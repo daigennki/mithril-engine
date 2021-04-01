@@ -1,0 +1,10 @@
+entities:
+-
+  class: ui_button
+  pos: [ 0.0, 0.0, 0.0 ]
+  align: [ 0.0, 0.0 ]
+  onPress: sample_script.lua
+  onRelease: 
+-
+  class: ui_prefab
+  file: sample_ui_prefab.yaml

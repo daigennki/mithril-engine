@@ -1,0 +1,4 @@
+Translucent: true
+Specular: models/sponza/sponza_thorn_spec.dds
+Diffuse: models/sponza/sponza_thorn_diff.dds
+Normal: models/sponza/sponza_thorn_ddn.dds

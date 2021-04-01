@@ -1,0 +1,24 @@
+IDI_ICON1 ICON "../mef.ico"
+1 MANIFEST "mef-manifest.xml"
+1 VERSIONINFO
+FILEVERSION 0,0,1
+PRODUCTVERSION 0,0,1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "daigennki"
+            VALUE "FileDescription",  "MithrilEngine Core Executable"
+            VALUE "FileVersion",      "0.1.0"
+            VALUE "InternalName",     "MithrilEngine"
+            VALUE "LegalCopyright",   "(c)2016-2020 daigennki"
+            VALUE "ProductName",      "MithrilEngine"
+            VALUE "ProductVersion",   "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -1,0 +1,42 @@
+skybox: skybox/sky_sunny005%s.png
+entities:
+- 
+  class: light_environment
+  angle: [ 30, 0, 285 ]
+  color: [ 12.5, 11.25, 10.0, 1.0 ]
+- 
+  class: save_point
+  pos: [ 10, 10, 0 ]
+- 
+  class: light
+  pos: [ 0, 5, 2 ]
+  color: [ 1.0, 1.0, 1.0, 5.0 ]
+  range: 7.0
+- 
+  class: light_spot
+  pos: [ -13, -1, 2 ]
+  angle: [ 90, 0, 0 ]
+  color: [ 1.0, 1.0, 1.0, 10.0 ]
+  range: 7.0
+  inner_cutoff: 30
+  outer_cutoff: 60
+- 
+  class: camera
+  name: test_camera1
+  pos: [ 20, 20, 0.5 ]
+  target: [ 0, 0, 10 ]
+- 
+  class: camera
+  name: player_tracking_camera
+  pos: [ 10, -10, 3 ]
+  target: client
+- 
+  class: prop
+  file: sponza.iqm
+  pos: [ 0, 0, 0 ]
+- 
+  class: npc
+  name: civilian_m
+  pos: [ 200, 200, 0 ]
+  mesh: human_low.iqm
+  on_interact: civ_test.lua

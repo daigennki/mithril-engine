@@ -1,0 +1,16 @@
+build/
+*.mkv
+*.exe
+mef
+*.blend1
+*.o
+*.d
+desktop.ini
+Thumbs.db
+bin/engine.dll
+bin/engine.so
+media/
+
+# Added by cargo
+
+/target
