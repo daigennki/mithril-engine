@@ -5,19 +5,22 @@
 
 	Licensed under the BSD 3-Clause License.
 ------------------------------------------------------------------------------ */
-extern crate sdl2;
 
-fn log_info(s: &str)
-{
+fn log_info(s: &str) {
     println!("{}", s);
     // TODO: print to log file
 }
-fn log_error(e: &str)
-{
+fn log_error(e: &str) {
     let formatted_log_str = ["ERROR: ", &e].concat();
     log_info(&formatted_log_str);
     let box_result = msgbox::create("MithrilEngine Error", e, msgbox::common::IconType::Error);
-    // TODO: handle box_result
+    match box_result {
+        Ok(r) => r,
+        Err(mbe) => {
+            let mbe_str = ["Error occurred while trying to create error message box: ", &mbe.to_string()].concat();
+            log_info(&mbe_str);
+        }
+    }
 }
 
 fn main() {
