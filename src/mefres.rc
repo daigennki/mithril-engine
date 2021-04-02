@@ -12,7 +12,7 @@ BEGIN
             VALUE "FileDescription",  "MithrilEngine Core Executable"
             VALUE "FileVersion",      "0.1.0"
             VALUE "InternalName",     "MithrilEngine"
-            VALUE "LegalCopyright",   "(c)2016-2020 daigennki"
+            VALUE "LegalCopyright",   "(c)2016-2021 daigennki"
             VALUE "ProductName",      "MithrilEngine"
             VALUE "ProductVersion",   "0.1.0"
         END
