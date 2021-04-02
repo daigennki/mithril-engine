@@ -17,3 +17,4 @@ glm = "0.2.3"
 yaml-rust = "0.4.5"
 openal = "0.2.2"
 mlua = { version = "0.5.3", features = ["luajit"] }
+msgbox = "0.6.0"
