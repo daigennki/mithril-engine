@@ -16,6 +16,6 @@ ffmpeg-next = "4.3.8"
 glm = "0.2.3"
 yaml-rust = "0.4.5"
 openal = "0.2.2"
-mlua = { version = "0.5.3", features = ["luajit"] }
+mlua = { version = "0.5.3", features = ["luajit", "vendored"] }     # "vendored" required here for Windows
 msgbox = "0.6.0"
 chrono = "0.4.19"
