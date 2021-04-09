@@ -5,16 +5,9 @@
 
 	Licensed under the BSD 3-Clause License.
 ------------------------------------------------------------------------------ */
-use std::io::Write;
+mod gamecontext;
+mod util;
 
-fn log_info(mut log_file: &std::fs::File, s: &str) {
-    println!("{}", &s);
-    let str_with_newline = format!("{}\n", s);
-    match log_file.write_all(str_with_newline.as_bytes()) {
-        Ok(()) => (),
-        Err(e) => println!("log_info failed to print to log file: {}", e.to_string())
-    }
-}
 fn print_error_unlogged(s: &str) {
     println!("{}", &s);
     match msgbox::create("MithrilEngine Error", &s, msgbox::common::IconType::Error) {
@@ -23,7 +16,13 @@ fn print_error_unlogged(s: &str) {
     }
 }
 
-fn logged_main(/*log_file: &std::fs::File*/) -> Result<(), Box<dyn std::error::Error>> {
+fn logged_main(log_file: &std::fs::File, pref_path_str: String) -> Result<(), Box<dyn std::error::Error>> {
+    // initialization
+    let gctx = gamecontext::GameContext::new(log_file, pref_path_str)?;
+
+    // render loop
+    gctx.render_loop(log_file)?;
+    
     Ok(())
 }
 
@@ -61,22 +60,23 @@ fn main() {
     }
 
     // print start date and time
-    log_info(&log_file, &format!("--- INIT {} ---", chrono::Local::now().to_rfc2822()));
+    util::log_info(&log_file, &format!("--- INIT {} ---", chrono::Local::now().to_rfc3339()));
 
-    match logged_main(/*&log_file*/) {
+    // construct and run GameContext
+    match logged_main(&log_file, pref_path_str) {
         Ok(()) => (),
         Err(e) => {
-            log_info(&log_file, &format!("ERROR: {}", &e.to_string()));
+            util::log_info(&log_file, &format!("ERROR: {}", &e.to_string()));
             match msgbox::create("MithrilEngine Error", &e.to_string(), msgbox::common::IconType::Error) {
                 Ok(r) => r,
                 Err(mbe) => {
                     let mbe_str = ["Error occurred while trying to create error message box: ", &mbe.to_string()].concat();
-                    log_info(&log_file, &mbe_str);
+                    util::log_info(&log_file, &mbe_str);
                 }
             }
         }
     }
 
     // print end date and time
-    log_info(&log_file, &format!("--- EXIT {} ---", chrono::Local::now().to_rfc2822()));
+    util::log_info(&log_file, &format!("--- EXIT {} ---", chrono::Local::now().to_rfc3339()));
 }
