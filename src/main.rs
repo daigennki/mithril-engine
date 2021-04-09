@@ -8,30 +8,9 @@
 mod gamecontext;
 mod util;
 
-fn print_error_unlogged(s: &str) {
-    println!("{}", &s);
-    match msgbox::create("MithrilEngine Error", &s, msgbox::common::IconType::Error) {
-        Ok(r) => r,
-        Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
-    }
-}
-
-fn logged_main(log_file: &std::fs::File, pref_path_str: String) -> Result<(), Box<dyn std::error::Error>> {
-    // initialization
-    let gctx = gamecontext::GameContext::new(log_file, pref_path_str)?;
-
-    // render loop
-    gctx.render_loop(log_file)?;
-    
-    Ok(())
-}
-
 fn main() {
     let org_name = "daigennki";
     let game_name = "MithrilEngine";
-
-    // get command line arguments
-    // let args: Vec<String> = std::env::args().collect();
 
     // get preferences path (log, config, and save data files will be saved here)
     let pref_path_str;
@@ -59,24 +38,35 @@ fn main() {
         }
     }
 
-    // print start date and time
-    util::log_info(&log_file, &format!("--- INIT {} ---", chrono::Local::now().to_rfc3339()));
-
-    // construct and run GameContext
-    match logged_main(&log_file, pref_path_str) {
-        Ok(()) => (),
+    // construct GameContext
+    let gctx_res = gamecontext::GameContext::new(log_file, pref_path_str);
+    let gctx;
+    match gctx_res {
+        Ok(g) => gctx = g,
         Err(e) => {
-            util::log_info(&log_file, &format!("ERROR: {}", &e.to_string()));
-            match msgbox::create("MithrilEngine Error", &e.to_string(), msgbox::common::IconType::Error) {
+            let log_error_file = e.print_error_to;
+            util::log_info(&log_error_file, &format!("ERROR: {}", &e.error_str));
+            let msgbox_message = format!("Initialization error!\n\n{}", &e.error_str);
+            match msgbox::create("MithrilEngine Error", &msgbox_message, msgbox::common::IconType::Error) {
                 Ok(r) => r,
                 Err(mbe) => {
-                    let mbe_str = ["Error occurred while trying to create error message box: ", &mbe.to_string()].concat();
-                    util::log_info(&log_file, &mbe_str);
+                    let mbe_str = format!("Error occurred while trying to create error message box: {}", &mbe.to_string());
+                    util::log_info(&log_error_file, &mbe_str);
                 }
             }
+            return;
         }
     }
 
-    // print end date and time
-    util::log_info(&log_file, &format!("--- EXIT {} ---", chrono::Local::now().to_rfc3339()));
+    // run render loop
+    gctx.render_loop();
 }
+
+fn print_error_unlogged(s: &str) {
+    println!("{}", &s);
+    match msgbox::create("MithrilEngine Error", &s, msgbox::common::IconType::Error) {
+        Ok(r) => r,
+        Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
+    }
+}
+
