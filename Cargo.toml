@@ -2,16 +2,20 @@
 name = "mithrilengine"
 version = "0.1.0"
 authors = ["daigennki <daigennki@users.noreply.github.com>"]
-edition = "2018"
+edition = "2021"
+build = "src/build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[build-dependencies]
+embed-resource = "1.6.5"
+
 [dependencies]
-sdl2 = "0.34.3"
+sdl2 = { version = "0.35.1", features = ["bundled"] }
 stb = "0.3.2"
 vulkano = "0.22.0"
 physx = "0.11.0"
-ffmpeg-next = "4.3.8"
+# ffmpeg-next = "4.4.0"     # broken right now, fails to build
 # steamworks = "0.7.0"
 glm = "0.2.3"
 yaml-rust = "0.4.5"

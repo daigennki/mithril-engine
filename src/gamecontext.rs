@@ -1,5 +1,3 @@
-use sdl2::libc::wait;
-
 use crate::util::log_info;
 
 pub struct InitError {
