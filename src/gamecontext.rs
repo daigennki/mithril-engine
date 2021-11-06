@@ -1,4 +1,4 @@
-use sdl2::libc::wait;
+use vulkano::app_info_from_cargo_toml;
 
 use crate::util::log_info;
 
@@ -9,7 +9,10 @@ pub struct InitError {
 pub struct GameContext {
     _pref_path: String,
     _log_file: std::fs::File,
-    _game_window: sdl2::video::Window
+    _sdlc: sdl2::Sdl,
+    _sdl_vss: sdl2::VideoSubsystem,
+    _game_window: sdl2::video::Window,
+    _vkinst: vulkano::instance::Instance
 }
 impl GameContext {
     // game context "constructor"
@@ -45,9 +48,16 @@ impl GameContext {
             Err(e) => return Err(InitError{ print_error_to: log_file, error_str: e.to_string() })
         }
 
+        // create Vulkan instance
+        let app_info = app_info_from_cargo_toml!();
+        app_info.engine_name
+        let vkinst_result = vulkano::instance::Instance::new();
+
         Ok(GameContext { 
             _pref_path: pref_path,
             _log_file: log_file,
+            _sdlc: sdl_context,
+            _sdl_vss: sdl_vss,
             _game_window: gwnd
         })
     }
