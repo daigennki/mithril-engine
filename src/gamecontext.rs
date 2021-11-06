@@ -11,8 +11,8 @@ pub struct GameContext {
     _log_file: std::fs::File,
     _sdlc: sdl2::Sdl,
     _sdl_vss: sdl2::VideoSubsystem,
-    _game_window: sdl2::video::Window,
-    _vkinst: vulkano::instance::Instance
+    _game_window: sdl2::video::Window/*,
+    _vkinst: vulkano::instance::Instance*/
 }
 impl GameContext {
     // game context "constructor"
@@ -49,9 +49,9 @@ impl GameContext {
         }
 
         // create Vulkan instance
-        let app_info = app_info_from_cargo_toml!();
-        app_info.engine_name
-        let vkinst_result = vulkano::instance::Instance::new();
+        /*let app_info = app_info_from_cargo_toml!();
+        app_info.engine_name = "MithrilEngine";
+        let vkinst_result = vulkano::instance::Instance::new();*/
 
         Ok(GameContext { 
             _pref_path: pref_path,
