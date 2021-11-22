@@ -16,9 +16,14 @@ pub struct GameContext {
 }
 impl GameContext {
     // game context "constructor"
-    pub fn new(log_file: std::fs::File, pref_path: String) -> Result<GameContext, InitError> {
+    pub fn new(log_file: std::fs::File, pref_path: String) 
+    -> Result<GameContext, InitError> {
         // print start date and time
-        log_info(&log_file, &format!("INIT {}", chrono::Local::now().to_rfc3339()));
+        let datetime_str = format!(
+            "INIT {}", 
+            chrono::Local::now().to_rfc3339()
+        );
+        log_info(&log_file, &datetime_str);
 
         // get command line arguments
         // let args: Vec<String> = std::env::args().collect();
@@ -27,14 +32,18 @@ impl GameContext {
         let sdl_context;
         match sdl2::init() {
             Ok(sc) => sdl_context = sc,
-            Err(e) => return Err(InitError{ print_error_to: log_file,  error_str: e })
+            Err(e) => return Err(
+                InitError{ print_error_to: log_file,  error_str: e }
+            )
         }
         
         // initialize SDL2 video subsystem
         let sdl_vss;
         match sdl_context.video() {
             Ok(vss) => sdl_vss = vss,
-            Err(e) => return Err(InitError{ print_error_to: log_file, error_str: e })
+            Err(e) => return Err(
+                InitError{ print_error_to: log_file, error_str: e }
+            )
         }
 
         // create window
@@ -45,7 +54,9 @@ impl GameContext {
         let gwnd;
         match wnd_result {
             Ok(w) => gwnd = w,
-            Err(e) => return Err(InitError{ print_error_to: log_file, error_str: e.to_string() })
+            Err(e) => return Err(
+                InitError{ print_error_to: log_file, error_str: e.to_string() }
+            )
         }
 
         // create Vulkan instance
@@ -67,10 +78,17 @@ impl GameContext {
             Ok(()) => (),
             Err(e) => {
                 self.print_log(&format!("ERROR: {}", &e.to_string()));
-                match msgbox::create("MithrilEngine Error", &e.to_string(), msgbox::common::IconType::Error) {
+                match msgbox::create(
+                    "MithrilEngine Error", 
+                    &e.to_string(), 
+                    msgbox::common::IconType::Error
+                ) {
                     Ok(r) => r,
                     Err(mbe) => {
-                        let mbe_str = ["Error occurred while trying to create error message box: ", &mbe.to_string()].concat();
+                        let mbe_str = [
+                            "Failed to create error message box: ", 
+                            &mbe.to_string()
+                        ].concat();
                         self.print_log(&mbe_str);
                     }
                 }
