@@ -12,11 +12,21 @@ pub struct GameContext
         _vkinst: vulkano::instance::Instance*/
 }
 
+fn create_game_window(sdl_vss: &sdl2::VideoSubsystem)
+        -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
+{
+        let wnd_result = sdl_vss.window("MithrilEngine", 1280, 720)
+                .position_centered()
+                .vulkan()
+                .build();
+        return wnd_result;
+}
+
 impl GameContext 
 {
         // game context "constructor"
         pub fn new(log_file: std::fs::File, pref_path: String) 
-        -> Result<GameContext, ()> 
+                -> Result<GameContext, ()> 
         {
                 // print start date and time
                 let datetime_str = format!(
@@ -49,12 +59,8 @@ impl GameContext
                 }
 
                 // create window
-                let wnd_result = sdl_vss.window("MithrilEngine", 1280, 720)
-                        .position_centered()
-                        .vulkan()
-                        .build();
                 let gwnd;
-                match wnd_result {
+                match create_game_window(&sdl_vss) {
                         Ok(w) => gwnd = w,
                         Err(e) => {
                                 print_init_error(&log_file, e.to_string());
