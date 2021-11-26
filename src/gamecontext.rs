@@ -2,11 +2,6 @@
 
 use crate::util::log_info;
 
-pub struct InitError 
-{
-        pub print_error_to: std::fs::File,  // give log file back to `main`
-        pub error_str: String,
-}
 pub struct GameContext 
 {
         _pref_path: String,
@@ -16,11 +11,12 @@ pub struct GameContext
         _game_window: sdl2::video::Window/*,
         _vkinst: vulkano::instance::Instance*/
 }
+
 impl GameContext 
 {
         // game context "constructor"
         pub fn new(log_file: std::fs::File, pref_path: String) 
-        -> Result<GameContext, InitError> 
+        -> Result<GameContext, ()> 
         {
                 // print start date and time
                 let datetime_str = format!(
@@ -36,24 +32,20 @@ impl GameContext
                 let sdl_context;
                 match sdl2::init() {
                         Ok(sc) => sdl_context = sc,
-                        Err(e) => return Err(
-                                InitError{ 
-                                        print_error_to: log_file,  
-                                        error_str: e 
-                                }
-                        )
+                        Err(e) => {
+                                print_init_error(&log_file, e);
+                                return Err(());
+                        }
                 }
                 
                 // initialize SDL2 video subsystem
                 let sdl_vss;
                 match sdl_context.video() {
                         Ok(vss) => sdl_vss = vss,
-                        Err(e) => return Err(
-                                InitError{ 
-                                        print_error_to: log_file, 
-                                        error_str: e 
-                                }
-                        )
+                        Err(e) => {
+                                print_init_error(&log_file, e);
+                                return Err(());
+                        }
                 }
 
                 // create window
@@ -64,12 +56,10 @@ impl GameContext
                 let gwnd;
                 match wnd_result {
                         Ok(w) => gwnd = w,
-                        Err(e) => return Err(
-                                InitError{ 
-                                        print_error_to: log_file, 
-                                        error_str: e.to_string() 
-                                }
-                        )
+                        Err(e) => {
+                                print_init_error(&log_file, e.to_string());
+                                return Err(());
+                        }
                 }
 
                 // create Vulkan instance
@@ -126,5 +116,27 @@ impl GameContext
                 std::thread::sleep(std::time::Duration::from_millis(2000));
 
                 Ok(())
+        }
+}
+
+fn print_init_error(log_file: &std::fs::File, e: String)
+{
+        let e_fmt = format!("ERROR: {}", &e);
+        log_info(log_file, &e_fmt);
+
+        let msg_str = format!("Initialization error!\n\n{}", &e);
+        match msgbox::create(
+                "MithrilEngine Error", 
+                &msg_str, 
+                msgbox::common::IconType::Error
+        ) {
+                Ok(r) => r,
+                Err(mbe) => {
+                        let mbe_str = format!(
+                                "Failed to create error message box: {}", 
+                                &mbe.to_string()
+                        );
+                        log_info(log_file, &mbe_str);
+                }
         }
 }

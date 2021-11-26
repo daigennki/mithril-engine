@@ -17,10 +17,7 @@ fn main()
         // (log, config, and save data files will be saved here)
         let pref_path_str;
         match sdl2::filesystem::pref_path(org_name, game_name) {
-                Ok(s) => {
-                        println!("Using preferences path: {}", &s);
-                        pref_path_str = s;
-                },
+                Ok(s) => pref_path_str = s,
                 Err(e) => {
                         let es = e.to_string();
                         let e_fmt = format!(
@@ -31,6 +28,7 @@ fn main()
                         return;
                 }
         }
+        println!("Using preferences path: {}", &pref_path_str);
 
         // open log file
         let log_file_path = [&pref_path_str, "game.log"].concat();
@@ -53,37 +51,11 @@ fn main()
         let gctx;
         match gctx_res {
                 Ok(g) => gctx = g,
-                Err(e) => {
-                        print_init_error(e);
-                        return;
-                }
+                Err(()) => return       // error logging is handled inside `new`
         }
 
         // run render loop
         gctx.render_loop();
-}
-
-fn print_init_error(e: gamecontext::InitError)
-{
-        let log_error_file = e.print_error_to;
-        let e_fmt = format!("ERROR: {}", &e.error_str);
-        util::log_info(&log_error_file, &e_fmt);
-
-        let msg_str = format!("Initialization error!\n\n{}", &e.error_str);
-        match msgbox::create(
-                "MithrilEngine Error", 
-                &msg_str, 
-                msgbox::common::IconType::Error
-        ) {
-                Ok(r) => r,
-                Err(mbe) => {
-                        let mbe_str = format!(
-                                "Failed to create error message box: {}", 
-                                &mbe.to_string()
-                        );
-                        util::log_info(&log_error_file, &mbe_str);
-                }
-        }
 }
 
 fn print_error_unlogged(s: &str) 
