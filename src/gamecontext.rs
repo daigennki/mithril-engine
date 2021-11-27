@@ -22,18 +22,88 @@ fn create_game_window(sdl_vss: &sdl2::VideoSubsystem)
     return wnd_result;
 }
 
+fn print_error_unlogged(s: &str) 
+{
+    println!("{}", &s);
+    match msgbox::create(
+        "MithrilEngine Error", 
+        &s, 
+        msgbox::common::IconType::Error
+    ) {
+        Ok(r) => r,
+        Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
+    }
+}
+
+fn print_init_error(log_file: &std::fs::File, e: String)
+{
+    let e_fmt = format!("ERROR: {}", &e);
+    log_info(log_file, &e_fmt);
+
+    let msg_str = format!("Initialization error!\n\n{}", &e);
+    match msgbox::create(
+        "MithrilEngine Error", 
+        &msg_str, 
+        msgbox::common::IconType::Error
+    ) {
+        Ok(r) => r,
+        Err(mbe) => {
+            let mbe_str = format!(
+                "Failed to create error message box: {}", 
+                &mbe.to_string()
+            );
+            log_info(log_file, &mbe_str);
+        }
+    }
+}
+
+fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
+{
+    match sdl2::filesystem::pref_path(org_name, game_name) {
+        Ok(s) => return Ok(s),
+        Err(e) => {
+            let es = e.to_string();
+            let e_fmt = format!("Failed to get preferences path: {}", &es);
+            print_error_unlogged(&e_fmt);
+            return Err(());
+        }
+    }
+}
+
+fn open_log_file(pref_path: &str) -> Result<std::fs::File, ()>
+{
+    let log_file_path = format!("{}game.log", &pref_path);
+    match std::fs::File::create(&log_file_path) {
+        Ok(f) => return Ok(f),
+        Err(e) => {
+            let es = e.to_string();
+            let e_fmt = format!(
+                "Failed to create log file '{0}': {1}", 
+                &log_file_path, 
+                &es
+            );
+            print_error_unlogged(&e_fmt);
+            return Err(());
+        }
+    }
+}
+
 impl GameContext 
 {
     // game context "constructor"
-    pub fn new(log_file: std::fs::File, pref_path: String) 
-        -> Result<GameContext, ()> 
+    pub fn new(org_name: &str, game_name: &str) -> Result<GameContext, ()> 
     {
+        // get preferences path
+        // (log, config, and save data files will be saved here)
+        let pref_path = get_pref_path(org_name, game_name)?;
+        println!("Using preferences path: {}", &pref_path);
+
+        // open log file
+        let log_file = open_log_file(&pref_path)?;
+        
         // print start date and time
-        let datetime_str = format!(
-            "INIT {}", 
-            chrono::Local::now().to_rfc3339()
-        );
-        log_info(&log_file, &datetime_str);
+        let dt_str = format!("INIT {}", chrono::Local::now().to_rfc3339());
+        log_info(&log_file, &dt_str);
 
         // get command line arguments
         // let args: Vec<String> = std::env::args().collect();
@@ -123,24 +193,3 @@ impl GameContext
     }
 }
 
-fn print_init_error(log_file: &std::fs::File, e: String)
-{
-    let e_fmt = format!("ERROR: {}", &e);
-    log_info(log_file, &e_fmt);
-
-    let msg_str = format!("Initialization error!\n\n{}", &e);
-    match msgbox::create(
-        "MithrilEngine Error", 
-        &msg_str, 
-        msgbox::common::IconType::Error
-    ) {
-        Ok(r) => r,
-        Err(mbe) => {
-            let mbe_str = format!(
-                "Failed to create error message box: {}", 
-                &mbe.to_string()
-            );
-            log_info(log_file, &mbe_str);
-        }
-    }
-}
