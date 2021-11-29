@@ -12,8 +12,7 @@ pub struct GameContext
     _vkinst: vulkano::instance::Instance*/
 }
 
-fn create_game_window(sdl_vss: &sdl2::VideoSubsystem)
-    -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
+fn create_game_window(sdl_vss: &sdl2::VideoSubsystem) -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
 {
     let wnd_result = sdl_vss.window("MithrilEngine", 1280, 720)
         .position_centered()
@@ -25,33 +24,22 @@ fn create_game_window(sdl_vss: &sdl2::VideoSubsystem)
 fn print_error_unlogged(s: &str) 
 {
     println!("{}", &s);
-    match msgbox::create(
-        "MithrilEngine Error", 
-        &s, 
-        msgbox::common::IconType::Error
-    ) {
+    match msgbox::create("MithrilEngine Error", &s, msgbox::common::IconType::Error) {
         Ok(r) => r,
         Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
     }
 }
 
-fn print_init_error(log_file: &std::fs::File, e: String)
+fn print_init_error(log_file: &std::fs::File, e: &str)
 {
-    let e_fmt = format!("ERROR: {}", &e);
-    log_info(log_file, &e_fmt);
+    let error_formatted = format!("ERROR: {}", e);
+    log_info(log_file, &error_formatted);
 
-    let msg_str = format!("Initialization error!\n\n{}", &e);
-    match msgbox::create(
-        "MithrilEngine Error", 
-        &msg_str, 
-        msgbox::common::IconType::Error
-    ) {
+    let msg_str = format!("Initialization error!\n\n{}", e);
+    match msgbox::create("MithrilEngine Error", &msg_str, msgbox::common::IconType::Error) {
         Ok(r) => r,
         Err(mbe) => {
-            let mbe_str = format!(
-                "Failed to create error message box: {}", 
-                &mbe.to_string()
-            );
+            let mbe_str = format!("Failed to create error message box: {}", &mbe.to_string());
             log_info(log_file, &mbe_str);
         }
     }
@@ -62,9 +50,8 @@ fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
     match sdl2::filesystem::pref_path(org_name, game_name) {
         Ok(s) => return Ok(s),
         Err(e) => {
-            let es = e.to_string();
-            let e_fmt = format!("Failed to get preferences path: {}", &es);
-            print_error_unlogged(&e_fmt);
+            let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
+            print_error_unlogged(&error_formatted);
             return Err(());
         }
     }
@@ -76,13 +63,8 @@ fn open_log_file(pref_path: &str) -> Result<std::fs::File, ()>
     match std::fs::File::create(&log_file_path) {
         Ok(f) => return Ok(f),
         Err(e) => {
-            let es = e.to_string();
-            let e_fmt = format!(
-                "Failed to create log file '{0}': {1}", 
-                &log_file_path, 
-                &es
-            );
-            print_error_unlogged(&e_fmt);
+            let error_formatted = format!("Failed to create log file '{0}': {1}", &log_file_path, &e.to_string());
+            print_error_unlogged(&error_formatted);
             return Err(());
         }
     }
@@ -113,7 +95,7 @@ impl GameContext
         match sdl2::init() {
             Ok(sc) => sdl_context = sc,
             Err(e) => {
-                print_init_error(&log_file, e);
+                print_init_error(&log_file, &e);
                 return Err(());
             }
         }
@@ -123,7 +105,7 @@ impl GameContext
         match sdl_context.video() {
             Ok(vss) => sdl_vss = vss,
             Err(e) => {
-                print_init_error(&log_file, e);
+                print_init_error(&log_file, &e);
                 return Err(());
             }
         }
@@ -133,7 +115,7 @@ impl GameContext
         match create_game_window(&sdl_vss) {
             Ok(w) => gwnd = w,
             Err(e) => {
-                print_init_error(&log_file, e.to_string());
+                print_init_error(&log_file, &e.to_string());
                 return Err(());
             }
         }
@@ -168,18 +150,11 @@ impl GameContext
     fn _render_loop_error(&self, e: Box<dyn std::error::Error>) 
     {
         self.print_log(&format!("ERROR: {}", &e.to_string()));
-        match msgbox::create(
-            "MithrilEngine Error", 
-            &e.to_string(), 
-            msgbox::common::IconType::Error
-        ) {
+        match msgbox::create("MithrilEngine Error", &e.to_string(), msgbox::common::IconType::Error) {
             Ok(r) => r,
             Err(mbe) => {
-                let mbe_str = format!(
-                    "Failed to create error message box: {}", 
-                    &mbe.to_string()
-                );
-                self.print_log(&mbe_str);
+                let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
+                self.print_log(&msgbox_error_str);
             }
         }
     }
