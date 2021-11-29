@@ -11,65 +11,6 @@ pub struct GameContext
     _game_window: sdl2::video::Window/*,
     _vkinst: vulkano::instance::Instance*/
 }
-
-fn create_game_window(vss: &sdl2::VideoSubsystem, title: &str) -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
-{
-    let wnd_result = vss.window(title, 1280, 720)
-        .position_centered()
-        .vulkan()
-        .build();
-    return wnd_result;
-}
-
-fn print_error_unlogged(s: &str) 
-{
-    println!("{}", &s);
-    match msgbox::create("Engine error", &s, msgbox::common::IconType::Error) {
-        Ok(r) => r,
-        Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
-    }
-}
-
-fn print_init_error(log_file: &std::fs::File, e: &str)
-{
-    let error_formatted = format!("ERROR: {}", e);
-    log_info(log_file, &error_formatted);
-
-    let msg_str = format!("Initialization error!\n\n{}", e);
-    match msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error) {
-        Ok(r) => r,
-        Err(mbe) => {
-            let mbe_str = format!("Failed to create error message box: {}", &mbe.to_string());
-            log_info(log_file, &mbe_str);
-        }
-    }
-}
-
-fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
-{
-    match sdl2::filesystem::pref_path(org_name, game_name) {
-        Ok(s) => return Ok(s),
-        Err(e) => {
-            let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
-            print_error_unlogged(&error_formatted);
-            return Err(());
-        }
-    }
-}
-
-fn open_log_file(pref_path: &str) -> Result<std::fs::File, ()>
-{
-    let log_file_path = format!("{}game.log", &pref_path);
-    match std::fs::File::create(&log_file_path) {
-        Ok(f) => return Ok(f),
-        Err(e) => {
-            let error_formatted = format!("Failed to create log file '{0}': {1}", &log_file_path, &e.to_string());
-            print_error_unlogged(&error_formatted);
-            return Err(());
-        }
-    }
-}
-
 impl GameContext 
 {
     // game context "constructor"
@@ -168,3 +109,60 @@ impl GameContext
     }
 }
 
+fn create_game_window(vss: &sdl2::VideoSubsystem, title: &str) -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
+{
+    let wnd_result = vss.window(title, 1280, 720)
+        .position_centered()
+        .vulkan()
+        .build();
+    return wnd_result;
+}
+
+fn print_error_unlogged(s: &str) 
+{
+    println!("{}", &s);
+    match msgbox::create("Engine error", &s, msgbox::common::IconType::Error) {
+        Ok(r) => r,
+        Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
+    }
+}
+
+fn print_init_error(log_file: &std::fs::File, e: &str)
+{
+    let error_formatted = format!("ERROR: {}", e);
+    log_info(log_file, &error_formatted);
+
+    let msg_str = format!("Initialization error!\n\n{}", e);
+    match msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error) {
+        Ok(r) => r,
+        Err(mbe) => {
+            let mbe_str = format!("Failed to create error message box: {}", &mbe.to_string());
+            log_info(log_file, &mbe_str);
+        }
+    }
+}
+
+fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
+{
+    match sdl2::filesystem::pref_path(org_name, game_name) {
+        Ok(s) => return Ok(s),
+        Err(e) => {
+            let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
+            print_error_unlogged(&error_formatted);
+            return Err(());
+        }
+    }
+}
+
+fn open_log_file(pref_path: &str) -> Result<std::fs::File, ()>
+{
+    let log_file_path = format!("{}game.log", &pref_path);
+    match std::fs::File::create(&log_file_path) {
+        Ok(f) => return Ok(f),
+        Err(e) => {
+            let error_formatted = format!("Failed to create log file '{0}': {1}", &log_file_path, &e.to_string());
+            print_error_unlogged(&error_formatted);
+            return Err(());
+        }
+    }
+}
