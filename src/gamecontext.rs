@@ -12,9 +12,9 @@ pub struct GameContext
     _vkinst: vulkano::instance::Instance*/
 }
 
-fn create_game_window(sdl_vss: &sdl2::VideoSubsystem) -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
+fn create_game_window(vss: &sdl2::VideoSubsystem, title: &str) -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
 {
-    let wnd_result = sdl_vss.window("MithrilEngine", 1280, 720)
+    let wnd_result = vss.window(title, 1280, 720)
         .position_centered()
         .vulkan()
         .build();
@@ -24,7 +24,7 @@ fn create_game_window(sdl_vss: &sdl2::VideoSubsystem) -> Result<sdl2::video::Win
 fn print_error_unlogged(s: &str) 
 {
     println!("{}", &s);
-    match msgbox::create("MithrilEngine Error", &s, msgbox::common::IconType::Error) {
+    match msgbox::create("Engine error", &s, msgbox::common::IconType::Error) {
         Ok(r) => r,
         Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
     }
@@ -36,7 +36,7 @@ fn print_init_error(log_file: &std::fs::File, e: &str)
     log_info(log_file, &error_formatted);
 
     let msg_str = format!("Initialization error!\n\n{}", e);
-    match msgbox::create("MithrilEngine Error", &msg_str, msgbox::common::IconType::Error) {
+    match msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error) {
         Ok(r) => r,
         Err(mbe) => {
             let mbe_str = format!("Failed to create error message box: {}", &mbe.to_string());
@@ -112,7 +112,7 @@ impl GameContext
 
         // create window
         let gwnd;
-        match create_game_window(&sdl_vss) {
+        match create_game_window(&sdl_vss, game_name) {
             Ok(w) => gwnd = w,
             Err(e) => {
                 print_init_error(&log_file, &e.to_string());
@@ -150,7 +150,7 @@ impl GameContext
     fn _render_loop_error(&self, e: Box<dyn std::error::Error>) 
     {
         self.print_log(&format!("ERROR: {}", &e.to_string()));
-        match msgbox::create("MithrilEngine Error", &e.to_string(), msgbox::common::IconType::Error) {
+        match msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
             Ok(r) => r,
             Err(mbe) => {
                 let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
