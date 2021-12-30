@@ -11,15 +11,16 @@ build = "src/build.rs"
 embed-resource = "1.6.5"
 
 [dependencies]
-sdl2 = { version = "0.35.1" }
-# stb = "0.3.2"
+sdl2 = "0.35.1"
+rusttype = "0.9.2"
+lodepng = "3.4.7"
 vulkano = "0.27.1"
 # physx = "0.12.1"
-# ffmpeg-next = "4.4.0"     # broken right now, fails to build
+ffmpeg-next = "4.4.0"
 # steamworks = "0.7.0"
 glm = "0.2.3"
 yaml-rust = "0.4.5"
 openal = "0.2.2"
-mlua = { version = "0.7.1", features = ["luajit", "vendored"] }     # "vendored" required here for Windows
+mlua = { version = "0.7.1", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 msgbox = "0.6.0"
 chrono = "0.4.19"
