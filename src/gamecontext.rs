@@ -4,11 +4,11 @@ use crate::util::log_info;
 
 pub struct GameContext 
 {
-	_pref_path: String,
-	_log_file: std::fs::File,
-	_sdlc: sdl2::Sdl,
-	_sdl_vss: sdl2::VideoSubsystem,
-	_game_window: sdl2::video::Window/*,
+	pref_path: String,
+	log_file: std::fs::File,
+	sdlc: sdl2::Sdl,
+	sdl_vss: sdl2::VideoSubsystem,
+	game_window: sdl2::video::Window/*,
 	_vkinst: vulkano::instance::Instance*/
 }
 impl GameContext 
@@ -67,28 +67,28 @@ impl GameContext
 		let vkinst_result = vulkano::instance::Instance::new();*/
 
 		Ok(GameContext { 
-			_pref_path: pref_path,
-			_log_file: log_file,
-			_sdlc: sdl_context,
-			_sdl_vss: sdl_vss,
-			_game_window: gwnd
+			pref_path: pref_path,
+			log_file: log_file,
+			sdlc: sdl_context,
+			sdl_vss: sdl_vss,
+			game_window: gwnd
 		})
 	}
 
 	pub fn render_loop(&self)
 	{
-		match self._render_loop_inner() {
+		match self.render_loop_inner() {
 			Ok(()) => (),
-			Err(e) => self._render_loop_error(e)
+			Err(e) => self.render_loop_error(e)
 		}
 	}
 
 	pub fn print_log(&self, s: &str) 
 	{
-		log_info(&self._log_file, s);
+		log_info(&self.log_file, s);
 	}
 
-	fn _render_loop_error(&self, e: Box<dyn std::error::Error>) 
+	fn render_loop_error(&self, e: Box<dyn std::error::Error>) 
 	{
 		self.print_log(&format!("ERROR: {}", &e.to_string()));
 		match msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
@@ -100,7 +100,7 @@ impl GameContext
 		}
 	}
 
-	fn _render_loop_inner(&self) -> Result<(), Box<dyn std::error::Error>> 
+	fn render_loop_inner(&self) -> Result<(), Box<dyn std::error::Error>> 
 	{
 		// wait for 2 seconds
 		std::thread::sleep(std::time::Duration::from_millis(2000));
