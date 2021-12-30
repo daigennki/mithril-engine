@@ -1,6 +1,7 @@
 desktop.ini
 Thumbs.db
 /media
+*.dll
 
 # Added by cargo
 
