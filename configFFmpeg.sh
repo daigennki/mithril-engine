@@ -4,7 +4,7 @@
 # * UTVideo decoder (used for RGBA animated textures)
 # * Opus audio decoder and parser (used for music and audio accompanying video)
 # * PCM Signed 16-bit little-endian decoder (used for lossless audio, just in case)
-# * Matroska demuxer (MKV for video,　MKA for audio)
+# * Matroska demuxer (MKV for video, MKA for audio)
 # * VP9 Hardware acceleration:
 #   * Windows: DXVA2
 #   * Linux: VAAPI

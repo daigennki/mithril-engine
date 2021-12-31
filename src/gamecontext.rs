@@ -1,5 +1,3 @@
-//use vulkano::app_info_from_cargo_toml;
-
 use crate::util::log_info;
 
 pub struct GameContext 
@@ -8,8 +6,8 @@ pub struct GameContext
 	log_file: std::fs::File,
 	sdlc: sdl2::Sdl,
 	sdl_vss: sdl2::VideoSubsystem,
-	game_window: sdl2::video::Window/*,
-	_vkinst: vulkano::instance::Instance*/
+	game_window: sdl2::video::Window,
+	vkinst: std::sync::Arc<vulkano::instance::Instance>
 }
 impl GameContext 
 {
@@ -62,16 +60,67 @@ impl GameContext
 		}
 
 		// create Vulkan instance
-		/*let app_info = app_info_from_cargo_toml!();
-		app_info.engine_name = "MithrilEngine";
-		let vkinst_result = vulkano::instance::Instance::new();*/
+		let vkinst;
+		match create_vulkan_instance() {
+			Ok(vki) => vkinst = vki,
+			Err(e) => {
+				print_init_error(&log_file, &e.to_string());
+				return Err(());
+			}
+		}
+
+		// get physical device
+		// TODO: check physical device type (prioritize discrete graphics)
+		let mut index = 0;
+		let vkpd: vulkano::device::physical::PhysicalDevice;
+		match vulkano::device::physical::PhysicalDevice::from_index(&vkinst, 0) {
+			Some(pd) => vkpd = pd,
+			None => {
+				print_init_error(&log_file, "No physical devices found!");
+				return Err(());
+			}
+		}
+		let string_formatted = format!("Using physical device: {}", &vkpd.properties().device_name);
+		log_info(&log_file, &string_formatted);
+
+		// get queue families from physical device
+		/*let q_fam;
+		for queue_family in vkpd.queue_families() {
+			if queue_family.supports_graphics() {
+				q_fam = queue_family;
+				break;
+			}
+		}
+		
+		// get logical device
+		let dev_features = vulkano::device::Features{
+			image_cube_array: true,
+			independent_blend: true,
+			sampler_anisotropy: true,
+			texture_compression_bc: true,
+			geometry_shader: true,
+			..vulkano::device::Features::none()
+		};
+		let dev_extensions = vulkano::device::DeviceExtensions{
+			khr_swapchain: true,
+			..vulkano::device::DeviceExtensions::none()
+		};
+
+		match vulkano::device::Device::new(
+			vkpd, 
+			&dev_features, 
+			&vkpd.required_extensions().union(&dev_extensions), 
+			vkpd.queue_families()) {
+
+		}*/
 
 		Ok(GameContext { 
 			pref_path: pref_path,
 			log_file: log_file,
 			sdlc: sdl_context,
 			sdl_vss: sdl_vss,
-			game_window: gwnd
+			game_window: gwnd,
+			vkinst: vkinst
 		})
 	}
 
@@ -81,6 +130,7 @@ impl GameContext
 			Ok(()) => (),
 			Err(e) => self.render_loop_error(e)
 		}
+		self.print_log("Success.");
 	}
 
 	pub fn print_log(&self, s: &str) 
@@ -116,6 +166,30 @@ fn create_game_window(vss: &sdl2::VideoSubsystem, title: &str) -> Result<sdl2::v
 		.vulkan()
 		.build();
 	return wnd_result;
+}
+
+fn create_vulkan_instance() -> Result<std::sync::Arc<vulkano::instance::Instance>, String>
+{
+	let mut app_info = vulkano::app_info_from_cargo_toml!();
+	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
+
+	let vk_ext = vulkano::instance::InstanceExtensions::none();
+	
+	let vk_layer_list: Vec<_>;
+	match vulkano::instance::layers_list() {
+		Ok(layers_list) => {
+			vk_layer_list = layers_list.filter(|l| l.description().contains("VK_LAYER_KHRONOS_validation")).collect();
+		},
+		Err(e) => {
+			return Err(e.to_string());
+		}
+	}
+	let vk_layer_names = vk_layer_list.iter().map(|l| l.name());
+
+	match vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names) {
+		Ok(vki) => Ok(vki),
+		Err(e) => Err(e.to_string())
+	}
 }
 
 fn print_error_unlogged(s: &str) 
