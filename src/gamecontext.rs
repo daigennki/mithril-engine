@@ -163,6 +163,7 @@ fn create_game_window(vss: &sdl2::VideoSubsystem, title: &str) -> Result<sdl2::v
 {
 	let wnd_result = vss.window(title, 1280, 720)
 		.position_centered()
+		.allow_highdpi()
 		.vulkan()
 		.build();
 	return wnd_result;
