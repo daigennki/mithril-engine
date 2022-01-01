@@ -1,13 +1,18 @@
 use crate::util::log_info;
 
+use std::sync::Arc;
+use vulkano_win::VkSurfaceBuild;
+use winit::window::{Window, WindowBuilder};
+
 pub struct GameContext 
 {
 	pref_path: String,
 	log_file: std::fs::File,
-	sdlc: sdl2::Sdl,
-	sdl_vss: sdl2::VideoSubsystem,
-	game_window: sdl2::video::Window,
-	vkinst: std::sync::Arc<vulkano::instance::Instance>
+	event_loop: winit::event_loop::EventLoop<()>,
+	//game_window: Window,
+	window_surface: Arc<vulkano::swapchain::Surface<Window>>,
+	vkinst: Arc<vulkano::instance::Instance>,
+	vk_dev: Arc<vulkano::device::Device>
 }
 impl GameContext 
 {
@@ -29,35 +34,8 @@ impl GameContext
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
-		// initialize SDL2
-		let sdl_context;
-		match sdl2::init() {
-			Ok(sc) => sdl_context = sc,
-			Err(e) => {
-				print_init_error(&log_file, &e);
-				return Err(());
-			}
-		}
-		
-		// initialize SDL2 video subsystem
-		let sdl_vss;
-		match sdl_context.video() {
-			Ok(vss) => sdl_vss = vss,
-			Err(e) => {
-				print_init_error(&log_file, &e);
-				return Err(());
-			}
-		}
-
-		// create window
-		let gwnd;
-		match create_game_window(&sdl_vss, game_name) {
-			Ok(w) => gwnd = w,
-			Err(e) => {
-				print_init_error(&log_file, &e.to_string());
-				return Err(());
-			}
-		}
+		// create event loop
+		let event_loop = winit::event_loop::EventLoop::new();
 
 		// create Vulkan instance
 		let vkinst;
@@ -69,9 +47,18 @@ impl GameContext
 			}
 		}
 
+		// create window
+		let window_surface;
+		match create_game_window(&event_loop, game_name, &vkinst) {
+			Ok(w) => window_surface = w,
+			Err(e) => {
+				print_init_error(&log_file, &e.to_string());
+				return Err(());
+			}
+		}
+
 		// get physical device
 		// TODO: check physical device type (prioritize discrete graphics)
-		let mut index = 0;
 		let vkpd: vulkano::device::physical::PhysicalDevice;
 		match vulkano::device::physical::PhysicalDevice::from_index(&vkinst, 0) {
 			Some(pd) => vkpd = pd,
@@ -83,16 +70,17 @@ impl GameContext
 		let string_formatted = format!("Using physical device: {}", &vkpd.properties().device_name);
 		log_info(&log_file, &string_formatted);
 
-		// get queue families from physical device
-		/*let q_fam;
-		for queue_family in vkpd.queue_families() {
-			if queue_family.supports_graphics() {
-				q_fam = queue_family;
-				break;
+		// get queue family that supports graphics
+		let q_fam;
+		match vkpd.queue_families().find(|q| q.supports_graphics()) {
+			Some(q) => q_fam = q,
+			None => {
+				print_init_error(&log_file, "No appropriate queue family found!");
+				return Err(());
 			}
 		}
 		
-		// get logical device
+		// create logical device
 		let dev_features = vulkano::device::Features{
 			image_cube_array: true,
 			independent_blend: true,
@@ -104,23 +92,51 @@ impl GameContext
 		let dev_extensions = vulkano::device::DeviceExtensions{
 			khr_swapchain: true,
 			..vulkano::device::DeviceExtensions::none()
-		};
+		}.union(vkpd.required_extensions());
 
-		match vulkano::device::Device::new(
-			vkpd, 
-			&dev_features, 
-			&vkpd.required_extensions().union(&dev_extensions), 
-			vkpd.queue_families()) {
+		let device_tuple;
+		match vulkano::device::Device::new(vkpd, &dev_features, &dev_extensions, [(q_fam, 0.5)].iter().cloned()) {
+			Ok(d) => device_tuple = d,
+			Err(e) => {
+				let error_formatted = format!("Failed to create Vulkan logical device: {}", e.to_string());
+				print_init_error(&log_file, &error_formatted);
+				return Err(());
+			}
+		}
+		let (vk_dev, mut queues) = device_tuple;
 
-		}*/
+		// get queue
+		let dev_queue;
+		match queues.next() {
+			Some(q) => dev_queue = q,
+			None => {
+				print_init_error(&log_file, "No queues available!");
+				return Err(());
+			}
+		}
+
+		// query surface capabilities
+		let surf_caps;
+		match window_surface.capabilities(vkpd) {
+			Ok(c) => surf_caps = c,
+			Err(e) => {
+				let error_formatted = format!("Failed to query surface capabilities: {}", e.to_string());
+				print_init_error(&log_file, &error_formatted);
+				return Err(());
+			}
+		}
+
+		let composite_alpha = surf_caps.supported_composite_alpha.iter().next().unwrap();
+		let format = surf_caps.supported_formats[0].0;
+		let dimensions: [u32; 2] = window_surface.window().inner_size().into();
 
 		Ok(GameContext { 
 			pref_path: pref_path,
 			log_file: log_file,
-			sdlc: sdl_context,
-			sdl_vss: sdl_vss,
-			game_window: gwnd,
-			vkinst: vkinst
+			event_loop: event_loop,
+			window_surface: window_surface,
+			vkinst: vkinst,
+			vk_dev: vk_dev
 		})
 	}
 
@@ -159,14 +175,14 @@ impl GameContext
 	}
 }
 
-fn create_game_window(vss: &sdl2::VideoSubsystem, title: &str) -> Result<sdl2::video::Window, sdl2::video::WindowBuildError>
+fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: &Arc<vulkano::instance::Instance>) 
+	-> Result<Arc<vulkano::swapchain::Surface<Window>>, vulkano_win::CreationError>
 {
-	let wnd_result = vss.window(title, 1280, 720)
-		.position_centered()
-		.allow_highdpi()
-		.vulkan()
-		.build();
-	return wnd_result;
+	return WindowBuilder::new()
+		.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
+		.with_title(title)
+		.build_vk_surface(event_loop, vkinst.clone());
+		//.build(event_loop);
 }
 
 fn create_vulkan_instance() -> Result<std::sync::Arc<vulkano::instance::Instance>, String>
@@ -219,8 +235,22 @@ fn print_init_error(log_file: &std::fs::File, e: &str)
 
 fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
 {
-	match sdl2::filesystem::pref_path(org_name, game_name) {
+	/*match sdl2::filesystem::pref_path(org_name, game_name) {
 		Ok(s) => return Ok(s),
+		Err(e) => {
+			let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
+			print_error_unlogged(&error_formatted);
+			return Err(());
+		}
+	}*/
+	// TODO: try to create the path if it doesn't exist
+	// TODO: get preferences path for other platforms
+	let path_prefix = std::env::var("APPDATA");
+	match path_prefix {
+		Ok(env_result) => {
+			let pref_path = format!("{}/{}/{}", env_result, org_name, game_name);
+			return Ok(pref_path);
+		}
 		Err(e) => {
 			let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
 			print_error_unlogged(&error_formatted);

@@ -12,7 +12,7 @@ mod util;
 fn main() -> Result<(), ()>
 {
 	// construct GameContext
-	let gctx = gamecontext::GameContext::new("daigennki", "MithrilEngine")?;
+	let mut gctx = gamecontext::GameContext::new("daigennki", "MithrilEngine")?;
 
 	// run render loop
 	gctx.render_loop();
