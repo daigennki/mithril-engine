@@ -3,6 +3,8 @@ use crate::util::log_info;
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::{Window, WindowBuilder};
+use vulkano::device::physical::PhysicalDeviceType;
+use vulkano::device::physical::PhysicalDevice;
 
 pub struct GameContext 
 {
@@ -57,16 +59,30 @@ impl GameContext
 			}
 		}
 
-		// get physical device
-		// TODO: check physical device type (prioritize discrete graphics)
-		let vkpd: vulkano::device::physical::PhysicalDevice;
-		match vulkano::device::physical::PhysicalDevice::from_index(&vkinst, 0) {
-			Some(pd) => vkpd = pd,
-			None => {
-				print_init_error(&log_file, "No physical devices found!");
-				return Err(());
-			}
+		// Get physical device.
+		log_info(&log_file, "Available Vulkan physical devices:");
+		for pd in PhysicalDevice::enumerate(&vkinst) {
+			log_info(&log_file, &pd.properties().device_name);
 		}
+		// Look for a discrete GPU.
+		let mut suitable_gpus: Vec<_>;
+		suitable_gpus = PhysicalDevice::enumerate(&vkinst)
+			.filter(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu)
+			.collect();
+		// If there is no discrete GPU, try to look for an integrated GPU instead.
+		if suitable_gpus.is_empty() {
+			suitable_gpus = PhysicalDevice::enumerate(&vkinst)
+				.filter(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu)
+				.collect();
+		}
+		// If there are still no GPUs, return with an error.
+		if suitable_gpus.is_empty() {
+			print_init_error(&log_file, "No GPUs were found!");
+			return Err(());
+		}
+		// TODO: Check to make sure that the GPU is even capable of the features we need from it.
+		let vkpd = suitable_gpus[0];
+		
 		let string_formatted = format!("Using physical device: {}", &vkpd.properties().device_name);
 		log_info(&log_file, &string_formatted);
 
@@ -182,7 +198,6 @@ fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str
 		.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
 		.with_title(title)
 		.build_vk_surface(event_loop, vkinst.clone());
-		//.build(event_loop);
 }
 
 fn create_vulkan_instance() -> Result<std::sync::Arc<vulkano::instance::Instance>, String>
@@ -190,7 +205,7 @@ fn create_vulkan_instance() -> Result<std::sync::Arc<vulkano::instance::Instance
 	let mut app_info = vulkano::app_info_from_cargo_toml!();
 	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
 
-	let vk_ext = vulkano::instance::InstanceExtensions::none();
+	let vk_ext = vulkano_win::required_extensions();
 	
 	let vk_layer_list: Vec<_>;
 	match vulkano::instance::layers_list() {
