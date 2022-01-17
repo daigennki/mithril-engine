@@ -243,9 +243,9 @@ fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
 	match path_prefix {
 		Ok(env_result) => {
 			#[cfg(target_family = "windows")]
-			let pref_path = format!("{}/{}/{}", env_result, org_name, game_name);
+			let pref_path = format!("{}/{}/{}/", env_result, org_name, game_name);
 			#[cfg(target_family = "unix")]
-			let pref_path = format!("{}/.local/share/{}/{}", env_result, org_name, game_name);
+			let pref_path = format!("{}/.local/share/{}/{}/", env_result, org_name, game_name);
 
 			// try to create the path if it doesn't exist
 			match std::fs::create_dir_all(&pref_path) {
