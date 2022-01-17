@@ -233,40 +233,59 @@ fn print_init_error(log_file: &std::fs::File, e: &str)
 	}
 }
 
+fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<String, ()>
+{
+	let pref_path = format!("{}/{}/{}/", prefix, org_name, game_name);
+
+	// try to create the path if it doesn't exist
+	match std::fs::create_dir_all(&pref_path) {
+		Ok(()) => return Ok(pref_path),
+		Err(e) => match e.kind() {
+			std::io::ErrorKind::AlreadyExists => {
+				println!("Preferences path already exists, skipping creation...");
+				return Ok(pref_path);
+			},
+			_ => {
+				let error_formatted = format!("Failed to create preferences path: {}", &e.to_string());
+				print_error_unlogged(&error_formatted);
+				return Err(());
+			}
+		}
+	}
+}
 fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
 {
 	#[cfg(target_family = "windows")]
 	let path_prefix = std::env::var("APPDATA");
 	#[cfg(target_family = "unix")]
-	let path_prefix = std::env::var("HOME");
+	let path_prefix = std::env::var("XDG_DATA_HOME");
 	
 	match path_prefix {
 		Ok(env_result) => {
+			return Ok(create_pref_path(&env_result, org_name, game_name)?);
+		},
+		Err(e) => {
 			#[cfg(target_family = "windows")]
-			let pref_path = format!("{}/{}/{}/", env_result, org_name, game_name);
+			{
+				let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
+				print_error_unlogged(&error_formatted);
+				return Err(());
+			}
 			#[cfg(target_family = "unix")]
-			let pref_path = format!("{}/.local/share/{}/{}/", env_result, org_name, game_name);
-
-			// try to create the path if it doesn't exist
-			match std::fs::create_dir_all(&pref_path) {
-				Ok(()) => return Ok(pref_path),
-				Err(e) => match e.kind() {
-					std::io::ErrorKind::AlreadyExists => {
-						println!("Preferences path already exists, skipping creation...");
-						return Ok(pref_path);
+			{
+				println!("XDG_DATA_HOME was invalid ({}), trying HOME instead...", &e.to_string());
+				match std::env::var("HOME") {
+					Ok(env_result) => {
+						let pref_prefix = format!("{}/.local/share", env_result);
+						return Ok(create_pref_path(&pref_prefix, org_name, game_name)?);
 					},
-					_ => {
-						let error_formatted = format!("Failed to create preferences path: {}", &e.to_string());
+					Err(e) => {
+						let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
 						print_error_unlogged(&error_formatted);
 						return Err(());
 					}
 				}
 			}
-		}
-		Err(e) => {
-			let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
-			print_error_unlogged(&error_formatted);
-			return Err(());
 		}
 	}
 }
