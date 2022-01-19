@@ -59,32 +59,8 @@ impl GameContext
 			}
 		}
 
-		// Get physical device.
-		log_info(&log_file, "Available Vulkan physical devices:");
-		for pd in PhysicalDevice::enumerate(&vkinst) {
-			log_info(&log_file, &pd.properties().device_name);
-		}
-		// Look for a discrete GPU.
-		let mut suitable_gpus: Vec<_>;
-		suitable_gpus = PhysicalDevice::enumerate(&vkinst)
-			.filter(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu)
-			.collect();
-		// If there is no discrete GPU, try to look for an integrated GPU instead.
-		if suitable_gpus.is_empty() {
-			suitable_gpus = PhysicalDevice::enumerate(&vkinst)
-				.filter(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu)
-				.collect();
-		}
-		// If there are still no GPUs, return with an error.
-		if suitable_gpus.is_empty() {
-			print_init_error(&log_file, "No GPUs were found!");
-			return Err(());
-		}
-		// TODO: Check to make sure that the GPU is even capable of the features we need from it.
-		let vkpd = suitable_gpus[0];
-		
-		let string_formatted = format!("Using physical device: {}", &vkpd.properties().device_name);
-		log_info(&log_file, &string_formatted);
+		// get physical device and queue family
+		let vkpd = get_vk_physical_device(&log_file, &vkinst)?;
 
 		// get queue family that supports graphics
 		let q_fam;
@@ -222,6 +198,43 @@ fn create_vulkan_instance() -> Result<std::sync::Arc<vulkano::instance::Instance
 		Ok(vki) => Ok(vki),
 		Err(e) => Err(e.to_string())
 	}
+}
+
+fn get_vk_physical_device<'a>(log_file: &std::fs::File, vkinst: &'a Arc<vulkano::instance::Instance>) 
+	-> Result<PhysicalDevice<'a>, ()>
+{
+	// Get physical device.
+	log_info(&log_file, "Available Vulkan physical devices:");
+	for pd in PhysicalDevice::enumerate(&vkinst) {
+		log_info(&log_file, &pd.properties().device_name);
+	}
+	
+	// Look for a discrete GPU.
+	let dgpu = PhysicalDevice::enumerate(&vkinst)
+		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
+	let vkpd;
+	match dgpu {
+		Some(g) => vkpd = g,
+		None => {
+			// If there is no discrete GPU, try to look for an integrated GPU instead.
+			let igpu = PhysicalDevice::enumerate(&vkinst)
+				.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
+			match igpu {
+				Some(g) => vkpd = g,
+				None => {
+					// If there are still no GPUs, return with an error.
+					print_init_error(&log_file, "No GPUs were found!");
+					return Err(());
+				}
+			}
+		}
+	}
+	// TODO: Check to make sure that the GPU is even capable of the features we need from it.
+	
+	let string_formatted = format!("Using physical device: {}", &vkpd.properties().device_name);
+	log_info(&log_file, &string_formatted);
+
+	return Ok(vkpd);
 }
 
 fn print_error_unlogged(s: &str) 
