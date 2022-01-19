@@ -59,53 +59,8 @@ impl GameContext
 			}
 		}
 
-		// get physical device and queue family
+		// get physical device
 		let vkpd = get_vk_physical_device(&log_file, &vkinst)?;
-
-		// get queue family that supports graphics
-		let q_fam;
-		match vkpd.queue_families().find(|q| q.supports_graphics()) {
-			Some(q) => q_fam = q,
-			None => {
-				print_init_error(&log_file, "No appropriate queue family found!");
-				return Err(());
-			}
-		}
-		
-		// create logical device
-		let dev_features = vulkano::device::Features{
-			image_cube_array: true,
-			independent_blend: true,
-			sampler_anisotropy: true,
-			texture_compression_bc: true,
-			geometry_shader: true,
-			..vulkano::device::Features::none()
-		};
-		let dev_extensions = vulkano::device::DeviceExtensions{
-			khr_swapchain: true,
-			..vulkano::device::DeviceExtensions::none()
-		}.union(vkpd.required_extensions());
-
-		let device_tuple;
-		match vulkano::device::Device::new(vkpd, &dev_features, &dev_extensions, [(q_fam, 0.5)].iter().cloned()) {
-			Ok(d) => device_tuple = d,
-			Err(e) => {
-				let error_formatted = format!("Failed to create Vulkan logical device: {}", e.to_string());
-				print_init_error(&log_file, &error_formatted);
-				return Err(());
-			}
-		}
-		let (vk_dev, mut queues) = device_tuple;
-
-		// get queue
-		let dev_queue;
-		match queues.next() {
-			Some(q) => dev_queue = q,
-			None => {
-				print_init_error(&log_file, "No queues available!");
-				return Err(());
-			}
-		}
 
 		// query surface capabilities
 		let surf_caps;
@@ -114,6 +69,19 @@ impl GameContext
 			Err(e) => {
 				let error_formatted = format!("Failed to query surface capabilities: {}", e.to_string());
 				print_init_error(&log_file, &error_formatted);
+				return Err(());
+			}
+		}
+		
+		// create logical device
+		let (vk_dev, mut queues) = create_vk_logical_device(&log_file, vkpd)?;
+
+		// get queue
+		let dev_queue;
+		match queues.next() {
+			Some(q) => dev_queue = q,
+			None => {
+				print_init_error(&log_file, "No queues available!");
 				return Err(());
 			}
 		}
@@ -176,7 +144,7 @@ fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str
 		.build_vk_surface(event_loop, vkinst.clone());
 }
 
-fn create_vulkan_instance() -> Result<std::sync::Arc<vulkano::instance::Instance>, String>
+fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, String>
 {
 	let mut app_info = vulkano::app_info_from_cargo_toml!();
 	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
@@ -235,6 +203,47 @@ fn get_vk_physical_device<'a>(log_file: &std::fs::File, vkinst: &'a Arc<vulkano:
 	log_info(&log_file, &string_formatted);
 
 	return Ok(vkpd);
+}
+
+fn create_vk_logical_device(log_file: &std::fs::File, physical_device: PhysicalDevice) 
+	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), ()>
+{
+	// get queue family that supports graphics
+	let q_fam;
+	match physical_device.queue_families().find(|q| q.supports_graphics()) {
+		Some(q) => q_fam = q,
+		None => {
+			print_init_error(&log_file, "No appropriate queue family found!");
+			return Err(());
+		}
+	}
+
+	// create logical device
+	let dev_features = vulkano::device::Features{
+		image_cube_array: true,
+		independent_blend: true,
+		sampler_anisotropy: true,
+		texture_compression_bc: true,
+		geometry_shader: true,
+		..vulkano::device::Features::none()
+	};
+	let dev_extensions = vulkano::device::DeviceExtensions{
+		khr_swapchain: true,
+		..vulkano::device::DeviceExtensions::none()
+	}.union(physical_device.required_extensions());
+
+	let device_tuple;
+	match vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, [(q_fam, 0.5)].iter().cloned()) {
+		Ok(d) => device_tuple = d,
+		Err(e) => {
+			let error_formatted = format!("Failed to create Vulkan logical device: {}", e.to_string());
+			print_init_error(&log_file, &error_formatted);
+			return Err(());
+		}
+	}
+	let (vk_dev, queues) = device_tuple;
+
+	return Ok((vk_dev, queues));
 }
 
 fn print_error_unlogged(s: &str) 
