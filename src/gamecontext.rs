@@ -5,16 +5,16 @@ use vulkano_win::VkSurfaceBuild;
 use winit::window::{Window, WindowBuilder};
 use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::physical::PhysicalDevice;
+use vulkano::format::Format;
 
 pub struct GameContext 
 {
 	pref_path: String,
 	log_file: std::fs::File,
 	event_loop: winit::event_loop::EventLoop<()>,
-	//game_window: Window,
-	window_surface: Arc<vulkano::swapchain::Surface<Window>>,
-	vkinst: Arc<vulkano::instance::Instance>,
-	vk_dev: Arc<vulkano::device::Device>
+	vk_dev: Arc<vulkano::device::Device>,
+	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
+	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>
 }
 impl GameContext 
 {
@@ -49,26 +49,15 @@ impl GameContext
 			}
 		}
 
+		// get physical device
+		let vkpd = get_vk_physical_device(&log_file, &vkinst)?;
+
 		// create window
 		let window_surface;
 		match create_game_window(&event_loop, game_name, &vkinst) {
 			Ok(w) => window_surface = w,
 			Err(e) => {
 				print_init_error(&log_file, &e.to_string());
-				return Err(());
-			}
-		}
-
-		// get physical device
-		let vkpd = get_vk_physical_device(&log_file, &vkinst)?;
-
-		// query surface capabilities
-		let surf_caps;
-		match window_surface.capabilities(vkpd) {
-			Ok(c) => surf_caps = c,
-			Err(e) => {
-				let error_formatted = format!("Failed to query surface capabilities: {}", e.to_string());
-				print_init_error(&log_file, &error_formatted);
 				return Err(());
 			}
 		}
@@ -86,21 +75,20 @@ impl GameContext
 			}
 		}
 
-		let composite_alpha = surf_caps.supported_composite_alpha.iter().next().unwrap();
-		let format = surf_caps.supported_formats[0].0;
-		let dimensions: [u32; 2] = window_surface.window().inner_size().into();
+		// create swapchain
+		let (swapchain, swapchain_images) = create_vk_swapchain(&log_file, vkpd, &vk_dev, &window_surface, dev_queue)?;
 
 		Ok(GameContext { 
 			pref_path: pref_path,
 			log_file: log_file,
 			event_loop: event_loop,
-			window_surface: window_surface,
-			vkinst: vkinst,
-			vk_dev: vk_dev
+			vk_dev: vk_dev,
+			swapchain: swapchain,
+			swapchain_images: swapchain_images
 		})
 	}
 
-	pub fn render_loop(&self)
+	pub fn render_loop(&mut self)
 	{
 		match self.render_loop_inner() {
 			Ok(()) => (),
@@ -244,6 +232,73 @@ fn create_vk_logical_device(log_file: &std::fs::File, physical_device: PhysicalD
 	let (vk_dev, queues) = device_tuple;
 
 	return Ok((vk_dev, queues));
+}
+
+fn create_vk_swapchain(
+	log_file: &std::fs::File, 
+	physical_device: PhysicalDevice, 
+	device: &Arc<vulkano::device::Device>, 
+	surf: &Arc<vulkano::swapchain::Surface<Window>>,
+	queue: Arc<vulkano::device::Queue>
+) 
+	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>), ()>
+{
+	// query surface capabilities
+	let surf_caps;
+	match surf.capabilities(physical_device) {
+		Ok(c) => surf_caps = c,
+		Err(e) => {
+			let error_formatted = format!("Failed to query surface capabilities: {}", e.to_string());
+			print_init_error(&log_file, &error_formatted);
+			return Err(());
+		}
+	}
+
+	let composite_alpha;
+	match surf_caps.supported_composite_alpha.iter().next() {
+		Some(ca) => composite_alpha = ca,
+		None => {
+			print_init_error(&log_file, "No supported Swapchain composite alpha found!");
+			return Err(());
+		}
+	}
+
+	// look for 8bpc sRGB
+	let format_result = surf_caps.supported_formats.iter().find(|format_color| {
+		match format_color.0 {
+			Format::R8G8B8A8_SRGB | Format::B8G8R8A8_SRGB => {
+				match format_color.1 {
+					vulkano::swapchain::ColorSpace::SrgbNonLinear => return true,
+					_ => return false
+				}
+			},
+			_ => return false
+		}
+	});
+	let format;
+	match format_result {
+		Some(format_color) => format = format_color.0,
+		None => {
+			print_init_error(&log_file, "Could not find 8bpc sRGB format!");
+			return Err(());
+		}
+	}
+
+	let swapchain_result = vulkano::swapchain::Swapchain::start(device.clone(), surf.clone())
+		.num_images(surf_caps.min_image_count)
+		.format(format)
+		.usage(vulkano::image::ImageUsage::color_attachment())
+		.sharing_mode(&queue)
+		.composite_alpha(composite_alpha)
+		.build();
+	match swapchain_result {
+		Ok(s) => return Ok(s),
+		Err(e) => {
+			let error_formatted = format!("Failed to create swapchain: {}", &e.to_string());
+			print_init_error(&log_file, &error_formatted);
+			return Err(());
+		}
+	}
 }
 
 fn print_error_unlogged(s: &str) 
