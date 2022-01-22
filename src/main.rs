@@ -7,7 +7,6 @@
 ----------------------------------------------------------------------------- */
 #![windows_subsystem = "windows"]
 mod gamecontext;
-mod util;
 
 fn main() -> Result<(), ()>
 {

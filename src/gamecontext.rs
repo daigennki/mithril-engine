@@ -1,5 +1,4 @@
-use crate::util::log_info;
-
+use std::io::Write;
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::{Window, WindowBuilder};
@@ -298,6 +297,16 @@ fn create_vk_swapchain(
 			print_init_error(&log_file, &error_formatted);
 			return Err(());
 		}
+	}
+}
+
+fn log_info(mut log_file: &std::fs::File, s: &str) 
+{
+	println!("{}", s);
+	let str_with_newline = format!("{}\n", s);
+	match log_file.write_all(str_with_newline.as_bytes()) {
+		Ok(()) => (),
+		Err(e) => println!("log_info failed to print to log file: {}", &e.to_string())
 	}
 }
 
