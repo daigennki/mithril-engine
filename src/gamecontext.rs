@@ -7,16 +7,10 @@ use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::physical::PhysicalDevice;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::CommandBufferUsage;
 
-#[repr(C)]
-#[derive(Default, Copy, Clone)]
-pub struct Vertex {
-    pub pos: [f32; 2],
-    pub uv: [f32; 2],
-}
-vulkano::impl_vertex!(Vertex, pos, uv);
-
-pub struct GameContext 
+pub struct GameContext
 {
 	pref_path: String,
 	log_file: std::fs::File,
@@ -24,7 +18,9 @@ pub struct GameContext
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
-	basic_rp: Arc<vulkano::render_pass::RenderPass>
+	basic_rp: Arc<vulkano::render_pass::RenderPass>,
+	basic_pipeline: Arc<vulkano::pipeline::GraphicsPipeline>,
+	q_fam_id: u32
 }
 impl GameContext 
 {
@@ -72,6 +68,17 @@ impl GameContext
 		// create logical device
 		let (vk_dev, mut queues) = create_vk_logical_device(&log_file, vkinst.clone())?;
 
+		// get queue family that supports graphics
+		let q_fam_id;
+		match vk_dev.physical_device().queue_families().find(|q| q.supports_graphics()) {
+			Some(q) => q_fam_id = q.id(),
+			None => {
+				print_init_error(&log_file, "No appropriate queue family found!");
+				return Err(());
+			}
+		}
+
+
 		// get queue
 		let dev_queue;
 		match queues.next() {
@@ -85,6 +92,7 @@ impl GameContext
 		// create swapchain
 		let (swapchain, swapchain_images) = create_vk_swapchain(&log_file, vk_dev.clone(), window_surface)?;
 
+		// create basic renderpass
 		let basic_rp_result = vulkano::single_pass_renderpass!(vk_dev.clone(),
 			attachments: {
 				first: {
@@ -108,9 +116,17 @@ impl GameContext
 				return Err(());
 			}
 		}
+		let basic_rp_subpass;
+		match vulkano::render_pass::Subpass::from(basic_rp.clone(), 0) {
+			Some(s) => basic_rp_subpass = s,
+			None => {
+				print_init_error(&log_file, "Subpass for render pass doesn't exist!");
+				return Err(());
+			}
+		}
 
 		// load vertex shader
-		let vs = load_spirv(&log_file, vk_dev.clone(), "shaders/ui.vert.spv")?;
+		let vs = load_spirv(&log_file, vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
 		let vs_entry;
 		match vs.entry_point("main") {
 			Some(entry) => vs_entry = entry,
@@ -124,7 +140,7 @@ impl GameContext
 		// load fragment shader
 		let fs = load_spirv(&log_file, vk_dev.clone(), "shaders/ui.frag.spv")?;
 		let fs_entry;
-		match vs.entry_point("main") {
+		match fs.entry_point("main") {
 			Some(entry) => fs_entry = entry,
 			None => {
 				let error_formatted = format!("No valid 'main' entry point in SPIR-V module!");
@@ -134,13 +150,16 @@ impl GameContext
 		}
 		
 		// create pipeline
+		let viewport = graphics::viewport::Viewport{ 
+			origin: [ 0.0, 0.0 ],
+			dimensions: [ swapchain.dimensions()[0] as f32, swapchain.dimensions()[1] as f32 ],
+			depth_range: (-1.0..1.0)
+		};
 		let pipeline_result = vulkano::pipeline::GraphicsPipeline::start()
-			.vertex_input_state(graphics::vertex_input::BuffersDefinition::new().vertex::<Vertex>())
 			.vertex_shader(vs_entry, ())
-			.input_assembly_state(graphics::input_assembly::InputAssemblyState::new())
-			.viewport_state(graphics::viewport::ViewportState::viewport_dynamic_scissor_irrelevant())
+			.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 			.fragment_shader(fs_entry, ())
-			.render_pass(vulkano::render_pass::Subpass::from(basic_rp.clone(), 0).unwrap())
+			.render_pass(basic_rp_subpass)
 			.build(vk_dev.clone());
 		let pipeline;
 		match pipeline_result {
@@ -159,7 +178,9 @@ impl GameContext
 			vk_dev: vk_dev,
 			swapchain: swapchain,
 			swapchain_images: swapchain_images,
-			basic_rp: basic_rp
+			basic_rp: basic_rp,
+			basic_pipeline: pipeline,
+			q_fam_id: q_fam_id
 		})
 	}
 
@@ -189,13 +210,31 @@ impl GameContext
 		}
 	}
 
-	fn render_loop_inner(&self) -> Result<(), Box<dyn std::error::Error>> 
+	fn render_loop_inner(&mut self) -> Result<(), Box<dyn std::error::Error>> 
 	{
+		let q_fam_result = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id);
+		let q_fam;
+		match q_fam_result {
+			Some(q) => q_fam = q,
+			None => return Err(Box::new(InvalidQueueIDError))
+		}
+		let cb_builder = AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
+		cb_builder.build();
+
 		// wait for 2 seconds
 		std::thread::sleep(std::time::Duration::from_millis(2000));
 
 		Ok(())
 	}
+}
+
+#[derive(Debug)]
+struct InvalidQueueIDError;
+impl std::error::Error for InvalidQueueIDError {}
+impl std::fmt::Display for InvalidQueueIDError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The given queue ID wax invalid!")
+    }
 }
 
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
@@ -333,7 +372,7 @@ fn create_vk_swapchain(
 	}
 }
 
-fn load_spirv<'a>(log_file: &std::fs::File, device: Arc<vulkano::device::Device>, filename: &str) 
+fn load_spirv(log_file: &std::fs::File, device: Arc<vulkano::device::Device>, filename: &str) 
 	-> Result<Arc<vulkano::shader::ShaderModule>, ()>
 {
 	let mut spv_file;
