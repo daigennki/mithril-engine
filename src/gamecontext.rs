@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::io::Read;
+use std::rc::Rc;
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::{Window, WindowBuilder};
@@ -13,7 +14,7 @@ use vulkano::command_buffer::CommandBufferUsage;
 pub struct GameContext
 {
 	pref_path: String,
-	log_file: std::fs::File,
+	log_file: Rc<std::fs::File>,
 	event_loop: winit::event_loop::EventLoop<()>,
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
@@ -22,19 +23,11 @@ pub struct GameContext
 	basic_pipeline: Arc<vulkano::pipeline::GraphicsPipeline>,
 	q_fam_id: u32
 }
-impl GameContext 
+impl GameContext
 {
 	// game context "constructor"
-	pub fn new(org_name: &str, game_name: &str) -> Result<GameContext, ()> 
+	pub fn new(pref_path: String, log_file: Rc<std::fs::File>, org_name: &str, game_name: &str) -> Result<GameContext, String>
 	{
-		// get preferences path
-		// (log, config, and save data files will be saved here)
-		let pref_path = get_pref_path(org_name, game_name)?;
-		println!("Using preferences path: {}", &pref_path);
-
-		// open log file
-		let log_file = open_log_file(&pref_path)?;
-		
 		// print start date and time
 		let dt_str = format!("INIT {}", chrono::Local::now().to_rfc3339());
 		log_info(&log_file, &dt_str);
@@ -46,23 +39,13 @@ impl GameContext
 		let event_loop = winit::event_loop::EventLoop::new();
 
 		// create Vulkan instance
-		let vkinst;
-		match create_vulkan_instance() {
-			Ok(vki) => vkinst = vki,
-			Err(e) => {
-				print_init_error(&log_file, &e.to_string());
-				return Err(());
-			}
-		}
+		let vkinst = create_vulkan_instance()?;
 
 		// create window
 		let window_surface;
 		match create_game_window(&event_loop, game_name, vkinst.clone()) {
 			Ok(w) => window_surface = w,
-			Err(e) => {
-				print_init_error(&log_file, &e.to_string());
-				return Err(());
-			}
+			Err(e) => return Err(e.to_string())
 		}
 
 		// create logical device
@@ -72,25 +55,18 @@ impl GameContext
 		let q_fam_id;
 		match vk_dev.physical_device().queue_families().find(|q| q.supports_graphics()) {
 			Some(q) => q_fam_id = q.id(),
-			None => {
-				print_init_error(&log_file, "No appropriate queue family found!");
-				return Err(());
-			}
+			None => return Err("No appropriate queue family found!".to_string())
 		}
-
 
 		// get queue
 		let dev_queue;
 		match queues.next() {
 			Some(q) => dev_queue = q,
-			None => {
-				print_init_error(&log_file, "No queues available!");
-				return Err(());
-			}
+			None => return Err("No queues available!".to_string())
 		}
 
 		// create swapchain
-		let (swapchain, swapchain_images) = create_vk_swapchain(&log_file, vk_dev.clone(), window_surface)?;
+		let (swapchain, swapchain_images) = create_vk_swapchain(vk_dev.clone(), window_surface)?;
 
 		// create basic renderpass
 		let basic_rp_result = vulkano::single_pass_renderpass!(vk_dev.clone(),
@@ -110,43 +86,28 @@ impl GameContext
 		let basic_rp;
 		match basic_rp_result {
 			Ok(r) => basic_rp = r,
-			Err(e) => {
-				let error_formatted = format!("Error creating render pass: {}", &e.to_string());
-				print_init_error(&log_file, &error_formatted);
-				return Err(());
-			}
+			Err(e) => return Err(format!("Error creating render pass: {}", &e.to_string()))
 		}
 		let basic_rp_subpass;
 		match vulkano::render_pass::Subpass::from(basic_rp.clone(), 0) {
 			Some(s) => basic_rp_subpass = s,
-			None => {
-				print_init_error(&log_file, "Subpass for render pass doesn't exist!");
-				return Err(());
-			}
+			None => return Err("Subpass for render pass doesn't exist!".to_string())
 		}
 
 		// load vertex shader
-		let vs = load_spirv(&log_file, vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
+		let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
 		let vs_entry;
 		match vs.entry_point("main") {
 			Some(entry) => vs_entry = entry,
-			None => {
-				let error_formatted = format!("No valid 'main' entry point in SPIR-V module!");
-				print_init_error(&log_file, &error_formatted);
-				return Err(());
-			}
+			None => return Err(format!("No valid 'main' entry point in SPIR-V module!"))
 		}
 		
 		// load fragment shader
-		let fs = load_spirv(&log_file, vk_dev.clone(), "shaders/ui.frag.spv")?;
+		let fs = load_spirv(vk_dev.clone(), "shaders/ui.frag.spv")?;
 		let fs_entry;
 		match fs.entry_point("main") {
 			Some(entry) => fs_entry = entry,
-			None => {
-				let error_formatted = format!("No valid 'main' entry point in SPIR-V module!");
-				print_init_error(&log_file, &error_formatted);
-				return Err(());
-			}
+			None => return Err(format!("No valid 'main' entry point in SPIR-V module!"))
 		}
 		
 		// create pipeline
@@ -164,11 +125,7 @@ impl GameContext
 		let pipeline;
 		match pipeline_result {
 			Ok(p) => pipeline = p,
-			Err(e) => {
-				let error_formatted = format!("Error creating pipeline: {}", e);
-				print_init_error(&log_file, &error_formatted);
-				return Err(());
-			}
+			Err(e) => return Err(format!("Error creating pipeline: {}", e))
 		}
 
 		Ok(GameContext { 
@@ -184,40 +141,32 @@ impl GameContext
 		})
 	}
 
-	pub fn render_loop(&mut self)
-	{
-		match self.render_loop_inner() {
-			Ok(()) => (),
-			Err(e) => self.render_loop_error(e)
-		}
-		self.print_log("Success.");
-	}
-
 	pub fn print_log(&self, s: &str) 
 	{
 		log_info(&self.log_file, s);
 	}
 
-	fn render_loop_error(&self, e: Box<dyn std::error::Error>) 
+	pub fn render_loop(&mut self)
 	{
-		self.print_log(&format!("ERROR: {}", &e.to_string()));
-		match msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
-			Ok(r) => r,
-			Err(mbe) => {
-				let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
-				self.print_log(&msgbox_error_str);
+		match self.render_loop_inner() {
+			Ok(()) => (),
+			Err(e) => {
+				let log_str = format!("ERROR: {}", e);
+				self.print_log(&log_str);
+				match msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
+					Ok(r) => r,
+					Err(mbe) => {
+						let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
+						self.print_log(&msgbox_error_str);
+					}
+				}
 			}
 		}
 	}
 
 	fn render_loop_inner(&mut self) -> Result<(), Box<dyn std::error::Error>> 
 	{
-		let q_fam_result = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id);
-		let q_fam;
-		match q_fam_result {
-			Some(q) => q_fam = q,
-			None => return Err(Box::new(InvalidQueueIDError))
-		}
+		let q_fam = get_queue_family_from_id(&self.vk_dev, 10)?;
 		let cb_builder = AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 		cb_builder.build();
 
@@ -228,13 +177,47 @@ impl GameContext
 	}
 }
 
+pub fn run_game(org_name: &str, game_name: &str) -> Result<(), ()> 
+{
+	// get preferences path
+	// (log, config, and save data files will be saved here)
+	let pref_path = get_pref_path(org_name, game_name)?;
+	println!("Using preferences path: {}", &pref_path);
+
+	// open log file
+	let log_file = Rc::new(open_log_file(&pref_path)?);
+	
+	// construct GameContext
+	let mut gctx;
+	match GameContext::new(pref_path, log_file.clone(), org_name, game_name) {
+		Ok(g) => gctx = g,
+		Err(e) => {
+			print_init_error(log_file.as_ref(), &e);
+			return Err(())
+		}
+	}
+
+	// run render loop
+	gctx.render_loop();
+
+	Ok(())
+}
+
 #[derive(Debug)]
 struct InvalidQueueIDError;
 impl std::error::Error for InvalidQueueIDError {}
 impl std::fmt::Display for InvalidQueueIDError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The given queue ID wax invalid!")
+        write!(f, "The given queue ID was invalid!")
     }
+}
+fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32) 
+	-> Result<vulkano::device::physical::QueueFamily, InvalidQueueIDError>
+{
+	match vk_dev.physical_device().queue_family_by_id(q_fam_id) {
+		Some(q) => Ok(q),
+		None => Err(InvalidQueueIDError)
+	}
 }
 
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
@@ -271,7 +254,7 @@ fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, String>
 }
 
 fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::instance::Instance>) 
-	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), ()>
+	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), String>
 {
 	// Get physical device.
 	log_info(&log_file, "Available Vulkan physical devices:");
@@ -291,11 +274,8 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 				.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
 			match igpu {
 				Some(g) => physical_device = g,
-				None => {
-					// If there are still no GPUs, return with an error.
-					print_init_error(&log_file, "No GPUs were found!");
-					return Err(());
-				}
+				None => return Err("No GPUs were found!".to_string())	
+				// If there are still no GPUs, return with an error.
 			}
 		}
 	}
@@ -305,10 +285,7 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 	let q_fam;
 	match physical_device.queue_families().find(|q| q.supports_graphics()) {
 		Some(q) => q_fam = q,
-		None => {
-			print_init_error(&log_file, "No appropriate queue family found!");
-			return Err(());
-		}
+		None => return Err("No appropriate queue family found!".to_string())
 	}
 
 	// create logical device
@@ -328,33 +305,24 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 	let device_tuple;
 	match vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, [(q_fam, 0.5)].iter().cloned()) {
 		Ok(d) => device_tuple = d,
-		Err(e) => {
-			let error_formatted = format!("Failed to create Vulkan logical device: {}", e.to_string());
-			print_init_error(&log_file, &error_formatted);
-			return Err(());
-		}
+		Err(e) => return Err(format!("Failed to create Vulkan logical device: {}", e))
 	}
 	let (vk_dev, queues) = device_tuple;
 
-	return Ok((vk_dev, queues));
+	Ok((vk_dev, queues))
 }
 
 fn create_vk_swapchain(
-	log_file: &std::fs::File, 
 	device: Arc<vulkano::device::Device>, 
 	surf: Arc<vulkano::swapchain::Surface<Window>>
 ) 
-	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>), ()>
+	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>), String>
 {
 	// query surface capabilities
 	let surf_caps;
 	match surf.capabilities(device.physical_device()) {
 		Ok(c) => surf_caps = c,
-		Err(e) => {
-			let error_formatted = format!("Failed to query surface capabilities: {}", e.to_string());
-			print_init_error(&log_file, &error_formatted);
-			return Err(());
-		}
+		Err(e) => return Err(format!("Failed to query surface capabilities: {}", e))
 	}
 
 	let swapchain_result = vulkano::swapchain::Swapchain::start(device.clone(), surf.clone())
@@ -363,45 +331,29 @@ fn create_vk_swapchain(
 		.usage(vulkano::image::ImageUsage::color_attachment())
 		.build();
 	match swapchain_result {
-		Ok(s) => return Ok(s),
-		Err(e) => {
-			let error_formatted = format!("Failed to create swapchain: {}", &e.to_string());
-			print_init_error(&log_file, &error_formatted);
-			return Err(());
-		}
+		Ok(s) => Ok(s),
+		Err(e) => Err(format!("Failed to create swapchain: {}", e))
 	}
 }
 
-fn load_spirv(log_file: &std::fs::File, device: Arc<vulkano::device::Device>, filename: &str) 
-	-> Result<Arc<vulkano::shader::ShaderModule>, ()>
+fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
+	-> Result<Arc<vulkano::shader::ShaderModule>, String>
 {
 	let mut spv_file;
 	match std::fs::File::open(filename) {
 		Ok(f) => spv_file = f,
-		Err(e) => {
-			let error_formatted = format!("Failed to open SPIR-V shader file: {}", e);
-			print_init_error(&log_file, &error_formatted);
-			return Err(());
-		}
+		Err(e) => return Err(format!("Failed to open SPIR-V shader file: {}", e))
 	}
 
 	let mut spv_data: Vec<u8> = Vec::new();
 	match spv_file.read_to_end(&mut spv_data) {
 		Ok(_bytes_read) => (),
-		Err(e) => {
-			let error_formatted = format!("Failed to read SPIR-V shader file: {}", e);
-			print_init_error(&log_file, &error_formatted);
-			return Err(());
-		}
+		Err(e) => return Err(format!("Failed to read SPIR-V shader file: {}", e))
 	}
 
 	match unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) } {
-		Ok(s) => return Ok(s),
-		Err(e) => {
-			let error_formatted = format!("Error loading SPIR-V module: {}", e);
-			print_init_error(&log_file, &error_formatted);
-			return Err(());
-		}
+		Ok(s) => Ok(s),
+		Err(e) => Err(format!("Error loading SPIR-V module: {}", e))
 	}
 }
 
@@ -411,7 +363,7 @@ fn log_info(mut log_file: &std::fs::File, s: &str)
 	let str_with_newline = format!("{}\n", s);
 	match log_file.write_all(str_with_newline.as_bytes()) {
 		Ok(()) => (),
-		Err(e) => println!("log_info failed to print to log file: {}", &e.to_string())
+		Err(e) => println!("log_info failed to print to log file: {}", e)
 	}
 }
 
