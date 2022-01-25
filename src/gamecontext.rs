@@ -8,12 +8,14 @@ mod rendercontext;
 
 use std::rc::Rc;
 use util::log_info;
+use winit::event::{ Event, WindowEvent };
+use winit::platform::run_return::EventLoopExtRunReturn;
 
-pub struct GameContext
+struct GameContext
 {
 	pref_path: String,
 	log_file: Rc<std::fs::File>,
-	event_loop: winit::event_loop::EventLoop<()>,
+	event_loop: Option<winit::event_loop::EventLoop<()>>,
 	render_context: rendercontext::RenderContext
 }
 impl GameContext
@@ -36,9 +38,22 @@ impl GameContext
 		Ok(GameContext { 
 			pref_path: pref_path,
 			log_file: log_file,
-			event_loop: event_loop,
+			event_loop: Some(event_loop),
 			render_context: render_context
 		})
+	}
+
+	fn log_error(&self, s: String)
+	{
+		let log_str = format!("ERROR: {}", s);
+		self.print_log(&log_str);
+		match msgbox::create("Engine Error", &s, msgbox::common::IconType::Error) {
+			Ok(r) => r,
+			Err(mbe) => {
+				let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
+				self.print_log(&msgbox_error_str);
+			}
+		}
 	}
 
 	pub fn print_log(&self, s: &str) 
@@ -48,25 +63,42 @@ impl GameContext
 
 	pub fn render_loop(&mut self)
 	{
-		match self.render_loop_inner() {
-			Ok(()) => (),
-			Err(e) => {
-				let log_str = format!("ERROR: {}", e);
-				self.print_log(&log_str);
-				match msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
-					Ok(r) => r,
-					Err(mbe) => {
-						let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
-						self.print_log(&msgbox_error_str);
-					}
-				}
+		let mut event_loop;
+		match self.event_loop.take() {
+			Some(el) => event_loop = el,
+			None => {
+				self.log_error(
+					"GameContext::event_loop was empty! Did render_loop accidentally get run twice or more?".to_string()
+				);
+				return;
 			}
 		}
+
+		event_loop.run_return(move |event, _, control_flow| {
+			match event {
+				Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
+					*control_flow = winit::event_loop::ControlFlow::Exit;
+				},
+				Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
+					//recreate_swapchain = true;
+				},
+				Event::RedrawEventsCleared => {
+					match self.draw_in_event_loop() {
+						Ok(()) => (),
+						Err(e) => {
+							self.log_error(e.to_string());
+							*control_flow = winit::event_loop::ControlFlow::Exit;
+						}
+					}
+				}
+				_ => (),
+			}
+		});
 	}
 
-	fn render_loop_inner(&mut self) -> Result<(), Box<dyn std::error::Error>> 
+	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let cb = self.render_context.start_commands()?;
+		let cb = self.render_context.start_commands();
 
 		// wait for 2 seconds
 		std::thread::sleep(std::time::Duration::from_millis(2000));
@@ -77,30 +109,36 @@ impl GameContext
 	}
 }
 
-pub fn run_game(org_name: &str, game_name: &str) -> Result<(), ()> 
+pub fn run_game(org_name: &str, game_name: &str)
 {
 	// get preferences path
 	// (log, config, and save data files will be saved here)
-	let pref_path = get_pref_path(org_name, game_name)?;
+	let pref_path;
+	match get_pref_path(org_name, game_name) {
+		Ok(p) => pref_path = p,
+		Err(()) => return
+	}
 	println!("Using preferences path: {}", &pref_path);
 
 	// open log file
-	let log_file = Rc::new(open_log_file(&pref_path)?);
-	
+	let log_file;
+	match open_log_file(&pref_path) {
+		Ok(l) => log_file = Rc::new(l),
+		Err(()) => return
+	}
+
 	// construct GameContext
 	let mut gctx;
 	match GameContext::new(pref_path, log_file.clone(), org_name, game_name) {
 		Ok(g) => gctx = g,
 		Err(e) => {
 			print_init_error(log_file.as_ref(), &e);
-			return Err(())
+			return
 		}
 	}
 
 	// run render loop
 	gctx.render_loop();
-
-	Ok(())
 }
 
 

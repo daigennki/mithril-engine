@@ -6,7 +6,7 @@
 #![windows_subsystem = "windows"]
 mod gamecontext;
 
-fn main() -> Result<(), ()>
+fn main()
 {
-	gamecontext::run_game("daigennki", "MithrilEngine")
+	gamecontext::run_game("daigennki", "MithrilEngine");
 }
