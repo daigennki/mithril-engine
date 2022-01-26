@@ -35,11 +35,7 @@ impl RenderContext
 		let vkinst = create_vulkan_instance()?;
 
 		// create window
-		let window_surface;
-		match create_game_window(&event_loop, game_name, vkinst.clone()) {
-			Ok(w) => window_surface = w,
-			Err(e) => return Err(e.to_string())
-		}
+		let window_surface = create_game_window(&event_loop, game_name, vkinst.clone()).or_else(|e| Err(e.to_string()))?;
 
 		// create logical device
 		let (vk_dev, mut queues) = create_vk_logical_device(&log_file, vkinst.clone())?;
@@ -129,10 +125,10 @@ fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
 	-> Result<Arc<vulkano::swapchain::Surface<Window>>, vulkano_win::CreationError>
 {
-	return WindowBuilder::new()
+	WindowBuilder::new()
 		.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
 		.with_title(title)
-		.build_vk_surface(event_loop, vkinst.clone());
+		.build_vk_surface(event_loop, vkinst.clone())
 }
 
 fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, String>
@@ -168,23 +164,16 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 		Some(g) => physical_device = g,
 		None => {
 			// If there is no discrete GPU, try to look for an integrated GPU instead.
-			let igpu = PhysicalDevice::enumerate(&vkinst)
-				.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
-			match igpu {
-				Some(g) => physical_device = g,
-				None => return Err("No GPUs were found!".to_string())	
-				// If there are still no GPUs, return with an error.
-			}
+			physical_device = PhysicalDevice::enumerate(&vkinst)
+				.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu)
+				.ok_or("No GPUs were found!")?;
 		}
 	}
 	// TODO: Check to make sure that the GPU is even capable of the features we need from it.
 
 	// get queue family that supports graphics
-	let q_fam;
-	match physical_device.queue_families().find(|q| q.supports_graphics()) {
-		Some(q) => q_fam = q,
-		None => return Err("No appropriate queue family found!".to_string())
-	}
+	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
+		.ok_or("No appropriate queue family found!")?;
 
 	// create logical device
 	let dev_features = vulkano::device::Features{
@@ -200,14 +189,11 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 		..vulkano::device::DeviceExtensions::none()
 	}.union(physical_device.required_extensions());
 
-	let device_tuple;
-	match vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, [(q_fam, 0.5)].iter().cloned()) {
-		Ok(d) => device_tuple = d,
-		Err(e) => return Err(format!("Failed to create Vulkan logical device: {}", e))
-	}
-	let (vk_dev, queues) = device_tuple;
-
-	Ok((vk_dev, queues))
+	let use_queue_families = [(q_fam, 0.5)];
+	Ok(
+		vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, use_queue_families)
+			.or_else(|e| Err(format!("Failed to create Vulkan logical device: {}", e)))?
+	)
 }
 
 fn create_vk_swapchain(
@@ -217,40 +203,27 @@ fn create_vk_swapchain(
 	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>), String>
 {
 	// query surface capabilities
-	let surf_caps;
-	match surf.capabilities(device.physical_device()) {
-		Ok(c) => surf_caps = c,
-		Err(e) => return Err(format!("Failed to query surface capabilities: {}", e))
-	}
+	let surf_caps = surf.capabilities(device.physical_device())
+		.or_else(|e| Err(format!("Failed to query surface capabilities: {}", e)))?;
 
-	let swapchain_result = vulkano::swapchain::Swapchain::start(device.clone(), surf.clone())
+	vulkano::swapchain::Swapchain::start(device.clone(), surf.clone())
 		.num_images(surf_caps.min_image_count)
 		.format(Format::B8G8R8A8_SRGB)
 		.usage(vulkano::image::ImageUsage::color_attachment())
-		.build();
-	match swapchain_result {
-		Ok(s) => Ok(s),
-		Err(e) => Err(format!("Failed to create swapchain: {}", e))
-	}
+		.build()
+		.or_else(|e| Err(format!("Failed to create swapchain: {}", e)))
 }
 
 fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
 	-> Result<Arc<vulkano::shader::ShaderModule>, String>
 {
-	let mut spv_file;
-	match std::fs::File::open(filename) {
-		Ok(f) => spv_file = f,
-		Err(e) => return Err(format!("Failed to open SPIR-V shader file: {}", e))
-	}
+	let mut spv_file = std::fs::File::open(filename)
+		.or_else(|e| Err(format!("Failed to open SPIR-V shader file: {}", e)))?;
 
 	let mut spv_data: Vec<u8> = Vec::new();
-	match spv_file.read_to_end(&mut spv_data) {
-		Ok(_bytes_read) => (),
-		Err(e) => return Err(format!("Failed to read SPIR-V shader file: {}", e))
-	}
+	spv_file.read_to_end(&mut spv_data)
+		.or_else(|e| Err(format!("Failed to read SPIR-V shader file: {}", e)))?;
 
-	match unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) } {
-		Ok(s) => Ok(s),
-		Err(e) => Err(format!("Error loading SPIR-V module: {}", e))
-	}
+	unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }
+		.or_else(|e| Err(format!("Error loading SPIR-V module: {}", e)))
 }

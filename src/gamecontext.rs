@@ -200,7 +200,7 @@ fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, String>
 		Ok(env_result) => Ok(create_pref_path(&env_result, org_name, game_name)?),
 		Err(e) => {
 			#[cfg(target_family = "windows")]
-			Err(format!("Failed to get preferences path: {}", e));
+			return Err(format!("Failed to get preferences path: {}", e));
 			#[cfg(target_family = "unix")]
 			{
 				println!("XDG_DATA_HOME was invalid ({}), trying HOME instead...", e);
