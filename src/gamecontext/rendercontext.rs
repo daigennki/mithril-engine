@@ -15,6 +15,7 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
+use vulkano::render_pass::Subpass;
 use super::util::log_info;
 
 pub struct RenderContext 
@@ -44,24 +45,18 @@ impl RenderContext
 		let (vk_dev, mut queues) = create_vk_logical_device(&log_file, vkinst.clone())?;
 
 		// get queue family that supports graphics
-		let q_fam_id;
-		match vk_dev.physical_device().queue_families().find(|q| q.supports_graphics()) {
-			Some(q) => q_fam_id = q.id(),
-			None => return Err("No appropriate queue family found!".to_string())
-		}
+		let q_fam_id = vk_dev.physical_device().queue_families().find(|q| q.supports_graphics())
+			.ok_or("No appropriate queue family found!")?
+			.id();
 
 		// get queue
-		let dev_queue;
-		match queues.next() {
-			Some(q) => dev_queue = q,
-			None => return Err("No queues available!".to_string())
-		}
+		let dev_queue = queues.next().ok_or("No queues available!")?;
 
 		// create swapchain
 		let (swapchain, swapchain_images) = create_vk_swapchain(vk_dev.clone(), window_surface)?;
 
 		// create basic renderpass
-		let basic_rp_result = vulkano::single_pass_renderpass!(vk_dev.clone(),
+		let basic_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
 			attachments: {
 				first: {
 					load: Clear,
@@ -74,33 +69,16 @@ impl RenderContext
 				color: [first],
 				depth_stencil: {}
 			}
-		);
-		let basic_rp;
-		match basic_rp_result {
-			Ok(r) => basic_rp = r,
-			Err(e) => return Err(format!("Error creating render pass: {}", &e.to_string()))
-		}
-		let basic_rp_subpass;
-		match vulkano::render_pass::Subpass::from(basic_rp.clone(), 0) {
-			Some(s) => basic_rp_subpass = s,
-			None => return Err("Subpass for render pass doesn't exist!".to_string())
-		}
+		).or_else(|e| Err(format!("Error creating render pass: {}", e)))?;
+		let basic_rp_subpass = Subpass::from(basic_rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
 
 		// load vertex shader
 		let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
-		let vs_entry;
-		match vs.entry_point("main") {
-			Some(entry) => vs_entry = entry,
-			None => return Err(format!("No valid 'main' entry point in SPIR-V module!"))
-		}
+		let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 		
 		// load fragment shader
 		let fs = load_spirv(vk_dev.clone(), "shaders/ui.frag.spv")?;
-		let fs_entry;
-		match fs.entry_point("main") {
-			Some(entry) => fs_entry = entry,
-			None => return Err(format!("No valid 'main' entry point in SPIR-V module!"))
-		}
+		let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 		
 		// create pipeline
 		let viewport = graphics::viewport::Viewport{ 
@@ -108,18 +86,14 @@ impl RenderContext
 			dimensions: [ swapchain.dimensions()[0] as f32, swapchain.dimensions()[1] as f32 ],
 			depth_range: (-1.0..1.0)
 		};
-		let pipeline_result = vulkano::pipeline::GraphicsPipeline::start()
+		let pipeline = vulkano::pipeline::GraphicsPipeline::start()
 			.vertex_shader(vs_entry, ())
 			.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 			.fragment_shader(fs_entry, ())
 			.render_pass(basic_rp_subpass)
-			.build(vk_dev.clone());
-		let pipeline;
-		match pipeline_result {
-			Ok(p) => pipeline = p,
-			Err(e) => return Err(format!("Error creating pipeline: {}", e))
-		}
-
+			.build(vk_dev.clone())
+			.or_else(|e| Err(format!("Error creating pipeline: {}", e)))?;
+			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
 			swapchain: swapchain,
@@ -149,10 +123,7 @@ impl std::fmt::Display for InvalidQueueIDError {
 fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32) 
 	-> Result<vulkano::device::physical::QueueFamily, InvalidQueueIDError>
 {
-	match vk_dev.physical_device().queue_family_by_id(q_fam_id) {
-		Some(q) => Ok(q),
-		None => Err(InvalidQueueIDError)
-	}
+	vk_dev.physical_device().queue_family_by_id(q_fam_id).ok_or(InvalidQueueIDError)
 }
 
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
@@ -170,22 +141,14 @@ fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, String>
 	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
 
 	let vk_ext = vulkano_win::required_extensions();
-	
-	let vk_layer_list: Vec<_>;
-	match vulkano::instance::layers_list() {
-		Ok(layers_list) => {
-			vk_layer_list = layers_list.filter(|l| l.description().contains("VK_LAYER_KHRONOS_validation")).collect();
-		},
-		Err(e) => {
-			return Err(e.to_string());
-		}
-	}
+	let vk_layer_list: Vec<_> = vulkano::instance::layers_list()
+		.or_else(|e| Err(e.to_string()))?
+		.filter(|l| l.description().contains("VK_LAYER_KHRONOS_validation"))
+		.collect();
 	let vk_layer_names = vk_layer_list.iter().map(|l| l.name());
 
-	match vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names) {
-		Ok(vki) => Ok(vki),
-		Err(e) => Err(e.to_string())
-	}
+	vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names)
+		.or_else(|e| Err(e.to_string()))
 }
 
 fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::instance::Instance>) 

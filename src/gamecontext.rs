@@ -100,8 +100,8 @@ impl GameContext
 	{
 		let cb = self.render_context.start_commands();
 
-		// wait for 2 seconds
-		std::thread::sleep(std::time::Duration::from_millis(2000));
+		// placeholder delay
+		std::thread::sleep(std::time::Duration::from_millis(16));
 
 		// TODO: finish commands and build command buffer here
 
@@ -116,7 +116,10 @@ pub fn run_game(org_name: &str, game_name: &str)
 	let pref_path;
 	match get_pref_path(org_name, game_name) {
 		Ok(p) => pref_path = p,
-		Err(()) => return
+		Err(e) => {
+			print_error_unlogged(&e);
+			return
+		}
 	}
 	println!("Using preferences path: {}", &pref_path);
 
@@ -124,7 +127,10 @@ pub fn run_game(org_name: &str, game_name: &str)
 	let log_file;
 	match open_log_file(&pref_path) {
 		Ok(l) => log_file = Rc::new(l),
-		Err(()) => return
+		Err(e) => {
+			print_error_unlogged(&e);
+			return
+		}
 	}
 
 	// construct GameContext
@@ -167,27 +173,23 @@ fn print_init_error(log_file: &std::fs::File, e: &str)
 	}
 }
 
-fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<String, ()>
+fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<String, String>
 {
 	let pref_path = format!("{}/{}/{}/", prefix, org_name, game_name);
 
 	// try to create the path if it doesn't exist
 	match std::fs::create_dir_all(&pref_path) {
-		Ok(()) => return Ok(pref_path),
+		Ok(()) => Ok(pref_path),
 		Err(e) => match e.kind() {
 			std::io::ErrorKind::AlreadyExists => {
 				println!("Preferences path already exists, skipping creation...");
-				return Ok(pref_path);
+				Ok(pref_path)
 			},
-			_ => {
-				let error_formatted = format!("Failed to create preferences path: {}", &e.to_string());
-				print_error_unlogged(&error_formatted);
-				return Err(());
-			}
+			_ => Err(format!("Failed to create preferences path: {}", &e.to_string()))
 		}
 	}
 }
-fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
+fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, String>
 {
 	#[cfg(target_family = "windows")]
 	let path_prefix = std::env::var("APPDATA");
@@ -195,44 +197,30 @@ fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, ()>
 	let path_prefix = std::env::var("XDG_DATA_HOME");
 	
 	match path_prefix {
-		Ok(env_result) => {
-			return Ok(create_pref_path(&env_result, org_name, game_name)?);
-		},
+		Ok(env_result) => Ok(create_pref_path(&env_result, org_name, game_name)?),
 		Err(e) => {
 			#[cfg(target_family = "windows")]
-			{
-				let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
-				print_error_unlogged(&error_formatted);
-				return Err(());
-			}
+			Err(format!("Failed to get preferences path: {}", e));
 			#[cfg(target_family = "unix")]
 			{
-				println!("XDG_DATA_HOME was invalid ({}), trying HOME instead...", &e.to_string());
+				println!("XDG_DATA_HOME was invalid ({}), trying HOME instead...", e);
 				match std::env::var("HOME") {
 					Ok(env_result) => {
 						let pref_prefix = format!("{}/.local/share", env_result);
-						return Ok(create_pref_path(&pref_prefix, org_name, game_name)?);
+						Ok(create_pref_path(&pref_prefix, org_name, game_name)?)
 					},
-					Err(e) => {
-						let error_formatted = format!("Failed to get preferences path: {}", &e.to_string());
-						print_error_unlogged(&error_formatted);
-						return Err(());
-					}
+					Err(e) => Err(format!("Failed to get preferences path: {}", e))
 				}
 			}
 		}
 	}
 }
 
-fn open_log_file(pref_path: &str) -> Result<std::fs::File, ()>
+fn open_log_file(pref_path: &str) -> Result<std::fs::File, String>
 {
 	let log_file_path = format!("{}game.log", &pref_path);
 	match std::fs::File::create(&log_file_path) {
-		Ok(f) => return Ok(f),
-		Err(e) => {
-			let error_formatted = format!("Failed to create log file '{0}': {1}", &log_file_path, &e.to_string());
-			print_error_unlogged(&error_formatted);
-			return Err(());
-		}
+		Ok(f) => Ok(f),
+		Err(e) => Err(format!("Failed to create log file '{0}': {1}", &log_file_path, e))
 	}
 }
