@@ -98,12 +98,13 @@ impl GameContext
 
 	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let cb = self.render_context.start_commands();
+		self.render_context.start_main_commands()?;
+		self.render_context.begin_main_render_pass()?;
 
-		// placeholder delay
-		std::thread::sleep(std::time::Duration::from_millis(16));
+		// draw stuff here
 
-		// TODO: finish commands and build command buffer here
+		self.render_context.end_main_render_pass()?;
+		self.render_context.submit_commands()?;
 
 		Ok(())
 	}

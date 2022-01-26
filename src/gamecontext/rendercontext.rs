@@ -15,7 +15,9 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
+use vulkano::command_buffer::SubpassContents;
 use vulkano::render_pass::Subpass;
+use vulkano::sync::{self, FlushError, GpuFuture};
 use super::util::log_info;
 
 pub struct RenderContext 
@@ -23,9 +25,16 @@ pub struct RenderContext
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
+	framebuffers: Vec<Arc<vulkano::render_pass::Framebuffer>>,
 	basic_rp: Arc<vulkano::render_pass::RenderPass>,
 	basic_pipeline: Arc<vulkano::pipeline::GraphicsPipeline>,
-	q_fam_id: u32
+	q_fam_id: u32,
+	dev_queue: Arc<vulkano::device::Queue>,
+	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>,
+	cur_image_num: usize,
+	acquire_future: Option<vulkano::swapchain::SwapchainAcquireFuture<Window>>,
+	previous_frame_end: Option<Box<dyn vulkano::sync::GpuFuture>>,
+	rotation_start: std::time::Instant
 }
 impl RenderContext
 {
@@ -54,7 +63,7 @@ impl RenderContext
 		// create basic renderpass
 		let basic_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
 			attachments: {
-				first: {
+				color: {
 					load: Clear,
 					store: Store,
 					format: swapchain.format(),
@@ -62,11 +71,26 @@ impl RenderContext
 				}
 			}, 
 			pass: {
-				color: [first],
+				color: [color],
 				depth_stencil: {}
 			}
 		).or_else(|e| Err(format!("Error creating render pass: {}", e)))?;
 		let basic_rp_subpass = Subpass::from(basic_rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
+
+		// create frame buffers
+		let mut framebuffers = Vec::<Arc<vulkano::render_pass::Framebuffer>>::with_capacity(swapchain_images.len());
+		for img in swapchain_images.iter() {
+			let view = vulkano::image::view::ImageView::new(img.clone())
+				.or_else(|e| Err(format!("Failed to create image view: {}", e)))?;
+			// TODO: add depth buffers
+			framebuffers.push(
+				vulkano::render_pass::Framebuffer::start(basic_rp.clone())
+				.add(view)
+				.or_else(|e| Err(format!("Failed to add image to framebuffer: {}", e)))?
+				.build()
+				.or_else(|e| Err(format!("Failed to build framebuffer: {}", e)))?
+			);
+		}
 
 		// load vertex shader
 		let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
@@ -89,23 +113,122 @@ impl RenderContext
 			.render_pass(basic_rp_subpass)
 			.build(vk_dev.clone())
 			.or_else(|e| Err(format!("Error creating pipeline: {}", e)))?;
+
+		let mut previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
+    	let rotation_start = std::time::Instant::now();
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
 			swapchain: swapchain,
 			swapchain_images: swapchain_images,
+			framebuffers: framebuffers,
 			basic_rp: basic_rp,
 			basic_pipeline: pipeline,
-			q_fam_id: q_fam_id
+			q_fam_id: q_fam_id,
+			dev_queue: dev_queue,
+			cur_cb: None,
+			cur_image_num: 0,
+			acquire_future: None,
+			previous_frame_end: previous_frame_end,
+			rotation_start: rotation_start
 		})
 	}
 
-	pub fn start_commands(&mut self) 
-		-> Result<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>, Box<dyn std::error::Error>>
+	pub fn start_main_commands(&mut self) 
+		-> Result<(), Box<dyn std::error::Error>>
 	{
+		if self.cur_cb.is_some() {
+			return Err(Box::new(CommandBufferAlreadyBuilding))
+		}
+
+		self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+		// TODO: recreate the swapchain in this function when it's suboptimal
+		let (image_num, suboptimal, acquire_future) =
+			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
+				Ok(r) => r,
+				/*Err(vulkano::swapchain::AcquireError::OutOfDate) => {
+					recreate_swapchain = true;
+					return;
+				}*/
+				Err(e) => return Err(Box::new(e))
+			};
+
+		/*if suboptimal {
+			recreate_swapchain = true;
+		}*/
+
+		self.cur_image_num = image_num;
+		self.acquire_future = Some(acquire_future);
+
 		let q_fam = get_queue_family_from_id(&self.vk_dev, self.q_fam_id)?;
-		Ok(AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?)
+		self.cur_cb = Some(AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?);
+
+		Ok(())
 	}
+
+	pub fn begin_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
+			.begin_render_pass(
+				self.framebuffers[self.cur_image_num].clone(),
+				vulkano::command_buffer::SubpassContents::Inline,
+				vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
+			)?;
+		Ok(())
+	}
+
+	pub fn end_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?.end_render_pass()?;
+		Ok(())
+	}
+
+	pub fn submit_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	{
+		let built_cb = self.cur_cb.take().ok_or(CommandBufferNotBuilding)?.build()?;
+		let acquire_future = self.acquire_future.take().ok_or(CommandBufferNotBuilding)?;
+
+		let future = self.previous_frame_end.take().ok_or(CommandBufferNotBuilding)?
+			.join(acquire_future)
+			.then_execute(self.dev_queue.clone(), built_cb)?
+			.then_swapchain_present(self.dev_queue.clone(), self.swapchain.clone(), self.cur_image_num)
+			.then_signal_fence_and_flush();
+
+		match future {
+			Ok(future) => {
+				self.previous_frame_end = Some(future.boxed());
+			}
+			/*Err(FlushError::OutOfDate) => {
+				recreate_swapchain = true;
+				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
+			}*/
+			Err(e) => {
+				println!("Failed to flush future: {:?}", e);
+				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
+			}
+		}
+		
+		Ok(())
+	}
+}
+
+#[derive(Debug)]
+struct CommandBufferNotBuilding;
+impl std::error::Error for CommandBufferNotBuilding {}
+impl std::fmt::Display for CommandBufferNotBuilding {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The RenderContext's current command buffer is not building! Did you forget to call `start_main_commands`?")
+    }
+}
+
+#[derive(Debug)]
+struct CommandBufferAlreadyBuilding;
+impl std::error::Error for CommandBufferAlreadyBuilding {}
+impl std::fmt::Display for CommandBufferAlreadyBuilding {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The RenderContext's current command buffer is already building! Did you forget to submit the previous one?")
+    }
 }
 
 #[derive(Debug)]
