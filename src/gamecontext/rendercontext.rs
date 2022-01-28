@@ -328,8 +328,18 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 {
 	// Get physical device.
 	log_info(&log_file, "Available Vulkan physical devices:");
+
 	for pd in PhysicalDevice::enumerate(&vkinst) {
-		log_info(&log_file, &pd.properties().device_name);
+		let pd_type_str;
+		match pd.properties().device_type {
+			PhysicalDeviceType::IntegratedGpu => pd_type_str = "Integrated GPU",
+			PhysicalDeviceType::DiscreteGpu => pd_type_str = "Discrete GPU",
+			PhysicalDeviceType::VirtualGpu => pd_type_str = "Virtual GPU",
+			PhysicalDeviceType::Cpu => pd_type_str = "CPU",
+			PhysicalDeviceType::Other => pd_type_str = "Other",
+		}
+		let pd_info = format!("- {} ({})", pd.properties().device_name, pd_type_str);
+		log_info(&log_file, &pd_info);
 	}
 	
 	// Look for a discrete GPU.
@@ -346,6 +356,9 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 		}
 	}
 	// TODO: Check to make sure that the GPU is even capable of the features we need from it.
+
+	let pd_info_print = format!("Using physical device: {}", physical_device.properties().device_name);
+	log_info(&log_file, &pd_info_print);
 
 	// get queue family that supports graphics
 	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
