@@ -3,8 +3,6 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-#![windows_subsystem = "windows"]
-
 mod util;
 mod rendercontext;
 
