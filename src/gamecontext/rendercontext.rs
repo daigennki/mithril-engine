@@ -15,14 +15,15 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
-use vulkano::command_buffer::SubpassContents;
 use vulkano::render_pass::Subpass;
+use vulkano::render_pass::Framebuffer;
 use vulkano::sync::{self, FlushError, GpuFuture};
 use super::util::log_info;
 
 pub struct RenderContext 
 {
 	vk_dev: Arc<vulkano::device::Device>,
+	window_surface: Arc<vulkano::swapchain::Surface<Window>>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
 	framebuffers: Vec<Arc<vulkano::render_pass::Framebuffer>>,
@@ -34,7 +35,8 @@ pub struct RenderContext
 	cur_image_num: usize,
 	acquire_future: Option<vulkano::swapchain::SwapchainAcquireFuture<Window>>,
 	previous_frame_end: Option<Box<dyn vulkano::sync::GpuFuture>>,
-	rotation_start: std::time::Instant
+	//rotation_start: std::time::Instant,
+	pub need_new_swapchain: bool
 }
 impl RenderContext
 {
@@ -58,7 +60,7 @@ impl RenderContext
 		let dev_queue = queues.next().ok_or("No queues available!")?;
 
 		// create swapchain
-		let (swapchain, swapchain_images) = create_vk_swapchain(vk_dev.clone(), window_surface)?;
+		let (swapchain, swapchain_images) = create_vk_swapchain(vk_dev.clone(), window_surface.clone())?;
 
 		// create basic renderpass
 		let basic_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
@@ -75,62 +77,30 @@ impl RenderContext
 				depth_stencil: {}
 			}
 		).or_else(|e| Err(format!("Error creating render pass: {}", e)))?;
-		let basic_rp_subpass = Subpass::from(basic_rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
 
-		// create frame buffers
-		let mut framebuffers = Vec::<Arc<vulkano::render_pass::Framebuffer>>::with_capacity(swapchain_images.len());
-		for img in swapchain_images.iter() {
-			let view = vulkano::image::view::ImageView::new(img.clone())
-				.or_else(|e| Err(format!("Failed to create image view: {}", e)))?;
-			// TODO: add depth buffers
-			framebuffers.push(
-				vulkano::render_pass::Framebuffer::start(basic_rp.clone())
-				.add(view)
-				.or_else(|e| Err(format!("Failed to add image to framebuffer: {}", e)))?
-				.build()
-				.or_else(|e| Err(format!("Failed to build framebuffer: {}", e)))?
-			);
-		}
+		let (framebuffers, basic_pipeline) = setup_pipeline(
+			vk_dev.clone(), basic_rp.clone(), swapchain.clone(), &swapchain_images
+		).or_else(|e| Err(format!("Error during framebuffer/pipeline setup: {}", e.to_string())))?;
 
-		// load vertex shader
-		let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
-		let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-		
-		// load fragment shader
-		let fs = load_spirv(vk_dev.clone(), "shaders/ui.frag.spv")?;
-		let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-		
-		// create pipeline
-		let viewport = graphics::viewport::Viewport{ 
-			origin: [ 0.0, 0.0 ],
-			dimensions: [ swapchain.dimensions()[0] as f32, swapchain.dimensions()[1] as f32 ],
-			depth_range: (-1.0..1.0)
-		};
-		let pipeline = vulkano::pipeline::GraphicsPipeline::start()
-			.vertex_shader(vs_entry, ())
-			.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-			.fragment_shader(fs_entry, ())
-			.render_pass(basic_rp_subpass)
-			.build(vk_dev.clone())
-			.or_else(|e| Err(format!("Error creating pipeline: {}", e)))?;
-
-		let mut previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
-    	let rotation_start = std::time::Instant::now();
+		let previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
+    	//let rotation_start = std::time::Instant::now();
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
+			window_surface: window_surface,
 			swapchain: swapchain,
 			swapchain_images: swapchain_images,
 			framebuffers: framebuffers,
 			basic_rp: basic_rp,
-			basic_pipeline: pipeline,
+			basic_pipeline: basic_pipeline,
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
 			cur_cb: None,
 			cur_image_num: 0,
 			acquire_future: None,
 			previous_frame_end: previous_frame_end,
-			rotation_start: rotation_start
+			//rotation_start: rotation_start,
+			need_new_swapchain: false
 		})
 	}
 
@@ -141,22 +111,27 @@ impl RenderContext
 			return Err(Box::new(CommandBufferAlreadyBuilding))
 		}
 
-		self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+		if self.need_new_swapchain {
+			self.recreate_swapchain()?;
+		}
+
+		self.previous_frame_end.as_mut().ok_or(PreviousFrameEndIsNone)?.cleanup_finished();
 
 		// TODO: recreate the swapchain in this function when it's suboptimal
 		let (image_num, suboptimal, acquire_future) =
 			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 				Ok(r) => r,
-				/*Err(vulkano::swapchain::AcquireError::OutOfDate) => {
-					recreate_swapchain = true;
-					return;
-				}*/
+				Err(vulkano::swapchain::AcquireError::OutOfDate) => {
+					// recreate the swapchain then try again
+					self.need_new_swapchain = true;
+					return self.start_main_commands();
+				}
 				Err(e) => return Err(Box::new(e))
 			};
 
-		/*if suboptimal {
-			recreate_swapchain = true;
-		}*/
+		if suboptimal {
+			self.need_new_swapchain = true;
+		}
 
 		self.cur_image_num = image_num;
 		self.acquire_future = Some(acquire_future);
@@ -199,10 +174,10 @@ impl RenderContext
 			Ok(future) => {
 				self.previous_frame_end = Some(future.boxed());
 			}
-			/*Err(FlushError::OutOfDate) => {
-				recreate_swapchain = true;
+			Err(FlushError::OutOfDate) => {
+				self.recreate_swapchain()?;
 				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
-			}*/
+			}
 			Err(e) => {
 				println!("Failed to flush future: {:?}", e);
 				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
@@ -211,6 +186,34 @@ impl RenderContext
 		
 		Ok(())
 	}
+
+	fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	{
+		let dimensions: [u32; 2] = self.window_surface.window().inner_size().into();
+
+		let (new_swapchain, new_images) = self.swapchain.recreate().dimensions(dimensions).build()?;
+		self.swapchain = new_swapchain;
+		self.swapchain_images = new_images;
+
+		let (new_framebuffers, new_pipeline) = setup_pipeline(
+			self.vk_dev.clone(), self.basic_rp.clone(), self.swapchain.clone(), &self.swapchain_images
+		)?;
+		self.basic_pipeline = new_pipeline;
+		self.framebuffers = new_framebuffers;
+
+		self.need_new_swapchain = false;
+
+		Ok(())
+	}
+}
+
+#[derive(Debug)]
+struct PreviousFrameEndIsNone;
+impl std::error::Error for PreviousFrameEndIsNone {}
+impl std::fmt::Display for PreviousFrameEndIsNone {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "previous_frame_end is `None`!")
+    }
 }
 
 #[derive(Debug)]
@@ -245,12 +248,62 @@ fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32
 	vk_dev.physical_device().queue_family_by_id(q_fam_id).ok_or(InvalidQueueIDError)
 }
 
+fn setup_pipeline(
+	vk_dev: Arc<vulkano::device::Device>, 
+	basic_rp: Arc<vulkano::render_pass::RenderPass>, 
+	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
+	swapchain_images: &Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>
+) -> Result<(Vec::<Arc<Framebuffer>>, Arc<vulkano::pipeline::GraphicsPipeline>), Box<dyn std::error::Error>>
+{
+	let basic_rp_subpass = Subpass::from(basic_rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
+
+	// create frame buffers
+	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(swapchain_images.len());
+	for img in swapchain_images.iter() {
+		let view = vulkano::image::view::ImageView::new(img.clone())
+			.or_else(|e| Err(format!("Failed to create image view: {}", e)))?;
+		// TODO: add depth buffers
+		framebuffers.push(
+			Framebuffer::start(basic_rp.clone())
+			.add(view)
+			.or_else(|e| Err(format!("Failed to add image to framebuffer: {}", e)))?
+			.build()
+			.or_else(|e| Err(format!("Failed to build framebuffer: {}", e)))?
+		);
+	}
+
+	// load vertex shader
+	let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
+	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
+	
+	// load fragment shader
+	let fs = load_spirv(vk_dev.clone(), "shaders/ui.frag.spv")?;
+	let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
+	
+	// create pipeline
+	let viewport = graphics::viewport::Viewport{ 
+		origin: [ 0.0, 0.0 ],
+		dimensions: [ swapchain.dimensions()[0] as f32, swapchain.dimensions()[1] as f32 ],
+		depth_range: (-1.0..1.0)
+	};
+	let pipeline = vulkano::pipeline::GraphicsPipeline::start()
+		.vertex_shader(vs_entry, ())
+		.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
+		.fragment_shader(fs_entry, ())
+		.render_pass(basic_rp_subpass)
+		.build(vk_dev)
+		.or_else(|e| Err(format!("Error creating pipeline: {}", e)))?;
+
+	Ok((framebuffers, pipeline))
+}
+
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
 	-> Result<Arc<vulkano::swapchain::Surface<Window>>, vulkano_win::CreationError>
 {
 	WindowBuilder::new()
 		.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
 		.with_title(title)
+		.with_resizable(false)
 		.build_vk_surface(event_loop, vkinst.clone())
 }
 
@@ -332,10 +385,7 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 	)
 }
 
-fn create_vk_swapchain(
-	device: Arc<vulkano::device::Device>, 
-	surf: Arc<vulkano::swapchain::Surface<Window>>
-) 
+fn create_vk_swapchain(device: Arc<vulkano::device::Device>, surf: Arc<vulkano::swapchain::Surface<Window>>) 
 	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>), String>
 {
 	// query surface capabilities

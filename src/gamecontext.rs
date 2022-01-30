@@ -21,7 +21,7 @@ struct GameContext
 impl GameContext
 {
 	// game context "constructor"
-	pub fn new(pref_path: String, log_file: Rc<std::fs::File>, org_name: &str, game_name: &str) -> Result<GameContext, String>
+	pub fn new(pref_path: String, log_file: Rc<std::fs::File>,  game_name: &str) -> Result<GameContext, String>
 	{
 		// print start date and time
 		let dt_str = format!("INIT {}", chrono::Local::now().to_rfc3339());
@@ -80,7 +80,7 @@ impl GameContext
 					*control_flow = winit::event_loop::ControlFlow::Exit;
 				},
 				Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
-					//recreate_swapchain = true;
+					self.render_context.need_new_swapchain = true;
 				},
 				Event::RedrawEventsCleared => {
 					match self.draw_in_event_loop() {
@@ -136,7 +136,7 @@ pub fn run_game(org_name: &str, game_name: &str)
 
 	// construct GameContext
 	let mut gctx;
-	match GameContext::new(pref_path, log_file.clone(), org_name, game_name) {
+	match GameContext::new(pref_path, log_file.clone(), game_name) {
 		Ok(g) => gctx = g,
 		Err(e) => {
 			print_init_error(log_file.as_ref(), &e);
