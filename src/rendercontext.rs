@@ -11,6 +11,8 @@ use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::physical::PhysicalDevice;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics;
+use vulkano::swapchain::Swapchain;
+use vulkano::image::swapchain::SwapchainImage;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
@@ -40,7 +42,8 @@ pub struct RenderContext
 }
 impl RenderContext
 {
-	pub fn new(log_file: &std::fs::File, game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<RenderContext, String>
+	pub fn new(log_file: &std::fs::File, game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
+		-> Result<RenderContext, Box<dyn std::error::Error>>
 	{
 		// create Vulkan instance
 		let vkinst = create_vulkan_instance()?;
@@ -57,7 +60,7 @@ impl RenderContext
 			.id();
 
 		// get queue
-		let dev_queue = queues.next().ok_or("No queues available!")?;
+		let dev_queue = queues.next().ok_or("No queues are available!")?;
 
 		// create swapchain
 		let (swapchain, swapchain_images) = create_vk_swapchain(vk_dev.clone(), window_surface.clone())?;
@@ -76,11 +79,11 @@ impl RenderContext
 				color: [color],
 				depth_stencil: {}
 			}
-		).or_else(|e| Err(format!("Error creating render pass: {}", e)))?;
+		)?;
 
 		let (framebuffers, basic_pipeline) = setup_pipeline(
 			vk_dev.clone(), basic_rp.clone(), swapchain.clone(), &swapchain_images
-		).or_else(|e| Err(format!("Error during framebuffer/pipeline setup: {}", e.to_string())))?;
+		)?;
 
 		let previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
     	//let rotation_start = std::time::Instant::now();
@@ -104,8 +107,7 @@ impl RenderContext
 		})
 	}
 
-	pub fn start_main_commands(&mut self) 
-		-> Result<(), Box<dyn std::error::Error>>
+	pub fn start_main_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		if self.cur_cb.is_some() {
 			return Err(Box::new(CommandBufferAlreadyBuilding))
@@ -115,7 +117,7 @@ impl RenderContext
 			self.recreate_swapchain()?;
 		}
 
-		self.previous_frame_end.as_mut().ok_or(PreviousFrameEndIsNone)?.cleanup_finished();
+		self.previous_frame_end.as_mut().ok_or("previous_frame_end is `None`!")?.cleanup_finished();
 
 		// TODO: recreate the swapchain in this function when it's suboptimal
 		let (image_num, suboptimal, acquire_future) =
@@ -179,8 +181,8 @@ impl RenderContext
 				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
 			}
 			Err(e) => {
-				println!("Failed to flush future: {:?}", e);
 				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
+				return Err(Box::new(e))
 			}
 		}
 		
@@ -207,41 +209,6 @@ impl RenderContext
 	}
 }
 
-#[derive(Debug)]
-struct PreviousFrameEndIsNone;
-impl std::error::Error for PreviousFrameEndIsNone {}
-impl std::fmt::Display for PreviousFrameEndIsNone {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "previous_frame_end is `None`!")
-    }
-}
-
-#[derive(Debug)]
-struct CommandBufferNotBuilding;
-impl std::error::Error for CommandBufferNotBuilding {}
-impl std::fmt::Display for CommandBufferNotBuilding {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The RenderContext's current command buffer is not building! Did you forget to call `start_main_commands`?")
-    }
-}
-
-#[derive(Debug)]
-struct CommandBufferAlreadyBuilding;
-impl std::error::Error for CommandBufferAlreadyBuilding {}
-impl std::fmt::Display for CommandBufferAlreadyBuilding {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The RenderContext's current command buffer is already building! Did you forget to submit the previous one?")
-    }
-}
-
-#[derive(Debug)]
-struct InvalidQueueIDError;
-impl std::error::Error for InvalidQueueIDError {}
-impl std::fmt::Display for InvalidQueueIDError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The given queue ID was invalid!")
-    }
-}
 fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32) 
 	-> Result<vulkano::device::physical::QueueFamily, InvalidQueueIDError>
 {
@@ -251,8 +218,8 @@ fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32
 fn setup_pipeline(
 	vk_dev: Arc<vulkano::device::Device>, 
 	basic_rp: Arc<vulkano::render_pass::RenderPass>, 
-	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-	swapchain_images: &Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>
+	swapchain: Arc<Swapchain<Window>>,
+	swapchain_images: &Vec<Arc<SwapchainImage<Window>>>
 ) -> Result<(Vec::<Arc<Framebuffer>>, Arc<vulkano::pipeline::GraphicsPipeline>), Box<dyn std::error::Error>>
 {
 	let basic_rp_subpass = Subpass::from(basic_rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
@@ -260,16 +227,9 @@ fn setup_pipeline(
 	// create frame buffers
 	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(swapchain_images.len());
 	for img in swapchain_images.iter() {
-		let view = vulkano::image::view::ImageView::new(img.clone())
-			.or_else(|e| Err(format!("Failed to create image view: {}", e)))?;
+		let view = vulkano::image::view::ImageView::new(img.clone())?;
 		// TODO: add depth buffers
-		framebuffers.push(
-			Framebuffer::start(basic_rp.clone())
-			.add(view)
-			.or_else(|e| Err(format!("Failed to add image to framebuffer: {}", e)))?
-			.build()
-			.or_else(|e| Err(format!("Failed to build framebuffer: {}", e)))?
-		);
+		framebuffers.push(Framebuffer::start(basic_rp.clone()).add(view)?.build()?);
 	}
 
 	// load vertex shader
@@ -291,8 +251,7 @@ fn setup_pipeline(
 		.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 		.fragment_shader(fs_entry, ())
 		.render_pass(basic_rp_subpass)
-		.build(vk_dev)
-		.or_else(|e| Err(format!("Error creating pipeline: {}", e)))?;
+		.build(vk_dev)?;
 
 	Ok((framebuffers, pipeline))
 }
@@ -307,24 +266,22 @@ fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str
 		.build_vk_surface(event_loop, vkinst.clone())
 }
 
-fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, String>
+fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
 {
 	let mut app_info = vulkano::app_info_from_cargo_toml!();
 	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
 
 	let vk_ext = vulkano_win::required_extensions();
-	let vk_layer_list: Vec<_> = vulkano::instance::layers_list()
-		.or_else(|e| Err(e.to_string()))?
+	let vk_layer_list: Vec<_> = vulkano::instance::layers_list()?
 		.filter(|l| l.description().contains("VK_LAYER_KHRONOS_validation"))
 		.collect();
 	let vk_layer_names = vk_layer_list.iter().map(|l| l.name());
 
-	vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names)
-		.or_else(|e| Err(e.to_string()))
+	Ok(vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names)?)
 }
 
 fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::instance::Instance>) 
-	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), String>
+	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), Box<dyn std::error::Error>>
 {
 	// Get physical device.
 	log_info(&log_file, "Available Vulkan physical devices:");
@@ -379,29 +336,24 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 	}.union(physical_device.required_extensions());
 
 	let use_queue_families = [(q_fam, 0.5)];
-	Ok(
-		vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, use_queue_families)
-			.or_else(|e| Err(format!("Failed to create Vulkan logical device: {}", e)))?
-	)
+	Ok(vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, use_queue_families)?)
 }
 
 fn create_vk_swapchain(device: Arc<vulkano::device::Device>, surf: Arc<vulkano::swapchain::Surface<Window>>) 
-	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>), String>
+	-> Result<(Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>), Box<dyn std::error::Error>>
 {
 	// query surface capabilities
-	let surf_caps = surf.capabilities(device.physical_device())
-		.or_else(|e| Err(format!("Failed to query surface capabilities: {}", e)))?;
+	let surf_caps = surf.capabilities(device.physical_device())?;
 
-	vulkano::swapchain::Swapchain::start(device.clone(), surf.clone())
+	Ok(Swapchain::start(device.clone(), surf.clone())
 		.num_images(surf_caps.min_image_count)
 		.format(Format::B8G8R8A8_SRGB)
 		.usage(vulkano::image::ImageUsage::color_attachment())
-		.build()
-		.or_else(|e| Err(format!("Failed to create swapchain: {}", e)))
+		.build()?)
 }
 
 fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
-	-> Result<Arc<vulkano::shader::ShaderModule>, String>
+	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error>>
 {
 	let mut spv_file = std::fs::File::open(filename)
 		.or_else(|e| Err(format!("Failed to open SPIR-V shader file: {}", e)))?;
@@ -410,6 +362,32 @@ fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str)
 	spv_file.read_to_end(&mut spv_data)
 		.or_else(|e| Err(format!("Failed to read SPIR-V shader file: {}", e)))?;
 
-	unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }
-		.or_else(|e| Err(format!("Error loading SPIR-V module: {}", e)))
+	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
+}
+
+#[derive(Debug)]
+struct CommandBufferNotBuilding;
+impl std::error::Error for CommandBufferNotBuilding {}
+impl std::fmt::Display for CommandBufferNotBuilding {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The RenderContext's current command buffer is not building! Did you forget to call `start_main_commands`?")
+    }
+}
+
+#[derive(Debug)]
+struct CommandBufferAlreadyBuilding;
+impl std::error::Error for CommandBufferAlreadyBuilding {}
+impl std::fmt::Display for CommandBufferAlreadyBuilding {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The RenderContext's current command buffer is already building! Did you forget to submit the previous one?")
+    }
+}
+
+#[derive(Debug)]
+struct InvalidQueueIDError;
+impl std::error::Error for InvalidQueueIDError {}
+impl std::fmt::Display for InvalidQueueIDError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The given queue ID was invalid!")
+    }
 }

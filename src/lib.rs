@@ -21,7 +21,7 @@ struct GameContext
 impl GameContext
 {
 	// game context "constructor"
-	pub fn new(pref_path: String, log_file: Rc<std::fs::File>,  game_name: &str) -> Result<GameContext, String>
+	pub fn new(pref_path: String, log_file: Rc<std::fs::File>,  game_name: &str) -> Result<GameContext, Box<dyn std::error::Error>>
 	{
 		// print start date and time
 		let dt_str = format!("INIT {}", chrono::Local::now().to_rfc3339());
@@ -43,17 +43,15 @@ impl GameContext
 		})
 	}
 
-	fn log_error(&self, s: String)
+	fn log_error(&self, e: Box<dyn std::error::Error>)
 	{
-		let log_str = format!("ERROR: {}", s);
+		let log_str = format!("ERROR: {}", e);
 		self.print_log(&log_str);
-		match msgbox::create("Engine Error", &s, msgbox::common::IconType::Error) {
-			Ok(r) => r,
-			Err(mbe) => {
-				let msgbox_error_str = format!("Failed to create error message box: {}", &mbe.to_string());
+		msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) 
+			.unwrap_or_else(|mbe| {
+				let msgbox_error_str = format!("Failed to create error message box: {}", mbe);
 				self.print_log(&msgbox_error_str);
-			}
-		}
+			});
 	}
 
 	pub fn print_log(&self, s: &str) 
@@ -68,7 +66,7 @@ impl GameContext
 			Some(el) => event_loop = el,
 			None => {
 				self.log_error(
-					"GameContext::event_loop was empty! Did render_loop accidentally get run twice or more?".to_string()
+					"GameContext::event_loop was empty! Did render_loop accidentally get run twice or more?".into()
 				);
 				return;
 			}
@@ -83,13 +81,10 @@ impl GameContext
 					self.render_context.need_new_swapchain = true;
 				},
 				Event::RedrawEventsCleared => {
-					match self.draw_in_event_loop() {
-						Ok(()) => (),
-						Err(e) => {
-							self.log_error(e.to_string());
-							*control_flow = winit::event_loop::ControlFlow::Exit;
-						}
-					}
+					self.draw_in_event_loop().unwrap_or_else(|e| {
+						self.log_error(e);
+						*control_flow = winit::event_loop::ControlFlow::Exit;
+					});
 				}
 				_ => (),
 			}
@@ -139,7 +134,7 @@ pub fn run_game(org_name: &str, game_name: &str)
 	match GameContext::new(pref_path, log_file.clone(), game_name) {
 		Ok(g) => gctx = g,
 		Err(e) => {
-			print_init_error(log_file.as_ref(), &e);
+			print_init_error(log_file.as_ref(), e);
 			return
 		}
 	}
@@ -150,28 +145,24 @@ pub fn run_game(org_name: &str, game_name: &str)
 
 
 
-fn print_error_unlogged(s: &str) 
+fn print_error_unlogged(e: &str) 
 {
-	println!("{}", &s);
-	match msgbox::create("Engine error", &s, msgbox::common::IconType::Error) {
-		Ok(r) => r,
-		Err(mbe) => println!("msgbox::create failed: {}", &mbe.to_string())
-	}
+	println!("{}", e);
+	msgbox::create("Engine error", &e.to_string(), msgbox::common::IconType::Error)
+		.unwrap_or_else(|mbe| { println!("msgbox::create failed: {}", mbe) });
 }
 
-fn print_init_error(log_file: &std::fs::File, e: &str)
+fn print_init_error(log_file: &std::fs::File, e: Box<dyn std::error::Error>)
 {
 	let error_formatted = format!("ERROR: {}", e);
 	log_info(log_file, &error_formatted);
 
 	let msg_str = format!("Initialization error!\n\n{}", e);
-	match msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error) {
-		Ok(r) => r,
-		Err(mbe) => {
-			let mbe_str = format!("Failed to create error message box: {}", &mbe.to_string());
+	msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error)
+		.unwrap_or_else(|mbe| {
+			let mbe_str = format!("Failed to create error message box: {}", mbe);
 			log_info(log_file, &mbe_str);
-		}
-	}
+		});
 }
 
 fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<String, String>
@@ -186,7 +177,7 @@ fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<Str
 				println!("Preferences path already exists, skipping creation...");
 				Ok(pref_path)
 			},
-			_ => Err(format!("Failed to create preferences path: {}", &e.to_string()))
+			_ => Err(format!("Failed to create preferences path: {}", e))
 		}
 	}
 }
@@ -220,8 +211,7 @@ fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, String>
 fn open_log_file(pref_path: &str) -> Result<std::fs::File, String>
 {
 	let log_file_path = format!("{}game.log", &pref_path);
-	match std::fs::File::create(&log_file_path) {
-		Ok(f) => Ok(f),
-		Err(e) => Err(format!("Failed to create log file '{0}': {1}", &log_file_path, e))
-	}
+	std::fs::File::create(&log_file_path).or_else(|e| {
+		Err(format!("Failed to create log file '{0}': {1}", &log_file_path, e))
+	})
 }

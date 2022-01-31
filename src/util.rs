@@ -1,6 +1,6 @@
 use std::io::Write;
 
-pub fn log_info(mut log_file: &std::fs::File, s: &str) 
+pub(crate) fn log_info(mut log_file: &std::fs::File, s: &str) 
 {
 	println!("{}", s);
 	write!(log_file, "{}\n", s)
