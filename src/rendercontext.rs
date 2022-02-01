@@ -20,7 +20,6 @@ use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::render_pass::Subpass;
 use vulkano::render_pass::Framebuffer;
 use vulkano::sync::{self, FlushError, GpuFuture};
-use super::util::log_info;
 
 pub struct RenderContext 
 {
@@ -42,17 +41,17 @@ pub struct RenderContext
 }
 impl RenderContext
 {
-	pub fn new(log_file: &std::fs::File, game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
+	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
 		-> Result<RenderContext, Box<dyn std::error::Error>>
 	{
 		// create Vulkan instance
 		let vkinst = create_vulkan_instance()?;
 
 		// create window
-		let window_surface = create_game_window(&event_loop, game_name, vkinst.clone()).or_else(|e| Err(e.to_string()))?;
+		let window_surface = create_game_window(&event_loop, game_name, vkinst.clone())?;
 
 		// create logical device
-		let (vk_dev, mut queues) = create_vk_logical_device(&log_file, vkinst.clone())?;
+		let (vk_dev, mut queues) = create_vk_logical_device(vkinst.clone())?;
 
 		// get queue family that supports graphics
 		let q_fam_id = vk_dev.physical_device().queue_families().find(|q| q.supports_graphics())
@@ -138,8 +137,12 @@ impl RenderContext
 		self.cur_image_num = image_num;
 		self.acquire_future = Some(acquire_future);
 
-		let q_fam = get_queue_family_from_id(&self.vk_dev, self.q_fam_id)?;
-		self.cur_cb = Some(AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?);
+		let q_fam = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id)
+			.ok_or("The given queue ID was invalid!")?;
+
+		self.cur_cb = Some(
+			AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?
+		);
 
 		Ok(())
 	}
@@ -209,12 +212,6 @@ impl RenderContext
 	}
 }
 
-fn get_queue_family_from_id(vk_dev: &Arc<vulkano::device::Device>, q_fam_id: u32) 
-	-> Result<vulkano::device::physical::QueueFamily, InvalidQueueIDError>
-{
-	vk_dev.physical_device().queue_family_by_id(q_fam_id).ok_or(InvalidQueueIDError)
-}
-
 fn setup_pipeline(
 	vk_dev: Arc<vulkano::device::Device>, 
 	basic_rp: Arc<vulkano::render_pass::RenderPass>, 
@@ -263,7 +260,7 @@ fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str
 		.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
 		.with_title(title)
 		.with_resizable(false)
-		.build_vk_surface(event_loop, vkinst.clone())
+		.build_vk_surface(event_loop, vkinst)
 }
 
 fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
@@ -280,11 +277,11 @@ fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, Box<dyn 
 	Ok(vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names)?)
 }
 
-fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::instance::Instance>) 
+fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>) 
 	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), Box<dyn std::error::Error>>
 {
 	// Get physical device.
-	log_info(&log_file, "Available Vulkan physical devices:");
+	log::info!("Available Vulkan physical devices:");
 
 	for pd in PhysicalDevice::enumerate(&vkinst) {
 		let pd_type_str;
@@ -295,8 +292,7 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 			PhysicalDeviceType::Cpu => pd_type_str = "CPU",
 			PhysicalDeviceType::Other => pd_type_str = "Other",
 		}
-		let pd_info = format!("- {} ({})", pd.properties().device_name, pd_type_str);
-		log_info(&log_file, &pd_info);
+		log::info!("- {} ({})", pd.properties().device_name, pd_type_str);
 	}
 	
 	// Look for a discrete GPU.
@@ -314,8 +310,7 @@ fn create_vk_logical_device(log_file: &std::fs::File, vkinst: Arc<vulkano::insta
 	}
 	// TODO: Check to make sure that the GPU is even capable of the features we need from it.
 
-	let pd_info_print = format!("Using physical device: {}", physical_device.properties().device_name);
-	log_info(&log_file, &pd_info_print);
+	log::info!("Using physical device: {}", physical_device.properties().device_name);
 
 	// get queue family that supports graphics
 	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
@@ -380,14 +375,5 @@ impl std::error::Error for CommandBufferAlreadyBuilding {}
 impl std::fmt::Display for CommandBufferAlreadyBuilding {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "The RenderContext's current command buffer is already building! Did you forget to submit the previous one?")
-    }
-}
-
-#[derive(Debug)]
-struct InvalidQueueIDError;
-impl std::error::Error for InvalidQueueIDError {}
-impl std::fmt::Display for InvalidQueueIDError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The given queue ID was invalid!")
     }
 }

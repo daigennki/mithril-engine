@@ -6,57 +6,34 @@
 mod util;
 mod rendercontext;
 
-use std::rc::Rc;
-use util::log_info;
 use winit::event::{ Event, WindowEvent };
 use winit::platform::run_return::EventLoopExtRunReturn;
+use simplelog::*;
 
 struct GameContext
 {
 	pref_path: String,
-	log_file: Rc<std::fs::File>,
 	event_loop: Option<winit::event_loop::EventLoop<()>>,
 	render_context: rendercontext::RenderContext
 }
 impl GameContext
 {
 	// game context "constructor"
-	pub fn new(pref_path: String, log_file: Rc<std::fs::File>,  game_name: &str) -> Result<GameContext, Box<dyn std::error::Error>>
+	pub fn new(pref_path: String, game_name: &str) -> Result<GameContext, Box<dyn std::error::Error>>
 	{
-		// print start date and time
-		let dt_str = format!("INIT {}", chrono::Local::now().to_rfc3339());
-		log_info(&log_file, &dt_str);
-
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
 		// create event loop
 		let event_loop = winit::event_loop::EventLoop::new();
 
-		let render_context = rendercontext::RenderContext::new(log_file.as_ref(), game_name, &event_loop)?;
+		let render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
 		Ok(GameContext { 
 			pref_path: pref_path,
-			log_file: log_file,
 			event_loop: Some(event_loop),
 			render_context: render_context
 		})
-	}
-
-	fn log_error(&self, e: Box<dyn std::error::Error>)
-	{
-		let log_str = format!("ERROR: {}", e);
-		self.print_log(&log_str);
-		msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) 
-			.unwrap_or_else(|mbe| {
-				let msgbox_error_str = format!("Failed to create error message box: {}", mbe);
-				self.print_log(&msgbox_error_str);
-			});
-	}
-
-	pub fn print_log(&self, s: &str) 
-	{
-		log_info(&self.log_file, s);
 	}
 
 	pub fn render_loop(&mut self)
@@ -65,9 +42,7 @@ impl GameContext
 		match self.event_loop.take() {
 			Some(el) => event_loop = el,
 			None => {
-				self.log_error(
-					"GameContext::event_loop was empty! Did render_loop accidentally get run twice or more?".into()
-				);
+				log_error("GameContext::event_loop was empty! Did render_loop accidentally get run twice or more?".into());
 				return;
 			}
 		}
@@ -82,7 +57,7 @@ impl GameContext
 				},
 				Event::RedrawEventsCleared => {
 					self.draw_in_event_loop().unwrap_or_else(|e| {
-						self.log_error(e);
+						log_error(e);
 						*control_flow = winit::event_loop::ControlFlow::Exit;
 					});
 				}
@@ -122,19 +97,36 @@ pub fn run_game(org_name: &str, game_name: &str)
 	// open log file
 	let log_file;
 	match open_log_file(&pref_path) {
-		Ok(l) => log_file = Rc::new(l),
+		Ok(l) => log_file = l,
 		Err(e) => {
 			print_error_unlogged(&e);
 			return
 		}
 	}
 
+	// set up logger
+	let logger_config = ConfigBuilder::new()
+		.set_time_to_local(true)	// use time in time zone local to system
+		.set_time_format_str("%FT%T.%f%Z")	// use RFC 3339 format
+		.build();
+	let term_logger = TermLogger::new(LevelFilter::Info, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
+	let write_logger = WriteLogger::new(LevelFilter::Info, logger_config, log_file);
+    match CombinedLogger::init(vec![ term_logger, write_logger ]) {
+		Ok(()) => (),
+		Err(e) => {
+			print_error_unlogged(&format!("CombinedLogger::init failed: {}", e));
+			return;
+		}
+	}
+
+	log::info!("--- Initializing MithrilEngine... ---");
+
 	// construct GameContext
 	let mut gctx;
-	match GameContext::new(pref_path, log_file.clone(), game_name) {
+	match GameContext::new(pref_path, game_name) {
 		Ok(g) => gctx = g,
 		Err(e) => {
-			print_init_error(log_file.as_ref(), e);
+			print_init_error(e);
 			return
 		}
 	}
@@ -144,25 +136,27 @@ pub fn run_game(org_name: &str, game_name: &str)
 }
 
 
+fn log_error(e: Box<dyn std::error::Error>)
+{
+	log::error!("ERROR: {}", e);
+	msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) 
+		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
+}
 
 fn print_error_unlogged(e: &str) 
 {
 	println!("{}", e);
 	msgbox::create("Engine error", &e.to_string(), msgbox::common::IconType::Error)
-		.unwrap_or_else(|mbe| { println!("msgbox::create failed: {}", mbe) });
+		.unwrap_or_else(|mbe| println!("msgbox::create failed: {}", mbe));
 }
 
-fn print_init_error(log_file: &std::fs::File, e: Box<dyn std::error::Error>)
+fn print_init_error(e: Box<dyn std::error::Error>)
 {
-	let error_formatted = format!("ERROR: {}", e);
-	log_info(log_file, &error_formatted);
+	log::error!("ERROR: {}", e);
 
 	let msg_str = format!("Initialization error!\n\n{}", e);
 	msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error)
-		.unwrap_or_else(|mbe| {
-			let mbe_str = format!("Failed to create error message box: {}", mbe);
-			log_info(log_file, &mbe_str);
-		});
+		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
 }
 
 fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<String, String>

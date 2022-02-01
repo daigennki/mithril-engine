@@ -24,3 +24,5 @@ openal = "0.2.2"
 mlua = { version = "0.7.1", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 msgbox = "0.6.0"
 chrono = "0.4.19"
+log = "0.4.14"
+simplelog = "0.11.2"
