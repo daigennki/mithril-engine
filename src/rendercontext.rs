@@ -4,25 +4,24 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod swapchain;
+mod pipeline;
 
-use std::io::Read;
+
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::{Window, WindowBuilder};
 use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::physical::PhysicalDevice;
-use vulkano::pipeline::graphics;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
-use vulkano::render_pass::Subpass;
 
 pub struct RenderContext 
 {
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: swapchain::Swapchain,
-	basic_pipeline: Arc<vulkano::pipeline::GraphicsPipeline>,
+	basic_pipeline: pipeline::Pipeline,
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
 	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>
@@ -35,9 +34,6 @@ impl RenderContext
 		// create Vulkan instance
 		let vkinst = create_vulkan_instance()?;
 
-		// create window
-		let window_surface = create_game_window(&event_loop, game_name, vkinst.clone())?;
-
 		// create logical device
 		let (vk_dev, mut queues) = create_vk_logical_device(vkinst.clone())?;
 
@@ -49,11 +45,20 @@ impl RenderContext
 		// get queue
 		let dev_queue = queues.next().ok_or("No queues are available!")?;
 
+		// create window
+		let window_surface = create_game_window(&event_loop, game_name, vkinst.clone())?;
+
 		// create swapchain
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface.clone())?;
 
-		let basic_pipeline = setup_pipeline(
-			vk_dev.clone(), swapchain.get_render_pass(), 1280.0, 720.0	// TODO: set the proper width and height from the swapchain here
+		// create pipeline
+		let dimensions = swapchain.dimensions();
+		let basic_pipeline = pipeline::Pipeline::new(
+			vk_dev.clone(), 
+			"shaders/fill_viewport.vert.spv".to_string(),
+			Some("shaders/ui.frag.spv".to_string()),
+			swapchain.render_pass(), 
+			dimensions[0], dimensions[1]
 		)?;
 			
 		Ok(RenderContext{
@@ -107,41 +112,17 @@ impl RenderContext
 	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.swapchain.recreate_swapchain()?;
-		self.basic_pipeline = setup_pipeline(
-			self.vk_dev.clone(), self.swapchain.get_render_pass(), 1280.0, 720.0
+		let dimensions = self.swapchain.dimensions();
+		self.basic_pipeline = pipeline::Pipeline::new(
+			self.vk_dev.clone(), 
+			"shaders/fill_viewport.vert.spv".to_string(),
+			Some("shaders/ui.frag.spv".to_string()),
+			self.swapchain.render_pass(), 
+			dimensions[0], dimensions[1]
 		)?;
 
 		Ok(())
 	}
-}
-
-fn setup_pipeline(vk_dev: Arc<vulkano::device::Device>, rp: Arc<vulkano::render_pass::RenderPass>, width: f32, height: f32)
-	-> Result<Arc<vulkano::pipeline::GraphicsPipeline>, Box<dyn std::error::Error>>
-{
-	let rp_subpass = Subpass::from(rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
-
-	// load vertex shader
-	let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
-	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-	
-	// load fragment shader
-	let fs = load_spirv(vk_dev.clone(), "shaders/ui.frag.spv")?;
-	let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-	
-	// create pipeline
-	let viewport = graphics::viewport::Viewport{ 
-		origin: [ 0.0, 0.0 ],
-		dimensions: [ width, height ],
-		depth_range: (-1.0..1.0)
-	};
-	let pipeline = vulkano::pipeline::GraphicsPipeline::start()
-		.vertex_shader(vs_entry, ())
-		.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-		.fragment_shader(fs_entry, ())
-		.render_pass(rp_subpass)
-		.build(vk_dev)?;
-
-	Ok(pipeline)
 }
 
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
@@ -199,7 +180,6 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 				.ok_or("No GPUs were found!")?;
 		}
 	}
-	// TODO: Check to make sure that the GPU is even capable of the features we need from it.
 
 	log::info!("Using physical device: {}", physical_device.properties().device_name);
 
@@ -207,12 +187,13 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
 		.ok_or("No appropriate queue family found!")?;
 
-	// create logical device
+	// select features and extensions.
+	// the ones chosen here are practically universally supported by any device with Vulkan support.
 	let dev_features = vulkano::device::Features{
 		image_cube_array: true,
 		independent_blend: true,
 		sampler_anisotropy: true,
-		texture_compression_bc: true,
+		texture_compression_bc: true,	// we might need to change this to ASTC or ETC2 if we want to support mobile platforms
 		geometry_shader: true,
 		..vulkano::device::Features::none()
 	};
@@ -221,21 +202,9 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 		..vulkano::device::DeviceExtensions::none()
 	}.union(physical_device.required_extensions());
 
+	// create logical device
 	let use_queue_families = [(q_fam, 0.5)];
 	Ok(vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, use_queue_families)?)
-}
-
-fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
-	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error>>
-{
-	let mut spv_file = std::fs::File::open(filename)
-		.or_else(|e| Err(format!("Failed to open SPIR-V shader file: {}", e)))?;
-
-	let mut spv_data: Vec<u8> = Vec::new();
-	spv_file.read_to_end(&mut spv_data)
-		.or_else(|e| Err(format!("Failed to read SPIR-V shader file: {}", e)))?;
-
-	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
 #[derive(Debug)]

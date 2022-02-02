@@ -15,7 +15,6 @@ use vulkano::sync::{self, FlushError, GpuFuture};
 pub struct Swapchain
 {
 	vk_dev: Arc<vulkano::device::Device>,
-	window_surface: Arc<vulkano::swapchain::Surface<Window>>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
 	swapchain_rp: Arc<vulkano::render_pass::RenderPass>,
@@ -63,7 +62,6 @@ impl Swapchain
 
 		Ok(Swapchain{
 			vk_dev: vk_dev,
-			window_surface: window_surface,
 			swapchain: swapchain,
 			swapchain_images: swapchain_images,
 			swapchain_rp: swapchain_rp,
@@ -77,7 +75,7 @@ impl Swapchain
 
 	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let dimensions: [u32; 2] = self.window_surface.window().inner_size().into();
+		let dimensions: [u32; 2] = self.swapchain.surface().window().inner_size().into();
 
 		let (new_swapchain, new_images) = self.swapchain.recreate().dimensions(dimensions).build()?;
 		self.swapchain = new_swapchain;
@@ -152,9 +150,14 @@ impl Swapchain
 		Ok(())
 	}
 
-	pub fn get_render_pass(&self) -> Arc<vulkano::render_pass::RenderPass> 
+	pub fn render_pass(&self) -> Arc<vulkano::render_pass::RenderPass> 
 	{
 		self.swapchain_rp.clone()
+	}
+
+	pub fn dimensions(&self) -> [u32; 2]
+	{
+		self.swapchain.dimensions()
 	}
 }
 
