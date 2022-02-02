@@ -3,68 +3,44 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-mod util;
 mod rendercontext;
 
 use winit::event::{ Event, WindowEvent };
-use winit::platform::run_return::EventLoopExtRunReturn;
 use simplelog::*;
 
 struct GameContext
 {
 	pref_path: String,
-	event_loop: Option<winit::event_loop::EventLoop<()>>,
 	render_context: rendercontext::RenderContext
 }
 impl GameContext
 {
 	// game context "constructor"
-	pub fn new(org_name: &str, game_name: &str) -> Result<GameContext, Box<dyn std::error::Error>>
+	pub fn new(org_name: &str, game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
+		-> Result<GameContext, Box<dyn std::error::Error>>
 	{
-		let pref_path = log_setup(org_name, game_name)?;
+		let pref_path = setup_log(org_name, game_name)?;
 
 		log::info!("--- Initializing MithrilEngine... ---");
 
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
-		// create event loop
-		let event_loop = winit::event_loop::EventLoop::new();
-
 		let render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
 		Ok(GameContext { 
 			pref_path: pref_path,
-			event_loop: Some(event_loop),
 			render_context: render_context
 		})
 	}
 
-	pub fn render_loop(&mut self)
+	pub fn handle_event(&mut self, event: Event<()>) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let mut event_loop;
-		match self.event_loop.take() {
-			Some(el) => event_loop = el,
-			None => {
-				log_error("GameContext::event_loop was empty! Did render_loop accidentally get run twice or more?".into());
-				return;
-			}
+		match event {
+			Event::WindowEvent { event: WindowEvent::Resized(_), .. } => self.render_context.recreate_swapchain(),
+			Event::RedrawEventsCleared => self.draw_in_event_loop(),
+			_ => Ok(())
 		}
-
-		event_loop.run_return(move |event, _, control_flow| {
-			match event {
-				Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
-					*control_flow = winit::event_loop::ControlFlow::Exit;	// TODO: exit confirmation dialog here
-					Ok(())
-				},
-				Event::WindowEvent { event: WindowEvent::Resized(_), .. } => self.render_context.recreate_swapchain(),
-				Event::RedrawEventsCleared => self.draw_in_event_loop(),
-				_ => Ok(()),
-			}.unwrap_or_else(|e|{
-				log_error(e);
-				*control_flow = winit::event_loop::ControlFlow::Exit;
-			});
-		});
 	}
 
 	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
@@ -81,8 +57,30 @@ impl GameContext
 	}
 }
 
+pub fn run_game(org_name: &str, game_name: &str)
+{
+	let event_loop = winit::event_loop::EventLoop::new();
+
+	match GameContext::new(org_name, game_name, &event_loop) {
+		Ok(mut gctx) => event_loop.run(move |event, _, control_flow| {
+			match event {
+				Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
+					*control_flow = winit::event_loop::ControlFlow::Exit;	// TODO: show exit confirmation dialog here
+				},
+				_ => (),
+			};
+			
+			gctx.handle_event(event).unwrap_or_else(|e| {
+				log_error(e);
+				*control_flow = winit::event_loop::ControlFlow::Exit;
+			});
+		}),	
+		Err(e) => log_error(e)
+	}
+}
+
 // Get preferences path, set up logging, and return the preferences path.
-fn log_setup(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::error::Error>>
+fn setup_log(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::error::Error>>
 {
 	let pref_path = get_pref_path(org_name, game_name)?;	// log, config, and save data files will be saved here
 	println!("Using preferences path: {}", &pref_path);
@@ -103,15 +101,6 @@ fn log_setup(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::err
     CombinedLogger::init(vec![ term_logger, write_logger ])?;
 
 	Ok(pref_path)
-}
-
-pub fn run_game(org_name: &str, game_name: &str)
-{
-	// construct GameContext
-	match GameContext::new(org_name, game_name) {
-		Ok(mut g) => g.render_loop(),	// run render loop
-		Err(e) => log_error(e)	// exit with error
-	}
 }
 
 fn log_error(e: Box<dyn std::error::Error>)
