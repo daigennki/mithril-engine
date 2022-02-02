@@ -54,22 +54,16 @@ impl GameContext
 		event_loop.run_return(move |event, _, control_flow| {
 			match event {
 				Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
-					*control_flow = winit::event_loop::ControlFlow::Exit;
+					*control_flow = winit::event_loop::ControlFlow::Exit;	// TODO: exit confirmation dialog here
+					Ok(())
 				},
-				Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
-					self.render_context.recreate_swapchain().unwrap_or_else(|e| {
-						log_error(e);
-						*control_flow = winit::event_loop::ControlFlow::Exit;
-					});
-				},
-				Event::RedrawEventsCleared => {
-					self.draw_in_event_loop().unwrap_or_else(|e| {
-						log_error(e);
-						*control_flow = winit::event_loop::ControlFlow::Exit;
-					});
-				}
-				_ => (),
-			}
+				Event::WindowEvent { event: WindowEvent::Resized(_), .. } => self.render_context.recreate_swapchain(),
+				Event::RedrawEventsCleared => self.draw_in_event_loop(),
+				_ => Ok(()),
+			}.unwrap_or_else(|e|{
+				log_error(e);
+				*control_flow = winit::event_loop::ControlFlow::Exit;
+			});
 		});
 	}
 
