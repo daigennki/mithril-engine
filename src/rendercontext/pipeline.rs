@@ -17,8 +17,8 @@ impl Pipeline
 {
     pub fn new(
         vk_dev: Arc<vulkano::device::Device>, 
-        vs_filename: String, 
-        fs_filename: Option<String>, 
+        vs_filename: &str, 
+        fs_filename: Option<&str>, 
         render_pass: Arc<RenderPass>, 
         width: u32, height: u32
     ) -> Result<Pipeline, Box<dyn std::error::Error>>

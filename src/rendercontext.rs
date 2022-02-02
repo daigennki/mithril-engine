@@ -9,7 +9,7 @@ mod pipeline;
 
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
-use winit::window::{Window, WindowBuilder};
+use winit::window::WindowBuilder;
 use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::physical::PhysicalDevice;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
@@ -32,7 +32,7 @@ impl RenderContext
 		-> Result<RenderContext, Box<dyn std::error::Error>>
 	{
 		// create Vulkan instance
-		let vkinst = create_vulkan_instance()?;
+		let vkinst = create_vulkan_instance(game_name)?;
 
 		// create logical device
 		let (vk_dev, mut queues) = create_vk_logical_device(vkinst.clone())?;
@@ -46,17 +46,21 @@ impl RenderContext
 		let dev_queue = queues.next().ok_or("No queues are available!")?;
 
 		// create window
-		let window_surface = create_game_window(&event_loop, game_name, vkinst.clone())?;
+		let window_surface = WindowBuilder::new()
+			.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
+			.with_title(game_name)
+			.with_resizable(false)
+			.build_vk_surface(&event_loop, vkinst)?;
 
 		// create swapchain
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface.clone())?;
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 
 		// create pipeline
 		let dimensions = swapchain.dimensions();
 		let basic_pipeline = pipeline::Pipeline::new(
 			vk_dev.clone(), 
-			"shaders/fill_viewport.vert.spv".to_string(),
-			Some("shaders/ui.frag.spv".to_string()),
+			"shaders/fill_viewport.vert.spv",
+			Some("shaders/ui.frag.spv"),
 			swapchain.render_pass(), 
 			dimensions[0], dimensions[1]
 		)?;
@@ -115,8 +119,8 @@ impl RenderContext
 		let dimensions = self.swapchain.dimensions();
 		self.basic_pipeline = pipeline::Pipeline::new(
 			self.vk_dev.clone(), 
-			"shaders/fill_viewport.vert.spv".to_string(),
-			Some("shaders/ui.frag.spv".to_string()),
+			"shaders/fill_viewport.vert.spv",
+			Some("shaders/ui.frag.spv"),
 			self.swapchain.render_pass(), 
 			dimensions[0], dimensions[1]
 		)?;
@@ -125,27 +129,31 @@ impl RenderContext
 	}
 }
 
-fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
-	-> Result<Arc<vulkano::swapchain::Surface<Window>>, vulkano_win::CreationError>
-{
-	WindowBuilder::new()
-		.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
-		.with_title(title)
-		.with_resizable(false)
-		.build_vk_surface(event_loop, vkinst)
-}
-
-fn create_vulkan_instance() -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
+fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
 {
 	let mut app_info = vulkano::app_info_from_cargo_toml!();
+	app_info.application_name = Some(std::borrow::Cow::from(game_name));
 	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
+	app_info.engine_version = app_info.application_version.clone();
 
 	let vk_ext = vulkano_win::required_extensions();
-	let vk_layer_list: Vec<_> = vulkano::instance::layers_list()?
-		.filter(|l| l.description().contains("VK_LAYER_KHRONOS_validation"))
-		.collect();
-	let vk_layer_names = vk_layer_list.iter().map(|l| l.name());
-
+	#[cfg(debug_assertions)]
+	let vk_layer_list: Vec<_>;
+	let vk_layer_names;
+	
+	// only use the validation layer in debug builds
+	#[cfg(debug_assertions)]
+	{
+		vk_layer_list = vulkano::instance::layers_list()?
+			.filter(|l| l.description().contains("VK_LAYER_KHRONOS_validation"))
+			.collect();
+		vk_layer_names = vk_layer_list.iter().map(|l| l.name()).collect::<Vec<&str>>();
+	}
+	#[cfg(not(debug_assertions))]
+	{
+		vk_layer_names = None;
+	}
+	
 	Ok(vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layer_names)?)
 }
 
@@ -156,14 +164,13 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 	log::info!("Available Vulkan physical devices:");
 
 	for pd in PhysicalDevice::enumerate(&vkinst) {
-		let pd_type_str;
-		match pd.properties().device_type {
-			PhysicalDeviceType::IntegratedGpu => pd_type_str = "Integrated GPU",
-			PhysicalDeviceType::DiscreteGpu => pd_type_str = "Discrete GPU",
-			PhysicalDeviceType::VirtualGpu => pd_type_str = "Virtual GPU",
-			PhysicalDeviceType::Cpu => pd_type_str = "CPU",
-			PhysicalDeviceType::Other => pd_type_str = "Other",
-		}
+		let pd_type_str = match pd.properties().device_type {
+			PhysicalDeviceType::IntegratedGpu => "Integrated GPU",
+			PhysicalDeviceType::DiscreteGpu => "Discrete GPU",
+			PhysicalDeviceType::VirtualGpu => "Virtual GPU",
+			PhysicalDeviceType::Cpu => "CPU",
+			PhysicalDeviceType::Other => "Other",
+		};
 		log::info!("- {} ({})", pd.properties().device_name, pd_type_str);
 	}
 	
