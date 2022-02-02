@@ -19,8 +19,12 @@ struct GameContext
 impl GameContext
 {
 	// game context "constructor"
-	pub fn new(pref_path: String, game_name: &str) -> Result<GameContext, Box<dyn std::error::Error>>
+	pub fn new(org_name: &str, game_name: &str) -> Result<GameContext, Box<dyn std::error::Error>>
 	{
+		let pref_path = log_setup(org_name, game_name)?;
+
+		log::info!("--- Initializing MithrilEngine... ---");
+
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
@@ -83,29 +87,17 @@ impl GameContext
 	}
 }
 
-pub fn run_game(org_name: &str, game_name: &str)
+// Get preferences path, set up logging, and return the preferences path.
+fn log_setup(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::error::Error>>
 {
-	// get preferences path
-	// (log, config, and save data files will be saved here)
-	let pref_path;
-	match get_pref_path(org_name, game_name) {
-		Ok(p) => pref_path = p,
-		Err(e) => {
-			print_error_unlogged(&e);
-			return
-		}
-	}
+	let pref_path = get_pref_path(org_name, game_name)?;	// log, config, and save data files will be saved here
 	println!("Using preferences path: {}", &pref_path);
 
 	// open log file
-	let log_file;
-	match open_log_file(&pref_path) {
-		Ok(l) => log_file = l,
-		Err(e) => {
-			print_error_unlogged(&e);
-			return
-		}
-	}
+	let log_file_path = format!("{}game.log", &pref_path);
+	let log_file = std::fs::File::create(&log_file_path).or_else(|e| {
+		Err(format!("Failed to create log file '{}': {}", &log_file_path, e))
+	})?;
 
 	// set up logger
 	let logger_config = ConfigBuilder::new()
@@ -114,51 +106,28 @@ pub fn run_game(org_name: &str, game_name: &str)
 		.build();
 	let term_logger = TermLogger::new(LevelFilter::Info, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
 	let write_logger = WriteLogger::new(LevelFilter::Info, logger_config, log_file);
-    match CombinedLogger::init(vec![ term_logger, write_logger ]) {
-		Ok(()) => (),
-		Err(e) => {
-			print_error_unlogged(&format!("CombinedLogger::init failed: {}", e));
-			return;
-		}
-	}
+    CombinedLogger::init(vec![ term_logger, write_logger ])?;
 
-	log::info!("--- Initializing MithrilEngine... ---");
-
-	// construct GameContext
-	let mut gctx;
-	match GameContext::new(pref_path, game_name) {
-		Ok(g) => gctx = g,
-		Err(e) => {
-			print_init_error(e);
-			return
-		}
-	}
-
-	// run render loop
-	gctx.render_loop();
+	Ok(pref_path)
 }
 
+pub fn run_game(org_name: &str, game_name: &str)
+{
+	// construct GameContext
+	match GameContext::new(org_name, game_name) {
+		Ok(mut g) => g.render_loop(),	// run render loop
+		Err(e) => log_error(e)	// exit with error
+	}
+}
 
 fn log_error(e: Box<dyn std::error::Error>)
 {
-	log::error!("ERROR: {}", e);
+	if log::log_enabled!(log::Level::Error) {
+		log::error!("ERROR: {}", e);
+	} else {
+		println!("ERROR: {}", e);
+	}
 	msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) 
-		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
-}
-
-fn print_error_unlogged(e: &str) 
-{
-	println!("{}", e);
-	msgbox::create("Engine error", &e.to_string(), msgbox::common::IconType::Error)
-		.unwrap_or_else(|mbe| println!("msgbox::create failed: {}", mbe));
-}
-
-fn print_init_error(e: Box<dyn std::error::Error>)
-{
-	log::error!("ERROR: {}", e);
-
-	let msg_str = format!("Initialization error!\n\n{}", e);
-	msgbox::create("Engine error", &msg_str, msgbox::common::IconType::Error)
 		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
 }
 
@@ -203,12 +172,4 @@ fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, String>
 			}
 		}
 	}
-}
-
-fn open_log_file(pref_path: &str) -> Result<std::fs::File, String>
-{
-	let log_file_path = format!("{}game.log", &pref_path);
-	std::fs::File::create(&log_file_path).or_else(|e| {
-		Err(format!("Failed to create log file '{0}': {1}", &log_file_path, e))
-	})
 }
