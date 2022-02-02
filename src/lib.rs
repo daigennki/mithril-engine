@@ -53,7 +53,10 @@ impl GameContext
 					*control_flow = winit::event_loop::ControlFlow::Exit;
 				},
 				Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
-					self.render_context.need_new_swapchain = true;
+					self.render_context.recreate_swapchain().unwrap_or_else(|e| {
+						log_error(e);
+						*control_flow = winit::event_loop::ControlFlow::Exit;
+					});
 				},
 				Event::RedrawEventsCleared => {
 					self.draw_in_event_loop().unwrap_or_else(|e| {

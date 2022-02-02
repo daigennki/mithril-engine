@@ -3,41 +3,29 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
+mod swapchain;
+
 use std::io::Read;
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::{Window, WindowBuilder};
 use vulkano::device::physical::PhysicalDeviceType;
 use vulkano::device::physical::PhysicalDevice;
-use vulkano::format::Format;
 use vulkano::pipeline::graphics;
-use vulkano::swapchain::Swapchain;
-use vulkano::image::swapchain::SwapchainImage;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::render_pass::Subpass;
-use vulkano::render_pass::Framebuffer;
-use vulkano::sync::{self, FlushError, GpuFuture};
 
 pub struct RenderContext 
 {
 	vk_dev: Arc<vulkano::device::Device>,
-	window_surface: Arc<vulkano::swapchain::Surface<Window>>,
-	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
-	framebuffers: Vec<Arc<vulkano::render_pass::Framebuffer>>,
-	basic_rp: Arc<vulkano::render_pass::RenderPass>,
+	swapchain: swapchain::Swapchain,
 	basic_pipeline: Arc<vulkano::pipeline::GraphicsPipeline>,
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
-	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>,
-	cur_image_num: usize,
-	acquire_future: Option<vulkano::swapchain::SwapchainAcquireFuture<Window>>,
-	previous_frame_end: Option<Box<dyn vulkano::sync::GpuFuture>>,
-	//rotation_start: std::time::Instant,
-	pub need_new_swapchain: bool
+	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>
 }
 impl RenderContext
 {
@@ -62,47 +50,19 @@ impl RenderContext
 		let dev_queue = queues.next().ok_or("No queues are available!")?;
 
 		// create swapchain
-		let (swapchain, swapchain_images) = create_vk_swapchain(vk_dev.clone(), window_surface.clone())?;
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface.clone())?;
 
-		// create basic renderpass
-		let basic_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
-			attachments: {
-				color: {
-					load: Clear,
-					store: Store,
-					format: swapchain.format(),
-					samples: 1,
-				}
-			}, 
-			pass: {
-				color: [color],
-				depth_stencil: {}
-			}
+		let basic_pipeline = setup_pipeline(
+			vk_dev.clone(), swapchain.get_render_pass(), 1280.0, 720.0	// TODO: set the proper width and height from the swapchain here
 		)?;
-
-		let (framebuffers, basic_pipeline) = setup_pipeline(
-			vk_dev.clone(), basic_rp.clone(), swapchain.clone(), &swapchain_images
-		)?;
-
-		let previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
-    	//let rotation_start = std::time::Instant::now();
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
-			window_surface: window_surface,
 			swapchain: swapchain,
-			swapchain_images: swapchain_images,
-			framebuffers: framebuffers,
-			basic_rp: basic_rp,
 			basic_pipeline: basic_pipeline,
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
-			cur_cb: None,
-			cur_image_num: 0,
-			acquire_future: None,
-			previous_frame_end: previous_frame_end,
-			//rotation_start: rotation_start,
-			need_new_swapchain: false
+			cur_cb: None
 		})
 	}
 
@@ -111,31 +71,6 @@ impl RenderContext
 		if self.cur_cb.is_some() {
 			return Err(Box::new(CommandBufferAlreadyBuilding))
 		}
-
-		if self.need_new_swapchain {
-			self.recreate_swapchain()?;
-		}
-
-		self.previous_frame_end.as_mut().ok_or("previous_frame_end is `None`!")?.cleanup_finished();
-
-		// TODO: recreate the swapchain in this function when it's suboptimal
-		let (image_num, suboptimal, acquire_future) =
-			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
-				Ok(r) => r,
-				Err(vulkano::swapchain::AcquireError::OutOfDate) => {
-					// recreate the swapchain then try again
-					self.need_new_swapchain = true;
-					return self.start_main_commands();
-				}
-				Err(e) => return Err(Box::new(e))
-			};
-
-		if suboptimal {
-			self.need_new_swapchain = true;
-		}
-
-		self.cur_image_num = image_num;
-		self.acquire_future = Some(acquire_future);
 
 		let q_fam = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id)
 			.ok_or("The given queue ID was invalid!")?;
@@ -151,7 +86,7 @@ impl RenderContext
 	{
 		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
 			.begin_render_pass(
-				self.framebuffers[self.cur_image_num].clone(),
+				self.swapchain.get_next_image()?,
 				vulkano::command_buffer::SubpassContents::Inline,
 				vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
 			)?;
@@ -166,68 +101,24 @@ impl RenderContext
 
 	pub fn submit_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let built_cb = self.cur_cb.take().ok_or(CommandBufferNotBuilding)?.build()?;
-		let acquire_future = self.acquire_future.take().ok_or(CommandBufferNotBuilding)?;
-
-		let future = self.previous_frame_end.take().ok_or(CommandBufferNotBuilding)?
-			.join(acquire_future)
-			.then_execute(self.dev_queue.clone(), built_cb)?
-			.then_swapchain_present(self.dev_queue.clone(), self.swapchain.clone(), self.cur_image_num)
-			.then_signal_fence_and_flush();
-
-		match future {
-			Ok(future) => {
-				self.previous_frame_end = Some(future.boxed());
-			}
-			Err(FlushError::OutOfDate) => {
-				self.recreate_swapchain()?;
-				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
-			}
-			Err(e) => {
-				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
-				return Err(Box::new(e))
-			}
-		}
-		
-		Ok(())
+		self.swapchain.submit_commands(self.cur_cb.take().ok_or(CommandBufferNotBuilding)?, self.dev_queue.clone())
 	}
 
-	fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let dimensions: [u32; 2] = self.window_surface.window().inner_size().into();
-
-		let (new_swapchain, new_images) = self.swapchain.recreate().dimensions(dimensions).build()?;
-		self.swapchain = new_swapchain;
-		self.swapchain_images = new_images;
-
-		let (new_framebuffers, new_pipeline) = setup_pipeline(
-			self.vk_dev.clone(), self.basic_rp.clone(), self.swapchain.clone(), &self.swapchain_images
+		self.swapchain.recreate_swapchain()?;
+		self.basic_pipeline = setup_pipeline(
+			self.vk_dev.clone(), self.swapchain.get_render_pass(), 1280.0, 720.0
 		)?;
-		self.basic_pipeline = new_pipeline;
-		self.framebuffers = new_framebuffers;
-
-		self.need_new_swapchain = false;
 
 		Ok(())
 	}
 }
 
-fn setup_pipeline(
-	vk_dev: Arc<vulkano::device::Device>, 
-	basic_rp: Arc<vulkano::render_pass::RenderPass>, 
-	swapchain: Arc<Swapchain<Window>>,
-	swapchain_images: &Vec<Arc<SwapchainImage<Window>>>
-) -> Result<(Vec::<Arc<Framebuffer>>, Arc<vulkano::pipeline::GraphicsPipeline>), Box<dyn std::error::Error>>
+fn setup_pipeline(vk_dev: Arc<vulkano::device::Device>, rp: Arc<vulkano::render_pass::RenderPass>, width: f32, height: f32)
+	-> Result<Arc<vulkano::pipeline::GraphicsPipeline>, Box<dyn std::error::Error>>
 {
-	let basic_rp_subpass = Subpass::from(basic_rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
-
-	// create frame buffers
-	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(swapchain_images.len());
-	for img in swapchain_images.iter() {
-		let view = vulkano::image::view::ImageView::new(img.clone())?;
-		// TODO: add depth buffers
-		framebuffers.push(Framebuffer::start(basic_rp.clone()).add(view)?.build()?);
-	}
+	let rp_subpass = Subpass::from(rp.clone(), 0).ok_or("Subpass for render pass doesn't exist!")?;
 
 	// load vertex shader
 	let vs = load_spirv(vk_dev.clone(), "shaders/fill_viewport.vert.spv")?;
@@ -240,17 +131,17 @@ fn setup_pipeline(
 	// create pipeline
 	let viewport = graphics::viewport::Viewport{ 
 		origin: [ 0.0, 0.0 ],
-		dimensions: [ swapchain.dimensions()[0] as f32, swapchain.dimensions()[1] as f32 ],
+		dimensions: [ width, height ],
 		depth_range: (-1.0..1.0)
 	};
 	let pipeline = vulkano::pipeline::GraphicsPipeline::start()
 		.vertex_shader(vs_entry, ())
 		.viewport_state(graphics::viewport::ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 		.fragment_shader(fs_entry, ())
-		.render_pass(basic_rp_subpass)
+		.render_pass(rp_subpass)
 		.build(vk_dev)?;
 
-	Ok((framebuffers, pipeline))
+	Ok(pipeline)
 }
 
 fn create_game_window(event_loop: &winit::event_loop::EventLoop<()>, title: &str, vkinst: Arc<vulkano::instance::Instance>) 
@@ -332,19 +223,6 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 
 	let use_queue_families = [(q_fam, 0.5)];
 	Ok(vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, use_queue_families)?)
-}
-
-fn create_vk_swapchain(device: Arc<vulkano::device::Device>, surf: Arc<vulkano::swapchain::Surface<Window>>) 
-	-> Result<(Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>), Box<dyn std::error::Error>>
-{
-	// query surface capabilities
-	let surf_caps = surf.capabilities(device.physical_device())?;
-
-	Ok(Swapchain::start(device.clone(), surf.clone())
-		.num_images(surf_caps.min_image_count)
-		.format(Format::B8G8R8A8_SRGB)
-		.usage(vulkano::image::ImageUsage::color_attachment())
-		.build()?)
 }
 
 fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
