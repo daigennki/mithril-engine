@@ -28,9 +28,9 @@ impl GameContext
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
-		let render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
+		let mut render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
-		let ui_canvas = ui::Canvas::new(&render_context)?;
+		let ui_canvas = ui::Canvas::new(&mut render_context)?;
 
 		Ok(GameContext { 
 			pref_path: pref_path,

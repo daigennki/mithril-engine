@@ -15,6 +15,12 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
+use vulkano::pipeline::graphics::vertex_input::VertexInputState;
+use vulkano::pipeline::graphics::vertex_input::VertexInputRate;
+use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
+use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
+use vulkano::format::Format;
+use std::mem::size_of;
 
 pub struct RenderContext 
 {
@@ -22,7 +28,10 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
-	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>
+	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>,
+
+	// TODO: figure out a better way to allow user-defined shader pipelines
+	ui_pipeline: pipeline::Pipeline
 }
 impl RenderContext
 {
@@ -52,13 +61,35 @@ impl RenderContext
 
 		// create swapchain
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
+		let dim = swapchain.dimensions();
+		
+		// create UI pipeline
+		// set vertex input state
+		let ui_vertex_input = VertexInputState::new()
+			.bindings([
+				(0, VertexInputBindingDescription{ stride: 2 * size_of::<f32>() as u32, input_rate: VertexInputRate::Vertex }),
+				(1, VertexInputBindingDescription{ stride: 2 * size_of::<f32>() as u32, input_rate: VertexInputRate::Vertex })
+			])
+			.attributes([
+				(0, VertexInputAttributeDescription{ binding: 0, format: Format::R32G32_SFLOAT, offset: 0 }),
+				(1, VertexInputAttributeDescription{ binding: 1, format: Format::R32G32_SFLOAT, offset: 0 })
+			]);
+		let ui_pipeline = pipeline::Pipeline::new(
+			vk_dev.clone(), 
+			Some(ui_vertex_input),
+			"ui.vert.spv".into(), 
+			Some("ui.frag.spv".into()),
+			swapchain.render_pass(), 
+			dim[0], dim[1]
+		)?;
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
 			swapchain: swapchain,
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
-			cur_cb: None
+			cur_cb: None,
+			ui_pipeline: ui_pipeline
 		})
 	}
 
@@ -105,17 +136,12 @@ impl RenderContext
 		self.swapchain.recreate_swapchain()?;
 		let dim = self.swapchain.dimensions();
 		
-		// TODO: recreate pipelines that have been handed out here
-		//self.ui_pipeline = pipeline::Pipeline::new(self.vk_dev.clone(), "ui.yaml", self.swapchain.render_pass(), dim[0], dim[1])?;
+		// recreate pipelines with new viewport
+		for pl in [ &mut self.ui_pipeline ] {
+			pl.resize_viewport(dim[0], dim[1])?;
+		}
 
 		Ok(())
-	}
-
-	pub fn create_pipeline_for_swapchain(&self, pipeline_config: &str) -> Result<pipeline::Pipeline, Box<dyn std::error::Error>>
-	{
-		// TODO: what do we do about pipelines that are handed out, but then need to be recreated due to viewport changes?
-		let dim = self.swapchain.dimensions();
-		pipeline::Pipeline::new(self.vk_dev.clone(), pipeline_config, self.swapchain.render_pass(), dim[0], dim[1])
 	}
 }
 
