@@ -111,9 +111,9 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::err
 fn log_error(e: Box<dyn std::error::Error>)
 {
 	if log::log_enabled!(log::Level::Error) {
-		log::error!("ERROR: {}", e);
+		log::error!("{}", e);
 	} else {
-		println!("ERROR: {}", e);
+		println!("{}", e);
 	}
 	msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) 
 		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
