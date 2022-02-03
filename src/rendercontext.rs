@@ -4,8 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod swapchain;
-mod pipeline;
-
+pub mod pipeline;
 
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
@@ -21,7 +20,6 @@ pub struct RenderContext
 {
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: swapchain::Swapchain,
-	basic_pipeline: pipeline::Pipeline,
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
 	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>
@@ -54,21 +52,10 @@ impl RenderContext
 
 		// create swapchain
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
-
-		// create pipeline
-		let dimensions = swapchain.dimensions();
-		let basic_pipeline = pipeline::Pipeline::new(
-			vk_dev.clone(), 
-			"shaders/fill_viewport.vert.spv",
-			Some("shaders/ui.frag.spv"),
-			swapchain.render_pass(), 
-			dimensions[0], dimensions[1]
-		)?;
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
 			swapchain: swapchain,
-			basic_pipeline: basic_pipeline,
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
 			cur_cb: None
@@ -116,16 +103,19 @@ impl RenderContext
 	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.swapchain.recreate_swapchain()?;
-		let dimensions = self.swapchain.dimensions();
-		self.basic_pipeline = pipeline::Pipeline::new(
-			self.vk_dev.clone(), 
-			"shaders/fill_viewport.vert.spv",
-			Some("shaders/ui.frag.spv"),
-			self.swapchain.render_pass(), 
-			dimensions[0], dimensions[1]
-		)?;
+		let dim = self.swapchain.dimensions();
+		
+		// TODO: recreate pipelines that have been handed out here
+		//self.ui_pipeline = pipeline::Pipeline::new(self.vk_dev.clone(), "ui.yaml", self.swapchain.render_pass(), dim[0], dim[1])?;
 
 		Ok(())
+	}
+
+	pub fn create_pipeline_for_swapchain(&self, pipeline_config: &str) -> Result<pipeline::Pipeline, Box<dyn std::error::Error>>
+	{
+		// TODO: what do we do about pipelines that are handed out, but then need to be recreated due to viewport changes?
+		let dim = self.swapchain.dimensions();
+		pipeline::Pipeline::new(self.vk_dev.clone(), pipeline_config, self.swapchain.render_pass(), dim[0], dim[1])
 	}
 }
 

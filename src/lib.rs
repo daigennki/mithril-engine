@@ -4,6 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod rendercontext;
+mod ui;
 
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
@@ -11,7 +12,8 @@ use simplelog::*;
 struct GameContext
 {
 	pref_path: String,
-	render_context: rendercontext::RenderContext
+	render_context: rendercontext::RenderContext,
+	ui_canvas: ui::Canvas
 }
 impl GameContext
 {
@@ -28,9 +30,12 @@ impl GameContext
 
 		let render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
+		let ui_canvas = ui::Canvas::new(&render_context)?;
+
 		Ok(GameContext { 
 			pref_path: pref_path,
-			render_context: render_context
+			render_context: render_context,
+			ui_canvas: ui_canvas
 		})
 	}
 
