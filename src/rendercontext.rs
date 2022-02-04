@@ -15,10 +15,6 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
-use vulkano::pipeline::graphics::vertex_input::VertexInputState;
-use vulkano::pipeline::graphics::vertex_input::VertexInputRate;
-use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
-use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
 use vulkano::format::Format;
 use std::mem::size_of;
 
@@ -64,21 +60,13 @@ impl RenderContext
 		let dim = swapchain.dimensions();
 		
 		// create UI pipeline
-		// set vertex input state
-		let ui_vertex_input = VertexInputState::new()
-			.bindings([
-				(0, VertexInputBindingDescription{ stride: 2 * size_of::<f32>() as u32, input_rate: VertexInputRate::Vertex }),
-				(1, VertexInputBindingDescription{ stride: 2 * size_of::<f32>() as u32, input_rate: VertexInputRate::Vertex })
-			])
-			.attributes([
-				(0, VertexInputAttributeDescription{ binding: 0, format: Format::R32G32_SFLOAT, offset: 0 }),
-				(1, VertexInputAttributeDescription{ binding: 1, format: Format::R32G32_SFLOAT, offset: 0 })
-			]);
 		let ui_pipeline = pipeline::Pipeline::new(
 			vk_dev.clone(), 
-			Some(ui_vertex_input),
-			"ui.vert.spv".into(), 
-			Some("ui.frag.spv".into()),
+			[ 
+				(2 * size_of::<f32>() as u32, Format::R32G32_SFLOAT),
+				(2 * size_of::<f32>() as u32, Format::R32G32_SFLOAT)
+			],
+			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;

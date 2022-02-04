@@ -11,10 +11,14 @@ use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::RenderPass;
 use vulkano::render_pass::Subpass;
 use vulkano::pipeline::graphics::vertex_input::VertexInputState;
+use vulkano::pipeline::graphics::vertex_input::VertexInputRate;
+use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
+use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
+use vulkano::format::Format;
 
 pub struct Pipeline
 {
-    vertex_input: Option<VertexInputState>,
+    vertex_input_state: VertexInputState,
     vs: Arc<ShaderModule>,
     fs: Option<Arc<ShaderModule>>,
     render_pass: Arc<RenderPass>,
@@ -24,7 +28,7 @@ impl Pipeline
 {
     pub fn new(
         vk_dev: Arc<vulkano::device::Device>, 
-        vertex_input: Option<VertexInputState>,
+        vertex_input: impl IntoIterator<Item = (u32, Format)>,
         vs_filename: String, 
         fs_filename: Option<String>,
         render_pass: Arc<RenderPass>, 
@@ -38,6 +42,18 @@ impl Pipeline
             depth_range: (0.0..1.0)
         };
 
+        // Automatically generate vertex input state from input formats and strides.
+        // This assumes bindings in order starting at 0 and with 0 offset - the typical use case.
+        // VertexInputState will remain as default if vertex_input was empty.
+        let mut i: u32 = 0;
+        let mut vertex_input_state = VertexInputState::new();
+        for (stride, vertex_format) in vertex_input {
+            vertex_input_state = vertex_input_state
+                .binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
+                .attribute(i, VertexInputAttributeDescription{ binding: 0, format: vertex_format, offset: 0 });
+            i += 1;
+        }
+
         // load vertex shader
         log::info!("Loading vertex shader {}...", &vs_filename);
         let vs = load_spirv(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
@@ -45,15 +61,10 @@ impl Pipeline
 
         // do some building
         let mut pipeline = GraphicsPipeline::start()
+            .vertex_input_state(vertex_input_state.clone())
             .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
             .vertex_shader(vs_entry, ())
             .render_pass(rp_subpass);
-
-        // add vertex input (optional)
-        match &vertex_input {
-            Some(vi) => pipeline = pipeline.vertex_input_state(vi.clone()),
-            None => ()
-        }
 
         // load fragment shader (optional)
         let fs;
@@ -71,7 +82,7 @@ impl Pipeline
         let pipeline_built = pipeline.build(vk_dev)?;
             
         Ok(Pipeline{
-            vertex_input: vertex_input,
+            vertex_input_state: vertex_input_state,
             vs: vs,
             fs: fs_optional,
             render_pass: render_pass,
@@ -90,13 +101,10 @@ impl Pipeline
 
         let vs_entry = self.vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
         let mut pipeline_builder = GraphicsPipeline::start()
+            .vertex_input_state(self.vertex_input_state.clone())
             .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
             .vertex_shader(vs_entry, ())
             .render_pass(rp_subpass);
-        match &self.vertex_input {
-            Some(vi) => pipeline_builder = pipeline_builder.vertex_input_state(vi.clone()),
-            None => ()
-        }
         match &self.fs {
             Some(fs) => {
                 let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
