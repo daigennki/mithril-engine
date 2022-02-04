@@ -50,7 +50,7 @@ impl Pipeline
         for (stride, vertex_format) in vertex_input {
             vertex_input_state = vertex_input_state
                 .binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
-                .attribute(i, VertexInputAttributeDescription{ binding: 0, format: vertex_format, offset: 0 });
+                .attribute(i, VertexInputAttributeDescription{ binding: i, format: vertex_format, offset: 0 });
             i += 1;
         }
 
