@@ -23,10 +23,9 @@ use std::mem::size_of;
 
 pub struct Pipeline
 {
-	vertex_input_state: VertexInputState,
 	vs: Arc<ShaderModule>,
 	fs: Option<Arc<ShaderModule>>,
-	render_pass: Arc<RenderPass>,
+	samplers: Vec<(usize, u32, Arc<Sampler>)>,
 	pipeline: Arc<GraphicsPipeline>
 }
 impl Pipeline
@@ -36,18 +35,11 @@ impl Pipeline
 		vertex_input: impl IntoIterator<Item = Format>,
 		vs_filename: String, 
 		fs_filename: Option<String>,
-		samplers: impl IntoIterator<Item = (usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
+		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		width: u32, height: u32
 	) -> Result<Pipeline, Box<dyn std::error::Error>>
 	{
-		let rp_subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
-		let viewport = Viewport{ 
-			origin: [ 0.0, 0.0 ],
-			dimensions: [ width as f32, height as f32 ],
-			depth_range: (0.0..1.0)
-		};
-
 		// Automatically generate vertex input state from input formats and strides.
 		// This assumes bindings in order starting at 0, tightly packed, and with 0 offset - the typical use case.
 		// VertexInputState will remain as default if vertex_input was empty.
@@ -65,76 +57,43 @@ impl Pipeline
 		// load vertex shader
 		log::info!("Loading vertex shader {}...", &vs_filename);
 		let vs = load_spirv(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
-		let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-
-		// do some building
-		let mut pipeline = GraphicsPipeline::start()
-			.vertex_input_state(vertex_input_state.clone())
-			.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-			.vertex_shader(vs_entry, ())
-			.render_pass(rp_subpass);
 
 		// load fragment shader (optional)
-		let fs;
-		let fs_optional = match &fs_filename {
+		let fs = match fs_filename {
 			Some(f) => {
 				log::info!("Loading fragment shader {}...", f);
-				fs = load_spirv(vk_dev.clone(), &format!("shaders/{}", f))?;
-				let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-				pipeline = pipeline.fragment_shader(fs_entry, ());
-				Some(fs.clone())
+				Some(load_spirv(vk_dev.clone(), &format!("shaders/{}", f))?)
 			}
 			None => None
 		};
 
-		// build pipeline with immutable samplers, if it needs any
-		let pipeline_built = pipeline.with_auto_layout(vk_dev, |sets| {
-			let mut sets_vec: Vec<_> = sets.into();
-			for (set_i, binding_i, sampler) in samplers {
-				match sets_vec.get_mut(set_i) {
-					Some(s) => {
-						s.set_immutable_samplers(binding_i, [ sampler.clone() ]);
-					}
-					None => {
-						log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i);
-					}
-				}
-			}
-		})?;
+		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
+
+		let pipeline_built = build_pipeline_common(
+			vk_dev.clone(), vertex_input_state, width, height,
+			vs.clone(), fs.clone(), 
+			subpass,
+			&samplers
+		)?;
 			
 		Ok(Pipeline{
-			vertex_input_state: vertex_input_state,
 			vs: vs,
-			fs: fs_optional,
-			render_pass: render_pass,
+			fs: fs,
+			samplers: samplers,
 			pipeline: pipeline_built
 		})
 	}
 
 	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let rp_subpass = Subpass::from(self.render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
-		let viewport = Viewport{ 
-			origin: [ 0.0, 0.0 ],
-			dimensions: [ width as f32, height as f32 ],
-			depth_range: (0.0..1.0)
-		};
+		self.pipeline = build_pipeline_common(
+			self.pipeline.device().clone(), 
+			self.pipeline.vertex_input_state().clone(), width, height,
+			self.vs.clone(), self.fs.clone(), 
+			self.pipeline.subpass().clone(),
+			&self.samplers
+		)?;
 
-		let vs_entry = self.vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-		let mut pipeline_builder = GraphicsPipeline::start()
-			.vertex_input_state(self.vertex_input_state.clone())
-			.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-			.vertex_shader(vs_entry, ())
-			.render_pass(rp_subpass);
-		match &self.fs {
-			Some(fs) => {
-				let fs_entry = fs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-				pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
-			}
-			None => ()
-		}
-
-		self.pipeline = pipeline_builder.build(self.pipeline.device().clone())?;
 		Ok(())
 	}
 
@@ -166,4 +125,57 @@ fn get_format_components(format: Format) -> Result<u32, Box<dyn std::error::Erro
 		Format::R32G32B32A32_SFLOAT => Ok(4),
 		_ => Err("unsupported vertex input format".into())
 	}
+}
+
+fn build_pipeline_common(
+	vk_dev: Arc<vulkano::device::Device>, 
+	vertex_input_state: VertexInputState,
+	width: u32, height: u32,
+	vs: Arc<ShaderModule>,
+	fs: Option<Arc<ShaderModule>>,
+	subpass: Subpass,
+	samplers: &Vec<(usize, u32, Arc<Sampler>)>
+) -> Result<Arc<GraphicsPipeline>, Box<dyn std::error::Error>>
+{
+	let viewport = Viewport{ 
+		origin: [ 0.0, 0.0 ],
+		dimensions: [ width as f32, height as f32 ],
+		depth_range: (0.0..1.0)
+	};
+	
+	// do some building
+	let mut pipeline_builder = GraphicsPipeline::start()
+		.vertex_input_state(vertex_input_state)
+		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
+		.render_pass(subpass);
+	
+	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
+	pipeline_builder = pipeline_builder.vertex_shader(vs_entry, ());
+
+	let fs_moved;
+	match fs {
+		Some(fs_exists) => {
+			fs_moved = fs_exists;
+			let fs_entry = fs_moved.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
+			pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
+		}
+		None => ()
+	}
+
+	// build pipeline with immutable samplers, if it needs any
+	let pipeline = pipeline_builder.with_auto_layout(vk_dev, |sets| {
+		let mut sets_vec: Vec<_> = sets.into();
+		for (set_i, binding_i, sampler) in samplers {
+			match sets_vec.get_mut(*set_i) {
+				Some(s) => {
+					s.set_immutable_samplers(*binding_i, [ sampler.clone() ]);
+				}
+				None => {
+					log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i);
+				}
+			}
+		}
+	})?;
+
+	Ok(pipeline)
 }

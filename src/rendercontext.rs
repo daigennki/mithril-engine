@@ -70,7 +70,7 @@ impl RenderContext
 			vk_dev.clone(), 
 			[ Format::R32G32_SFLOAT, Format::R32G32_SFLOAT ],
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
-			[ (0, 0, ui_sampler.clone()) ],
+			[ (0, 0, ui_sampler.clone()) ].into(),
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;
