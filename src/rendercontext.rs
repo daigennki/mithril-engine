@@ -15,8 +15,8 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
+use vulkano::sampler::Sampler;
 use vulkano::format::Format;
-use std::mem::size_of;
 
 pub struct RenderContext 
 {
@@ -27,6 +27,7 @@ pub struct RenderContext
 	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>,
 
 	// TODO: figure out a better way to allow user-defined shader pipelines
+	ui_sampler: Arc<Sampler>,
 	ui_pipeline: pipeline::Pipeline
 }
 impl RenderContext
@@ -59,14 +60,17 @@ impl RenderContext
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 		
+		// create sampler for UI pipeline
+		let ui_sampler = Sampler::start(vk_dev.clone())
+			.filter(vulkano::sampler::Filter::Linear)
+			.build()?;
+
 		// create UI pipeline
 		let ui_pipeline = pipeline::Pipeline::new(
 			vk_dev.clone(), 
-			[ 
-				(2 * size_of::<f32>() as u32, Format::R32G32_SFLOAT),
-				(2 * size_of::<f32>() as u32, Format::R32G32_SFLOAT)
-			],
+			[ Format::R32G32_SFLOAT, Format::R32G32_SFLOAT ],
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
+			[ (0, 0, ui_sampler.clone()) ],
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;
@@ -77,6 +81,7 @@ impl RenderContext
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
 			cur_cb: None,
+			ui_sampler: ui_sampler,
 			ui_pipeline: ui_pipeline
 		})
 	}
@@ -129,6 +134,19 @@ impl RenderContext
 			pl.resize_viewport(dim[0], dim[1])?;
 		}
 
+		Ok(())
+	}
+
+	
+	/*pub fn bind_pipeline(&mut self, pipeline: &pipeline::Pipeline) -> Result<(), CommandBufferNotBuilding>
+	{
+		pipeline.bind(self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?);
+		Ok(())
+	}*/
+
+	pub fn bind_ui_pipeline(&mut self) -> Result<(), CommandBufferNotBuilding>
+	{
+		self.ui_pipeline.bind(self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?);
 		Ok(())
 	}
 }
@@ -219,7 +237,7 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 }
 
 #[derive(Debug)]
-struct CommandBufferNotBuilding;
+pub struct CommandBufferNotBuilding;
 impl std::error::Error for CommandBufferNotBuilding {}
 impl std::fmt::Display for CommandBufferNotBuilding {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -228,7 +246,7 @@ impl std::fmt::Display for CommandBufferNotBuilding {
 }
 
 #[derive(Debug)]
-struct CommandBufferAlreadyBuilding;
+pub struct CommandBufferAlreadyBuilding;
 impl std::error::Error for CommandBufferAlreadyBuilding {}
 impl std::fmt::Display for CommandBufferAlreadyBuilding {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
