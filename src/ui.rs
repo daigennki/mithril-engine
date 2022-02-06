@@ -10,9 +10,9 @@ pub struct Canvas
 }
 impl Canvas
 {
-    pub fn new(render_context: &mut rendercontext::RenderContext) -> Result<Canvas, Box<dyn std::error::Error>>
-    {
-        Ok(Canvas{
-        })
-    }
+	pub fn new(render_context: &mut rendercontext::RenderContext) -> Result<Canvas, Box<dyn std::error::Error>>
+	{
+		Ok(Canvas{
+		})
+	}
 }

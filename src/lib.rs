@@ -54,6 +54,7 @@ impl GameContext
 		self.render_context.begin_main_render_pass()?;
 
 		// draw stuff here
+		self.render_context.bind_ui_pipeline()?;
 
 		self.render_context.end_main_render_pass()?;
 		self.render_context.submit_commands()?;

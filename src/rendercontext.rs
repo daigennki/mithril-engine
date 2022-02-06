@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 mod swapchain;
 pub mod pipeline;
+pub mod texture;
 
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
