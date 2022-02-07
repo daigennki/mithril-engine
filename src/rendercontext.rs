@@ -18,6 +18,7 @@ use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::sampler::Sampler;
 use vulkano::format::Format;
+use vulkano::sync::GpuFuture;
 
 pub struct RenderContext 
 {
@@ -26,6 +27,8 @@ pub struct RenderContext
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
 	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>,
+
+	upload_futures: std::collections::LinkedList<Box<dyn vulkano::sync::GpuFuture>>,
 
 	// TODO: figure out a better way to allow user-defined shader pipelines
 	ui_sampler: Arc<Sampler>,
@@ -82,6 +85,7 @@ impl RenderContext
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
 			cur_cb: None,
+			upload_futures: std::collections::LinkedList::new(),
 			ui_sampler: ui_sampler,
 			ui_pipeline: ui_pipeline
 		})
@@ -95,6 +99,12 @@ impl RenderContext
 
 		let q_fam = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id)
 			.ok_or("The given queue ID was invalid!")?;
+
+		// wait for image and buffer uploads to finish
+		for upload_future in &mut self.upload_futures {
+			upload_future.cleanup_finished();
+		}
+		self.upload_futures.clear();
 
 		self.cur_cb = Some(
 			AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?
@@ -136,6 +146,13 @@ impl RenderContext
 		}
 
 		Ok(())
+	}
+
+	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, Box<dyn std::error::Error>>
+	{
+		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
+		self.upload_futures.push_back(Box::new(upload_future));
+		Ok(tex)
 	}
 
 	
