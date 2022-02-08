@@ -19,6 +19,8 @@ use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::sampler::Sampler;
 use vulkano::format::Format;
 use vulkano::sync::GpuFuture;
+use vulkano::buffer::ImmutableBuffer;
+use vulkano::buffer::BufferUsage;
 
 pub struct RenderContext 
 {
@@ -100,12 +102,6 @@ impl RenderContext
 		let q_fam = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id)
 			.ok_or("The given queue ID was invalid!")?;
 
-		// wait for image and buffer uploads to finish
-		for upload_future in &mut self.upload_futures {
-			upload_future.cleanup_finished();
-		}
-		self.upload_futures.clear();
-
 		self.cur_cb = Some(
 			AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?
 		);
@@ -132,7 +128,9 @@ impl RenderContext
 
 	pub fn submit_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.swapchain.submit_commands(self.cur_cb.take().ok_or(CommandBufferNotBuilding)?, self.dev_queue.clone())
+		self.swapchain.submit_commands(
+			self.cur_cb.take().ok_or(CommandBufferNotBuilding)?, self.dev_queue.clone(), &mut self.upload_futures
+		)
 	}
 
 	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
@@ -155,6 +153,13 @@ impl RenderContext
 		Ok(tex)
 	}
 
+	pub fn new_buffer<T>(&mut self, data: T, usage: BufferUsage) -> Result<Arc<ImmutableBuffer<T>>, Box<dyn std::error::Error>>
+		where T: Copy + Send + Sync + Sized + 'static
+	{
+		let (buf, upload_future) = ImmutableBuffer::from_data(data, usage, self.dev_queue.clone())?;
+		self.upload_futures.push_back(Box::new(upload_future));
+		Ok(buf)
+	} 
 	
 	/*pub fn bind_pipeline(&mut self, pipeline: &pipeline::Pipeline) -> Result<(), CommandBufferNotBuilding>
 	{

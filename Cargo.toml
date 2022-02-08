@@ -19,7 +19,7 @@ vulkano-win = "0.28"
 # physx = "0.12"
 # ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
 # steamworks = "0.8"
-# glm = "0.2"
+glam = "0.20"
 yaml-rust = "0.4"
 # openal = "0.2"
 # mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety

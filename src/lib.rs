@@ -102,7 +102,16 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::err
 		.set_time_to_local(true)	// use time in time zone local to system
 		.set_time_format_str("%FT%T.%f%Z")	// use RFC 3339 format
 		.build();
-	let term_logger = TermLogger::new(LevelFilter::Info, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
+	let term_log_level;
+	#[cfg(debug_assertions)] 
+	{
+		term_log_level = LevelFilter::Debug;
+	}
+	#[cfg(not(debug_assertions))] 
+	{
+		term_log_level = LevelFilter::Info;
+	}	
+	let term_logger = TermLogger::new(term_log_level, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
 	let write_logger = WriteLogger::new(LevelFilter::Info, logger_config, log_file);
     CombinedLogger::init(vec![ term_logger, write_logger ])?;
 

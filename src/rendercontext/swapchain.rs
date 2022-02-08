@@ -120,20 +120,33 @@ impl Swapchain
 
 	pub fn submit_commands(&mut self, 
 		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
-		queue: Arc<vulkano::device::Queue>
+		queue: Arc<vulkano::device::Queue>,
+		join_futures: &mut std::collections::LinkedList<Box<dyn GpuFuture>>
 	) 
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let built_cb = submit_cb.build()?;
 		let acquire_future = self.acquire_future.take().ok_or(super::CommandBufferNotBuilding)?;
 
-		let future = self.previous_frame_end.take().ok_or(super::CommandBufferNotBuilding)?
-			.join(acquire_future)
+		let mut joined_future = self.previous_frame_end.take().ok_or(super::CommandBufferNotBuilding)?;
+
+		// join futures from images and buffers being uploaded
+		let mut join_count: usize = 0;
+		while !join_futures.is_empty() {
+			let popped_future = join_futures.pop_front().unwrap();
+			joined_future = joined_future.join(popped_future).boxed();
+			join_count += 1;
+		}
+		if join_count > 0 {
+			log::debug!("Joined {} futures", join_count);
+		}
+
+		let future_result = joined_future.join(acquire_future)
 			.then_execute(queue.clone(), built_cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
 			.then_signal_fence_and_flush();
 
-		match future {
+		match future_result {
 			Ok(future) => {
 				self.previous_frame_end = Some(future.boxed());
 			}

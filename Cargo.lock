@@ -814,6 +814,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4fa84eead97d5412b2a20aed4d66612a97a9e41e08eababdb9ae2bf88667490"
+
+[[package]]
 name = "glib"
 version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1196,6 +1202,7 @@ name = "mithrilengine"
 version = "0.0.2"
 dependencies = [
  "ddsfile",
+ "glam",
  "image",
  "log",
  "msgbox",
