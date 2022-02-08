@@ -16,9 +16,11 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
+use vulkano::pipeline::PipelineBindPoint;
+use vulkano::descriptor_set::DescriptorSetsCollection;
+use vulkano::shader::DescriptorRequirements;
 use vulkano::sampler::Sampler;
 use vulkano::format::Format;
-use vulkano::sync::GpuFuture;
 use vulkano::buffer::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
 
@@ -171,6 +173,20 @@ impl RenderContext
 	{
 		self.ui_pipeline.bind(self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?);
 		Ok(())
+	}
+
+	pub fn bind_ui_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) 
+		-> Result<(), CommandBufferNotBuilding>
+		where S: DescriptorSetsCollection
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
+			.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout().clone(), first_set, descriptor_sets);
+		Ok(())
+	}
+
+	pub fn device(&self) -> Arc<vulkano::device::Device>
+	{
+		self.vk_dev.clone()
 	}
 }
 

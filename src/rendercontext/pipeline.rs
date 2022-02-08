@@ -14,6 +14,7 @@ use vulkano::pipeline::graphics::vertex_input::VertexInputState;
 use vulkano::pipeline::graphics::vertex_input::VertexInputRate;
 use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
+use vulkano::pipeline::PipelineLayout;
 use vulkano::format::Format;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
@@ -100,6 +101,12 @@ impl Pipeline
 	pub fn bind(&self, command_buffer: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>) 
 	{
 		command_buffer.bind_pipeline_graphics(self.pipeline.clone());
+	}
+
+	pub fn layout(&self) -> Arc<PipelineLayout>
+	{
+		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
+		pipeline_ref.layout().clone()
 	}
 }
 

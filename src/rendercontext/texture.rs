@@ -8,6 +8,7 @@ use std::path::Path;
 use vulkano::image::ImmutableImage;
 use vulkano::image::ImageDimensions;
 use vulkano::image::MipmapsCount;
+use vulkano::image::view::ImageView;
 use vulkano::format::Format;
 use vulkano::command_buffer::CommandBufferExecFuture;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
@@ -16,7 +17,7 @@ use ddsfile::DxgiFormat;
 
 pub struct Texture
 {
-	vk_img: Arc<ImmutableImage>
+	view: Arc<ImageView<ImmutableImage>>
 }
 impl Texture
 {
@@ -55,12 +56,19 @@ impl Texture
 
 		let (vk_img, upload_future) = ImmutableImage::from_iter(img_raw, dim, mip, vk_fmt, queue)?;
 
+		let view = ImageView::new(vk_img)?;
+
 		Ok((
 			Texture{
-				vk_img: vk_img
+				view: view
 			},
 			upload_future
 		))
+	}
+
+	pub fn clone_view(&self) -> Arc<ImageView<ImmutableImage>>
+	{
+		self.view.clone()
 	}
 }
 
