@@ -19,4 +19,10 @@ impl Canvas
 			test_image: image::Image::new(render_context, std::path::Path::new("test_image.png"))?
 		})
 	}
+
+	pub fn draw(&self, render_ctx: &mut rendercontext::RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	{
+		self.test_image.draw(render_ctx)?;
+		Ok(())
+	}
 }

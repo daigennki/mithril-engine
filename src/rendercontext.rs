@@ -18,7 +18,9 @@ use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::descriptor_set::DescriptorSetsCollection;
-use vulkano::shader::DescriptorRequirements;
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
+use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::sampler::Sampler;
 use vulkano::format::Format;
 use vulkano::buffer::ImmutableBuffer;
@@ -76,12 +78,17 @@ impl RenderContext
 		// create UI pipeline
 		let ui_pipeline = pipeline::Pipeline::new(
 			vk_dev.clone(), 
+			PrimitiveTopology::TriangleStrip,
 			[ Format::R32G32_SFLOAT, Format::R32G32_SFLOAT ],
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
-			[ (0, 0, ui_sampler.clone()) ].into(),
+			[ (0, 2, ui_sampler.clone()) ].into(),
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;
+		log::debug!("Descriptor requirements:");
+		for ((set, binding), req) in ui_pipeline.get_descriptor_requirements() {
+			log::debug!("{}, {}: {}", set, binding, req.descriptor_count);
+		}
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
@@ -169,6 +176,11 @@ impl RenderContext
 		Ok(())
 	}*/
 
+	pub fn get_ui_set_layout(&self) -> Arc<DescriptorSetLayout>
+	{
+		self.ui_pipeline.layout().descriptor_set_layouts()[0].clone()
+	}
+
 	pub fn bind_ui_pipeline(&mut self) -> Result<(), CommandBufferNotBuilding>
 	{
 		self.ui_pipeline.bind(self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?);
@@ -184,9 +196,30 @@ impl RenderContext
 		Ok(())
 	}
 
+	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V) -> Result<(), CommandBufferNotBuilding>
+		where V: VertexBuffersCollection
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
+			.bind_vertex_buffers(first_binding, vertex_buffers);
+		Ok(())
+	}
+
+	pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
+		-> Result<(), Box<dyn std::error::Error>>
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
+			.draw(vertex_count, instance_count, first_vertex, first_instance)?;
+		Ok(())
+	}
+
 	pub fn device(&self) -> Arc<vulkano::device::Device>
 	{
 		self.vk_dev.clone()
+	}
+
+	pub fn get_ui_sampler(&self) -> Arc<Sampler>
+	{
+		self.ui_sampler.clone()
 	}
 }
 

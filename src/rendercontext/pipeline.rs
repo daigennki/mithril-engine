@@ -14,12 +14,21 @@ use vulkano::pipeline::graphics::vertex_input::VertexInputState;
 use vulkano::pipeline::graphics::vertex_input::VertexInputRate;
 use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
+use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
+use vulkano::pipeline::PartialStateMode;
+use vulkano::pipeline::StateMode;
+use vulkano::pipeline::graphics::color_blend::ColorBlendState;
+use vulkano::pipeline::graphics::color_blend::AttachmentBlend;
+use vulkano::pipeline::graphics::color_blend::BlendOp;
+use vulkano::pipeline::graphics::color_blend::BlendFactor;
 use vulkano::pipeline::PipelineLayout;
 use vulkano::format::Format;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::sampler::Sampler;
+use vulkano::shader::DescriptorRequirements;
 use std::mem::size_of;
 
 pub struct Pipeline
@@ -33,14 +42,19 @@ impl Pipeline
 {
 	pub fn new(
 		vk_dev: Arc<vulkano::device::Device>, 
+		primitive_topology: PrimitiveTopology,
 		vertex_input: impl IntoIterator<Item = Format>,
 		vs_filename: String, 
 		fs_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
-		width: u32, height: u32
+		width: u32, height: u32,
 	) -> Result<Pipeline, Box<dyn std::error::Error>>
 	{
+		let input_assembly_state = InputAssemblyState{
+			topology: PartialStateMode::Fixed(primitive_topology),
+			primitive_restart_enable: StateMode::Fixed(false)
+		};
 		// Automatically generate vertex input state from input formats and strides.
 		// This assumes bindings in order starting at 0, tightly packed, and with 0 offset - the typical use case.
 		// VertexInputState will remain as default if vertex_input was empty.
@@ -71,7 +85,7 @@ impl Pipeline
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
 
 		let pipeline_built = build_pipeline_common(
-			vk_dev.clone(), vertex_input_state, width, height,
+			vk_dev.clone(), input_assembly_state, vertex_input_state, width, height,
 			vs.clone(), fs.clone(), 
 			subpass,
 			&samplers
@@ -89,6 +103,7 @@ impl Pipeline
 	{
 		self.pipeline = build_pipeline_common(
 			self.pipeline.device().clone(), 
+			self.pipeline.input_assembly_state().clone(),
 			self.pipeline.vertex_input_state().clone(), width, height,
 			self.vs.clone(), self.fs.clone(), 
 			self.pipeline.subpass().clone(),
@@ -107,6 +122,11 @@ impl Pipeline
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
 		pipeline_ref.layout().clone()
+	}
+
+	pub fn get_descriptor_requirements(&self) -> impl ExactSizeIterator<Item = ((u32, u32), &DescriptorRequirements)>
+	{
+		self.pipeline.descriptor_requirements()
 	}
 }
 
@@ -136,6 +156,7 @@ fn get_format_components(format: Format) -> Result<u32, Box<dyn std::error::Erro
 
 fn build_pipeline_common(
 	vk_dev: Arc<vulkano::device::Device>, 
+	input_assembly_state: InputAssemblyState,
 	vertex_input_state: VertexInputState,
 	width: u32, height: u32,
 	vs: Arc<ShaderModule>,
@@ -149,11 +170,25 @@ fn build_pipeline_common(
 		dimensions: [ width as f32, height as f32 ],
 		depth_range: (0.0..1.0)
 	};
+
+	// TODO: add parameters to change this
+	let color_blend_state = ColorBlendState::new(subpass.num_color_attachments()).blend(
+		AttachmentBlend {
+			color_op: BlendOp::Add,
+			color_source: BlendFactor::One,
+			color_destination: BlendFactor::OneMinusSrcAlpha,
+			alpha_op: BlendOp::Add,
+			alpha_source: BlendFactor::One,
+			alpha_destination: BlendFactor::OneMinusSrcAlpha,
+		},
+	);
 	
 	// do some building
 	let mut pipeline_builder = GraphicsPipeline::start()
+		.input_assembly_state(input_assembly_state)
 		.vertex_input_state(vertex_input_state)
 		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
+		.color_blend_state(color_blend_state)
 		.render_pass(subpass);
 	
 	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
