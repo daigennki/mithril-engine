@@ -17,7 +17,8 @@ use ddsfile::DxgiFormat;
 
 pub struct Texture
 {
-	view: Arc<ImageView<ImmutableImage>>
+	view: Arc<ImageView<ImmutableImage>>,
+	dimensions: ImageDimensions
 }
 impl Texture
 {
@@ -60,7 +61,8 @@ impl Texture
 
 		Ok((
 			Texture{
-				view: view
+				view: view,
+				dimensions: dim
 			},
 			upload_future
 		))
@@ -69,6 +71,11 @@ impl Texture
 	pub fn clone_view(&self) -> Arc<ImageView<ImmutableImage>>
 	{
 		self.view.clone()
+	}
+
+	pub fn dimensions(&self) -> ImageDimensions
+	{
+		self.dimensions
 	}
 }
 

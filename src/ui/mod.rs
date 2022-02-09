@@ -9,20 +9,32 @@ use super::rendercontext;
 
 pub struct Canvas
 {
-	test_image: image::Image
+	elements: std::collections::LinkedList<Box<dyn UIElement>>
 }
 impl Canvas
 {
-	pub fn new(render_context: &mut rendercontext::RenderContext) -> Result<Canvas, Box<dyn std::error::Error>>
+	pub fn new(render_ctx: &mut rendercontext::RenderContext, width: u32, height: u32) 
+		-> Result<Canvas, Box<dyn std::error::Error>>
 	{
+		let projection = glam::Mat4::orthographic_lh(0.0, width as f32, 0.0, height as f32, 0.0, 1.0);
+
+		let mut elements: std::collections::LinkedList<Box<dyn UIElement>> = std::collections::LinkedList::new();
+		
+		let test_image = image::Image::new(
+			render_ctx, glam::Vec2::new(640.0, 360.0), projection, std::path::Path::new("test_image.png")
+		)?;
+		elements.push_back(Box::new(test_image));
+
 		Ok(Canvas{
-			test_image: image::Image::new(render_context, std::path::Path::new("test_image.png"))?
+			elements: elements
 		})
 	}
 
 	pub fn draw(&self, render_ctx: &mut rendercontext::RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.test_image.draw(render_ctx)?;
+		for element in &self.elements {
+			element.draw(render_ctx)?;
+		}
 		Ok(())
 	}
 }

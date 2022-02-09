@@ -30,7 +30,7 @@ impl GameContext
 
 		let mut render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
-		let ui_canvas = ui::Canvas::new(&mut render_context)?;
+		let ui_canvas = ui::Canvas::new(&mut render_context, 1280, 720)?;
 
 		Ok(GameContext { 
 			pref_path: pref_path,

@@ -20,14 +20,24 @@ pub struct Image
 }
 impl Image
 {
-	pub fn new(render_ctx: &mut RenderContext, path: &std::path::Path) 
+	pub fn new(render_ctx: &mut RenderContext, pos: glam::Vec2, proj: glam::Mat4, path: &std::path::Path) 
 		-> Result<Image, Box<dyn std::error::Error>>
 	{
-		let transformation = glam::Mat4::IDENTITY;
+		let tex = render_ctx.new_texture(path)?;
+		let dim = tex.dimensions();
+		let transformation = proj * glam::Mat4::from_scale_rotation_translation(
+			glam::Vec3::new(dim.width() as f32, dim.height() as f32, 1.0), 
+			glam::Quat::IDENTITY, 
+			glam::Vec3::new(pos.x, pos.y, 0.0)
+		);
 		let transform_buf = render_ctx.new_buffer(transformation, BufferUsage::uniform_buffer())?;
 
-		// texture
-		let tex = render_ctx.new_texture(path)?;
+		// create descriptor set
+		let set_layout = render_ctx.get_ui_set_layout();
+		let descriptor_set = PersistentDescriptorSet::new(set_layout, [
+			WriteDescriptorSet::buffer(0, transform_buf.clone()),
+			WriteDescriptorSet::image_view(1, tex.clone_view())
+		])?;
 
 		// vertex data (common for both position and UV)
 		let vertices: [f32; 8] = [
@@ -38,16 +48,8 @@ impl Image
 		];
 		let vertex_buf = render_ctx.new_buffer(vertices, BufferUsage::vertex_buffer())?;
 
-		let set_layout = render_ctx.get_ui_set_layout();
-
-		// create descriptor set
-		let descriptor_set = PersistentDescriptorSet::new(set_layout, [
-			WriteDescriptorSet::buffer(0, transform_buf.clone()),
-			WriteDescriptorSet::image_view(1, tex.clone_view())
-		])?;
-
 		Ok(Image{
-			tex: render_ctx.new_texture(path)?,
+			tex: tex,
 			transform_buf: transform_buf,
 			descriptor_set: descriptor_set,
 			vertex_buf: vertex_buf
