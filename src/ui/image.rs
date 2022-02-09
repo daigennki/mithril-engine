@@ -24,10 +24,7 @@ impl Image
 		-> Result<Image, Box<dyn std::error::Error>>
 	{
 		let transformation = glam::Mat4::IDENTITY;
-		let transform_buf = render_ctx.new_buffer(transformation, BufferUsage{
-			uniform_buffer: true,
-			..BufferUsage::none()
-		})?;
+		let transform_buf = render_ctx.new_buffer(transformation, BufferUsage::uniform_buffer())?;
 
 		// texture
 		let tex = render_ctx.new_texture(path)?;
@@ -39,10 +36,7 @@ impl Image
 			0.0, 1.0,
 			1.0, 1.0
 		];
-		let vertex_buf = render_ctx.new_buffer(vertices, BufferUsage{
-			vertex_buffer: true,
-			..BufferUsage::none()
-		})?;
+		let vertex_buf = render_ctx.new_buffer(vertices, BufferUsage::vertex_buffer())?;
 
 		let set_layout = render_ctx.get_ui_set_layout();
 

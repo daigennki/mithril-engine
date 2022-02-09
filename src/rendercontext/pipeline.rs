@@ -16,8 +16,6 @@ use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
-use vulkano::pipeline::PartialStateMode;
-use vulkano::pipeline::StateMode;
 use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::pipeline::graphics::color_blend::AttachmentBlend;
 use vulkano::pipeline::graphics::color_blend::BlendOp;
@@ -51,24 +49,6 @@ impl Pipeline
 		width: u32, height: u32,
 	) -> Result<Pipeline, Box<dyn std::error::Error>>
 	{
-		let input_assembly_state = InputAssemblyState{
-			topology: PartialStateMode::Fixed(primitive_topology),
-			primitive_restart_enable: StateMode::Fixed(false)
-		};
-		// Automatically generate vertex input state from input formats and strides.
-		// This assumes bindings in order starting at 0, tightly packed, and with 0 offset - the typical use case.
-		// VertexInputState will remain as default if vertex_input was empty.
-		let mut i: u32 = 0;
-		let mut vertex_input_state = VertexInputState::new();
-		for vertex_format in vertex_input {
-			let stride = get_format_components(vertex_format)? * size_of::<f32>() as u32;
-
-			vertex_input_state = vertex_input_state
-				.binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
-				.attribute(i, VertexInputAttributeDescription{ binding: i, format: vertex_format, offset: 0 });
-			i += 1;
-		}
-
 		// load vertex shader
 		log::info!("Loading vertex shader {}...", &vs_filename);
 		let vs = load_spirv(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
@@ -83,12 +63,18 @@ impl Pipeline
 		};
 
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
+		let input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
+		let vertex_input_state = vertex_input_state_from_formats(vertex_input)?;
+		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
 		let pipeline_built = build_pipeline_common(
-			vk_dev.clone(), input_assembly_state, vertex_input_state, width, height,
+			vk_dev.clone(), input_assembly_state, 
+			vertex_input_state, 
+			width, height,
 			vs.clone(), fs.clone(), 
 			subpass,
-			&samplers
+			&samplers,
+			color_blend_state
 		)?;
 
 		log::debug!("Built pipeline with descriptors:");
@@ -116,7 +102,8 @@ impl Pipeline
 			self.pipeline.vertex_input_state().clone(), width, height,
 			self.vs.clone(), self.fs.clone(), 
 			self.pipeline.subpass().clone(),
-			&self.samplers
+			&self.samplers,
+			self.pipeline.color_blend_state().cloned()
 		)?;
 
 		Ok(())
@@ -147,14 +134,64 @@ fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str)
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
-fn get_format_components(format: Format) -> Result<u32, Box<dyn std::error::Error>> 
+#[derive(Debug)]
+pub struct UnsupportedVertexInputFormat;
+impl std::error::Error for UnsupportedVertexInputFormat {}
+impl std::fmt::Display for UnsupportedVertexInputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "unsupported vertex input format")
+    }
+}
+fn get_format_components(format: Format) -> Result<u32, UnsupportedVertexInputFormat> 
 {
 	match format {
 		Format::R32_SFLOAT => Ok(1),
 		Format::R32G32_SFLOAT => Ok(2),
 		Format::R32G32B32_SFLOAT => Ok(3),
 		Format::R32G32B32A32_SFLOAT => Ok(4),
-		_ => Err("unsupported vertex input format".into())
+		_ => Err(UnsupportedVertexInputFormat)
+	}
+}
+fn vertex_input_state_from_formats(vertex_input: impl IntoIterator<Item = Format>) 
+	-> Result<VertexInputState, UnsupportedVertexInputFormat>
+{
+	// Automatically generate vertex input state from input formats and strides.
+	// This assumes bindings in order starting at 0, tightly packed, and with 0 offset - the typical use case.
+	// VertexInputState will remain as default if vertex_input was empty.
+	let mut i: u32 = 0;
+	let mut vertex_input_state = VertexInputState::new();
+	for vertex_format in vertex_input {
+		let stride = get_format_components(vertex_format)? * size_of::<f32>() as u32;
+
+		vertex_input_state = vertex_input_state
+			.binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
+			.attribute(i, VertexInputAttributeDescription{ binding: i, format: vertex_format, offset: 0 });
+		i += 1;
+	}
+	Ok(vertex_input_state)
+}
+
+fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
+{
+	// only enable blending for the first attachment.
+	// this blending configuration will require textures to be premultiplied by alpha.
+	// TODO: what do we do about PNG images, which are *not* premultiplied by alpha, according to the PNG spec?
+	if subpass.num_color_attachments() > 0 {
+		let mut new_color_blend_state = ColorBlendState::new(subpass.num_color_attachments());
+		match new_color_blend_state.attachments.get_mut(0) {
+			Some(a) => a.blend = Some(AttachmentBlend{
+				color_op: BlendOp::Add,
+				color_source: BlendFactor::One,
+				color_destination: BlendFactor::OneMinusSrcAlpha,
+				alpha_op: BlendOp::Add,
+				alpha_source: BlendFactor::One,
+				alpha_destination: BlendFactor::OneMinusSrcAlpha
+			}),
+			None => ()
+		}
+		Some(new_color_blend_state)
+	} else {
+		None
 	}
 }
 
@@ -166,7 +203,8 @@ fn build_pipeline_common(
 	vs: Arc<ShaderModule>,
 	fs: Option<Arc<ShaderModule>>,
 	subpass: Subpass,
-	samplers: &Vec<(usize, u32, Arc<Sampler>)>
+	samplers: &Vec<(usize, u32, Arc<Sampler>)>,
+	color_blend_state: Option<ColorBlendState>
 ) -> Result<Arc<GraphicsPipeline>, Box<dyn std::error::Error>>
 {
 	let viewport = Viewport{ 
@@ -174,26 +212,18 @@ fn build_pipeline_common(
 		dimensions: [ width as f32, height as f32 ],
 		depth_range: (0.0..1.0)
 	};
-
-	// TODO: add parameters to change this
-	let color_blend_state = ColorBlendState::new(subpass.num_color_attachments()).blend(
-		AttachmentBlend {
-			color_op: BlendOp::Add,
-			color_source: BlendFactor::One,
-			color_destination: BlendFactor::OneMinusSrcAlpha,
-			alpha_op: BlendOp::Add,
-			alpha_source: BlendFactor::One,
-			alpha_destination: BlendFactor::OneMinusSrcAlpha,
-		},
-	);
 	
 	// do some building
 	let mut pipeline_builder = GraphicsPipeline::start()
 		.input_assembly_state(input_assembly_state)
 		.vertex_input_state(vertex_input_state)
 		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
-		.color_blend_state(color_blend_state)
 		.render_pass(subpass);
+
+	match color_blend_state {
+		Some(c) => pipeline_builder = pipeline_builder.color_blend_state(c),
+		None => ()
+	}
 	
 	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 	pipeline_builder = pipeline_builder.vertex_shader(vs_entry, ());
