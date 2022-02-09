@@ -131,8 +131,9 @@ impl RenderContext
 
 	pub fn submit_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
+		let submit_futures = std::mem::take(&mut self.upload_futures);	// consume the futures to join them upon submission
 		self.swapchain.submit_commands(
-			self.cur_cb.take().ok_or(CommandBufferNotBuilding)?, self.dev_queue.clone(), &mut self.upload_futures
+			self.cur_cb.take().ok_or(CommandBufferNotBuilding)?, self.dev_queue.clone(), submit_futures
 		)
 	}
 

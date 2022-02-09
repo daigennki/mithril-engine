@@ -121,7 +121,7 @@ impl Swapchain
 	pub fn submit_commands(&mut self, 
 		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
 		queue: Arc<vulkano::device::Queue>,
-		join_futures: &mut std::collections::LinkedList<Box<dyn GpuFuture>>
+		join_futures: std::collections::LinkedList<Box<dyn GpuFuture>>
 	) 
 		-> Result<(), Box<dyn std::error::Error>>
 	{
@@ -132,9 +132,8 @@ impl Swapchain
 
 		// join futures from images and buffers being uploaded
 		let mut join_count: usize = 0;
-		while !join_futures.is_empty() {
-			let popped_future = join_futures.pop_front().unwrap();
-			joined_future = joined_future.join(popped_future).boxed();
+		for join_future in join_futures {
+			joined_future = joined_future.join(join_future).boxed();
 			join_count += 1;
 		}
 		if join_count > 0 {
