@@ -53,8 +53,10 @@ impl Image
 			vertex_buf: vertex_buf
 		})
 	}
-
-	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+}
+impl super::UIElement for Image
+{
+	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
 		render_ctx.bind_ui_descriptor_set(0, self.descriptor_set.clone())?;
 		render_ctx.bind_vertex_buffers(0, self.vertex_buf.clone())?;

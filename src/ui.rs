@@ -26,3 +26,9 @@ impl Canvas
 		Ok(())
 	}
 }
+
+/// Common trait for UI elements.
+pub trait UIElement
+{
+	fn draw(&self, render_ctx: &mut rendercontext::RenderContext) -> Result<(), Box<dyn std::error::Error>>;
+}
