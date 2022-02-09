@@ -37,7 +37,6 @@ pub struct RenderContext
 	upload_futures: std::collections::LinkedList<Box<dyn vulkano::sync::GpuFuture>>,
 
 	// TODO: figure out a better way to allow user-defined shader pipelines
-	ui_sampler: Arc<Sampler>,
 	ui_pipeline: pipeline::Pipeline
 }
 impl RenderContext
@@ -81,14 +80,10 @@ impl RenderContext
 			PrimitiveTopology::TriangleStrip,
 			[ Format::R32G32_SFLOAT, Format::R32G32_SFLOAT ],
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
-			[ (0, 2, ui_sampler.clone()) ].into(),
+			[ (0, 2, ui_sampler) ].into(),
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;
-		log::debug!("Descriptor requirements:");
-		for ((set, binding), req) in ui_pipeline.get_descriptor_requirements() {
-			log::debug!("{}, {}: {}", set, binding, req.descriptor_count);
-		}
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
@@ -97,7 +92,6 @@ impl RenderContext
 			dev_queue: dev_queue,
 			cur_cb: None,
 			upload_futures: std::collections::LinkedList::new(),
-			ui_sampler: ui_sampler,
 			ui_pipeline: ui_pipeline
 		})
 	}
@@ -210,16 +204,6 @@ impl RenderContext
 		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
 			.draw(vertex_count, instance_count, first_vertex, first_instance)?;
 		Ok(())
-	}
-
-	pub fn device(&self) -> Arc<vulkano::device::Device>
-	{
-		self.vk_dev.clone()
-	}
-
-	pub fn get_ui_sampler(&self) -> Arc<Sampler>
-	{
-		self.ui_sampler.clone()
 	}
 }
 

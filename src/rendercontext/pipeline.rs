@@ -28,7 +28,7 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::sampler::Sampler;
-use vulkano::shader::DescriptorRequirements;
+use vulkano::descriptor_set::layout::DescriptorType;
 use std::mem::size_of;
 
 pub struct Pipeline
@@ -90,6 +90,15 @@ impl Pipeline
 			subpass,
 			&samplers
 		)?;
+
+		log::debug!("Built pipeline with descriptors:");
+		for ((set, binding), req) in pipeline_built.descriptor_requirements() {
+			log::debug!(
+				"set {}, binding {}: {}x {}", 
+				set, binding, req.descriptor_count, 
+				&print_descriptor_types(&req.descriptor_types)
+			);
+		}
 			
 		Ok(Pipeline{
 			vs: vs,
@@ -122,11 +131,6 @@ impl Pipeline
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
 		pipeline_ref.layout().clone()
-	}
-
-	pub fn get_descriptor_requirements(&self) -> impl ExactSizeIterator<Item = ((u32, u32), &DescriptorRequirements)>
-	{
-		self.pipeline.descriptor_requirements()
 	}
 }
 
@@ -206,9 +210,8 @@ fn build_pipeline_common(
 
 	// build pipeline with immutable samplers, if it needs any
 	let pipeline = pipeline_builder.with_auto_layout(vk_dev, |sets| {
-		let mut sets_vec: Vec<_> = sets.into();
 		for (set_i, binding_i, sampler) in samplers {
-			match sets_vec.get_mut(*set_i) {
+			match sets.get_mut(*set_i) {
 				Some(s) => {
 					s.set_immutable_samplers(*binding_i, [ sampler.clone() ]);
 				}
@@ -220,4 +223,31 @@ fn build_pipeline_common(
 	})?;
 
 	Ok(pipeline)
+}
+
+fn print_descriptor_types(types: &Vec<DescriptorType>) -> String
+{
+	let mut out_str = String::new();
+	let mut first = true;
+	for ty in types {
+		if first {
+			first = false;
+		} else {
+			out_str += "/";
+		}
+		out_str += match ty {
+			DescriptorType::Sampler => "Sampler",
+			DescriptorType::CombinedImageSampler => "Combined image sampler",
+			DescriptorType::SampledImage => "Sampled image",
+			DescriptorType::StorageImage => "Storage image",
+			DescriptorType::UniformTexelBuffer => "Uniform texel buffer",
+			DescriptorType::StorageTexelBuffer => "Storage texel buffer",
+			DescriptorType::UniformBuffer => "Uniform buffer",
+			DescriptorType::StorageBuffer => "Storage buffer",
+			DescriptorType::UniformBufferDynamic => "Dynamic uniform buffer",
+			DescriptorType::StorageBufferDynamic => "Dynamic storage buffer",
+			DescriptorType::InputAttachment => "Input attachment"
+		}
+	}
+	out_str
 }

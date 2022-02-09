@@ -49,8 +49,7 @@ impl Image
 		// create descriptor set
 		let descriptor_set = PersistentDescriptorSet::new(set_layout, [
 			WriteDescriptorSet::buffer(0, transform_buf.clone()),
-			WriteDescriptorSet::image_view(1, tex.clone_view()),
-			WriteDescriptorSet::sampler(2, render_ctx.get_ui_sampler())
+			WriteDescriptorSet::image_view(1, tex.clone_view())
 		])?;
 
 		Ok(Image{
