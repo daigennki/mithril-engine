@@ -25,6 +25,7 @@ use vulkano::sampler::Sampler;
 use vulkano::format::Format;
 use vulkano::buffer::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
+use vulkano::sync::FlushError;
 
 pub struct RenderContext 
 {
@@ -221,6 +222,11 @@ impl RenderContext
 	pub fn get_main_subpass(&self) -> vulkano::render_pass::Subpass
 	{
 		self.swapchain.render_pass().first_subpass()
+	}
+
+	pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	{
+		self.swapchain.wait_for_fence()
 	}
 }
 

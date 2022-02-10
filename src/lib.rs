@@ -66,13 +66,6 @@ impl GameContext
 
 	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.gui.immediate_ui(|gui| {
-			let ctx = gui.context();
-			// Fill egui UI layout here
-			// It may be convenient to organize the layout under a stateful GuiState struct (See `wholesome` example)
-			self.gui_state.layout(ctx, self.render_context.swapchain_dimensions(), 0.0);
-		});
-
 		self.render_context.begin_main_render_pass()?;
 
 		// draw stuff here
@@ -82,6 +75,14 @@ impl GameContext
 		self.render_context.end_render_pass()?;
 
 		// draw GUI
+		// we have to wait for things to finish on the GPU side by waiting for the fence, before egui sends data to the GPU.
+		self.render_context.wait_for_fence()?;	
+		self.gui.immediate_ui(|gui| {
+			let ctx = gui.context();
+			// Fill egui UI layout here
+			// It may be convenient to organize the layout under a stateful GuiState struct (See `wholesome` example)
+			self.gui_state.layout(ctx, self.render_context.swapchain_dimensions(), 0.0);
+		});
 		self.render_context.begin_gui_render_pass()?;
 		let gui_cb = self.gui.draw_on_subpass_image(self.render_context.swapchain_dimensions());
 		self.render_context.submit_secondary(gui_cb)?;

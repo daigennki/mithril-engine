@@ -7,22 +7,30 @@ use std::sync::Arc;
 use winit::window::Window;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::CommandBufferExecFuture;
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::format::Format;
-use vulkano::render_pass::Framebuffer;
-use vulkano::sync::{self, FlushError, GpuFuture};
+use vulkano::render_pass::{ RenderPass, Framebuffer };
+use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture};
+use vulkano::swapchain::{ SwapchainAcquireFuture, PresentFuture };
 
 pub struct Swapchain
 {
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
-	swapchain_rp: Arc<vulkano::render_pass::RenderPass>,
-	framebuffers: Vec<Arc<vulkano::render_pass::Framebuffer>>,
+	swapchain_rp: Arc<RenderPass>,
+	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
-	acquire_future: Option<vulkano::swapchain::SwapchainAcquireFuture<Window>>,
-	previous_frame_end: Option<Box<dyn GpuFuture>>,
-	//rotation_start: std::time::Instant,
+	acquire_future: Option<SwapchainAcquireFuture<Window>>,
+	fence_signal_future: Option<
+		FenceSignalFuture<
+			PresentFuture<
+				CommandBufferExecFuture<Box<dyn GpuFuture>, PrimaryAutoCommandBuffer>, 
+				Window
+			>
+		>
+	>,
 	pub need_new_swapchain: bool
 }
 impl Swapchain
@@ -61,7 +69,7 @@ impl Swapchain
 
 		let framebuffers = create_framebuffers(&swapchain_images, swapchain_rp.clone())?;
 
-		let previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
+		//let previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
     	//let rotation_start = std::time::Instant::now();
 
 		Ok(Swapchain{
@@ -72,7 +80,8 @@ impl Swapchain
 			framebuffers: framebuffers,
 			cur_image_num: 0,
 			acquire_future: None,
-			previous_frame_end: previous_frame_end,
+			//previous_frame_end: previous_frame_end,
+			fence_signal_future: None,
 			need_new_swapchain: false
 		})
 	}
@@ -91,16 +100,16 @@ impl Swapchain
 		Ok(())
 	}
 
-	pub fn get_next_image(&mut self) 
-		-> Result<Arc<vulkano::render_pass::Framebuffer>, Box<dyn std::error::Error>>
+	pub fn get_next_image(&mut self) -> Result<Arc<vulkano::render_pass::Framebuffer>, Box<dyn std::error::Error>>
 	{
 		if self.need_new_swapchain {
 			self.recreate_swapchain()?;
 		}
+		match self.fence_signal_future.as_mut() {
+			Some(p) => p.cleanup_finished(),
+			None => ()
+		}
 
-		self.previous_frame_end.as_mut().ok_or("previous_frame_end is `None`!")?.cleanup_finished();
-
-		// TODO: recreate the swapchain in this function when it's suboptimal
 		let (image_num, suboptimal, acquire_future) =
 			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 				Ok(r) => r,
@@ -127,6 +136,14 @@ impl Swapchain
 		self.framebuffers[self.cur_image_num].clone()
 	}
 
+	pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	{
+		match self.fence_signal_future.as_ref() {
+			Some(f) => f.wait(None),
+			None => Ok(())
+		}
+	}
+
 	pub fn submit_commands(&mut self, 
 		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
 		queue: Arc<vulkano::device::Queue>,
@@ -135,9 +152,13 @@ impl Swapchain
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let built_cb = submit_cb.build()?;
-		let acquire_future = self.acquire_future.take().ok_or(CommandBufferNotBuilding)?;
 
-		let mut joined_future = self.previous_frame_end.take().ok_or(CommandBufferNotBuilding)?;
+		let mut joined_future = self.acquire_future.take().ok_or(ImageNotAcquired)?.boxed();
+		
+		match self.fence_signal_future.take() {
+			Some(f) => joined_future = joined_future.join(f).boxed(),
+			None => ()
+		}
 
 		// join futures from images and buffers being uploaded
 		let mut join_count: usize = 0;
@@ -149,24 +170,19 @@ impl Swapchain
 			log::debug!("Joined {} futures", join_count);
 		}
 
-		let future_result = joined_future.join(acquire_future)
+		let future_result = joined_future
 			.then_execute(queue.clone(), built_cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
 			.then_signal_fence_and_flush();
 
 		match future_result {
 			Ok(future) => {
-				// TODO: this is probably wasting CPU time, so find a way to not wait here, 
-				// without getting GpuLocked error from egui
-				future.wait(None)?;	
-				self.previous_frame_end = Some(future.boxed());
+				self.fence_signal_future = Some(future);
 			}
 			Err(FlushError::OutOfDate) => {
 				self.recreate_swapchain()?;
-				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
 			}
 			Err(e) => {
-				self.previous_frame_end = Some(sync::now(self.vk_dev.clone()).boxed());
 				return Err(Box::new(e))
 			}
 		}
@@ -206,10 +222,10 @@ fn create_framebuffers(
 }
 
 #[derive(Debug)]
-pub struct CommandBufferNotBuilding;
-impl std::error::Error for CommandBufferNotBuilding {}
-impl std::fmt::Display for CommandBufferNotBuilding {
+struct ImageNotAcquired;
+impl std::error::Error for ImageNotAcquired {}
+impl std::fmt::Display for ImageNotAcquired {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The RenderContext's current command buffer is not building!")
+        write!(f, "An attempt was made to submit a primary command buffer when no image was acquired!")
     }
 }
