@@ -6,26 +6,26 @@
 use super::rendercontext::RenderContext;
 use super::quad::Quad;
 
-pub struct Image
+pub struct Img
 {
 	quad: Quad
 }
-impl Image
+impl Img
 {
 	pub fn new(render_ctx: &mut RenderContext, pos: glam::Vec2, proj: glam::Mat4, path: &std::path::Path) 
-		-> Result<Image, Box<dyn std::error::Error>>
+		-> Result<Img, Box<dyn std::error::Error>>
 	{
 		let tex = render_ctx.new_texture(path)?;
 		let dim = tex.dimensions();
 		let scale = glam::Vec2::new(dim.width() as f32, dim.height() as f32);
 		let quad = Quad::new(render_ctx, pos, scale, proj, tex)?;
 
-		Ok(Image{
+		Ok(Img{
 			quad: quad
 		})
 	}
 }
-impl super::UIElement for Image
+impl super::UIElement for Img
 {
 	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{

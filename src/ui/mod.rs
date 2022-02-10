@@ -3,8 +3,8 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-mod image;
 mod quad;
+mod img;
 
 use super::rendercontext;
 
@@ -21,7 +21,7 @@ impl Canvas
 
 		let mut elements: std::collections::LinkedList<Box<dyn UIElement>> = std::collections::LinkedList::new();
 		
-		let test_image = image::Image::new(
+		let test_image = img::Img::new(
 			render_ctx, glam::Vec2::new(640.0, 360.0), projection, std::path::Path::new("test_image.png")
 		)?;
 		elements.push_back(Box::new(test_image));
