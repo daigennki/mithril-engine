@@ -15,7 +15,6 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::{ ExecuteCommandsError, DrawError };
-use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::descriptor_set::DescriptorSetsCollection;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
@@ -33,7 +32,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
-	cur_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
+	cur_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 
 	upload_futures: std::collections::LinkedList<Box<dyn vulkano::sync::GpuFuture>>,
 

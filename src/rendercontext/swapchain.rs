@@ -8,7 +8,6 @@ use winit::window::Window;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::CommandBufferExecFuture;
-use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture};
@@ -145,20 +144,17 @@ impl Swapchain
 	}
 
 	pub fn submit_commands(&mut self, 
-		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
+		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		queue: Arc<vulkano::device::Queue>,
 		join_futures: std::collections::LinkedList<Box<dyn GpuFuture>>
 	) 
 		-> Result<(), Box<dyn std::error::Error>>
 	{
-		let built_cb = submit_cb.build()?;
-
-		let mut joined_future = self.acquire_future.take().ok_or(ImageNotAcquired)?.boxed();
-		
-		match self.fence_signal_future.take() {
-			Some(f) => joined_future = joined_future.join(f).boxed(),
-			None => ()
-		}
+		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
+		let mut joined_future = match self.fence_signal_future.take() {
+			Some(f) => f.join(acquire_future).boxed(),
+			None => acquire_future.boxed()
+		};
 
 		// join futures from images and buffers being uploaded
 		let mut join_count: usize = 0;
@@ -171,7 +167,7 @@ impl Swapchain
 		}
 
 		let future_result = joined_future
-			.then_execute(queue.clone(), built_cb)?
+			.then_execute(queue.clone(), submit_cb.build()?)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
 			.then_signal_fence_and_flush();
 

@@ -24,7 +24,6 @@ use vulkano::pipeline::PipelineLayout;
 use vulkano::format::Format;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
-use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::sampler::Sampler;
 use vulkano::descriptor_set::layout::DescriptorType;
 use std::mem::size_of;
@@ -109,7 +108,7 @@ impl Pipeline
 		Ok(())
 	}
 
-	pub fn bind(&self, command_buffer: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>) 
+	pub fn bind(&self, command_buffer: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) 
 	{
 		command_buffer.bind_pipeline_graphics(self.pipeline.clone());
 	}
