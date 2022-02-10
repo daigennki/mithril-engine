@@ -66,7 +66,7 @@ impl RenderContext
 			.build_vk_surface(&event_loop, vkinst)?;
 
 		// create swapchain
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), dev_queue.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 		
 		// create sampler for UI pipeline
@@ -123,7 +123,18 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn end_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	pub fn begin_gui_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
+			.begin_render_pass(
+				self.swapchain.get_current_image(),
+				vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers,
+				vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
+			)?;
+		Ok(())
+	}
+
+	pub fn end_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?.end_render_pass()?;
 		Ok(())
@@ -205,6 +216,33 @@ impl RenderContext
 		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
 			.draw(vertex_count, instance_count, first_vertex, first_instance)?;
 		Ok(())
+	}
+
+	pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
+	{
+		self.swapchain.surface()
+	}
+	pub fn queue(&self) -> Arc<vulkano::device::Queue>
+	{
+		self.dev_queue.clone()
+	}
+
+	pub fn submit_secondary(&mut self, s: vulkano::command_buffer::SecondaryAutoCommandBuffer) 
+		-> Result<(), Box<dyn std::error::Error>>
+	{
+		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
+			.execute_commands(s)?;
+		Ok(())
+	}
+
+	pub fn swapchain_dimensions(&self) -> [u32; 2]
+	{
+		self.swapchain.dimensions()
+	}
+
+	pub fn get_main_subpass(&self) -> vulkano::render_pass::Subpass
+	{
+		self.swapchain.render_pass().first_subpass()
 	}
 }
 

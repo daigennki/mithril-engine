@@ -21,14 +21,17 @@ pub struct Swapchain
 	framebuffers: Vec<Arc<vulkano::render_pass::Framebuffer>>,
 	cur_image_num: usize,
 	acquire_future: Option<vulkano::swapchain::SwapchainAcquireFuture<Window>>,
-	previous_frame_end: Option<Box<dyn vulkano::sync::GpuFuture>>,
+	previous_frame_end: Option<Box<dyn GpuFuture>>,
 	//rotation_start: std::time::Instant,
 	pub need_new_swapchain: bool
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<vulkano::device::Device>, window_surface: Arc<vulkano::swapchain::Surface<Window>>) 
-		-> Result<Swapchain, Box<dyn std::error::Error>>
+	pub fn new(
+		vk_dev: Arc<vulkano::device::Device>, 
+		queue: Arc<vulkano::device::Queue>, 
+		window_surface: Arc<vulkano::swapchain::Surface<Window>>
+	) -> Result<Swapchain, Box<dyn std::error::Error>>
 	{
 		// query surface capabilities
 		let surf_caps = window_surface.capabilities(vk_dev.physical_device())?;
@@ -37,6 +40,7 @@ impl Swapchain
 			.num_images(surf_caps.min_image_count)
 			.format(Format::B8G8R8A8_SRGB)
 			.usage(vulkano::image::ImageUsage::color_attachment())
+			.sharing_mode(&queue)
 			.build()?;
 
 		// create render pass
@@ -118,6 +122,11 @@ impl Swapchain
 		Ok(self.framebuffers[self.cur_image_num].clone())
 	}
 
+	pub fn get_current_image(&self) -> Arc<vulkano::render_pass::Framebuffer>
+	{
+		self.framebuffers[self.cur_image_num].clone()
+	}
+
 	pub fn submit_commands(&mut self, 
 		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
 		queue: Arc<vulkano::device::Queue>,
@@ -147,6 +156,9 @@ impl Swapchain
 
 		match future_result {
 			Ok(future) => {
+				// TODO: this is probably wasting CPU time, so find a way to not wait here, 
+				// without getting GpuLocked error from egui
+				future.wait(None)?;	
 				self.previous_frame_end = Some(future.boxed());
 			}
 			Err(FlushError::OutOfDate) => {
@@ -170,6 +182,11 @@ impl Swapchain
 	pub fn dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()
+	}
+
+	pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
+	{
+		self.swapchain.surface().clone()
 	}
 }
 

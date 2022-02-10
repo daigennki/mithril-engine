@@ -9,11 +9,19 @@ mod ui;
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 
+use egui::{CtxRef, Visuals};
+use egui_winit_vulkano::Gui;
+use vulkano::{
+    format::Format,
+};
+
 struct GameContext
 {
 	pref_path: String,
 	render_context: rendercontext::RenderContext,
-	ui_canvas: ui::Canvas
+	//ui_canvas: ui::Canvas,
+	gui: egui_winit_vulkano::Gui,
+	gui_state: GuiState
 }
 impl GameContext
 {
@@ -28,19 +36,27 @@ impl GameContext
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
-		let mut render_context = rendercontext::RenderContext::new(game_name, &event_loop)?;
+		let render_ctx = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
-		let ui_canvas = ui::Canvas::new(&mut render_context, 1280, 720)?;
+		//let ui_canvas = ui::Canvas::new(&mut render_context, 1280, 720)?;
+
+		let mut gui = egui_winit_vulkano::Gui::new_with_subpass(
+			render_ctx.surface(), render_ctx.queue(), render_ctx.get_main_subpass()
+		);
+		let gui_state = GuiState::new(&mut gui);
 
 		Ok(GameContext { 
 			pref_path: pref_path,
-			render_context: render_context,
-			ui_canvas: ui_canvas
+			render_context: render_ctx,
+			//ui_canvas: ui_canvas,
+			gui: gui,
+			gui_state: gui_state
 		})
 	}
 
-	pub fn handle_event(&mut self, event: Event<()>) -> Result<(), Box<dyn std::error::Error>>
+	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error>>
 	{
+		self.gui.update(event);
 		match event {
 			Event::WindowEvent { event: WindowEvent::Resized(_), .. } => self.render_context.recreate_swapchain(),
 			Event::RedrawEventsCleared => self.draw_in_event_loop(),
@@ -50,18 +66,71 @@ impl GameContext
 
 	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
+		self.gui.immediate_ui(|gui| {
+			let ctx = gui.context();
+			// Fill egui UI layout here
+			// It may be convenient to organize the layout under a stateful GuiState struct (See `wholesome` example)
+			self.gui_state.layout(ctx, self.render_context.swapchain_dimensions(), 0.0);
+		});
+
 		self.render_context.start_main_commands()?;
 		self.render_context.begin_main_render_pass()?;
 
 		// draw stuff here
-		self.render_context.bind_ui_pipeline()?;
-		self.ui_canvas.draw(&mut self.render_context)?;
+		//self.render_context.bind_ui_pipeline()?;
+		//self.ui_canvas.draw(&mut self.render_context)?;
 
-		self.render_context.end_main_render_pass()?;
+		self.render_context.end_render_pass()?;
+
+		// draw GUI
+		self.render_context.begin_gui_render_pass()?;
+		let gui_cb = self.gui.draw_on_subpass_image(self.render_context.swapchain_dimensions());
+		self.render_context.submit_secondary(gui_cb)?;
+		self.render_context.end_render_pass()?;
+
 		self.render_context.submit_commands()?;
 
 		Ok(())
 	}
+}
+
+/// Example struct to contain the state of the UI
+pub struct GuiState {
+    image_texture_id1: egui::TextureId
+}
+
+impl GuiState {
+    pub fn new(gui: &mut Gui) -> GuiState 
+	{
+        let image_texture_id1 =
+            gui.register_user_image(include_bytes!("../test_image.png"), Format::R8G8B8A8_SRGB);
+        GuiState {
+            image_texture_id1
+        }
+    }
+
+    /// Defines the layout of our UI
+    pub fn layout(&mut self, egui_context: CtxRef, window_dimensions: [u32; 2], fps: f32) 
+	{
+        egui_context.set_visuals(Visuals::dark());
+        egui::SidePanel::left("Side Panel").default_width(150.0).show(&egui_context, |ui| {
+            ui.heading("Hello Rust");
+            ui.separator();
+        });
+        let image_texture_id1 = self.image_texture_id1;
+        egui::Window::new("Rust")
+            .resizable(true)
+            .vscroll(true)
+            .show(&egui_context, |ui| {
+                ui.image(image_texture_id1, [93.0, 93.0]);
+            });
+        let size = window_dimensions;
+        egui::Area::new("fps")
+            .fixed_pos(egui::pos2(size[0] as f32 - 0.05 * size[0] as f32, 10.0))
+            .show(&egui_context, |ui| {
+                ui.label(format!("{:.2}", fps));
+            });
+    }
 }
 
 pub fn run_game(org_name: &str, game_name: &str)
@@ -77,7 +146,7 @@ pub fn run_game(org_name: &str, game_name: &str)
 				_ => (),
 			};
 			
-			gctx.handle_event(event).unwrap_or_else(|e| {
+			gctx.handle_event(&event).unwrap_or_else(|e| {
 				log_error(e);
 				*control_flow = winit::event_loop::ControlFlow::Exit;
 			});
