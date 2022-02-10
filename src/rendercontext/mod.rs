@@ -10,11 +10,11 @@ pub mod texture;
 use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
-use vulkano::device::physical::PhysicalDeviceType;
-use vulkano::device::physical::PhysicalDevice;
+use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice };
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{ ExecuteCommandsError, DrawError };
 use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::descriptor_set::DescriptorSetsCollection;
@@ -32,7 +32,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	q_fam_id: u32,
 	dev_queue: Arc<vulkano::device::Queue>,
-	cur_cb: Option<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>>,
+	cur_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer, StandardCommandPoolBuilder>,
 
 	upload_futures: std::collections::LinkedList<Box<dyn vulkano::sync::GpuFuture>>,
 
@@ -51,9 +51,9 @@ impl RenderContext
 		let (vk_dev, mut queues) = create_vk_logical_device(vkinst.clone())?;
 
 		// get queue family that supports graphics
-		let q_fam_id = vk_dev.physical_device().queue_families().find(|q| q.supports_graphics())
-			.ok_or("No appropriate queue family found!")?
-			.id();
+		let q_fam = vk_dev.physical_device().queue_families().find(|q| q.supports_graphics())
+			.ok_or("No appropriate queue family found!")?;
+		let q_fam_id = q_fam.id();
 
 		// get queue
 		let dev_queue = queues.next().ok_or("No queues are available!")?;
@@ -84,68 +84,55 @@ impl RenderContext
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;
+
+		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev,
 			swapchain: swapchain,
 			q_fam_id: q_fam_id,
 			dev_queue: dev_queue,
-			cur_cb: None,
+			cur_cb: cur_cb,
 			upload_futures: std::collections::LinkedList::new(),
 			ui_pipeline: ui_pipeline
 		})
 	}
 
-	pub fn start_main_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
-	{
-		if self.cur_cb.is_some() {
-			return Err(Box::new(CommandBufferAlreadyBuilding))
-		}
-
-		let q_fam = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id)
-			.ok_or("The given queue ID was invalid!")?;
-
-		self.cur_cb = Some(
-			AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?
-		);
-
-		Ok(())
-	}
-
 	pub fn begin_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
-			.begin_render_pass(
-				self.swapchain.get_next_image()?,
-				vulkano::command_buffer::SubpassContents::Inline,
-				vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
-			)?;
+		self.cur_cb.begin_render_pass(
+			self.swapchain.get_next_image()?,
+			vulkano::command_buffer::SubpassContents::Inline,
+			vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
+		)?;
 		Ok(())
 	}
 
 	pub fn begin_gui_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
-			.begin_render_pass(
-				self.swapchain.get_current_image(),
-				vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers,
-				vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
-			)?;
+		self.cur_cb.begin_render_pass(
+			self.swapchain.get_current_image(),
+			vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers,
+			vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
+		)?;
 		Ok(())
 	}
 
 	pub fn end_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?.end_render_pass()?;
+		self.cur_cb.end_render_pass()?;
 		Ok(())
 	}
 
 	pub fn submit_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
+		let q_fam = self.vk_dev.physical_device().queue_family_by_id(self.q_fam_id)
+			.ok_or("The given queue ID was invalid!")?;
+		let mut swap_cb = AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
+		std::mem::swap(&mut swap_cb, &mut self.cur_cb);
+
 		let submit_futures = std::mem::take(&mut self.upload_futures);	// consume the futures to join them upon submission
-		self.swapchain.submit_commands(
-			self.cur_cb.take().ok_or(CommandBufferNotBuilding)?, self.dev_queue.clone(), submit_futures
-		)
+		self.swapchain.submit_commands(swap_cb, self.dev_queue.clone(), submit_futures)
 	}
 
 	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
@@ -187,34 +174,27 @@ impl RenderContext
 		self.ui_pipeline.layout().descriptor_set_layouts()[0].clone()
 	}
 
-	pub fn bind_ui_pipeline(&mut self) -> Result<(), CommandBufferNotBuilding>
+	pub fn bind_ui_pipeline(&mut self)
 	{
-		self.ui_pipeline.bind(self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?);
-		Ok(())
+		self.ui_pipeline.bind(&mut self.cur_cb);
 	}
 
 	pub fn bind_ui_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) 
-		-> Result<(), CommandBufferNotBuilding>
 		where S: DescriptorSetsCollection
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout().clone(), first_set, descriptor_sets);
-		Ok(())
+		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout().clone(), first_set, descriptor_sets);
 	}
 
-	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V) -> Result<(), CommandBufferNotBuilding>
+	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V)
 		where V: VertexBuffersCollection
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
-			.bind_vertex_buffers(first_binding, vertex_buffers);
-		Ok(())
+		self.cur_cb.bind_vertex_buffers(first_binding, vertex_buffers);
 	}
 
 	pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
-		-> Result<(), Box<dyn std::error::Error>>
+		-> Result<(), DrawError>
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
-			.draw(vertex_count, instance_count, first_vertex, first_instance)?;
+		self.cur_cb.draw(vertex_count, instance_count, first_vertex, first_instance)?;
 		Ok(())
 	}
 
@@ -227,11 +207,9 @@ impl RenderContext
 		self.dev_queue.clone()
 	}
 
-	pub fn submit_secondary(&mut self, s: vulkano::command_buffer::SecondaryAutoCommandBuffer) 
-		-> Result<(), Box<dyn std::error::Error>>
+	pub fn submit_secondary(&mut self, s: vulkano::command_buffer::SecondaryAutoCommandBuffer) -> Result<(), ExecuteCommandsError>
 	{
-		self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?
-			.execute_commands(s)?;
+		self.cur_cb.execute_commands(s)?;
 		Ok(())
 	}
 
@@ -329,22 +307,4 @@ fn create_vk_logical_device(vkinst: Arc<vulkano::instance::Instance>)
 	// create logical device
 	let use_queue_families = [(q_fam, 0.5)];
 	Ok(vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, use_queue_families)?)
-}
-
-#[derive(Debug)]
-pub struct CommandBufferNotBuilding;
-impl std::error::Error for CommandBufferNotBuilding {}
-impl std::fmt::Display for CommandBufferNotBuilding {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The RenderContext's current command buffer is not building! Did you forget to call `start_main_commands`?")
-    }
-}
-
-#[derive(Debug)]
-pub struct CommandBufferAlreadyBuilding;
-impl std::error::Error for CommandBufferAlreadyBuilding {}
-impl std::fmt::Display for CommandBufferAlreadyBuilding {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "The RenderContext's current command buffer is already building! Did you forget to submit the previous one?")
-    }
 }

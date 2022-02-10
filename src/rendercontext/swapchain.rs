@@ -135,9 +135,9 @@ impl Swapchain
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let built_cb = submit_cb.build()?;
-		let acquire_future = self.acquire_future.take().ok_or(super::CommandBufferNotBuilding)?;
+		let acquire_future = self.acquire_future.take().ok_or(CommandBufferNotBuilding)?;
 
-		let mut joined_future = self.previous_frame_end.take().ok_or(super::CommandBufferNotBuilding)?;
+		let mut joined_future = self.previous_frame_end.take().ok_or(CommandBufferNotBuilding)?;
 
 		// join futures from images and buffers being uploaded
 		let mut join_count: usize = 0;
@@ -203,4 +203,13 @@ fn create_framebuffers(
 	}
 	
 	Ok(framebuffers)
+}
+
+#[derive(Debug)]
+pub struct CommandBufferNotBuilding;
+impl std::error::Error for CommandBufferNotBuilding {}
+impl std::fmt::Display for CommandBufferNotBuilding {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "The RenderContext's current command buffer is not building!")
+    }
 }

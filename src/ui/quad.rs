@@ -8,6 +8,7 @@ use vulkano::buffer::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::command_buffer::DrawError;
 use super::rendercontext::texture::Texture;
 use super::rendercontext::RenderContext;
 
@@ -53,11 +54,11 @@ impl Quad
 }
 impl super::UIElement for Quad
 {
-	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
-		render_ctx.bind_ui_descriptor_set(0, self.descriptor_set.clone())?;
-		render_ctx.bind_vertex_buffers(0, self.vertex_buf.clone())?;
-		render_ctx.bind_vertex_buffers(1, self.vertex_buf.clone())?;
+		render_ctx.bind_ui_descriptor_set(0, self.descriptor_set.clone());
+		render_ctx.bind_vertex_buffers(0, self.vertex_buf.clone());
+		render_ctx.bind_vertex_buffers(1, self.vertex_buf.clone());
 		render_ctx.draw(4, 1, 0, 0)?;
 		Ok(())
 	}

@@ -3,6 +3,7 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
+use vulkano::command_buffer::DrawError;
 use super::rendercontext::RenderContext;
 use super::quad::Quad;
 
@@ -27,7 +28,7 @@ impl Img
 }
 impl super::UIElement for Img
 {
-	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
 		self.quad.draw(render_ctx)
 	}

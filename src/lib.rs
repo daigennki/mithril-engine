@@ -73,7 +73,6 @@ impl GameContext
 			self.gui_state.layout(ctx, self.render_context.swapchain_dimensions(), 0.0);
 		});
 
-		self.render_context.start_main_commands()?;
 		self.render_context.begin_main_render_pass()?;
 
 		// draw stuff here
