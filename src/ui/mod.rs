@@ -4,6 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod image;
+mod quad;
 
 use super::rendercontext;
 
