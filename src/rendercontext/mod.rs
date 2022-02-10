@@ -14,7 +14,7 @@ use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice };
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBufferUsage;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
-use vulkano::command_buffer::{ ExecuteCommandsError, DrawError };
+use vulkano::command_buffer::{ /*ExecuteCommandsError,*/ DrawError };
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::descriptor_set::DescriptorSetsCollection;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
@@ -24,7 +24,7 @@ use vulkano::sampler::Sampler;
 use vulkano::format::Format;
 use vulkano::buffer::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
-use vulkano::sync::FlushError;
+//use vulkano::sync::FlushError;
 
 pub struct RenderContext 
 {
@@ -108,7 +108,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn begin_gui_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	/*pub fn begin_gui_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.cur_cb.begin_render_pass(
 			self.swapchain.get_current_image(),
@@ -116,7 +116,7 @@ impl RenderContext
 			vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
 		)?;
 		Ok(())
-	}
+	}*/
 
 	pub fn end_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
@@ -198,7 +198,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
+	/*pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
 	{
 		self.swapchain.surface()
 	}
@@ -221,12 +221,12 @@ impl RenderContext
 	pub fn get_main_subpass(&self) -> vulkano::render_pass::Subpass
 	{
 		self.swapchain.render_pass().first_subpass()
-	}
+	}*/
 
-	pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	/*pub fn wait_for_fence(&self) -> Result<(), FlushError>
 	{
 		self.swapchain.wait_for_fence()
-	}
+	}*/
 }
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>

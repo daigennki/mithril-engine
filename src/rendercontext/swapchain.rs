@@ -15,7 +15,6 @@ use vulkano::swapchain::{ SwapchainAcquireFuture, PresentFuture };
 
 pub struct Swapchain
 {
-	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
 	swapchain_rp: Arc<RenderPass>,
@@ -72,7 +71,6 @@ impl Swapchain
     	//let rotation_start = std::time::Instant::now();
 
 		Ok(Swapchain{
-			vk_dev: vk_dev,
 			swapchain: swapchain,
 			swapchain_images: swapchain_images,
 			swapchain_rp: swapchain_rp,
@@ -130,7 +128,7 @@ impl Swapchain
 		Ok(self.framebuffers[self.cur_image_num].clone())
 	}
 
-	pub fn get_current_image(&self) -> Arc<vulkano::render_pass::Framebuffer>
+	/*pub fn get_current_image(&self) -> Arc<vulkano::render_pass::Framebuffer>
 	{
 		self.framebuffers[self.cur_image_num].clone()
 	}
@@ -141,7 +139,7 @@ impl Swapchain
 			Some(f) => f.wait(None),
 			None => Ok(())
 		}
-	}
+	}*/
 
 	pub fn submit_commands(&mut self, 
 		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -196,10 +194,10 @@ impl Swapchain
 		self.swapchain.dimensions()
 	}
 
-	pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
+	/*pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
 	{
 		self.swapchain.surface().clone()
-	}
+	}*/
 }
 
 fn create_framebuffers(
