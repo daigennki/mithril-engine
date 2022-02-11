@@ -4,7 +4,6 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use std::collections::LinkedList;
 use winit::window::Window;
 use vulkano::device::Queue;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
@@ -127,7 +126,7 @@ impl Swapchain
 		}
 	}*/
 
-	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: LinkedList<Box<dyn GpuFuture>>)
+	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Option<Box<dyn GpuFuture>>)
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
@@ -136,14 +135,10 @@ impl Swapchain
 			None => acquire_future.boxed()
 		};
 
-		// join futures from images and buffers being uploaded
-		let mut join_count: usize = 0;
-		for join_future in futures {
-			joined_future = joined_future.join(join_future).boxed();
-			join_count += 1;
-		}
-		if join_count > 0 {
-			log::debug!("Joined {} futures", join_count);
+		// join the joined futures from images and buffers being uploaded
+		match futures {
+			Some(f) => joined_future = joined_future.join(f).boxed(),
+			None => ()
 		}
 
 		let future_result = joined_future

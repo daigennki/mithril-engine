@@ -22,6 +22,7 @@ use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::sampler::Sampler;
 use vulkano::format::Format;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
+use vulkano::sync::{ GpuFuture };
 
 pub struct RenderContext 
 {
@@ -30,7 +31,8 @@ pub struct RenderContext
 	dev_queue: Arc<vulkano::device::Queue>,
 	cur_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 
-	upload_futures: std::collections::LinkedList<Box<dyn vulkano::sync::GpuFuture>>,
+	upload_futures: Option<Box<dyn vulkano::sync::GpuFuture>>,
+	upload_futures_count: usize,
 
 	// TODO: figure out a better way to allow user-defined shader pipelines
 	ui_pipeline: pipeline::Pipeline
@@ -77,8 +79,9 @@ impl RenderContext
 			swapchain: swapchain,
 			dev_queue: dev_queue,
 			cur_cb: cur_cb,
-			upload_futures: std::collections::LinkedList::new(),
-			ui_pipeline: ui_pipeline
+			upload_futures: None,
+			ui_pipeline: ui_pipeline,
+			upload_futures_count: 0
 		})
 	}
 
@@ -124,14 +127,24 @@ impl RenderContext
 		let mut swap_cb = AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 		std::mem::swap(&mut swap_cb, &mut self.cur_cb);
 
-		let submit_futures = std::mem::take(&mut self.upload_futures);	// consume the futures to join them upon submission
+		let submit_futures = self.upload_futures.take();	// consume the futures to join them upon submission
+		if submit_futures.is_some() {
+			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
+		}
+		self.upload_futures_count = 0;
 		self.swapchain.submit_commands(swap_cb.build()?, self.dev_queue.clone(), submit_futures)
 	}
 
 	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, Box<dyn std::error::Error>>
 	{
 		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
-		self.upload_futures.push_back(Box::new(upload_future));
+
+		self.upload_futures = Some(match self.upload_futures.take() {
+			Some(f) => upload_future.join(f).boxed(),
+			None => upload_future.boxed()
+		});
+		self.upload_futures_count += 1;
+
 		Ok(tex)
 	}
 
@@ -139,7 +152,13 @@ impl RenderContext
 		where T: Copy + Send + Sync + Sized + 'static
 	{
 		let (buf, upload_future) = ImmutableBuffer::from_data(data, usage, self.dev_queue.clone())?;
-		self.upload_futures.push_back(Box::new(upload_future));
+		
+		self.upload_futures = Some(match self.upload_futures.take() {
+			Some(f) => upload_future.join(f).boxed(),
+			None => upload_future.boxed()
+		});
+		self.upload_futures_count += 1;
+
 		Ok(buf)
 	} 
 	
