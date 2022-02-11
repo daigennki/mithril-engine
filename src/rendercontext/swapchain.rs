@@ -29,7 +29,7 @@ pub struct Swapchain
 			>
 		>
 	>,
-	pub need_new_swapchain: bool
+	need_new_swapchain: bool
 }
 impl Swapchain
 {
@@ -83,25 +83,27 @@ impl Swapchain
 		})
 	}
 
-	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	fn recreate_swapchain(&mut self) -> Result<bool, Box<dyn std::error::Error>>
 	{
-		let dimensions: [u32; 2] = self.swapchain.surface().window().inner_size().into();
+		let prev_dimensions = self.swapchain.dimensions();
 
-		let (new_swapchain, new_images) = self.swapchain.recreate().dimensions(dimensions).build()?;
+		let (new_swapchain, new_images) = self.swapchain.recreate().build()?;
 		self.swapchain = new_swapchain;
 		self.swapchain_images = new_images;
 		self.framebuffers = create_framebuffers(&self.swapchain_images, self.swapchain_rp.clone())?;
 
-		self.need_new_swapchain = false;
-
-		Ok(())
+		Ok(self.swapchain.dimensions() != prev_dimensions)
 	}
 
-	pub fn get_next_image(&mut self) -> Result<Arc<vulkano::render_pass::Framebuffer>, Box<dyn std::error::Error>>
+	/// Get the next swapchain image. Returns the corresponding framebuffer, and a bool indicating if the image dimensions changed.
+	pub fn get_next_image(&mut self) -> Result<(Arc<vulkano::render_pass::Framebuffer>, bool), Box<dyn std::error::Error>>
 	{
-		if self.need_new_swapchain {
-			self.recreate_swapchain()?;
-		}
+		let dimensions_changed = match self.need_new_swapchain {
+			true => self.recreate_swapchain()?,
+			false => false
+		};
+		self.need_new_swapchain = false;
+		
 		match self.fence_signal_future.as_mut() {
 			Some(p) => p.cleanup_finished(),
 			None => ()
@@ -112,6 +114,7 @@ impl Swapchain
 				Ok(r) => r,
 				Err(vulkano::swapchain::AcquireError::OutOfDate) => {
 					// recreate the swapchain then try again
+					log::debug!("Swapchain out of date, recreating...");
 					self.need_new_swapchain = true;
 					return self.get_next_image();
 				}
@@ -119,13 +122,15 @@ impl Swapchain
 			};
 
 		if suboptimal {
+			// if suboptimal, recreate the swapchain next frame
+			log::debug!("Swapchain is suboptimal, recreating it in next frame...");
 			self.need_new_swapchain = true;
 		}
 
 		self.cur_image_num = image_num;
 		self.acquire_future = Some(acquire_future);
 		
-		Ok(self.framebuffers[self.cur_image_num].clone())
+		Ok((self.framebuffers[self.cur_image_num].clone(), dimensions_changed))
 	}
 
 	/*pub fn get_current_image(&self) -> Arc<vulkano::render_pass::Framebuffer>

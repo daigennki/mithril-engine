@@ -100,8 +100,19 @@ impl RenderContext
 
 	pub fn begin_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
+		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
+
+		if resize_viewports {
+			let new_dimensions = self.swapchain.dimensions();
+			log::debug!("Recreating pipelines with new viewport...");
+			// recreate pipelines with new viewport
+			for pl in [ &mut self.ui_pipeline ] {
+				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
+			}
+		}
+
 		self.cur_cb.begin_render_pass(
-			self.swapchain.get_next_image()?,
+			next_img_fb,
 			vulkano::command_buffer::SubpassContents::Inline,
 			vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
 		)?;
@@ -133,19 +144,6 @@ impl RenderContext
 
 		let submit_futures = std::mem::take(&mut self.upload_futures);	// consume the futures to join them upon submission
 		self.swapchain.submit_commands(swap_cb, self.dev_queue.clone(), submit_futures)
-	}
-
-	pub fn recreate_swapchain(&mut self) -> Result<(), Box<dyn std::error::Error>>
-	{
-		self.swapchain.recreate_swapchain()?;
-		let dim = self.swapchain.dimensions();
-		
-		// recreate pipelines with new viewport
-		for pl in [ &mut self.ui_pipeline ] {
-			pl.resize_viewport(dim[0], dim[1])?;
-		}
-
-		Ok(())
 	}
 
 	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, Box<dyn std::error::Error>>

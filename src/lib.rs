@@ -58,7 +58,6 @@ impl GameContext
 	{
 		//self.gui.update(event);
 		match event {
-			Event::WindowEvent { event: WindowEvent::Resized(_), .. } => self.render_context.recreate_swapchain(),
 			Event::RedrawEventsCleared => self.draw_in_event_loop(),
 			_ => Ok(())
 		}
