@@ -236,20 +236,19 @@ fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
 		(version >> 6) & 0x0ff,
 		version & 0x003f)
 	}
-	#[cfg(target_family = "windows")]
+	
 	// Intel (Windows only)
+	#[cfg(target_family = "windows")]
 	if vendor_id == 0x8086 {
 		return ((version >> 14),
 		version & 0x3fff,
-		0,
-		0)
+		0, 0)
 	}
 
 	// others (use Vulkan version convention)
 	((version >> 22),
 	(version >> 12) & 0x3ff,
-	version & 0xfff,
-	0)
+	version & 0xfff, 0)
 }
 fn print_physical_devices<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 {
@@ -262,10 +261,9 @@ fn print_physical_devices<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 			PhysicalDeviceType::Cpu => "CPU",
 			PhysicalDeviceType::Other => "Other",
 		};
-
 		let driver_ver = decode_driver_version(pd.properties().driver_version, pd.properties().vendor_id);
 		let api_ver = pd.properties().api_version;
-
+		
 		log::info!("{}: {} ({}), driver '{}' version {}.{}.{}.{} (Vulkan {}.{}.{})", 
 			pd.index(), 
 			pd.properties().device_name, 
