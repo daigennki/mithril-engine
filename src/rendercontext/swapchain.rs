@@ -4,40 +4,32 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
+use std::collections::LinkedList;
 use winit::window::Window;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::device::Queue;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::command_buffer::CommandBufferExecFuture;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture};
-use vulkano::swapchain::{ SwapchainAcquireFuture, PresentFuture };
+use vulkano::swapchain::{ Surface, AcquireError, SwapchainAcquireFuture, PresentFuture };
 
 pub struct Swapchain
 {
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-	swapchain_images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>,
 	swapchain_rp: Arc<RenderPass>,
 	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
 	acquire_future: Option<SwapchainAcquireFuture<Window>>,
 	fence_signal_future: Option<
-		FenceSignalFuture<
-			PresentFuture<
-				CommandBufferExecFuture<Box<dyn GpuFuture>, PrimaryAutoCommandBuffer>, 
-				Window
-			>
-		>
+		FenceSignalFuture<PresentFuture<CommandBufferExecFuture<Box<dyn GpuFuture>, PrimaryAutoCommandBuffer>, Window>>
 	>,
 	need_new_swapchain: bool
 }
 impl Swapchain
 {
-	pub fn new(
-		vk_dev: Arc<vulkano::device::Device>, 
-		queue: Arc<vulkano::device::Queue>, 
-		window_surface: Arc<vulkano::swapchain::Surface<Window>>
-	) -> Result<Swapchain, Box<dyn std::error::Error>>
+	pub fn new(vk_dev: Arc<vulkano::device::Device>, queue: Arc<Queue>, window_surface: Arc<Surface<Window>>) 
+		-> Result<Swapchain, Box<dyn std::error::Error>>
 	{
 		// query surface capabilities
 		let surf_caps = window_surface.capabilities(vk_dev.physical_device())?;
@@ -65,41 +57,32 @@ impl Swapchain
 			}
 		)?;
 
-		let framebuffers = create_framebuffers(&swapchain_images, swapchain_rp.clone())?;
-
-		//let previous_frame_end = Some(sync::now(vk_dev.clone()).boxed());
-    	//let rotation_start = std::time::Instant::now();
+		let framebuffers = create_framebuffers(swapchain_images, swapchain_rp.clone())?;
 
 		Ok(Swapchain{
 			swapchain: swapchain,
-			swapchain_images: swapchain_images,
 			swapchain_rp: swapchain_rp,
 			framebuffers: framebuffers,
 			cur_image_num: 0,
 			acquire_future: None,
-			//previous_frame_end: previous_frame_end,
 			fence_signal_future: None,
 			need_new_swapchain: false
 		})
 	}
 
-	fn recreate_swapchain(&mut self) -> Result<bool, Box<dyn std::error::Error>>
-	{
-		let prev_dimensions = self.swapchain.dimensions();
-
-		let (new_swapchain, new_images) = self.swapchain.recreate().build()?;
-		self.swapchain = new_swapchain;
-		self.swapchain_images = new_images;
-		self.framebuffers = create_framebuffers(&self.swapchain_images, self.swapchain_rp.clone())?;
-
-		Ok(self.swapchain.dimensions() != prev_dimensions)
-	}
-
-	/// Get the next swapchain image. Returns the corresponding framebuffer, and a bool indicating if the image dimensions changed.
+	/// Get the next swapchain image.
+	/// Returns the corresponding framebuffer, and a bool indicating if the image dimensions changed.
 	pub fn get_next_image(&mut self) -> Result<(Arc<vulkano::render_pass::Framebuffer>, bool), Box<dyn std::error::Error>>
 	{
+		// Recreate the swapchain if needed.
 		let dimensions_changed = match self.need_new_swapchain {
-			true => self.recreate_swapchain()?,
+			true => {
+				let prev_dimensions = self.swapchain.dimensions();
+				let (new_swapchain, new_images) = self.swapchain.recreate().build()?;
+				self.swapchain = new_swapchain;
+				self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
+				self.swapchain.dimensions() != prev_dimensions
+			}
 			false => false
 		};
 		self.need_new_swapchain = false;
@@ -112,17 +95,15 @@ impl Swapchain
 		let (image_num, suboptimal, acquire_future) =
 			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 				Ok(r) => r,
-				Err(vulkano::swapchain::AcquireError::OutOfDate) => {
-					// recreate the swapchain then try again
+				Err(AcquireError::OutOfDate) => {
 					log::debug!("Swapchain out of date, recreating...");
 					self.need_new_swapchain = true;
-					return self.get_next_image();
+					return self.get_next_image();	// recreate the swapchain then try again
 				}
 				Err(e) => return Err(Box::new(e))
 			};
 
 		if suboptimal {
-			// if suboptimal, recreate the swapchain next frame
 			log::debug!("Swapchain is suboptimal, recreating it in next frame...");
 			self.need_new_swapchain = true;
 		}
@@ -146,11 +127,7 @@ impl Swapchain
 		}
 	}*/
 
-	pub fn submit_commands(&mut self, 
-		submit_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		queue: Arc<vulkano::device::Queue>,
-		join_futures: std::collections::LinkedList<Box<dyn GpuFuture>>
-	) 
+	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: LinkedList<Box<dyn GpuFuture>>)
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
@@ -161,7 +138,7 @@ impl Swapchain
 
 		// join futures from images and buffers being uploaded
 		let mut join_count: usize = 0;
-		for join_future in join_futures {
+		for join_future in futures {
 			joined_future = joined_future.join(join_future).boxed();
 			join_count += 1;
 		}
@@ -170,20 +147,14 @@ impl Swapchain
 		}
 
 		let future_result = joined_future
-			.then_execute(queue.clone(), submit_cb.build()?)?
+			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
 			.then_signal_fence_and_flush();
 
 		match future_result {
-			Ok(future) => {
-				self.fence_signal_future = Some(future);
-			}
-			Err(FlushError::OutOfDate) => {
-				self.recreate_swapchain()?;
-			}
-			Err(e) => {
-				return Err(Box::new(e))
-			}
+			Ok(future) => self.fence_signal_future = Some(future),
+			Err(FlushError::OutOfDate) => self.need_new_swapchain = true,
+			Err(e) => return Err(Box::new(e))
 		}
 
 		Ok(())
@@ -206,13 +177,13 @@ impl Swapchain
 }
 
 fn create_framebuffers(
-	images: &Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>, 
+	images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>, 
 	render_pass: Arc<vulkano::render_pass::RenderPass>
 ) -> Result<Vec::<Arc<Framebuffer>>, Box<dyn std::error::Error>>
 {
 	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(images.len());
-	for img in images.iter() {
-		let view = vulkano::image::view::ImageView::new(img.clone())?;
+	for img in images {
+		let view = vulkano::image::view::ImageView::new(img)?;
 		// TODO: add depth buffers
 		framebuffers.push(Framebuffer::start(render_pass.clone()).add(view)?.build()?);
 	}
