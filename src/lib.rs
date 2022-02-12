@@ -10,19 +10,12 @@ use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use component::ui::canvas::Canvas;
 
-/*use egui::{CtxRef, Visuals};
-use egui_winit_vulkano::Gui;
-use vulkano::{
-    format::Format,
-};*/
-
 struct GameContext
 {
 	pref_path: String,
 	render_context: rendercontext::RenderContext,
 	ui_canvas: Canvas,
-	/*gui: egui_winit_vulkano::Gui,
-	gui_state: GuiState*/
+	ecs_world: shipyard::World
 }
 impl GameContext
 {
@@ -41,17 +34,11 @@ impl GameContext
 
 		let ui_canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
 
-		/*let mut gui = egui_winit_vulkano::Gui::new_with_subpass(
-			render_ctx.surface(), render_ctx.queue(), render_ctx.get_main_subpass()
-		);
-		let gui_state = GuiState::new(&mut gui);*/
-
 		Ok(GameContext { 
 			pref_path: pref_path,
 			render_context: render_ctx,
 			ui_canvas: ui_canvas,
-			/*gui: gui,
-			gui_state: gui_state*/
+			ecs_world: shipyard::World::new()
 		})
 	}
 
@@ -73,20 +60,6 @@ impl GameContext
 		self.ui_canvas.draw(&mut self.render_context)?;
 
 		self.render_context.end_render_pass()?;
-
-		// draw immediate mode GUI
-		// we have to wait for things to finish on the GPU side by waiting for the fence, before egui sends data to the GPU.
-		/*self.render_context.wait_for_fence()?;	
-		self.gui.immediate_ui(|gui| {
-			let ctx = gui.context();
-			// Fill egui UI layout here
-			// It may be convenient to organize the layout under a stateful GuiState struct (See `wholesome` example)
-			self.gui_state.layout(ctx, self.render_context.swapchain_dimensions(), 0.0);
-		});
-		self.render_context.begin_gui_render_pass()?;
-		let gui_cb = self.gui.draw_on_subpass_image(self.render_context.swapchain_dimensions());
-		self.render_context.submit_secondary(gui_cb)?;
-		self.render_context.end_render_pass()?;*/
 
 		self.render_context.submit_commands()?;
 
