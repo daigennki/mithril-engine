@@ -4,7 +4,8 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod rendercontext;
-mod ui;
+pub mod component;
+mod uicanvas;
 
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
@@ -19,7 +20,7 @@ struct GameContext
 {
 	pref_path: String,
 	render_context: rendercontext::RenderContext,
-	ui_canvas: ui::Canvas,
+	ui_canvas: uicanvas::UICanvas,
 	/*gui: egui_winit_vulkano::Gui,
 	gui_state: GuiState*/
 }
@@ -38,7 +39,7 @@ impl GameContext
 
 		let mut render_ctx = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
-		let ui_canvas = ui::Canvas::new(&mut render_ctx, 1280, 720)?;
+		let ui_canvas = uicanvas::UICanvas::new(&mut render_ctx, 1280, 720)?;
 
 		/*let mut gui = egui_winit_vulkano::Gui::new_with_subpass(
 			render_ctx.surface(), render_ctx.queue(), render_ctx.get_main_subpass()
