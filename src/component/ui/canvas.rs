@@ -4,10 +4,12 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use crate::rendercontext;
+//use shipyard::EntityId;
 
 pub struct Canvas
 {
-	elements: std::collections::LinkedList<Box<dyn super::UIElement>>
+	//children: std::collections::LinkedList<EntityId>,
+	projection: glam::Mat4
 }
 impl Canvas
 {
@@ -16,23 +18,24 @@ impl Canvas
 	{
 		let projection = glam::Mat4::orthographic_lh(0.0, width as f32, 0.0, height as f32, 0.0, 1.0);
 
-		let mut elements: std::collections::LinkedList<Box<dyn super::UIElement>> = std::collections::LinkedList::new();
-		
-		let test_image = super::img::Img::new(
-			render_ctx, glam::Vec2::new(640.0, 360.0), projection, std::path::Path::new("test_image.png")
-		)?;
-		elements.push_back(Box::new(test_image));
+		//let mut children = std::collections::LinkedList::<EntityId>::new();
 
 		Ok(Canvas{
-			elements: elements
+			//children: children,
+			projection: projection
 		})
 	}
 
-	pub fn draw(&self, render_ctx: &mut rendercontext::RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn projection(&self) -> glam::Mat4
+	{
+		self.projection
+	}
+
+	/*pub fn draw(&self, render_ctx: &mut rendercontext::RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
 		for element in &self.elements {
 			element.draw(render_ctx)?;
 		}
 		Ok(())
-	}
+	}*/
 }

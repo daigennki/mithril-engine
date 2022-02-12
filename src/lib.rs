@@ -8,14 +8,14 @@ pub mod component;
 
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
-use component::ui::canvas::Canvas;
+use component::ui::{ canvas::Canvas, UIElement, img::Img };
+use shipyard::{ World, View, UniqueView };
 
 struct GameContext
 {
 	pref_path: String,
 	render_context: rendercontext::RenderContext,
-	ui_canvas: Canvas,
-	ecs_world: shipyard::World
+	world: World
 }
 impl GameContext
 {
@@ -32,14 +32,24 @@ impl GameContext
 
 		let mut render_ctx = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
-		let ui_canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
+		let mut world = World::new();
 
-		Ok(GameContext { 
+		let canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
+
+		let img_compo = Img::new(
+			&mut render_ctx, glam::Vec2::new(640.0, 360.0), canvas.projection(), std::path::Path::new("test_image.png")
+		)?;
+		world.add_entity((img_compo,));
+
+		world.add_unique(canvas)?;
+
+		let gctx = GameContext { 
 			pref_path: pref_path,
 			render_context: render_ctx,
-			ui_canvas: ui_canvas,
-			ecs_world: shipyard::World::new()
-		})
+			world: world
+		};
+
+		Ok(gctx)
 	}
 
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error>>
@@ -55,9 +65,9 @@ impl GameContext
 	{
 		self.render_context.begin_main_render_pass()?;
 
-		// draw stuff here
+		// Draw the UI element components.
 		self.render_context.bind_ui_pipeline();
-		self.ui_canvas.draw(&mut self.render_context)?;
+		self.world.run_with_data(draw_ui_elements, &mut self.render_context)??;
 
 		self.render_context.end_render_pass()?;
 
@@ -65,6 +75,16 @@ impl GameContext
 
 		Ok(())
 	}
+}
+
+fn draw_ui_elements(render_ctx: &mut rendercontext::RenderContext, elements: View<Img>) 
+	-> Result<(), Box<dyn std::error::Error>>
+{
+	for ui_element in elements.as_slice() {
+		ui_element.draw(render_ctx)?;
+	}
+	
+	Ok(())
 }
 
 pub fn run_game(org_name: &str, game_name: &str)
