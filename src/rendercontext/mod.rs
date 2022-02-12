@@ -67,7 +67,7 @@ impl RenderContext
 			PrimitiveTopology::TriangleStrip,
 			[ Format::R32G32_SFLOAT, Format::R32G32_SFLOAT ],
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
-			[ (0, 2, ui_sampler) ].into(),
+			[ (1, 1, ui_sampler) ].into(),
 			swapchain.render_pass(), 
 			dim[0], dim[1]
 		)?;
@@ -168,9 +168,9 @@ impl RenderContext
 		Ok(())
 	}*/
 
-	pub fn get_ui_set_layout(&self) -> Arc<DescriptorSetLayout>
+	pub fn get_ui_set_layout(&self, set: usize) -> Arc<DescriptorSetLayout>
 	{
-		self.ui_pipeline.layout().descriptor_set_layouts()[0].clone()
+		self.ui_pipeline.layout().descriptor_set_layouts()[set].clone()
 	}
 
 	pub fn bind_ui_pipeline(&mut self)

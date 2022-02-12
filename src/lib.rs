@@ -8,8 +8,10 @@ pub mod component;
 
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
+use component::ui;
 use component::ui::{ canvas::Canvas, UIElement, img::Img };
-use shipyard::{ World, View, UniqueView };
+use shipyard::{ World, View, Get };
+use shipyard::iter::{ IntoIter, IntoWithId };
 
 struct GameContext
 {
@@ -36,10 +38,14 @@ impl GameContext
 
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
 
-		let img_compo = Img::new(
-			&mut render_ctx, glam::Vec2::new(640.0, 360.0), canvas.projection(), std::path::Path::new("test_image.png")
+		let img_compo = Img::new(&mut render_ctx, std::path::Path::new("test_image.png"))?;
+		let img_transform = ui::Transform::new(
+			&mut render_ctx, 
+			glam::IVec2::new(640, 360), 
+			img_compo.tex_dimensions_vec2(), 
+			canvas.projection()
 		)?;
-		world.add_entity((img_compo,));
+		world.add_entity((img_transform,img_compo));
 
 		world.add_unique(canvas)?;
 
@@ -77,13 +83,21 @@ impl GameContext
 	}
 }
 
-fn draw_ui_elements(render_ctx: &mut rendercontext::RenderContext, elements: View<Img>) 
+fn draw_ui_elements(render_ctx: &mut rendercontext::RenderContext, transforms: View<ui::Transform>, images: View<Img>)
 	-> Result<(), Box<dyn std::error::Error>>
 {
-	for ui_element in elements.as_slice() {
-		ui_element.draw(render_ctx)?;
+	for (eid, img) in images.iter().with_id() {
+		match transforms.get(eid) {
+			Ok(t) => {
+				t.bind_descriptor_set(render_ctx);
+				img.draw(render_ctx)?;
+			}
+			Err(e) => {
+				log::warn!("Skipping draw for entity with missing Transform: {}", e)
+			}
+		}
 	}
-	
+
 	Ok(())
 }
 
