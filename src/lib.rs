@@ -5,10 +5,10 @@
 ----------------------------------------------------------------------------- */
 mod rendercontext;
 pub mod component;
-mod uicanvas;
 
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
+use component::ui::canvas::Canvas;
 
 /*use egui::{CtxRef, Visuals};
 use egui_winit_vulkano::Gui;
@@ -20,7 +20,7 @@ struct GameContext
 {
 	pref_path: String,
 	render_context: rendercontext::RenderContext,
-	ui_canvas: uicanvas::UICanvas,
+	ui_canvas: Canvas,
 	/*gui: egui_winit_vulkano::Gui,
 	gui_state: GuiState*/
 }
@@ -39,7 +39,7 @@ impl GameContext
 
 		let mut render_ctx = rendercontext::RenderContext::new(game_name, &event_loop)?;
 
-		let ui_canvas = uicanvas::UICanvas::new(&mut render_ctx, 1280, 720)?;
+		let ui_canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
 
 		/*let mut gui = egui_winit_vulkano::Gui::new_with_subpass(
 			render_ctx.surface(), render_ctx.queue(), render_ctx.get_main_subpass()

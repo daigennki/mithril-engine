@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 mod quad;
 pub mod img;
+pub mod canvas;
 
 use vulkano::command_buffer::DrawError;
 use crate::rendercontext;
