@@ -39,12 +39,7 @@ impl GameContext
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
 
 		let img_compo = Img::new(&mut render_ctx, std::path::Path::new("test_image.png"))?;
-		let img_transform = ui::Transform::new(
-			&mut render_ctx, 
-			glam::IVec2::new(640, 360), 
-			img_compo.tex_dimensions_vec2(), 
-			canvas.projection()
-		)?;
+		let img_transform = ui::Transform::new(&mut render_ctx, [ 640, 360 ].into(), [ 1.0, 1.0 ].into(), canvas.projection())?;
 		world.add_entity((img_transform,img_compo));
 
 		world.add_unique(canvas)?;

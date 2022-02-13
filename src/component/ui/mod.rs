@@ -35,7 +35,7 @@ impl Transform
 			glam::Quat::IDENTITY, 
 			pos.as_vec2().extend(0.0)
 		);
-		let transform_buf = render_ctx.new_buffer(transformation, BufferUsage::uniform_buffer())?;
+		let transform_buf = render_ctx.new_buffer([transformation], BufferUsage::uniform_buffer())?;
 
 		// create descriptor set
 		let set_layout = render_ctx.get_ui_set_layout(0);

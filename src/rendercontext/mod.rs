@@ -148,10 +148,14 @@ impl RenderContext
 		Ok(tex)
 	}
 
-	pub fn new_buffer<T>(&mut self, data: T, usage: BufferUsage) -> Result<Arc<ImmutableBuffer<T>>, Box<dyn std::error::Error>>
-		where T: Copy + Send + Sync + Sized + 'static
+	pub fn new_buffer<D,T>(&mut self, data: D, usage: BufferUsage) 
+		-> Result<Arc<ImmutableBuffer<[T]>>, Box<dyn std::error::Error>>
+		where
+			D: IntoIterator<Item = T>,
+			D::IntoIter: ExactSizeIterator,
+			T: Send + Sync + Sized + 'static, 
 	{
-		let (buf, upload_future) = ImmutableBuffer::from_data(data, usage, self.dev_queue.clone())?;
+		let (buf, upload_future) = ImmutableBuffer::from_iter(data, usage, self.dev_queue.clone())?;
 		
 		self.upload_futures = Some(match self.upload_futures.take() {
 			Some(f) => upload_future.join(f).boxed(),
