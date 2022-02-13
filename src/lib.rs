@@ -15,7 +15,7 @@ use shipyard::iter::{ IntoIter, IntoWithId };
 
 struct GameContext
 {
-	pref_path: String,
+	//pref_path: String,
 	render_context: rendercontext::RenderContext,
 	world: World
 }
@@ -25,7 +25,7 @@ impl GameContext
 	pub fn new(org_name: &str, game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
 		-> Result<GameContext, Box<dyn std::error::Error>>
 	{
-		let pref_path = setup_log(org_name, game_name)?;
+		/*let pref_path =*/ setup_log(org_name, game_name)?;
 
 		log::info!("--- Initializing MithrilEngine... ---");
 
@@ -36,14 +36,14 @@ impl GameContext
 
 		let mut world = World::new();
 
-		let canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
+		let mut canvas = Canvas::new(1280, 720)?;
 
-		world.add_entity(ui::new_image(&mut render_ctx, &canvas, "test_image.png", [ 0, 0 ].into())?);
+		canvas.add_child(world.add_entity(ui::new_image(&mut render_ctx, &canvas, "test_image.png", [ 0, 0 ].into())?));
 
 		world.add_unique(canvas)?;
 
 		let gctx = GameContext { 
-			pref_path: pref_path,
+			//pref_path: pref_path,
 			render_context: render_ctx,
 			world: world
 		};
@@ -53,7 +53,6 @@ impl GameContext
 
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error>>
 	{
-		//self.gui.update(event);
 		match event {
 			Event::RedrawEventsCleared => self.draw_in_event_loop(),
 			_ => Ok(())

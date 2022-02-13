@@ -3,27 +3,24 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::rendercontext;
-//use shipyard::EntityId;
+use shipyard::EntityId;
 
 pub struct Canvas
 {
-	//children: std::collections::LinkedList<EntityId>,
+	children: std::collections::LinkedList<EntityId>,
 	projection: glam::Mat4
 }
 impl Canvas
 {
-	pub fn new(render_ctx: &mut rendercontext::RenderContext, width: u32, height: u32) 
+	pub fn new(width: u32, height: u32) 
 		-> Result<Canvas, Box<dyn std::error::Error>>
 	{
 		let half_width = width as f32 / 2.0;
 		let half_height = height as f32 / 2.0;
 		let projection = glam::Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0);
 
-		//let mut children = std::collections::LinkedList::<EntityId>::new();
-
 		Ok(Canvas{
-			//children: children,
+			children: std::collections::LinkedList::<EntityId>::new(),
 			projection: projection
 		})
 	}
@@ -33,11 +30,8 @@ impl Canvas
 		self.projection
 	}
 
-	/*pub fn draw(&self, render_ctx: &mut rendercontext::RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn add_child(&mut self, eid: EntityId)
 	{
-		for element in &self.elements {
-			element.draw(render_ctx)?;
-		}
-		Ok(())
-	}*/
+		self.children.push_back(eid);
+	}
 }
