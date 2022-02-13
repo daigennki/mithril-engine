@@ -83,18 +83,18 @@ impl GameContext
 	}
 }
 
+/// Draw UI elements.
+/// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 fn draw_ui_elements(render_ctx: &mut rendercontext::RenderContext, transforms: View<ui::Transform>, images: View<Img>)
 	-> Result<(), Box<dyn std::error::Error>>
-{
-	for (eid, img) in images.iter().with_id() {
-		match transforms.get(eid) {
-			Ok(t) => {
-				t.bind_descriptor_set(render_ctx);
-				img.draw(render_ctx)?;
-			}
-			Err(e) => {
-				log::warn!("Skipping draw for entity with missing Transform: {}", e)
-			}
+{	
+	for (eid, transform) in transforms.iter().with_id() {
+		transform.bind_descriptor_set(render_ctx);
+
+		// TODO: add more component types here, or add an abstract component for any UI element that draws
+		match images.get(eid) {
+			Ok(img) => img.draw(render_ctx)?,
+			Err(_) => ()
 		}
 	}
 
