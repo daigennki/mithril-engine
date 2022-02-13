@@ -45,3 +45,15 @@ impl Transform
 		render_ctx.bind_ui_descriptor_set(0, self.descriptor_set.clone());
 	}
 }
+
+
+/// Convenience function: create a tuple of `Transform` and `Mesh` to display an image loaded from a file on the UI.
+pub fn new_image(render_ctx: &mut RenderContext, canvas: &canvas::Canvas, path: &str, pos: glam::IVec2) 
+	-> Result<(Transform, mesh::Mesh), Box<dyn std::error::Error>>
+{
+	let img_transform = Transform::new(render_ctx, pos, [ 1.0, 1.0 ].into(), canvas.projection())?;
+	let img_tex = render_ctx.new_texture(std::path::Path::new(path))?;
+	let img_mesh = mesh::Mesh::new(render_ctx, img_tex)?;
+
+	Ok((img_transform, img_mesh))
+}

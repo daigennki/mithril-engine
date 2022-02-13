@@ -38,11 +38,7 @@ impl GameContext
 
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
 
-		// TODO: add a convenient way to just add an entity that displays an image
-		let img_transform = ui::Transform::new(&mut render_ctx, [ 0, 0 ].into(), [ 1.0, 1.0 ].into(), canvas.projection())?;
-		let img_tex = render_ctx.new_texture(std::path::Path::new("test_image.png"))?;
-		let img_mesh = ui::mesh::Mesh::new(&mut render_ctx, img_tex)?;
-		world.add_entity((img_transform,img_mesh));
+		world.add_entity(ui::new_image(&mut render_ctx, &canvas, "test_image.png", [ 0, 0 ].into())?);
 
 		world.add_unique(canvas)?;
 
