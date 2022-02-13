@@ -68,10 +68,8 @@ impl Mesh
 		let dim = self.tex.dimensions();
 		[ dim.width(), dim.height() ]
 	}
-}
-impl super::UIElement for Mesh
-{
-	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
+
+	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
 		render_ctx.bind_ui_descriptor_set(1, self.descriptor_set.clone());
 		render_ctx.bind_vertex_buffers(0, self.pos_vert_buf.clone());

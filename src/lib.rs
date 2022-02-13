@@ -9,7 +9,7 @@ pub mod component;
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use component::ui;
-use component::ui::{ canvas::Canvas, UIElement, img::Img };
+use component::ui::{ canvas::Canvas };
 use shipyard::{ World, View, Get };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
@@ -38,9 +38,11 @@ impl GameContext
 
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720)?;
 
-		let img_compo = Img::new(&mut render_ctx, std::path::Path::new("test_image.png"))?;
-		let img_transform = ui::Transform::new(&mut render_ctx, [ 640, 360 ].into(), [ 1.0, 1.0 ].into(), canvas.projection())?;
-		world.add_entity((img_transform,img_compo));
+		// TODO: add a convenient way to just add an entity that displays an image
+		let img_transform = ui::Transform::new(&mut render_ctx, [ 0, 0 ].into(), [ 1.0, 1.0 ].into(), canvas.projection())?;
+		let img_tex = render_ctx.new_texture(std::path::Path::new("test_image.png"))?;
+		let img_mesh = ui::mesh::Mesh::new(&mut render_ctx, img_tex)?;
+		world.add_entity((img_transform,img_mesh));
 
 		world.add_unique(canvas)?;
 
@@ -80,14 +82,19 @@ impl GameContext
 
 /// Draw UI elements.
 /// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-fn draw_ui_elements(render_ctx: &mut rendercontext::RenderContext, transforms: View<ui::Transform>, images: View<Img>)
+fn draw_ui_elements(
+	render_ctx: &mut rendercontext::RenderContext, 
+	transforms: View<ui::Transform>, 
+	meshes: View<ui::mesh::Mesh>
+)
 	-> Result<(), Box<dyn std::error::Error>>
 {	
 	for (eid, transform) in transforms.iter().with_id() {
 		transform.bind_descriptor_set(render_ctx);
 
-		// TODO: add more component types here, or add an abstract component for any UI element that draws
-		match images.get(eid) {
+		// draw UI meshes
+		// TODO: how do we respect the render order?
+		match meshes.get(eid) {
 			Ok(img) => img.draw(render_ctx)?,
 			Err(_) => ()
 		}

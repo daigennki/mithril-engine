@@ -3,22 +3,14 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-mod mesh;
-pub mod img;
+pub mod mesh;
 pub mod canvas;
 
 use std::sync::Arc;
 use vulkano::buffer::BufferUsage;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::command_buffer::DrawError;
 use crate::rendercontext::RenderContext;
-
-/// Common trait for UI elements.
-pub trait UIElement
-{
-	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>;
-}
 
 pub struct Transform
 {
