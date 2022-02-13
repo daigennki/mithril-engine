@@ -6,11 +6,11 @@
 
 use vulkano::command_buffer::DrawError;
 use crate::rendercontext::RenderContext;
-use super::quad::Quad;
+use super::mesh::Mesh;
 
 pub struct Img
 {
-	quad: Quad
+	quad: Mesh
 }
 impl Img
 {
@@ -18,7 +18,7 @@ impl Img
 		-> Result<Img, Box<dyn std::error::Error>>
 	{
 		let tex = render_ctx.new_texture(path)?;
-		let quad = Quad::new(render_ctx, tex)?;
+		let quad = Mesh::new(render_ctx, tex)?;
 
 		Ok(Img{
 			quad: quad

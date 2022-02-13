@@ -3,7 +3,7 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-mod quad;
+mod mesh;
 pub mod img;
 pub mod canvas;
 

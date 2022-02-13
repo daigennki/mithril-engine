@@ -13,17 +13,17 @@ use crate::rendercontext::texture::Texture;
 use crate::rendercontext::RenderContext;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
-pub struct Quad
+pub struct Mesh
 {
 	pos_vert_buf: Arc<ImmutableBuffer<[glam::Vec2]>>,
 	uv_vert_buf: Arc<ImmutableBuffer<[glam::Vec2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	tex: Texture
 }
-impl Quad
+impl Mesh
 {
 	pub fn new(render_ctx: &mut RenderContext, tex: Texture) 
-		-> Result<Quad, Box<dyn std::error::Error>>
+		-> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		// create descriptor set
 		let set_layout = render_ctx.get_ui_set_layout(1);
@@ -55,7 +55,7 @@ impl Quad
 		let pos_vert_buf = render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?;
 		let uv_vert_buf = render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?;
 
-		Ok(Quad{
+		Ok(Mesh{
 			descriptor_set: descriptor_set,
 			pos_vert_buf: pos_vert_buf,
 			uv_vert_buf: uv_vert_buf,
@@ -69,7 +69,7 @@ impl Quad
 		[ dim.width(), dim.height() ]
 	}
 }
-impl super::UIElement for Quad
+impl super::UIElement for Mesh
 {
 	fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
