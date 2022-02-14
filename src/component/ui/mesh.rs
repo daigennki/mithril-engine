@@ -22,12 +22,10 @@ pub struct Mesh
 }
 impl Mesh
 {
-	pub fn new(render_ctx: &mut RenderContext, tex: Texture) 
-		-> Result<Mesh, Box<dyn std::error::Error>>
+	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		// create descriptor set
-		let set_layout = render_ctx.get_ui_set_layout(1);
-		let descriptor_set = PersistentDescriptorSet::new(set_layout, [
+		let descriptor_set = render_ctx.new_ui_descriptor_set(1, [
 			WriteDescriptorSet::image_view(0, tex.clone_view())
 		])?;
 
@@ -41,24 +39,17 @@ impl Mesh
 		let uv_verts = pos_verts;
 
 		// resize position vertices according to texture dimensions
-		let tex_dimensions = tex.dimensions();
-		let width = tex_dimensions.width() as f32;
-		let height = tex_dimensions.height() as f32;
-		let half_width = width / 2.0;
-		let half_height = height / 2.0;
+		let dimensions_uvec2: glam::UVec2 = tex.dimensions().width_height().into();
+		let dimensions = dimensions_uvec2.as_vec2();
+		let half_dimensions = dimensions / 2.0;
 		for pos in &mut pos_verts {
-			pos.x = pos.x * width - half_width;
-			pos.y = pos.y * height - half_height;
+			*pos = pos.clone() * dimensions - half_dimensions;
 		}
-
-		// create vertex buffers
-		let pos_vert_buf = render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?;
-		let uv_vert_buf = render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?;
 
 		Ok(Mesh{
 			descriptor_set: descriptor_set,
-			pos_vert_buf: pos_vert_buf,
-			uv_vert_buf: uv_vert_buf,
+			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
+			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
 			tex: tex
 		})
 	}
@@ -72,8 +63,7 @@ impl Mesh
 	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
 		render_ctx.bind_ui_descriptor_set(1, self.descriptor_set.clone());
-		render_ctx.bind_vertex_buffers(0, self.pos_vert_buf.clone());
-		render_ctx.bind_vertex_buffers(1, self.uv_vert_buf.clone());
+		render_ctx.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
 		render_ctx.draw(4, 1, 0, 0)?;
 		Ok(())
 	}

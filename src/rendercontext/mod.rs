@@ -15,8 +15,7 @@ use vulkano::device::DeviceCreationError;
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, DrawError };
 use vulkano::command_buffer::{ SubpassContents };
 use vulkano::pipeline::PipelineBindPoint;
-use vulkano::descriptor_set::DescriptorSetsCollection;
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
+use vulkano::descriptor_set::{ DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::sampler::Sampler;
@@ -172,20 +171,21 @@ impl RenderContext
 		Ok(())
 	}*/
 
-	pub fn get_ui_set_layout(&self, set: usize) -> Arc<DescriptorSetLayout>
-	{
-		self.ui_pipeline.layout().descriptor_set_layouts()[set].clone()
-	}
-
 	pub fn bind_ui_pipeline(&mut self)
 	{
 		self.ui_pipeline.bind(&mut self.cur_cb);
 	}
 
+	pub fn new_ui_descriptor_set(&self, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
+		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
+	{
+		self.ui_pipeline.new_descriptor_set(set, writes)
+	}
+
 	pub fn bind_ui_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) 
 		where S: DescriptorSetsCollection
 	{
-		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout().clone(), first_set, descriptor_sets);
+		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout(), first_set, descriptor_sets);
 	}
 
 	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V)

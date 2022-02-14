@@ -26,6 +26,8 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::sampler::Sampler;
 use vulkano::descriptor_set::layout::DescriptorType;
+use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::descriptor_set::PersistentDescriptorSet;
 use std::mem::size_of;
 
 pub struct Pipeline
@@ -117,6 +119,18 @@ impl Pipeline
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
 		pipeline_ref.layout().clone()
+	}
+
+	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
+	/// into the descriptor set.
+	pub fn new_descriptor_set(&self, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
+		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
+	{
+		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
+		let set_layout = pipeline_ref.layout().descriptor_set_layouts().get(set)
+			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
+			.clone();
+		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
 	}
 }
 

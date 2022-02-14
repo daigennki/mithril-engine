@@ -30,8 +30,7 @@ impl Transform
 		let transform_buf = render_ctx.new_buffer([transformation], BufferUsage::uniform_buffer())?;
 
 		// create descriptor set
-		let set_layout = render_ctx.get_ui_set_layout(0);
-		let descriptor_set = PersistentDescriptorSet::new(set_layout, [
+		let descriptor_set = render_ctx.new_ui_descriptor_set(0, [
 			WriteDescriptorSet::buffer(0, transform_buf.clone())
 		])?;
 
