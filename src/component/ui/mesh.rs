@@ -18,23 +18,17 @@ pub struct Mesh
 	pos_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
 	uv_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
-	//tex: Texture
 }
 impl Mesh
 {
 	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Mesh, Box<dyn std::error::Error>>
 	{
-		// create descriptor set
-		let descriptor_set = render_ctx.new_ui_descriptor_set(1, [
-			WriteDescriptorSet::image_view(0, tex.clone_view())
-		])?;
-
 		// vertex data
 		let mut pos_verts: [Vec2; 4] = [
-			[ 0.0, 0.0 ].into(),
-			[ 1.0, 0.0 ].into(),
-			[ 0.0, 1.0 ].into(),
-			[ 1.0, 1.0 ].into()
+			Vec2::new(0.0, 0.0),
+			Vec2::new(1.0, 0.0),
+			Vec2::new(0.0, 1.0),
+			Vec2::new(1.0, 1.0)
 		];
 		let uv_verts = pos_verts;
 
@@ -47,10 +41,9 @@ impl Mesh
 		}
 
 		Ok(Mesh{
-			descriptor_set: descriptor_set,
+			descriptor_set: render_ctx.new_ui_descriptor_set(1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
 			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
 			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
-			//tex: tex
 		})
 	}
 
