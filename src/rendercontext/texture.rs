@@ -5,13 +5,9 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use std::path::Path;
-use vulkano::image::ImmutableImage;
-use vulkano::image::ImageDimensions;
-use vulkano::image::MipmapsCount;
-use vulkano::image::view::ImageView;
+use vulkano::image::{ ImmutableImage, ImageDimensions, MipmapsCount, view::ImageView };
 use vulkano::format::Format;
-use vulkano::command_buffer::CommandBufferExecFuture;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{ CommandBufferExecFuture, PrimaryAutoCommandBuffer };
 use vulkano::sync::NowFuture;
 use ddsfile::DxgiFormat;
 

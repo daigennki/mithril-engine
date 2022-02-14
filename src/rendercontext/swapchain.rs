@@ -6,8 +6,7 @@
 use std::sync::Arc;
 use winit::window::Window;
 use vulkano::device::Queue;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
-use vulkano::command_buffer::CommandBufferExecFuture;
+use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, CommandBufferExecFuture };
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture};
@@ -22,7 +21,7 @@ pub struct Swapchain
 	acquire_future: Option<SwapchainAcquireFuture<Window>>,
 	fence_signal_future: Option<
 		FenceSignalFuture<PresentFuture<CommandBufferExecFuture<Box<dyn GpuFuture>, PrimaryAutoCommandBuffer>, Window>>
-	>,
+	>,	// sheesh, that's a mouthful
 	need_new_swapchain: bool
 }
 impl Swapchain

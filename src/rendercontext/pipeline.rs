@@ -5,29 +5,19 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use std::io::Read;
-use vulkano::pipeline::graphics::viewport::*;
 use vulkano::shader::ShaderModule;
+use vulkano::render_pass::{ RenderPass, Subpass };
 use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::RenderPass;
-use vulkano::render_pass::Subpass;
-use vulkano::pipeline::graphics::vertex_input::VertexInputState;
-use vulkano::pipeline::graphics::vertex_input::VertexInputRate;
-use vulkano::pipeline::graphics::vertex_input::VertexInputBindingDescription;
-use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
-use vulkano::pipeline::graphics::color_blend::ColorBlendState;
-use vulkano::pipeline::graphics::color_blend::AttachmentBlend;
-use vulkano::pipeline::graphics::color_blend::BlendOp;
-use vulkano::pipeline::graphics::color_blend::BlendFactor;
 use vulkano::pipeline::PipelineLayout;
+use vulkano::pipeline::graphics::viewport::*;
+use vulkano::pipeline::graphics::vertex_input::{ VertexInputState, VertexInputRate, VertexInputBindingDescription };
+use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
+use vulkano::pipeline::graphics::input_assembly::{ InputAssemblyState, PrimitiveTopology };
+use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend, BlendOp, BlendFactor };
 use vulkano::format::Format;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{ AutoCommandBufferBuilder, PrimaryAutoCommandBuffer };
 use vulkano::sampler::Sampler;
-use vulkano::descriptor_set::layout::DescriptorType;
-use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor_set::{ layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet };
 use std::mem::size_of;
 
 pub struct Pipeline

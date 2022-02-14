@@ -4,8 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::buffer::ImmutableBuffer;
-use vulkano::buffer::BufferUsage;
+use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::DrawError;
@@ -18,7 +17,7 @@ pub struct Mesh
 	pos_vert_buf: Arc<ImmutableBuffer<[glam::Vec2]>>,
 	uv_vert_buf: Arc<ImmutableBuffer<[glam::Vec2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
-	tex: Texture
+	//tex: Texture
 }
 impl Mesh
 {
@@ -50,14 +49,8 @@ impl Mesh
 			descriptor_set: descriptor_set,
 			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
 			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
-			tex: tex
+			//tex: tex
 		})
-	}
-
-	pub fn tex_dimensions(&self) -> [u32; 2]
-	{
-		let dim = self.tex.dimensions();
-		[ dim.width(), dim.height() ]
 	}
 
 	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
