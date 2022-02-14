@@ -4,11 +4,12 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use shipyard::EntityId;
+use glam::*;
 
 pub struct Canvas
 {
 	children: std::collections::LinkedList<EntityId>,
-	projection: glam::Mat4
+	projection: Mat4
 }
 impl Canvas
 {
@@ -17,7 +18,7 @@ impl Canvas
 	{
 		let half_width = width as f32 / 2.0;
 		let half_height = height as f32 / 2.0;
-		let projection = glam::Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0);
+		let projection = Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0);
 
 		Ok(Canvas{
 			children: std::collections::LinkedList::<EntityId>::new(),
@@ -25,7 +26,7 @@ impl Canvas
 		})
 	}
 
-	pub fn projection(&self) -> glam::Mat4
+	pub fn projection(&self) -> Mat4
 	{
 		self.projection
 	}

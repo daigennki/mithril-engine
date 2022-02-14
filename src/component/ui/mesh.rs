@@ -8,14 +8,15 @@ use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::DrawError;
+use glam::*;
 use crate::rendercontext::texture::Texture;
 use crate::rendercontext::RenderContext;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 pub struct Mesh
 {
-	pos_vert_buf: Arc<ImmutableBuffer<[glam::Vec2]>>,
-	uv_vert_buf: Arc<ImmutableBuffer<[glam::Vec2]>>,
+	pos_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
+	uv_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	//tex: Texture
 }
@@ -29,7 +30,7 @@ impl Mesh
 		])?;
 
 		// vertex data
-		let mut pos_verts: [glam::Vec2; 4] = [
+		let mut pos_verts: [Vec2; 4] = [
 			[ 0.0, 0.0 ].into(),
 			[ 1.0, 0.0 ].into(),
 			[ 0.0, 1.0 ].into(),
@@ -38,7 +39,7 @@ impl Mesh
 		let uv_verts = pos_verts;
 
 		// resize position vertices according to texture dimensions
-		let dimensions_uvec2: glam::UVec2 = tex.dimensions().width_height().into();
+		let dimensions_uvec2: UVec2 = tex.dimensions().width_height().into();
 		let dimensions = dimensions_uvec2.as_vec2();
 		let half_dimensions = dimensions / 2.0;
 		for pos in &mut pos_verts {
