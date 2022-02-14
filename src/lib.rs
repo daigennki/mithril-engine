@@ -3,7 +3,7 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-mod rendercontext;
+mod render;
 pub mod component;
 
 use winit::event::{ Event, WindowEvent };
@@ -16,7 +16,7 @@ use shipyard::iter::{ IntoIter, IntoWithId };
 struct GameContext
 {
 	//pref_path: String,
-	render_context: rendercontext::RenderContext,
+	render_context: render::RenderContext,
 	world: World
 }
 impl GameContext
@@ -32,7 +32,7 @@ impl GameContext
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
-		let mut render_ctx = rendercontext::RenderContext::new(game_name, &event_loop)?;
+		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 
 		let mut world = World::new();
 
@@ -78,7 +78,7 @@ impl GameContext
 /// Draw UI elements.
 /// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 fn draw_ui_elements(
-	render_ctx: &mut rendercontext::RenderContext, 
+	render_ctx: &mut render::RenderContext, 
 	transforms: View<ui::Transform>, 
 	meshes: View<ui::mesh::Mesh>
 )

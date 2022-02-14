@@ -9,8 +9,8 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::DrawError;
 use glam::*;
-use crate::rendercontext::texture::Texture;
-use crate::rendercontext::RenderContext;
+use crate::render::texture::Texture;
+use crate::render::RenderContext;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 pub struct Mesh
