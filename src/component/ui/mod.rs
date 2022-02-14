@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 pub mod mesh;
 pub mod canvas;
+pub mod text;
 
 use std::sync::Arc;
 use vulkano::buffer::BufferUsage;

@@ -40,6 +40,12 @@ impl GameContext
 
 		canvas.add_child(world.add_entity(ui::new_image(&mut render_ctx, &canvas, "test_image.png", [ 0, 0 ].into())?));
 
+		let text_transform = ui::Transform::new(
+			&mut render_ctx, [ -200, -200 ].into(), [ 1.0, 1.0 ].into(), canvas.projection()
+		)?;
+		let text_ent = world.add_entity((text_transform, ui::text::Text::new(&mut render_ctx, "Hello World!")?));
+		canvas.add_child(text_ent);
+
 		world.add_unique(canvas)?;
 
 		let gctx = GameContext { 
@@ -80,7 +86,8 @@ impl GameContext
 fn draw_ui_elements(
 	render_ctx: &mut render::RenderContext, 
 	transforms: View<ui::Transform>, 
-	meshes: View<ui::mesh::Mesh>
+	meshes: View<ui::mesh::Mesh>,
+	texts: View<ui::text::Text>
 )
 	-> Result<(), Box<dyn std::error::Error>>
 {	
@@ -90,7 +97,11 @@ fn draw_ui_elements(
 		// draw UI meshes
 		// TODO: how do we respect the render order?
 		match meshes.get(eid) {
-			Ok(img) => img.draw(render_ctx)?,
+			Ok(c) => c.draw(render_ctx)?,
+			Err(_) => ()
+		}
+		match texts.get(eid) {
+			Ok(c) => c.draw(render_ctx)?,
 			Err(_) => ()
 		}
 	}

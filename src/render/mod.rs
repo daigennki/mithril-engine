@@ -19,9 +19,10 @@ use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::descriptor_set::{ DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::sampler::Sampler;
-use vulkano::format::Format;
+use vulkano::format::{ Format, Pixel };
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::sync::{ GpuFuture };
+use vulkano::image::{ ImageDimensions, MipmapsCount };
 
 pub struct RenderContext 
 {
@@ -137,6 +138,35 @@ impl RenderContext
 	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, Box<dyn std::error::Error>>
 	{
 		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
+
+		self.upload_futures = Some(match self.upload_futures.take() {
+			Some(f) => upload_future.join(f).boxed(),
+			None => upload_future.boxed()
+		});
+		self.upload_futures_count += 1;
+
+		Ok(tex)
+	}
+
+	pub fn new_texture_from_iter<Px, I>(&mut self,	
+		iter: I, 
+		vk_fmt: Format, 
+		dimensions: ImageDimensions,
+		mip: MipmapsCount
+	) 
+	-> Result<texture::Texture, Box<dyn std::error::Error>>
+	where
+		Px: Pixel + Send + Sync + Clone + 'static,
+		I: IntoIterator<Item = Px>,
+		I::IntoIter: ExactSizeIterator
+	{
+		let (tex, upload_future) = texture::Texture::new_from_iter(
+			self.dev_queue.clone(), 
+			iter,
+			vk_fmt, 
+			dimensions, 
+			mip
+		)?;
 
 		self.upload_futures = Some(match self.upload_futures.take() {
 			Some(f) => upload_future.join(f).boxed(),

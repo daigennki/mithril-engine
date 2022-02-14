@@ -11,7 +11,7 @@ opt-level = 1   # needed to stop stack overflow in Windows debug build; see http
 
 [dependencies]
 winit = "0.26"
-# rusttype = "0.9"
+rusttype = "0.9"
 image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.28"
