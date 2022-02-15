@@ -14,28 +14,34 @@ use crate::render::RenderContext;
 /// UI component that rasterizes fonts into textures.
 pub struct Text
 {
-	quad: Mesh
+	quad: Option<Mesh>,
+	cur_str: String
 }
 impl Text
 {
-	pub fn new(render_ctx: &mut RenderContext, text_str: &str) -> Result<Text, Box<dyn std::error::Error>>
+	pub fn new(render_ctx: &mut RenderContext, text_str: &str, size: f32) -> Result<Text, Box<dyn std::error::Error>>
 	{
+		if text_str.is_empty() {
+			return Ok(Text{ quad: None, cur_str: text_str.to_string() })
+		}
+
+		// TODO: preload fonts
 		let font_data = include_bytes!("../../../examples/ui_menu/resource/mplus-1m-medium.ttf");
 		let font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
 
-		let scale = Scale::uniform(32.0);
+		let scale_uniform = Scale::uniform(size);
 		let color = (255, 255, 255);
-		let v_metrics = font.v_metrics(scale);
+		let v_metrics = font.v_metrics(scale_uniform);
 
 		// lay out the glyphs in a line with 20 pixels padding
-		let glyphs: Vec<_> = font.layout(text_str, scale, point(20.0, 20.0 + v_metrics.ascent)).collect();
+		let glyphs: Vec<_> = font.layout(text_str, scale_uniform, point(20.0, 20.0 + v_metrics.ascent)).collect();
 
 		// work out the layout size
 		let glyphs_height = (v_metrics.ascent - v_metrics.descent).ceil() as u32;
 		let min_x = glyphs.first().ok_or("there were no glyphs for the string!")?
-			.pixel_bounding_box().ok_or("pixel_bounding_box was none!")?.min.x;
+			.pixel_bounding_box().ok_or("pixel_bounding_box was `None`!")?.min.x;
 		let max_x = glyphs.last().ok_or("there were no glyphs for the string!")?
-			.pixel_bounding_box().ok_or("pixel_bounding_box was none!")?.max.x;
+			.pixel_bounding_box().ok_or("pixel_bounding_box was `None`!")?.max.x;
 		let glyphs_width = (max_x - min_x) as u32;
 		
 		// Create a new rgba image with some padding
@@ -43,17 +49,18 @@ impl Text
 
 		// Loop through the glyphs in the text, positing each one on a line
 		for glyph in glyphs {
-			if let Some(bounding_box) = glyph.pixel_bounding_box() {
-				// Draw the glyph into the image per-pixel by using the draw closure
-				glyph.draw(|x, y, v| {
-					image.put_pixel(
+			match glyph.pixel_bounding_box() {
+				Some(bounding_box) => {
+					// Draw the glyph into the image per-pixel by using the draw closure
+					glyph.draw(|x, y, v| {
 						// Offset the position by the glyph bounding box
-						x + bounding_box.min.x as u32,
-						y + bounding_box.min.y as u32,
+						let x_offset = x + bounding_box.min.x as u32;
+						let y_offset = y + bounding_box.min.y as u32;
 						// Turn the coverage into an alpha value
-						Rgba([color.0, color.1, color.2, (v * 255.0) as u8])
-					)
-				})
+						image.put_pixel(x_offset, y_offset, Rgba([color.0, color.1, color.2, (v * 255.0) as u8]))
+					})
+				}
+				None => ()
 			}
 		}
 
@@ -61,12 +68,22 @@ impl Text
 		let tex = render_ctx.new_texture_from_iter(image.into_raw(), Format::R8G8B8A8_SRGB, img_dim, MipmapsCount::One)?;
 
 		Ok(Text{
-			quad: Mesh::new(render_ctx, tex)?
+			quad: Some(Mesh::new(render_ctx, tex)?),
+			cur_str: text_str.to_string()
 		})
+	}
+
+	/// Obtain the currently displayed string.
+	pub fn cur_str(&self) -> String
+	{
+		self.cur_str.clone()
 	}
 
 	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
-		self.quad.draw(render_ctx)
+		match self.quad.as_ref() {
+			Some(q) => q.draw(render_ctx),
+			None => Ok(())
+		}
 	}
 }

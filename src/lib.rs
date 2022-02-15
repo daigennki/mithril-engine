@@ -43,7 +43,7 @@ impl GameContext
 		let text_transform = ui::Transform::new(
 			&mut render_ctx, [ -200, -200 ].into(), [ 1.0, 1.0 ].into(), canvas.projection()
 		)?;
-		let text_ent = world.add_entity((text_transform, ui::text::Text::new(&mut render_ctx, "Hello World!")?));
+		let text_ent = world.add_entity((text_transform, ui::text::Text::new(&mut render_ctx, "Hello World!", 32.0)?));
 		canvas.add_child(text_ent);
 
 		world.add_unique(canvas)?;
