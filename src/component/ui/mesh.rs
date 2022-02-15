@@ -47,6 +47,30 @@ impl Mesh
 		})
 	}
 
+	pub fn new_from_corners(render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Texture)
+		-> Result<Mesh, Box<dyn std::error::Error>>
+	{
+		// vertex data
+		let pos_verts: [Vec2; 4] = [
+			top_left,
+			Vec2::new(bottom_right.x, top_left.y),
+			Vec2::new(top_left.x, bottom_right.y),
+			bottom_right
+		];
+		let uv_verts = [
+			Vec2::new(0.0, 0.0),
+			Vec2::new(1.0, 0.0),
+			Vec2::new(0.0, 1.0),
+			Vec2::new(1.0, 1.0)
+		];
+
+		Ok(Mesh{
+			descriptor_set: render_ctx.new_ui_descriptor_set(1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
+			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
+			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
+		})
+	}
+
 	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
 	{
 		render_ctx.bind_ui_descriptor_set(1, self.descriptor_set.clone());
