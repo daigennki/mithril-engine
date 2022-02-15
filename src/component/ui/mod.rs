@@ -17,42 +17,68 @@ use crate::render::RenderContext;
 pub struct Transform
 {
 	// TODO: parent-child relationship
-	descriptor_set: Arc<PersistentDescriptorSet>
+	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
+	proj: Option<Mat4>,
+	pos: IVec2,
+	scale: Vec2
 }
 impl Transform
 {
-	pub fn new(render_ctx: &mut RenderContext, pos: IVec2, scale: Vec2, proj: Mat4)
-		-> Result<Transform, Box<dyn std::error::Error>>
+	pub fn new(pos: IVec2, scale: Vec2) -> Transform
 	{
-		let transformation = proj * Mat4::from_scale_rotation_translation(
-			scale.extend(0.0), 
-			Quat::IDENTITY, 
-			pos.as_vec2().extend(0.0)
-		);
-		let buf = render_ctx.new_buffer([transformation], BufferUsage::uniform_buffer())?;
-
-		// create descriptor set
-		let descriptor_set = render_ctx.new_ui_descriptor_set(0, [
-			WriteDescriptorSet::buffer(0, buf.clone())
-		])?;
-
-		Ok(Transform{ descriptor_set: descriptor_set })
+		Transform{ descriptor_set: None, proj: None, pos: pos, scale: scale }
 	}
 
-	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext)
+	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
-		render_ctx.bind_ui_descriptor_set(0, self.descriptor_set.clone());
+		let descriptor_set_ref = self.descriptor_set.as_ref()
+			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
+		render_ctx.bind_ui_descriptor_set(0, descriptor_set_ref.clone());
+		Ok(())
+	}
+
+	pub fn update_projection(&mut self, render_ctx: &mut RenderContext, proj: Mat4)
+		-> Result<(), Box<dyn std::error::Error>>
+	{
+		self.proj = Some(proj);
+		self.descriptor_set = Some(update_matrix(render_ctx, proj, self.pos, self.scale)?);
+		Ok(())
 	}
 }
 
+fn update_matrix(render_ctx: &mut RenderContext, proj: Mat4, pos: IVec2, scale: Vec2) 
+	-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
+{
+	let projected = proj * Mat4::from_scale_rotation_translation(
+		scale.extend(0.0), 
+		Quat::IDENTITY, 
+		pos.as_vec2().extend(0.0)
+	);
+	let buf = render_ctx.new_buffer([projected], BufferUsage::uniform_buffer())?;
+
+	// create descriptor set
+	render_ctx.new_ui_descriptor_set(0, [
+		WriteDescriptorSet::buffer(0, buf.clone())
+	])
+}
 
 /// Convenience function: create a tuple of `Transform` and `Mesh` to display an image loaded from a file on the UI.
-pub fn new_image(render_ctx: &mut RenderContext, canvas: &canvas::Canvas, path: &str, pos: IVec2) 
+pub fn new_image(render_ctx: &mut RenderContext, path: &str, pos: IVec2) 
 	-> Result<(Transform, mesh::Mesh), Box<dyn std::error::Error>>
 {
-	let img_transform = Transform::new(render_ctx, pos, [ 1.0, 1.0 ].into(), canvas.projection())?;
+	let img_transform = Transform::new(pos, [ 1.0, 1.0 ].into());
 	let img_tex = render_ctx.new_texture(std::path::Path::new(path))?;
 	let img_mesh = mesh::Mesh::new(render_ctx, img_tex)?;
 
 	Ok((img_transform, img_mesh))
+}
+
+/// Convenience function: create a tuple of `Transform` and `Text` to display text.
+pub fn new_text(render_ctx: &mut RenderContext, text_str: &str, size: f32, pos: IVec2) 
+	-> Result<(Transform, text::Text), Box<dyn std::error::Error>>
+{
+	let text_transform = Transform::new(pos, [ 1.0, 1.0 ].into());
+	let text_mesh = text::Text::new(render_ctx, text_str, size)?;
+
+	Ok((text_transform, text_mesh))
 }

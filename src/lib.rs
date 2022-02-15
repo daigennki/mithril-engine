@@ -10,7 +10,7 @@ use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use component::ui;
 use component::ui::{ canvas::Canvas };
-use shipyard::{ World, View, Get };
+use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
 struct GameContext
@@ -35,18 +35,23 @@ impl GameContext
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 
 		let mut world = World::new();
+		world.add_unique(Canvas::new(1280, 720)?)?;
 
-		let mut canvas = Canvas::new(1280, 720)?;
+		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
+		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
-		canvas.add_child(world.add_entity(ui::new_image(&mut render_ctx, &canvas, "test_image.png", [ 0, 0 ].into())?));
+		// Update the projection matrix on UI `Transform` components.
+		// TODO: use tracking instead, when it gets implemented in shipyard stable
+		world.run(|mut canvas: UniqueViewMut<Canvas>, mut transforms: ViewMut<ui::Transform>| 
+			-> Result<(), Box<dyn std::error::Error>> 
+		{
+			for (eid, mut transform) in (&mut transforms).iter().with_id() {
+				transform.update_projection(&mut render_ctx, canvas.projection())?;
+				canvas.add_child(eid);	// TODO: only do this upon component insertion, when tracking is implemented
+			}
 
-		let text_transform = ui::Transform::new(
-			&mut render_ctx, [ -200, -200 ].into(), [ 1.0, 1.0 ].into(), canvas.projection()
-		)?;
-		let text_ent = world.add_entity((text_transform, ui::text::Text::new(&mut render_ctx, "Hello World!", 32.0)?));
-		canvas.add_child(text_ent);
-
-		world.add_unique(canvas)?;
+			Ok(())
+		})??;
 
 		let gctx = GameContext { 
 			//pref_path: pref_path,
@@ -92,7 +97,7 @@ fn draw_ui_elements(
 	-> Result<(), Box<dyn std::error::Error>>
 {	
 	for (eid, transform) in transforms.iter().with_id() {
-		transform.bind_descriptor_set(render_ctx);
+		transform.bind_descriptor_set(render_ctx)?;
 
 		// draw UI meshes
 		// TODO: how do we respect the render order?
