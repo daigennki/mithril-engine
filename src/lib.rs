@@ -150,8 +150,11 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::err
 
 	// set up logger
 	let logger_config = ConfigBuilder::new()
-		.set_time_to_local(true)	// use time in time zone local to system
-		.set_time_format_str("%FT%T.%f%Z")	// use RFC 3339 format
+		.set_time_offset_to_local().unwrap_or_else(|e| {
+			println!("WARNING: simplelog::ConfigBuilder::set_time_offset_to_local failed!");
+			e
+		})	// use time in time zone local to system
+		.set_time_format_rfc3339()	// use RFC 3339 format
 		.build();
 	let term_log_level;
 	#[cfg(debug_assertions)] 
