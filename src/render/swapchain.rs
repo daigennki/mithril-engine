@@ -22,7 +22,8 @@ pub struct Swapchain
 	fence_signal_future: Option<
 		FenceSignalFuture<PresentFuture<CommandBufferExecFuture<Box<dyn GpuFuture>, PrimaryAutoCommandBuffer>, Window>>
 	>,	// sheesh, that's a mouthful
-	need_new_swapchain: bool
+	need_new_swapchain: bool,
+	create_info: vulkano::swapchain::SwapchainCreateInfo
 }
 impl Swapchain
 {
@@ -30,14 +31,20 @@ impl Swapchain
 		-> Result<Swapchain, Box<dyn std::error::Error>>
 	{
 		// query surface capabilities
-		let surf_caps = window_surface.capabilities(vk_dev.physical_device())?;
+		let surf_caps = vk_dev.physical_device().surface_capabilities(
+			&window_surface, vulkano::swapchain::SurfaceInfo::default()
+		)?;
 
-		let (swapchain, swapchain_images) = vulkano::swapchain::Swapchain::start(vk_dev.clone(), window_surface.clone())
-			.num_images(surf_caps.min_image_count)
-			.format(Format::B8G8R8A8_SRGB)
-			.usage(vulkano::image::ImageUsage::color_attachment())
-			.sharing_mode(&queue)
-			.build()?;
+		let swapchain_create_info = vulkano::swapchain::SwapchainCreateInfo {
+			min_image_count: surf_caps.min_image_count,
+			image_format: Some(Format::B8G8R8A8_SRGB),
+			image_usage: vulkano::image::ImageUsage::color_attachment(),
+			..vulkano::swapchain::SwapchainCreateInfo::default()
+		};
+		// TODO: sharing mode using `&queue`?
+		let (swapchain, swapchain_images) = vulkano::swapchain::Swapchain::new(
+			vk_dev.clone(), window_surface.clone(), swapchain_create_info.clone()
+		)?;
 
 		// create render pass
 		let swapchain_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
@@ -45,7 +52,7 @@ impl Swapchain
 				color: {
 					load: Clear,
 					store: Store,
-					format: swapchain.format(),
+					format: swapchain.image_format(),
 					samples: 1,
 				}
 			}, 
@@ -64,7 +71,8 @@ impl Swapchain
 			cur_image_num: 0,
 			acquire_future: None,
 			fence_signal_future: None,
-			need_new_swapchain: false
+			need_new_swapchain: false,
+			create_info: swapchain_create_info
 		})
 	}
 
@@ -75,11 +83,11 @@ impl Swapchain
 		// Recreate the swapchain if needed.
 		let dimensions_changed = match self.need_new_swapchain {
 			true => {
-				let prev_dimensions = self.swapchain.dimensions();
-				let (new_swapchain, new_images) = self.swapchain.recreate().build()?;
+				let prev_dimensions = self.swapchain.image_extent();
+				let (new_swapchain, new_images) = self.swapchain.recreate(self.create_info.clone())?;
 				self.swapchain = new_swapchain;
 				self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
-				self.swapchain.dimensions() != prev_dimensions
+				self.swapchain.image_extent() != prev_dimensions
 			}
 			false => false
 		};
@@ -161,7 +169,7 @@ impl Swapchain
 
 	pub fn dimensions(&self) -> [u32; 2]
 	{
-		self.swapchain.dimensions()
+		self.swapchain.image_extent()
 	}
 
 	/*pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
@@ -177,9 +185,14 @@ fn create_framebuffers(
 {
 	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(images.len());
 	for img in images {
-		let view = vulkano::image::view::ImageView::new(img)?;
+		let view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&img);
+		let view = vulkano::image::view::ImageView::new(img, view_create_info)?;
 		// TODO: add depth buffers
-		framebuffers.push(Framebuffer::start(render_pass.clone()).add(view)?.build()?);
+		let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
+			attachments: vec![ view ],
+			..Default::default()
+		};
+		framebuffers.push(Framebuffer::new(render_pass.clone(), fb_create_info)?);
 	}
 	
 	Ok(framebuffers)

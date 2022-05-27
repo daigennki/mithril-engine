@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::path::Path;
 use vulkano::image::{ ImmutableImage, ImageDimensions, MipmapsCount, view::ImageView };
-use vulkano::format::{ Format, Pixel };
+use vulkano::format::{ Format };
 use vulkano::command_buffer::{ CommandBufferExecFuture, PrimaryAutoCommandBuffer };
 use vulkano::sync::NowFuture;
 use ddsfile::DxgiFormat;
@@ -41,14 +41,15 @@ impl Texture
 	) 
 		-> Result<(Texture, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error>>
 	where
-		Px: Pixel + Send + Sync + Clone + 'static,
+		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
 		let (vk_img, upload_future) = ImmutableImage::from_iter(iter, dimensions, mip, vk_fmt, queue)?;
+		let view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
 		Ok((
 			Texture{
-				view: ImageView::new(vk_img)?,
+				view: ImageView::new(vk_img, view_create_info)?,
 				dimensions: dimensions
 			},
 			upload_future

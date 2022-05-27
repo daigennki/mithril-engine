@@ -1110,6 +1110,7 @@ dependencies = [
 name = "mithrilengine"
 version = "0.0.2"
 dependencies = [
+ "bytemuck",
  "ddsfile",
  "glam",
  "image",

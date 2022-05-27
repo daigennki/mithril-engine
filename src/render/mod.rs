@@ -11,7 +11,7 @@ use std::sync::Arc;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
-use vulkano::device::DeviceCreationError;
+use vulkano::device::{ DeviceCreationError, Queue };
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, DrawError };
 use vulkano::command_buffer::{ SubpassContents };
 use vulkano::pipeline::PipelineBindPoint;
@@ -19,7 +19,7 @@ use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::descriptor_set::{ DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::sampler::Sampler;
-use vulkano::format::{ Format, Pixel };
+use vulkano::format::{ Format };
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
@@ -49,7 +49,7 @@ impl RenderContext
 
 		// create window
 		let window_surface = WindowBuilder::new()
-			.with_inner_size(winit::dpi::PhysicalSize{ width: 1280, height: 720 })
+			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
 			.with_title(game_name)
 			.with_resizable(false)
 			.build_vk_surface(&event_loop, vk_dev.instance().clone())?;
@@ -59,7 +59,10 @@ impl RenderContext
 		let dim = swapchain.dimensions();
 		
 		// create sampler for UI pipeline
-		let ui_sampler = Sampler::start(vk_dev.clone()).filter(vulkano::sampler::Filter::Linear).build()?;
+		let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
+		sampler_create_info.mag_filter = vulkano::sampler::Filter::Linear;
+		sampler_create_info.min_filter = vulkano::sampler::Filter::Linear;
+		let ui_sampler = Sampler::new(vk_dev.clone(), sampler_create_info)?;
 
 		// create UI pipeline
 		let ui_pipeline = pipeline::Pipeline::new(
@@ -156,7 +159,7 @@ impl RenderContext
 	) 
 	-> Result<texture::Texture, Box<dyn std::error::Error>>
 	where
-		Px: Pixel + Send + Sync + Clone + 'static,
+		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator
 	{
@@ -182,7 +185,7 @@ impl RenderContext
 		where
 			D: IntoIterator<Item = T>,
 			D::IntoIter: ExactSizeIterator,
-			T: Send + Sync + Sized + 'static, 
+			[T]: vulkano::buffer::BufferContents, 
 	{
 		let (buf, upload_future) = ImmutableBuffer::from_iter(data, usage, self.dev_queue.clone())?;
 		
@@ -264,20 +267,23 @@ impl RenderContext
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
 {
-	let mut app_info = vulkano::app_info_from_cargo_toml!();
-	app_info.application_name = Some(std::borrow::Cow::from(game_name));
-	app_info.engine_name = Some(std::borrow::Cow::from("MithrilEngine"));
-	app_info.engine_version = app_info.application_version.clone();
-
 	let vk_ext = vulkano_win::required_extensions();
 	
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]
-	let vk_layers = ["VK_LAYER_KHRONOS_validation"];
+	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".to_string()];
 	#[cfg(not(debug_assertions))]
-	let vk_layers = [];
+	let vk_layers: Vec<String> = vec![];
+
+	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
+	inst_create_info.application_name = Some(game_name.to_string());
+	inst_create_info.engine_name = Some("MithrilEngine".to_string());
+	inst_create_info.engine_version = inst_create_info.application_version.clone();
+	inst_create_info.enabled_extensions = vk_ext;
+	inst_create_info.enabled_layers = vk_layers;
+	inst_create_info.max_api_version = Some(vulkano::Version::V1_2);
 	
-	Ok(vulkano::instance::Instance::new(Some(&app_info), vulkano::Version::V1_2, &vk_ext, vk_layers)?)
+	Ok(vulkano::instance::Instance::new(inst_create_info)?)
 }
 
 fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
@@ -375,7 +381,7 @@ fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 }
 
 fn create_vk_logical_device<'a, I>(physical_device: PhysicalDevice, queue_families: I) 
-	-> Result<(Arc<vulkano::device::Device>, vulkano::device::QueuesIter), DeviceCreationError>
+	-> Result<(Arc<vulkano::device::Device>, impl ExactSizeIterator<Item = Arc<Queue>>), DeviceCreationError>
 	where I: IntoIterator<Item = (QueueFamily<'a>, f32)>
 {
 	// Select features and extensions.
@@ -393,5 +399,17 @@ fn create_vk_logical_device<'a, I>(physical_device: PhysicalDevice, queue_famili
 		..vulkano::device::DeviceExtensions::none()
 	}.union(physical_device.required_extensions());
 
-	vulkano::device::Device::new(physical_device, &dev_features, &dev_extensions, queue_families)
+	let mut queue_create_infos: Vec<vulkano::device::QueueCreateInfo<'a>> = Vec::new();
+	for qf in queue_families {
+		queue_create_infos.push(vulkano::device::QueueCreateInfo::family(qf.0));
+	}
+
+	let dev_create_info = vulkano::device::DeviceCreateInfo{
+		enabled_extensions: dev_extensions,
+		enabled_features: dev_features,
+		queue_create_infos: queue_create_infos,
+		..Default::default()
+	};
+
+	vulkano::device::Device::new(physical_device, dev_create_info)
 }

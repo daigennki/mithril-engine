@@ -117,7 +117,7 @@ impl Pipeline
 		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
-		let set_layout = pipeline_ref.layout().descriptor_set_layouts().get(set)
+		let set_layout = pipeline_ref.layout().set_layouts().get(set)
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
 		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
@@ -246,7 +246,10 @@ fn build_pipeline_common(
 		for (set_i, binding_i, sampler) in samplers {
 			match sets.get_mut(*set_i) {
 				Some(s) => {
-					s.set_immutable_samplers(*binding_i, [ sampler.clone() ]);
+					match s.bindings.get_mut(binding_i) {
+						Some(b) => b.immutable_samplers = vec![ sampler.clone() ],
+						None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i)
+					}
 				}
 				None => {
 					log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i);
@@ -279,7 +282,8 @@ fn print_descriptor_types(types: &Vec<DescriptorType>) -> String
 			DescriptorType::StorageBuffer => "Storage buffer",
 			DescriptorType::UniformBufferDynamic => "Dynamic uniform buffer",
 			DescriptorType::StorageBufferDynamic => "Dynamic storage buffer",
-			DescriptorType::InputAttachment => "Input attachment"
+			DescriptorType::InputAttachment => "Input attachment",
+			_ => "(unknown)"
 		}
 	}
 	out_str

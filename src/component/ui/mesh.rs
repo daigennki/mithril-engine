@@ -12,11 +12,30 @@ use glam::*;
 use crate::render::texture::Texture;
 use crate::render::RenderContext;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Zeroable, bytemuck::Pod)]
+pub struct Vertex2
+{
+	pub x: f32,
+	pub y: f32
+}
+impl Vertex2
+{
+	pub fn new(x: f32, y: f32) -> Vertex2
+	{
+		Vertex2{ x: x, y: y }
+	}
+	pub fn new_from_vec2(pos: Vec2) -> Vertex2
+	{
+		Vertex2{ x: pos.x, y: pos.y }
+	}
+}
+
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 pub struct Mesh
 {
-	pos_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
-	uv_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
+	pos_vert_buf: Arc<ImmutableBuffer<[Vertex2]>>,
+	uv_vert_buf: Arc<ImmutableBuffer<[Vertex2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 }
 impl Mesh
@@ -24,11 +43,11 @@ impl Mesh
 	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		// vertex data
-		let mut pos_verts: [Vec2; 4] = [
-			Vec2::new(0.0, 0.0),
-			Vec2::new(1.0, 0.0),
-			Vec2::new(0.0, 1.0),
-			Vec2::new(1.0, 1.0)
+		let mut pos_verts = [
+			Vertex2::new(0.0, 0.0),
+			Vertex2::new(1.0, 0.0),
+			Vertex2::new(0.0, 1.0),
+			Vertex2::new(1.0, 1.0)
 		];
 		let uv_verts = pos_verts;
 
@@ -37,7 +56,10 @@ impl Mesh
 		let dimensions = dimensions_uvec2.as_vec2();
 		let half_dimensions = dimensions / 2.0;
 		for pos in &mut pos_verts {
-			*pos = pos.clone() * dimensions - half_dimensions;
+			let pos_clone = pos.clone();
+			let x = pos_clone.x * dimensions.x - half_dimensions.x;
+			let y = pos_clone.y * dimensions.y - half_dimensions.y;
+			*pos = Vertex2::new(x, y);
 		}
 
 		Ok(Mesh{
@@ -51,17 +73,17 @@ impl Mesh
 		-> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		// vertex data
-		let pos_verts: [Vec2; 4] = [
-			top_left,
-			Vec2::new(bottom_right.x, top_left.y),
-			Vec2::new(top_left.x, bottom_right.y),
-			bottom_right
+		let pos_verts: [Vertex2; 4] = [
+			Vertex2::new_from_vec2(top_left),
+			Vertex2::new(bottom_right.x, top_left.y),
+			Vertex2::new(top_left.x, bottom_right.y),
+			Vertex2::new_from_vec2(bottom_right)
 		];
 		let uv_verts = [
-			Vec2::new(0.0, 0.0),
-			Vec2::new(1.0, 0.0),
-			Vec2::new(0.0, 1.0),
-			Vec2::new(1.0, 1.0)
+			Vertex2::new(0.0, 0.0),
+			Vertex2::new(1.0, 0.0),
+			Vertex2::new(0.0, 1.0),
+			Vertex2::new(1.0, 1.0)
 		];
 
 		Ok(Mesh{
