@@ -27,7 +27,7 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<vulkano::device::Device>, queue: Arc<Queue>, window_surface: Arc<Surface<Window>>) 
+	pub fn new(vk_dev: Arc<vulkano::device::Device>, window_surface: Arc<Surface<Window>>) 
 		-> Result<Swapchain, Box<dyn std::error::Error>>
 	{
 		// query surface capabilities

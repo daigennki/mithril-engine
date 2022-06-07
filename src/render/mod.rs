@@ -55,7 +55,7 @@ impl RenderContext
 			.build_vk_surface(&event_loop, vk_dev.instance().clone())?;
 
 		// create swapchain
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), dev_queue.clone(), window_surface)?;
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 		
 		// create sampler for UI pipeline
