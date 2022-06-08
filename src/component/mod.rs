@@ -37,11 +37,11 @@ impl Transform
 		Ok(())
 	}
 
-	pub fn update_projection(&mut self, render_ctx: &mut RenderContext, proj: Mat4)
+	/*pub fn update_projection(&mut self, render_ctx: &mut RenderContext, proj: Mat4)
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		self.proj = Some(proj);
 		self.descriptor_set = Some(update_matrix(render_ctx, proj, self.pos, self.scale)?);
 		Ok(())
-	}
+	}*/
 }
