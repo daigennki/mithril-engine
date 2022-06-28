@@ -9,27 +9,9 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::DrawError;
 use glam::*;
+use crate::vertex::*;
 use crate::render::texture::Texture;
 use crate::render::RenderContext;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Zeroable, bytemuck::Pod)]
-pub struct Vertex2
-{
-	pub x: f32,
-	pub y: f32
-}
-impl Vertex2
-{
-	pub fn new(x: f32, y: f32) -> Vertex2
-	{
-		Vertex2{ x: x, y: y }
-	}
-	pub fn new_from_vec2(pos: Vec2) -> Vertex2
-	{
-		Vertex2{ x: pos.x, y: pos.y }
-	}
-}
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 pub struct Mesh

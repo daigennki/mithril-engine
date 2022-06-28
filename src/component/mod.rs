@@ -4,6 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 pub mod ui;
+pub mod mesh;
 
 use std::sync::Arc;
 use glam::*;

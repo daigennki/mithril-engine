@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 mod render;
 pub mod component;
+pub mod vertex;
 
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;

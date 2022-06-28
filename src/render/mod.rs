@@ -16,11 +16,11 @@ use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, Pri
 use vulkano::command_buffer::{ SubpassContents };
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
+use vulkano::pipeline::graphics::input_assembly::{ PrimitiveTopology, Index };
 use vulkano::descriptor_set::{ DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::sampler::Sampler;
 use vulkano::format::{ Format };
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
+use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess };
 use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
@@ -225,6 +225,14 @@ impl RenderContext
 		where V: VertexBuffersCollection
 	{
 		self.cur_cb.bind_vertex_buffers(first_binding, vertex_buffers);
+	}
+
+	pub fn bind_index_buffers<Ib, I>(&mut self, index_buffer: Arc<Ib>)
+		where 
+			Ib: TypedBufferAccess<Content = [I]> + 'static,
+			I: Index + 'static
+	{
+		self.cur_cb.bind_index_buffer(index_buffer);
 	}
 
 	pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
