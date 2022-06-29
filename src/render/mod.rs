@@ -278,9 +278,11 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	let vk_ext = vulkano_win::required_extensions();
 	
 	// only use the validation layer in debug builds
-	#[cfg(debug_assertions)]
+	// TODO: re-enable this later, since vulkano is a bit borked as of v0.29.0 and doesn't get along well with the validation
+	// layer; see https://github.com/vulkano-rs/vulkano/issues/1858
+	/*#[cfg(debug_assertions)]
 	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".to_string()];
-	#[cfg(not(debug_assertions))]
+	#[cfg(not(debug_assertions))]*/
 	let vk_layers: Vec<String> = vec![];
 
 	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
