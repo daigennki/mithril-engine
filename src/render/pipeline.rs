@@ -113,11 +113,11 @@ impl Pipeline
 
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
-	pub fn new_descriptor_set(&self, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
+	pub fn new_descriptor_set(&self, set_number: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
 		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
-		let set_layout = pipeline_ref.layout().set_layouts().get(set)
+		let set_layout = pipeline_ref.layout().set_layouts().get(set_number)
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
 		Ok(PersistentDescriptorSet::new(set_layout, writes)?)

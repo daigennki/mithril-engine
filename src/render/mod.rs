@@ -35,7 +35,8 @@ pub struct RenderContext
 	upload_futures_count: usize,
 
 	// TODO: figure out a better way to allow user-defined shader pipelines
-	ui_pipeline: pipeline::Pipeline
+	ui_pipeline: pipeline::Pipeline,
+	world_pipeline: pipeline::Pipeline	// 3D world pipeline
 }
 impl RenderContext
 {
@@ -75,6 +76,17 @@ impl RenderContext
 			dim[0], dim[1]
 		)?;
 
+		// create 3D pipeline
+		let world_pipeline = pipeline::Pipeline::new(
+			vk_dev.clone(),
+			PrimitiveTopology::TriangleList,
+			[ Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT ],
+			"vid_to_color.vert.spv".into(), Some("vid_to_color.frag.spv".into()),
+			[].into(),
+			swapchain.render_pass(),
+			dim[0], dim[1]
+		)?;
+
 		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 			
 		Ok(RenderContext{
@@ -84,6 +96,7 @@ impl RenderContext
 			cur_cb: cur_cb,
 			upload_futures: None,
 			ui_pipeline: ui_pipeline,
+			world_pipeline: world_pipeline,
 			upload_futures_count: 0
 		})
 	}
@@ -220,6 +233,24 @@ impl RenderContext
 	{
 		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout(), first_set, descriptor_sets);
 	}
+
+	pub fn bind_3d_pipeline(&mut self)
+	{
+		self.world_pipeline.bind(&mut self.cur_cb);
+	}
+
+	pub fn new_3d_descriptor_set(&self, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
+		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
+	{
+		self.world_pipeline.new_descriptor_set(set, writes)
+	}
+
+	pub fn bind_3d_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S)
+		where S: DescriptorSetsCollection
+	{
+		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.world_pipeline.layout(), first_set, descriptor_sets);
+	}
+
 
 	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V)
 		where V: VertexBuffersCollection

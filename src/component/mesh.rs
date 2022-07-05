@@ -22,9 +22,9 @@ impl Mesh
 	pub fn new(render_ctx: &mut RenderContext) -> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		let pos_verts = vec![ 
-			Vertex3::new(0.0, 0.0, 0.0),
-			Vertex3::new(2.0, 0.0, 0.0),
-			Vertex3::new(1.0, 1.0, 0.0)
+			Vertex3::new(-1.0, -0.5, 0.0),
+			Vertex3::new(1.0, -0.5, 0.0),
+			Vertex3::new(0.0, 0.5, 0.0)
 		];
 
 		let uv_verts = vec![ 
@@ -49,7 +49,7 @@ impl Mesh
 		//render_ctx.bind_ui_descriptor_set(1, self.descriptor_set.clone());
 		render_ctx.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
 		render_ctx.bind_index_buffers(self.index_buf.clone());
-		render_ctx.draw(4, 1, 0, 0)?;
+		render_ctx.draw(3, 1, 0, 0)?;
 		Ok(())
 	}
 }

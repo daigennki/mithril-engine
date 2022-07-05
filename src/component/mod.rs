@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 pub mod ui;
 pub mod mesh;
+pub mod camera;
 
 use std::sync::Arc;
 use glam::*;
@@ -18,31 +19,43 @@ use crate::render::RenderContext;
 pub struct Transform
 {
 	// TODO: parent-child relationship
-	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
-	proj: Option<Mat4>,
+	descriptor_set: Arc<PersistentDescriptorSet>,
 	pos: Vec3,
 	scale: Vec3
 }
 impl Transform
 {
-	pub fn new(pos: Vec3, scale: Vec3) -> Transform
+	pub fn new(render_ctx: &mut RenderContext, pos: Vec3, scale: Vec3) -> Result<Transform, Box<dyn std::error::Error>>
 	{
-		Transform{ descriptor_set: None, proj: None, pos: pos, scale: scale }
+		let transform_mat = Mat4::from_scale_rotation_translation(
+			scale,
+			Quat::IDENTITY,
+			pos
+		);
+		let buf = render_ctx.new_buffer(transform_mat.to_cols_array(), BufferUsage::uniform_buffer())?;
+		
+		Ok(Transform{ 
+			descriptor_set: render_ctx.new_3d_descriptor_set(0, [
+				WriteDescriptorSet::buffer(0, buf.clone())
+			])?, 
+			pos: pos, 
+			scale: scale 
+		})
 	}
 
-	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext)
 	{
-		let descriptor_set_ref = self.descriptor_set.as_ref()
-			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
-		render_ctx.bind_ui_descriptor_set(0, descriptor_set_ref.clone());
-		Ok(())
+		render_ctx.bind_3d_descriptor_set(0, self.descriptor_set.clone());
 	}
-
-	/*pub fn update_projection(&mut self, render_ctx: &mut RenderContext, proj: Mat4)
-		-> Result<(), Box<dyn std::error::Error>>
-	{
-		self.proj = Some(proj);
-		self.descriptor_set = Some(update_matrix(render_ctx, proj, self.pos, self.scale)?);
-		Ok(())
-	}*/
 }
+
+/// Convenience function: create a tuple of `Transform` and `Mesh` to display a simple triangle.
+pub fn new_triangle(render_ctx: &mut RenderContext, pos: Vec3, scale: Vec3)
+	-> Result<(Transform, mesh::Mesh), Box<dyn std::error::Error>>
+{
+	let tri_transform = Transform::new(render_ctx, pos, scale)?;
+	let tri_mesh = mesh::Mesh::new(render_ctx)?;
+
+	Ok((tri_transform, tri_mesh))
+}
+

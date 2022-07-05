@@ -11,6 +11,7 @@ use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use component::ui;
 use component::ui::{ canvas::Canvas };
+use component::camera::Camera;
 use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
@@ -36,10 +37,19 @@ impl GameContext
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 
 		let mut world = World::new();
+
+		// add some 3D entities for testing
+		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;
+
+		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.0, 0.0, 0.0 ].into(), [ 1.0, 1.0, 1.0 ].into())?);
+
+		// add some UI entities for testing
 		world.add_unique(Canvas::new(1280, 720)?)?;
 
 		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
+
+		
 
 		// Update the projection matrix on UI `Transform` components.
 		// TODO: use tracking instead, when it gets implemented in shipyard stable
@@ -75,10 +85,18 @@ impl GameContext
 	{
 		self.render_context.begin_main_render_pass()?;
 
-		// Draw the UI element components.
-		self.render_context.bind_ui_pipeline();
-		self.world.run_with_data(draw_ui_elements, &mut self.render_context)??;
+		// Draw the 3D stuff
+		self.render_context.bind_3d_pipeline();
+		self.world.run(|camera: UniqueViewMut<Camera>|
+		{
+			camera.bind(&mut self.render_context)
+		})?;
+		self.world.run_with_data(draw_3d, &mut self.render_context)??;
 
+		// Draw the UI element components.
+		//self.render_context.bind_ui_pipeline();
+		//self.world.run_with_data(draw_ui_elements, &mut self.render_context)??;
+		
 		self.render_context.end_render_pass()?;
 
 		self.render_context.submit_commands()?;
@@ -86,6 +104,31 @@ impl GameContext
 		Ok(())
 	}
 }
+
+/// Draw 3D objects.
+/// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+fn draw_3d(
+	render_ctx: &mut render::RenderContext,
+	transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>
+)
+	-> Result<(), Box<dyn std::error::Error>>
+{
+	for (eid, transform) in transforms.iter().with_id() {
+		transform.bind_descriptor_set(render_ctx);
+
+		// draw 3D meshes
+		match meshes.get(eid) {
+			Ok(c) => {
+				c.draw(render_ctx)?
+			},
+			Err(_) => ()
+		}
+	}
+
+	Ok(())
+}
+
 
 /// Draw UI elements.
 /// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
@@ -167,7 +210,7 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::err
 		term_log_level = LevelFilter::Info;
 	}	
 	let term_logger = TermLogger::new(term_log_level, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
-	let write_logger = WriteLogger::new(LevelFilter::Info, logger_config, log_file);
+	let write_logger = WriteLogger::new(term_log_level /*LevelFilter::Info*/, logger_config, log_file);
     CombinedLogger::init(vec![ term_logger, write_logger ])?;
 
 	Ok(pref_path)
