@@ -81,7 +81,7 @@ impl RenderContext
 			vk_dev.clone(),
 			PrimitiveTopology::TriangleList,
 			[ Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT ],
-			"vid_to_color.vert.spv".into(), Some("vid_to_color.frag.spv".into()),
+			"basic_3d.vert.spv".into(), Some("mat_single_color.frag.spv".into()),
 			[].into(),
 			swapchain.render_pass(),
 			dim[0], dim[1]
@@ -114,7 +114,7 @@ impl RenderContext
 			}
 		}
 
-		self.cur_cb.begin_render_pass(next_img_fb, SubpassContents::Inline, [[0.0, 0.0, 1.0, 1.0].into()])?;
+		self.cur_cb.begin_render_pass(next_img_fb, SubpassContents::Inline, [[0.1, 0.1, 0.1, 1.0].into()])?;
 		Ok(())
 	}
 
