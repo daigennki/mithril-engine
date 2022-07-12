@@ -2,6 +2,7 @@ desktop.ini
 Thumbs.db
 /media
 *.dll
+*.swp
 
 # Added by cargo
 
