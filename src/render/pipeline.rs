@@ -177,19 +177,21 @@ fn vertex_input_state_from_formats(vertex_input: impl IntoIterator<Item = Format
 fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
 {
 	// only enable blending for the first attachment.
-	// this blending configuration will require textures to be premultiplied by alpha.
-	// TODO: what do we do about PNG images, which are *not* premultiplied by alpha, according to the PNG spec?
+	// This blending configuration is for textures that are *not* premultiplied by alpha.
+	// TODO: expose an option for premultiplied alpha. also be careful about using plain RGBA colors instead of textures, as
+	// those have to be premultiplied too.
 	if subpass.num_color_attachments() > 0 {
 		let mut new_color_blend_state = ColorBlendState::new(subpass.num_color_attachments());
 		match new_color_blend_state.attachments.get_mut(0) {
-			Some(a) => a.blend = Some(AttachmentBlend{
+			/*Some(a) => a.blend = Some(AttachmentBlend{
 				color_op: BlendOp::Add,
-				color_source: BlendFactor::One,
+				color_source: BlendFactor::SrcAlpha,
 				color_destination: BlendFactor::OneMinusSrcAlpha,
 				alpha_op: BlendOp::Add,
-				alpha_source: BlendFactor::One,
+				alpha_source: BlendFactor::SrcAlpha,
 				alpha_destination: BlendFactor::OneMinusSrcAlpha
-			}),
+			}),*/
+			Some(a) => a.blend = Some(AttachmentBlend::alpha()),
 			None => ()
 		}
 		Some(new_color_blend_state)
