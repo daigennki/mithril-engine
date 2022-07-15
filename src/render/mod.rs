@@ -67,7 +67,6 @@ impl RenderContext
 
 		// create UI pipeline
 		let ui_pipeline = pipeline::Pipeline::new(
-			vk_dev.clone(), 
 			PrimitiveTopology::TriangleStrip,
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
 			[ (1, 1, ui_sampler) ].into(),
@@ -77,7 +76,6 @@ impl RenderContext
 
 		// create 3D pipeline
 		let world_pipeline = pipeline::Pipeline::new(
-			vk_dev.clone(),
 			PrimitiveTopology::TriangleList,
 			"basic_3d.vert.spv".into(), Some("mat_single_color.frag.spv".into()),
 			[].into(),

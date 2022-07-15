@@ -18,6 +18,7 @@ use vulkano::format::Format;
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, PrimaryAutoCommandBuffer };
 use vulkano::sampler::Sampler;
 use vulkano::descriptor_set::{ layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet };
+use vulkano::device::DeviceOwned;
 use spirv_reflect::types::image::ReflectFormat;
 use std::mem::size_of;
 
@@ -30,8 +31,7 @@ pub struct Pipeline
 }
 impl Pipeline
 {
-	pub fn new(
-		vk_dev: Arc<vulkano::device::Device>, 
+	pub fn new( 
 		primitive_topology: PrimitiveTopology,	
 		vs_filename: String, 
 		fs_filename: Option<String>,
@@ -40,6 +40,8 @@ impl Pipeline
 		width: u32, height: u32,
 	) -> Result<Pipeline, Box<dyn std::error::Error>>
 	{
+		let vk_dev = render_pass.device().clone();
+
 		// load vertex shader
 		log::info!("Loading vertex shader {}...", &vs_filename);
 		let (vs, vertex_input_state) = load_spirv_and_vertex_input_state(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
