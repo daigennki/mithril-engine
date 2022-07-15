@@ -21,6 +21,7 @@ use vulkano::descriptor_set::{ layout::DescriptorType, WriteDescriptorSet, Persi
 use vulkano::device::DeviceOwned;
 use spirv_reflect::types::image::ReflectFormat;
 use std::mem::size_of;
+use yaml_rust::YamlLoader;
 
 pub struct Pipeline
 {
@@ -86,6 +87,75 @@ impl Pipeline
 		})
 	}
 
+	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>, width: u32, height: u32)
+		-> Result<Pipeline, Box<dyn std::error::Error>>
+	{
+		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
+
+		let mut yaml_file = std::fs::File::open(format!("shaders/{}", yaml_filename))?;
+		let mut yaml_string = String::new();
+		yaml_file.read_to_string(&mut yaml_string)?;
+
+		let yaml_docs = YamlLoader::load_from_str(&yaml_string)?;
+		let yaml_doc = &yaml_docs[0];
+
+		let primitive_topology_str = yaml_doc["PrimitiveTopology"].as_str().ok_or("Primitive topology not specified!")?;
+		let primitive_topology = match primitive_topology_str {
+			"PointList" => Ok(PrimitiveTopology::PointList),
+			"LineList" => Ok(PrimitiveTopology::LineList),
+			"LineStrip" => Ok(PrimitiveTopology::LineStrip),
+			"TriangleList" => Ok(PrimitiveTopology::TriangleList),
+			"TriangleStrip" => Ok(PrimitiveTopology::TriangleStrip),
+			"TriangleFan" => Ok(PrimitiveTopology::TriangleFan),
+			"LineListWithAdjacency" => Ok(PrimitiveTopology::LineListWithAdjacency),
+			"LineStripWithAdjacency" => Ok(PrimitiveTopology::LineStripWithAdjacency),
+			"TriangleListWithAdjacency" => Ok(PrimitiveTopology::TriangleListWithAdjacency),
+			"TriangleStripWithAdjacency" => Ok(PrimitiveTopology::TriangleStripWithAdjacency),
+			"PatchList" => Ok(PrimitiveTopology::PatchList),
+			_ => Err("Invalid primitive topology specified")
+		}?;
+
+		let vs_filename = yaml_doc["VertexShader"].as_str().ok_or("Vertex shader not specified!")?;
+		let fs_filename = yaml_doc["FragmentShader"].as_str();
+
+		let mut generated_samplers: Vec<(usize, u32, Arc<Sampler>)> = vec![];
+		match yaml_doc["Samplers"].as_hash() {
+			Some(samplers) => {
+				for (set_key, set) in samplers {
+					let set_number = set_key.as_i64().ok_or("Invalid set number in sampler list")?;
+					match set.as_hash() {
+						Some(set_hash) => {
+							for (binding_key, binding) in set_hash {
+								let binding_number = binding_key.as_i64().ok_or("Invalid binding number in sampler list")?;
+								
+								let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
+								
+								match binding["MagFilter"].as_str() {
+									Some(s) => sampler_create_info.mag_filter = filter_str_to_enum(s)?,
+									None => ()
+								}
+								match binding["MinFilter"].as_str() {
+									Some(s) => sampler_create_info.min_filter = filter_str_to_enum(s)?,
+									None => ()
+								}
+
+								let sampler = Sampler::new(render_pass.device().clone(), sampler_create_info)?;
+								
+								generated_samplers.push((set_number.try_into()?, binding_number.try_into()?, sampler));
+								
+								log::debug!("created sampler at set {}, binding {}", set_number, binding_number);
+							}
+						},
+						None => ()
+					}
+				}
+			}
+			None => ()
+		}
+
+		Pipeline::new(primitive_topology, vs_filename, fs_filename, generated_samplers, render_pass, width, height)
+	}
+
 	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.pipeline = build_pipeline_common(
@@ -122,6 +192,15 @@ impl Pipeline
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
 		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
+	}
+}
+
+fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<dyn std::error::Error>>
+{
+	match filter_str {
+		"Nearest" => Ok(vulkano::sampler::Filter::Nearest),
+		"Linear" => Ok(vulkano::sampler::Filter::Linear),
+		_ => Err("Invalid sampler filter".into())
 	}
 }
 

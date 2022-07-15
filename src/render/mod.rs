@@ -59,29 +59,11 @@ impl RenderContext
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 		
-		// create sampler for UI pipeline
-		let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
-		sampler_create_info.mag_filter = vulkano::sampler::Filter::Linear;
-		sampler_create_info.min_filter = vulkano::sampler::Filter::Linear;
-		let ui_sampler = Sampler::new(vk_dev.clone(), sampler_create_info)?;
-
 		// create UI pipeline
-		let ui_pipeline = pipeline::Pipeline::new(
-			PrimitiveTopology::TriangleStrip,
-			"ui.vert.spv", Some("ui.frag.spv"),
-			[ (1, 1, ui_sampler) ].into(),
-			swapchain.render_pass(), 
-			dim[0], dim[1]
-		)?;
+		let ui_pipeline = pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?;
 
-		// create 3D pipeline
-		let world_pipeline = pipeline::Pipeline::new(
-			PrimitiveTopology::TriangleList,
-			"basic_3d.vert.spv", Some("mat_single_color.frag.spv"),
-			[].into(),
-			swapchain.render_pass(),
-			dim[0], dim[1]
-		)?;
+		// create 3D pipeline	
+		let world_pipeline = pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?;
 
 		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 			

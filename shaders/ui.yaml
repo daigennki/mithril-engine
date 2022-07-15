@@ -1,0 +1,9 @@
+VertexShader: ui.vert.spv
+FragmentShader: ui.frag.spv
+PrimitiveTopology: TriangleStrip
+Samplers:
+  1:
+    1:
+      MagFilter: Linear
+      MinFilter: Linear
+

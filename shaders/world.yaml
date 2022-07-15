@@ -1,0 +1,4 @@
+VertexShader: basic_3d.vert.spv
+FragmentShader: mat_single_color.frag.spv
+PrimitiveTopology: TriangleList
+
