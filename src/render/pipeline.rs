@@ -18,6 +18,7 @@ use vulkano::format::Format;
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, PrimaryAutoCommandBuffer };
 use vulkano::sampler::Sampler;
 use vulkano::descriptor_set::{ layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet };
+use spirv_reflect::types::image::ReflectFormat;
 use std::mem::size_of;
 
 pub struct Pipeline
@@ -31,8 +32,7 @@ impl Pipeline
 {
 	pub fn new(
 		vk_dev: Arc<vulkano::device::Device>, 
-		primitive_topology: PrimitiveTopology,
-		vertex_input: impl IntoIterator<Item = Format>,
+		primitive_topology: PrimitiveTopology,	
 		vs_filename: String, 
 		fs_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
@@ -42,7 +42,7 @@ impl Pipeline
 	{
 		// load vertex shader
 		log::info!("Loading vertex shader {}...", &vs_filename);
-		let vs = load_spirv(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
+		let (vs, vertex_input_state) = load_spirv_and_vertex_input_state(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
 
 		// load fragment shader (optional)
 		let fs = match fs_filename {
@@ -55,7 +55,6 @@ impl Pipeline
 
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
 		let input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
-		let vertex_input_state = vertex_input_state_from_formats(vertex_input)?;
 		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
 		let pipeline_built = build_pipeline_common(
@@ -137,6 +136,35 @@ fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str)
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
+/// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
+fn load_spirv_and_vertex_input_state(device: Arc<vulkano::device::Device>, filename: &str) 
+	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), Box<dyn std::error::Error>>
+{
+	let mut spv_file = std::fs::File::open(filename)
+		.or_else(|e| Err(format!("Failed to open '{}': {}", filename, e)))?;
+
+	let mut spv_data: Vec<u8> = Vec::new();
+	spv_file.read_to_end(&mut spv_data)
+		.or_else(|e| Err(format!("Failed to read '{}': {}", filename, e)))?;
+
+	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
+	let input_variables = shader_module.enumerate_input_variables(Some("main"))?;
+
+	let mut i: u32 = 0;
+	let mut vertex_input_state = VertexInputState::new();
+	for input_var in &input_variables {
+		let vertex_format = reflect_format_to_vulkano_format(input_var.format)?;
+		let stride = get_format_components(vertex_format)? * size_of::<f32>() as u32;
+
+		vertex_input_state = vertex_input_state
+			.binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
+			.attribute(i, VertexInputAttributeDescription{ binding: i, format: vertex_format, offset: 0 });
+		i += 1;
+	}
+
+	Ok((unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?, vertex_input_state))
+}
+
 #[derive(Debug)]
 pub struct UnsupportedVertexInputFormat;
 impl std::error::Error for UnsupportedVertexInputFormat {}
@@ -148,9 +176,17 @@ impl std::fmt::Display for UnsupportedVertexInputFormat {
 fn get_format_components(format: Format) -> Result<u32, UnsupportedVertexInputFormat> 
 {
 	match format {
+		Format::R32_UINT => Ok(1),
+		Format::R32_SINT => Ok(1),
 		Format::R32_SFLOAT => Ok(1),
+		Format::R32G32_UINT => Ok(2),
+		Format::R32G32_SINT => Ok(2),
 		Format::R32G32_SFLOAT => Ok(2),
+		Format::R32G32B32_UINT => Ok(3),
+		Format::R32G32B32_SINT => Ok(3),
 		Format::R32G32B32_SFLOAT => Ok(3),
+		Format::R32G32B32A32_UINT => Ok(4),
+		Format::R32G32B32A32_SINT => Ok(4),
 		Format::R32G32B32A32_SFLOAT => Ok(4),
 		_ => Err(UnsupportedVertexInputFormat)
 	}
@@ -172,6 +208,26 @@ fn vertex_input_state_from_formats(vertex_input: impl IntoIterator<Item = Format
 		i += 1;
 	}
 	Ok(vertex_input_state)
+}
+
+fn reflect_format_to_vulkano_format(reflect_format: spirv_reflect::types::image::ReflectFormat) 
+	-> Result<Format, UnsupportedVertexInputFormat>
+{
+	match reflect_format {
+		ReflectFormat::R32_UINT => Ok(Format::R32_UINT),
+		ReflectFormat::R32_SINT => Ok(Format::R32_UINT),
+		ReflectFormat::R32_SFLOAT => Ok(Format::R32_SFLOAT),
+		ReflectFormat::R32G32_UINT => Ok(Format::R32G32_UINT),
+		ReflectFormat::R32G32_SINT => Ok(Format::R32G32_SINT),
+		ReflectFormat::R32G32_SFLOAT => Ok(Format::R32G32_SFLOAT),
+		ReflectFormat::R32G32B32_UINT => Ok(Format::R32G32B32_UINT),
+		ReflectFormat::R32G32B32_SINT => Ok(Format::R32G32B32_SINT),
+		ReflectFormat::R32G32B32_SFLOAT => Ok(Format::R32G32B32_SFLOAT),
+		ReflectFormat::R32G32B32A32_UINT => Ok(Format::R32G32B32A32_UINT),
+		ReflectFormat::R32G32B32A32_SINT => Ok(Format::R32G32B32A32_SINT),
+		ReflectFormat::R32G32B32A32_SFLOAT => Ok(Format::R32G32B32A32_SFLOAT),
+		_ => Err(UnsupportedVertexInputFormat)
+	}
 }
 
 fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>

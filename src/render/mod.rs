@@ -69,7 +69,6 @@ impl RenderContext
 		let ui_pipeline = pipeline::Pipeline::new(
 			vk_dev.clone(), 
 			PrimitiveTopology::TriangleStrip,
-			[ Format::R32G32_SFLOAT, Format::R32G32_SFLOAT ],
 			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
 			[ (1, 1, ui_sampler) ].into(),
 			swapchain.render_pass(), 
@@ -80,7 +79,6 @@ impl RenderContext
 		let world_pipeline = pipeline::Pipeline::new(
 			vk_dev.clone(),
 			PrimitiveTopology::TriangleList,
-			[ Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT ],
 			"basic_3d.vert.spv".into(), Some("mat_single_color.frag.spv".into()),
 			[].into(),
 			swapchain.render_pass(),

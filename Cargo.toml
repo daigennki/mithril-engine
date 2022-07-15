@@ -16,6 +16,7 @@ image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.29"
 vulkano-win = "0.29"
+spirv-reflect = "0.2"
 # physx = "0.12"
 # ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
 # steamworks = "0.8"
