@@ -33,8 +33,8 @@ impl Pipeline
 {
 	pub fn new( 
 		primitive_topology: PrimitiveTopology,	
-		vs_filename: String, 
-		fs_filename: Option<String>,
+		vs_filename: &str,
+		fs_filename: Option<&str>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		width: u32, height: u32,
@@ -43,8 +43,8 @@ impl Pipeline
 		let vk_dev = render_pass.device().clone();
 
 		// load vertex shader
-		log::info!("Loading vertex shader {}...", &vs_filename);
-		let (vs, vertex_input_state) = load_spirv_and_vertex_input_state(vk_dev.clone(), &format!("shaders/{}", &vs_filename))?;
+		log::info!("Loading vertex shader {}...", vs_filename);
+		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &format!("shaders/{}", vs_filename))?;
 
 		// load fragment shader (optional)
 		let fs = match fs_filename {
@@ -125,29 +125,31 @@ impl Pipeline
 	}
 }
 
+fn load_file_as_raw_bytes(filename: &str)
+	-> Result<Vec<u8>, Box<dyn std::error::Error>>
+{
+	let mut file = std::fs::File::open(filename)
+		.or_else(|e| Err(format!("Failed to open '{}': {}", filename, e)))?;
+
+	let mut data: Vec<u8> = Vec::new();
+	file.read_to_end(&mut data)
+		.or_else(|e| Err(format!("Failed to read '{}': {}", filename, e)))?;
+
+	Ok(data)
+}
+
 fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
 	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error>>
 {
-	let mut spv_file = std::fs::File::open(filename)
-		.or_else(|e| Err(format!("Failed to open '{}': {}", filename, e)))?;
-
-	let mut spv_data: Vec<u8> = Vec::new();
-	spv_file.read_to_end(&mut spv_data)
-		.or_else(|e| Err(format!("Failed to read '{}': {}", filename, e)))?;
-
+	let spv_data = load_file_as_raw_bytes(filename)?;
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
-fn load_spirv_and_vertex_input_state(device: Arc<vulkano::device::Device>, filename: &str) 
+fn load_spirv_vertex(device: Arc<vulkano::device::Device>, filename: &str) 
 	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), Box<dyn std::error::Error>>
 {
-	let mut spv_file = std::fs::File::open(filename)
-		.or_else(|e| Err(format!("Failed to open '{}': {}", filename, e)))?;
-
-	let mut spv_data: Vec<u8> = Vec::new();
-	spv_file.read_to_end(&mut spv_data)
-		.or_else(|e| Err(format!("Failed to read '{}': {}", filename, e)))?;
+	let spv_data = load_file_as_raw_bytes(filename)?;
 
 	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
 	let input_variables = shader_module.enumerate_input_variables(Some("main"))?;
@@ -193,25 +195,6 @@ fn get_format_components(format: Format) -> Result<u32, UnsupportedVertexInputFo
 		_ => Err(UnsupportedVertexInputFormat)
 	}
 }
-fn vertex_input_state_from_formats(vertex_input: impl IntoIterator<Item = Format>) 
-	-> Result<VertexInputState, UnsupportedVertexInputFormat>
-{
-	// Automatically generate vertex input state from input formats and strides.
-	// This assumes bindings in order starting at 0, tightly packed, and with 0 offset - the typical use case.
-	// VertexInputState will remain as default if vertex_input was empty.
-	let mut i: u32 = 0;
-	let mut vertex_input_state = VertexInputState::new();
-	for vertex_format in vertex_input {
-		let stride = get_format_components(vertex_format)? * size_of::<f32>() as u32;
-
-		vertex_input_state = vertex_input_state
-			.binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
-			.attribute(i, VertexInputAttributeDescription{ binding: i, format: vertex_format, offset: 0 });
-		i += 1;
-	}
-	Ok(vertex_input_state)
-}
-
 fn reflect_format_to_vulkano_format(reflect_format: spirv_reflect::types::image::ReflectFormat) 
 	-> Result<Format, UnsupportedVertexInputFormat>
 {
@@ -348,3 +331,4 @@ fn print_descriptor_types(types: &Vec<DescriptorType>) -> String
 	}
 	out_str
 }
+

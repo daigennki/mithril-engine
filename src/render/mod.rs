@@ -68,7 +68,7 @@ impl RenderContext
 		// create UI pipeline
 		let ui_pipeline = pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleStrip,
-			"ui.vert.spv".into(), Some("ui.frag.spv".into()),
+			"ui.vert.spv", Some("ui.frag.spv"),
 			[ (1, 1, ui_sampler) ].into(),
 			swapchain.render_pass(), 
 			dim[0], dim[1]
@@ -77,7 +77,7 @@ impl RenderContext
 		// create 3D pipeline
 		let world_pipeline = pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleList,
-			"basic_3d.vert.spv".into(), Some("mat_single_color.frag.spv".into()),
+			"basic_3d.vert.spv", Some("mat_single_color.frag.spv"),
 			[].into(),
 			swapchain.render_pass(),
 			dim[0], dim[1]
