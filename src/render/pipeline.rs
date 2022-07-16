@@ -87,6 +87,7 @@ impl Pipeline
 		})
 	}
 
+	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>, width: u32, height: u32)
 		-> Result<Pipeline, Box<dyn std::error::Error>>
 	{
@@ -100,20 +101,7 @@ impl Pipeline
 		let yaml_doc = &yaml_docs[0];
 
 		let primitive_topology_str = yaml_doc["PrimitiveTopology"].as_str().ok_or("Primitive topology not specified!")?;
-		let primitive_topology = match primitive_topology_str {
-			"PointList" => Ok(PrimitiveTopology::PointList),
-			"LineList" => Ok(PrimitiveTopology::LineList),
-			"LineStrip" => Ok(PrimitiveTopology::LineStrip),
-			"TriangleList" => Ok(PrimitiveTopology::TriangleList),
-			"TriangleStrip" => Ok(PrimitiveTopology::TriangleStrip),
-			"TriangleFan" => Ok(PrimitiveTopology::TriangleFan),
-			"LineListWithAdjacency" => Ok(PrimitiveTopology::LineListWithAdjacency),
-			"LineStripWithAdjacency" => Ok(PrimitiveTopology::LineStripWithAdjacency),
-			"TriangleListWithAdjacency" => Ok(PrimitiveTopology::TriangleListWithAdjacency),
-			"TriangleStripWithAdjacency" => Ok(PrimitiveTopology::TriangleStripWithAdjacency),
-			"PatchList" => Ok(PrimitiveTopology::PatchList),
-			_ => Err("Invalid primitive topology specified")
-		}?;
+		let primitive_topology = prim_topo_str_to_enum(primitive_topology_str)?;
 
 		let vs_filename = yaml_doc["VertexShader"].as_str().ok_or("Vertex shader not specified!")?;
 		let fs_filename = yaml_doc["FragmentShader"].as_str();
@@ -123,30 +111,13 @@ impl Pipeline
 			Some(samplers) => {
 				for (set_key, set) in samplers {
 					let set_number = set_key.as_i64().ok_or("Invalid set number in sampler list")?;
-					match set.as_hash() {
-						Some(set_hash) => {
-							for (binding_key, binding) in set_hash {
-								let binding_number = binding_key.as_i64().ok_or("Invalid binding number in sampler list")?;
-								
-								let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
-								
-								match binding["MagFilter"].as_str() {
-									Some(s) => sampler_create_info.mag_filter = filter_str_to_enum(s)?,
-									None => ()
-								}
-								match binding["MinFilter"].as_str() {
-									Some(s) => sampler_create_info.min_filter = filter_str_to_enum(s)?,
-									None => ()
-								}
+					for (binding_key, binding) in set.as_hash().ok_or("Invalid sampler binding")? {
+						let binding_number = binding_key.as_i64().ok_or("Invalid binding number in sampler list")?;
+						let sampler = sampler_from_yaml(binding, render_pass.clone())?;
 
-								let sampler = Sampler::new(render_pass.device().clone(), sampler_create_info)?;
-								
-								generated_samplers.push((set_number.try_into()?, binding_number.try_into()?, sampler));
-								
-								log::debug!("created sampler at set {}, binding {}", set_number, binding_number);
-							}
-						},
-						None => ()
+						generated_samplers.push((set_number.try_into()?, binding_number.try_into()?, sampler));
+
+						log::debug!("created sampler at set {}, binding {}", set_number, binding_number);
 					}
 				}
 			}
@@ -192,6 +163,39 @@ impl Pipeline
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
 		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
+	}
+}
+
+fn sampler_from_yaml(sampler_yaml: &yaml_rust::Yaml, render_pass: Arc<RenderPass>) -> Result<Arc<Sampler>, Box<dyn std::error::Error>>
+{
+	let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
+
+	for (item_name, data) in sampler_yaml.as_hash().ok_or("Invalid sampler entry")? {
+		match item_name.as_str().ok_or("Invalid sampler data entry")? {
+			"MagFilter" => sampler_create_info.mag_filter = filter_str_to_enum(data.as_str().ok_or("Invalid value in MagFilter")?)?,
+			"MinFilter" => sampler_create_info.min_filter = filter_str_to_enum(data.as_str().ok_or("Invalid value in MinFilter")?)?,
+			_ => ()
+		}
+	}
+
+	Ok(Sampler::new(render_pass.device().clone(), sampler_create_info)?)
+}
+
+fn prim_topo_str_to_enum(topology_str: &str) -> Result<PrimitiveTopology, Box<dyn std::error::Error>>
+{
+	match topology_str {
+		"PointList" => Ok(PrimitiveTopology::PointList),
+		"LineList" => Ok(PrimitiveTopology::LineList),
+		"LineStrip" => Ok(PrimitiveTopology::LineStrip),
+		"TriangleList" => Ok(PrimitiveTopology::TriangleList),
+		"TriangleStrip" => Ok(PrimitiveTopology::TriangleStrip),
+		"TriangleFan" => Ok(PrimitiveTopology::TriangleFan),
+		"LineListWithAdjacency" => Ok(PrimitiveTopology::LineListWithAdjacency),
+		"LineStripWithAdjacency" => Ok(PrimitiveTopology::LineStripWithAdjacency),
+		"TriangleListWithAdjacency" => Ok(PrimitiveTopology::TriangleListWithAdjacency),
+		"TriangleStripWithAdjacency" => Ok(PrimitiveTopology::TriangleStripWithAdjacency),
+		"PatchList" => Ok(PrimitiveTopology::PatchList),
+		_ => Err("Invalid primitive topology specified".into())
 	}
 }
 
