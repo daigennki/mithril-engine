@@ -3,6 +3,7 @@ Thumbs.db
 /media
 *.dll
 *.swp
+*.spv
 
 # Added by cargo
 

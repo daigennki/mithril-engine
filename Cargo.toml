@@ -9,6 +9,9 @@ edition = "2021"
 [profile.dev]
 opt-level = 1   # needed to stop stack overflow in Windows debug build; see https://github.com/vulkano-rs/vulkano/issues/1790#issuecomment-1023222638
 
+[build-dependencies]
+hassle-rs = "0.9"
+
 [dependencies]
 winit = "0.26"
 rusttype = "0.9"
