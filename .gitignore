@@ -4,6 +4,7 @@ Thumbs.db
 *.dll
 *.swp
 *.spv
+*.so
 
 # Added by cargo
 
