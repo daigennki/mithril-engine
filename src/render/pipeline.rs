@@ -208,23 +208,10 @@ fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<
 	}
 }
 
-fn load_file_as_raw_bytes(filename: &str)
-	-> Result<Vec<u8>, Box<dyn std::error::Error>>
-{
-	let mut file = std::fs::File::open(filename)
-		.or_else(|e| Err(format!("Failed to open '{}': {}", filename, e)))?;
-
-	let mut data: Vec<u8> = Vec::new();
-	file.read_to_end(&mut data)
-		.or_else(|e| Err(format!("Failed to read '{}': {}", filename, e)))?;
-
-	Ok(data)
-}
-
 fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
 	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error>>
 {
-	let spv_data = load_file_as_raw_bytes(filename)?;
+	let spv_data = std::fs::read(&filename)?;
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
@@ -232,8 +219,7 @@ fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str)
 fn load_spirv_vertex(device: Arc<vulkano::device::Device>, filename: &str) 
 	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), Box<dyn std::error::Error>>
 {
-	let spv_data = load_file_as_raw_bytes(filename)?;
-
+	let spv_data = std::fs::read(&filename)?;
 	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
 	let input_variables = shader_module.enumerate_input_variables(Some("main"))?;
 
@@ -241,7 +227,7 @@ fn load_spirv_vertex(device: Arc<vulkano::device::Device>, filename: &str)
 	let mut vertex_input_state = VertexInputState::new();
 	for input_var in &input_variables {
 		let vertex_format = reflect_format_to_vulkano_format(input_var.format)?;
-		let stride = get_format_components(vertex_format)? * size_of::<f32>() as u32;
+		let stride = vertex_format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
 
 		vertex_input_state = vertex_input_state
 			.binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
@@ -259,24 +245,6 @@ impl std::fmt::Display for UnsupportedVertexInputFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "unsupported vertex input format")
     }
-}
-fn get_format_components(format: Format) -> Result<u32, UnsupportedVertexInputFormat> 
-{
-	match format {
-		Format::R32_UINT => Ok(1),
-		Format::R32_SINT => Ok(1),
-		Format::R32_SFLOAT => Ok(1),
-		Format::R32G32_UINT => Ok(2),
-		Format::R32G32_SINT => Ok(2),
-		Format::R32G32_SFLOAT => Ok(2),
-		Format::R32G32B32_UINT => Ok(3),
-		Format::R32G32B32_SINT => Ok(3),
-		Format::R32G32B32_SFLOAT => Ok(3),
-		Format::R32G32B32A32_UINT => Ok(4),
-		Format::R32G32B32A32_SINT => Ok(4),
-		Format::R32G32B32A32_SFLOAT => Ok(4),
-		_ => Err(UnsupportedVertexInputFormat)
-	}
 }
 fn reflect_format_to_vulkano_format(reflect_format: spirv_reflect::types::image::ReflectFormat) 
 	-> Result<Format, UnsupportedVertexInputFormat>
@@ -305,20 +273,9 @@ fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
 	// TODO: expose an option for premultiplied alpha. also be careful about using plain RGBA colors instead of textures, as
 	// those have to be premultiplied too.
 	if subpass.num_color_attachments() > 0 {
-		let mut new_color_blend_state = ColorBlendState::new(subpass.num_color_attachments());
-		match new_color_blend_state.attachments.get_mut(0) {
-			/*Some(a) => a.blend = Some(AttachmentBlend{
-				color_op: BlendOp::Add,
-				color_source: BlendFactor::SrcAlpha,
-				color_destination: BlendFactor::OneMinusSrcAlpha,
-				alpha_op: BlendOp::Add,
-				alpha_source: BlendFactor::SrcAlpha,
-				alpha_destination: BlendFactor::OneMinusSrcAlpha
-			}),*/
-			Some(a) => a.blend = Some(AttachmentBlend::alpha()),
-			None => ()
-		}
-		Some(new_color_blend_state)
+		let mut blend_state = ColorBlendState::new(subpass.num_color_attachments());
+		blend_state.attachments[0].blend = Some(AttachmentBlend::alpha());
+		Some(blend_state)
 	} else {
 		None
 	}
