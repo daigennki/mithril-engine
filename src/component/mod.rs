@@ -59,7 +59,7 @@ impl Transform
 
 	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), crate::render::PipelineNotLoaded>
 	{
-		render_ctx.bind_descriptor_set("World", 0, self.descriptor_set.clone())
+		render_ctx.bind_descriptor_set(0, self.descriptor_set.clone())
 	}
 }
 

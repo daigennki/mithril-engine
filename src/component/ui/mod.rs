@@ -33,7 +33,7 @@ impl Transform
 	{
 		let descriptor_set_ref = self.descriptor_set.as_ref()
 			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
-		render_ctx.bind_descriptor_set("UI", 0, descriptor_set_ref.clone())?;
+		render_ctx.bind_descriptor_set(0, descriptor_set_ref.clone())?;
 		Ok(())
 	}
 

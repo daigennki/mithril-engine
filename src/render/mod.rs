@@ -7,6 +7,7 @@ mod swapchain;
 pub mod pipeline;
 pub mod texture;
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::collections::HashMap;
 use vulkano_win::VkSurfaceBuild;
@@ -25,7 +26,7 @@ use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess };
 use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
-pub struct RenderContext 
+pub struct RenderContext
 {
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: swapchain::Swapchain,
@@ -38,8 +39,10 @@ pub struct RenderContext
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
 	// TODO: give ownership of these to "Material" objects?
-	material_pipelines: HashMap<String, pipeline::Pipeline>
+	material_pipelines: HashMap<String, Rc<pipeline::Pipeline>>,
 
+	bound_pipeline: std::rc::Weak<pipeline::Pipeline>,
+	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 }
 impl RenderContext
@@ -63,18 +66,18 @@ impl RenderContext
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 		
-		let mut material_pipelines = HashMap::<String, pipeline::Pipeline>::new();
+		let mut material_pipelines = HashMap::new();
 
 		// create UI pipeline
 		material_pipelines.insert(
 			"UI".to_string(),
-			pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?
+			Rc::new(pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?)
 		);
 
 		// create 3D pipeline
 		material_pipelines.insert(
 			"World".to_string(),
-			pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?
+			Rc::new(pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?)
 		);
 
 		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
@@ -86,10 +89,13 @@ impl RenderContext
 			cur_cb: cur_cb,
 			upload_futures: None,
 			upload_futures_count: 0,
-			material_pipelines: material_pipelines
+			material_pipelines: material_pipelines,
+			bound_pipeline: std::rc::Weak::new()
 		})
 	}
 
+	/// THIS MAY UNBIND THE CURRENTLY BOUND PIPELINE!!! (if there is a viewport resize)
+	/// Do not bind pipelines before this function for use after it!
 	pub fn begin_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
@@ -97,9 +103,17 @@ impl RenderContext
 		if resize_viewports {
 			let new_dimensions = self.swapchain.dimensions();
 			log::debug!("Recreating pipelines with new viewport...");
-			// recreate pipelines with new viewport
+			
+			// destroy the existing "weak" to the bound pipeline since it will become invalid with the viewport resize,
+			// and we need to do so for `Rc::get_mut()` to work.
+			// pipelines to be used during this render pass should be bound after this function, and nothing else should be 
+			// accessing it at the same time anyways.
+			self.bound_pipeline = std::rc::Weak::new();	
+
 			for (_, pl) in &mut self.material_pipelines {
-				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
+				// TODO: there might be a better time than when the render pass begins to do the pipeline viewports resizing...
+				Rc::get_mut(pl).ok_or("a pipeline whose viewport is being resized is in use!")?
+					.resize_viewport(new_dimensions[0], new_dimensions[1])?;
 			}
 		}
 
@@ -203,7 +217,10 @@ impl RenderContext
 	pub fn bind_pipeline(&mut self, pipeline_name: &str)
 		-> Result<(), PipelineNotLoaded>
 	{
-		Ok(self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.bind(&mut self.cur_cb))
+		let pipeline_to_bind = self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?;
+		pipeline_to_bind.bind(&mut self.cur_cb);
+		self.bound_pipeline = Rc::downgrade(pipeline_to_bind);
+		Ok(())
 	}
 
 	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
@@ -212,13 +229,15 @@ impl RenderContext
 		self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.new_descriptor_set(set, writes)
 	}
 
-	pub fn bind_descriptor_set<S>(&mut self, pipeline_name: &str, first_set: u32, descriptor_sets: S) 
+	/// Bind the given descriptor sets to the currently bound pipeline.
+	/// This will fail if there is no pipeline currently bound.
+	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) 
 		-> Result<(), PipelineNotLoaded>
 		where S: DescriptorSetsCollection
 	{
 		self.cur_cb.bind_descriptor_sets(
 			PipelineBindPoint::Graphics,
-			self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.layout(), first_set, descriptor_sets
+			self.bound_pipeline.upgrade().ok_or(PipelineNotLoaded)?.layout(), first_set, descriptor_sets
 		);
 		Ok(())
 	}

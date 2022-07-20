@@ -77,7 +77,7 @@ impl Mesh
 
 	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
-		render_ctx.bind_descriptor_set("UI", 1, self.descriptor_set.clone())?;
+		render_ctx.bind_descriptor_set(1, self.descriptor_set.clone())?;
 		render_ctx.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
 		render_ctx.draw(4, 1, 0, 0)?;
 		Ok(())

@@ -39,7 +39,7 @@ impl Camera
 	pub fn bind(&self, render_ctx: &mut RenderContext) -> Result<(), crate::render::PipelineNotLoaded>
 	{
 		// this must be bound as descriptor set 1
-		render_ctx.bind_descriptor_set("World", 1, self.descriptor_set.clone())
+		render_ctx.bind_descriptor_set(1, self.descriptor_set.clone())
 	}
 }
 
