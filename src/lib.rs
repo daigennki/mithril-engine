@@ -91,11 +91,11 @@ impl GameContext
 		self.render_context.begin_main_render_pass()?;
 
 		// Draw the 3D stuff
-		self.render_context.bind_3d_pipeline();
+		self.render_context.bind_pipeline("World")?;
 		self.world.run(|camera: UniqueViewMut<Camera>|
 		{
 			camera.bind(&mut self.render_context)
-		})?;
+		})??;
 		self.world.run_with_data(draw_3d, &mut self.render_context)??;
 
 		// Draw the UI element components.
@@ -120,7 +120,7 @@ fn draw_3d(
 	-> Result<(), Box<dyn std::error::Error>>
 {
 	for (eid, transform) in transforms.iter().with_id() {
-		transform.bind_descriptor_set(render_ctx);
+		transform.bind_descriptor_set(render_ctx)?;
 
 		// draw 3D meshes
 		match meshes.get(eid) {

@@ -90,7 +90,7 @@ impl Text
 		self.cur_str.clone()
 	}
 
-	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
+	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
 		match self.quad.as_ref() {
 			Some(q) => q.draw(render_ctx),

@@ -45,7 +45,7 @@ impl Mesh
 		}
 
 		Ok(Mesh{
-			descriptor_set: render_ctx.new_ui_descriptor_set(1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
+			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
 			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
 			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
 		})
@@ -69,15 +69,15 @@ impl Mesh
 		];
 
 		Ok(Mesh{
-			descriptor_set: render_ctx.new_ui_descriptor_set(1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
+			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
 			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
 			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
 		})
 	}
 
-	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), DrawError>
+	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
-		render_ctx.bind_ui_descriptor_set(1, self.descriptor_set.clone());
+		render_ctx.bind_descriptor_set("UI", 1, self.descriptor_set.clone())?;
 		render_ctx.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
 		render_ctx.draw(4, 1, 0, 0)?;
 		Ok(())

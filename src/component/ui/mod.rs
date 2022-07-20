@@ -33,7 +33,7 @@ impl Transform
 	{
 		let descriptor_set_ref = self.descriptor_set.as_ref()
 			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
-		render_ctx.bind_ui_descriptor_set(0, descriptor_set_ref.clone());
+		render_ctx.bind_descriptor_set("UI", 0, descriptor_set_ref.clone())?;
 		Ok(())
 	}
 
@@ -57,7 +57,7 @@ fn update_matrix(render_ctx: &mut RenderContext, proj: Mat4, pos: IVec2, scale: 
 	let buf = render_ctx.new_buffer(projected.to_cols_array(), BufferUsage::uniform_buffer())?;
 
 	// create descriptor set
-	render_ctx.new_ui_descriptor_set(0, [
+	render_ctx.new_descriptor_set("UI", 0, [
 		WriteDescriptorSet::buffer(0, buf.clone())
 	])
 }

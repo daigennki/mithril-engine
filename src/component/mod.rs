@@ -35,7 +35,7 @@ impl Transform
 		
 		Ok(Transform{ 
 			buf: buf.clone(),
-			descriptor_set: render_ctx.new_3d_descriptor_set(0, [
+			descriptor_set: render_ctx.new_descriptor_set("World", 0, [
 				WriteDescriptorSet::buffer(0, buf)
 			])?, 
 			pos: pos, 
@@ -57,9 +57,9 @@ impl Transform
 		self.
 	}*/
 
-	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext)
+	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), crate::render::PipelineNotLoaded>
 	{
-		render_ctx.bind_3d_descriptor_set(0, self.descriptor_set.clone());
+		render_ctx.bind_descriptor_set("World", 0, self.descriptor_set.clone())
 	}
 }
 

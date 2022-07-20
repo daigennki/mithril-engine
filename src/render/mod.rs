@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod texture;
 
 use std::sync::Arc;
+use std::collections::HashMap;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
@@ -34,9 +35,12 @@ pub struct RenderContext
 	upload_futures: Option<Box<dyn vulkano::sync::GpuFuture>>,
 	upload_futures_count: usize,
 
-	// TODO: figure out a better way to allow user-defined shader pipelines
-	ui_pipeline: pipeline::Pipeline,
-	world_pipeline: pipeline::Pipeline	// 3D world pipeline
+	// User-accessible material pipelines; these will have their viewports resized
+	// when the window size changes
+	// TODO: give ownership of these to "Material" objects?
+	material_pipelines: HashMap<String, pipeline::Pipeline>
+
+	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 }
 impl RenderContext
 {
@@ -59,11 +63,19 @@ impl RenderContext
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 		
-		// create UI pipeline
-		let ui_pipeline = pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?;
+		let mut material_pipelines = HashMap::<String, pipeline::Pipeline>::new();
 
-		// create 3D pipeline	
-		let world_pipeline = pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?;
+		// create UI pipeline
+		material_pipelines.insert(
+			"UI".to_string(),
+			pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?
+		);
+
+		// create 3D pipeline
+		material_pipelines.insert(
+			"World".to_string(),
+			pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?
+		);
 
 		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 			
@@ -73,9 +85,8 @@ impl RenderContext
 			dev_queue: dev_queue,
 			cur_cb: cur_cb,
 			upload_futures: None,
-			ui_pipeline: ui_pipeline,
-			world_pipeline: world_pipeline,
-			upload_futures_count: 0
+			upload_futures_count: 0,
+			material_pipelines: material_pipelines
 		})
 	}
 
@@ -87,7 +98,7 @@ impl RenderContext
 			let new_dimensions = self.swapchain.dimensions();
 			log::debug!("Recreating pipelines with new viewport...");
 			// recreate pipelines with new viewport
-			for pl in [ &mut self.ui_pipeline ] {
+			for (_, pl) in &mut self.material_pipelines {
 				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
 			}
 		}
@@ -187,49 +198,31 @@ impl RenderContext
 		self.upload_futures_count += 1;
 
 		Ok(buf)
-	} 
-	
-	/*pub fn bind_pipeline(&mut self, pipeline: &pipeline::Pipeline) -> Result<(), CommandBufferNotBuilding>
+	} 	
+
+	pub fn bind_pipeline(&mut self, pipeline_name: &str)
+		-> Result<(), PipelineNotLoaded>
 	{
-		pipeline.bind(self.cur_cb.as_mut().ok_or(CommandBufferNotBuilding)?);
+		Ok(self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.bind(&mut self.cur_cb))
+	}
+
+	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
+		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
+	{
+		self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.new_descriptor_set(set, writes)
+	}
+
+	pub fn bind_descriptor_set<S>(&mut self, pipeline_name: &str, first_set: u32, descriptor_sets: S) 
+		-> Result<(), PipelineNotLoaded>
+		where S: DescriptorSetsCollection
+	{
+		self.cur_cb.bind_descriptor_sets(
+			PipelineBindPoint::Graphics,
+			self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.layout(), first_set, descriptor_sets
+		);
 		Ok(())
-	}*/
-
-	pub fn bind_ui_pipeline(&mut self)
-	{
-		self.ui_pipeline.bind(&mut self.cur_cb);
 	}
-
-	pub fn new_ui_descriptor_set(&self, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
-		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
-	{
-		self.ui_pipeline.new_descriptor_set(set, writes)
-	}
-
-	pub fn bind_ui_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) 
-		where S: DescriptorSetsCollection
-	{
-		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.ui_pipeline.layout(), first_set, descriptor_sets);
-	}
-
-	pub fn bind_3d_pipeline(&mut self)
-	{
-		self.world_pipeline.bind(&mut self.cur_cb);
-	}
-
-	pub fn new_3d_descriptor_set(&self, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
-		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
-	{
-		self.world_pipeline.new_descriptor_set(set, writes)
-	}
-
-	pub fn bind_3d_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S)
-		where S: DescriptorSetsCollection
-	{
-		self.cur_cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.world_pipeline.layout(), first_set, descriptor_sets);
-	}
-
-
+	
 	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V)
 		where V: VertexBuffersCollection
 	{
@@ -280,6 +273,15 @@ impl RenderContext
 	{
 		self.swapchain.wait_for_fence()
 	}*/
+}
+
+#[derive(Debug)]
+pub struct PipelineNotLoaded;
+impl std::error::Error for PipelineNotLoaded {}
+impl std::fmt::Display for PipelineNotLoaded {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "the specified pipeline is not loaded")
+    }
 }
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>

@@ -28,7 +28,7 @@ impl Camera
 		let projview_buf = render_ctx.new_buffer(projview.to_cols_array(), BufferUsage::uniform_buffer())?;
 
 		Ok(Camera{
-			descriptor_set: render_ctx.new_3d_descriptor_set(1, [
+			descriptor_set: render_ctx.new_descriptor_set("World", 1, [
 				WriteDescriptorSet::buffer(0, projview_buf.clone())
 			])?,
 			projview: projview
@@ -36,10 +36,10 @@ impl Camera
 	}
 
 	/// Bind this camera's projection and view matrices so they can be used in shaders.
-	pub fn bind(&self, render_ctx: &mut RenderContext)
+	pub fn bind(&self, render_ctx: &mut RenderContext) -> Result<(), crate::render::PipelineNotLoaded>
 	{
 		// this must be bound as descriptor set 1
-		render_ctx.bind_3d_descriptor_set(1, self.descriptor_set.clone())
+		render_ctx.bind_descriptor_set("World", 1, self.descriptor_set.clone())
 	}
 }
 
