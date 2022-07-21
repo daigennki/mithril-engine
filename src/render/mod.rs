@@ -115,8 +115,11 @@ impl RenderContext
 					.resize_viewport(new_dimensions[0], new_dimensions[1])?;
 			}
 		}
+		
+		let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(next_img_fb);
+		rp_begin_info.clear_values = vec![Some([0.1, 0.1, 0.1, 1.0].into())];
 
-		self.cur_cb.begin_render_pass(next_img_fb, SubpassContents::Inline, [[0.1, 0.1, 0.1, 1.0].into()])?;
+		self.cur_cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
 		Ok(())
 	}
 
@@ -304,14 +307,14 @@ impl std::fmt::Display for PipelineNotLoaded {
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
 {
+	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
+	// implementations like MoltenVK. for now, we can go without it.
 	let vk_ext = vulkano_win::required_extensions();
 	
 	// only use the validation layer in debug builds
-	// TODO: re-enable this later, since vulkano is a bit borked as of v0.29.0 and doesn't get along well with the validation
-	// layer; see https://github.com/vulkano-rs/vulkano/issues/1858
-	/*#[cfg(debug_assertions)]
+	#[cfg(debug_assertions)]
 	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".to_string()];
-	#[cfg(not(debug_assertions))]*/
+	#[cfg(not(debug_assertions))]
 	let vk_layers: Vec<String> = vec![];
 
 	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
@@ -436,7 +439,7 @@ fn create_vk_logical_device<'a, I>(physical_device: PhysicalDevice, queue_famili
 	let dev_extensions = vulkano::device::DeviceExtensions{
 		khr_swapchain: true,
 		..vulkano::device::DeviceExtensions::none()
-	}.union(physical_device.required_extensions());
+	};
 
 	let mut queue_create_infos: Vec<vulkano::device::QueueCreateInfo<'a>> = Vec::new();
 	for qf in queue_families {

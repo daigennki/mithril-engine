@@ -27,7 +27,8 @@ pub struct Pipeline
 	vs: Arc<ShaderModule>,
 	fs: Option<Arc<ShaderModule>>,
 	samplers: Vec<(usize, u32, Arc<Sampler>)>,
-	pipeline: Arc<GraphicsPipeline>
+	pipeline: Arc<GraphicsPipeline>,
+	subpass: Subpass
 }
 impl Pipeline
 {
@@ -64,7 +65,7 @@ impl Pipeline
 			vertex_input_state, 
 			width, height,
 			vs.clone(), fs.clone(), 
-			subpass,
+			subpass.clone(),
 			&samplers,
 			color_blend_state
 		)?;
@@ -82,7 +83,8 @@ impl Pipeline
 			vs: vs,
 			fs: fs,
 			samplers: samplers,
-			pipeline: pipeline_built
+			pipeline: pipeline_built,
+			subpass: subpass
 		})
 	}
 
@@ -133,7 +135,7 @@ impl Pipeline
 			self.pipeline.input_assembly_state().clone(),
 			self.pipeline.vertex_input_state().clone(), width, height,
 			self.vs.clone(), self.fs.clone(), 
-			self.pipeline.subpass().clone(),
+			self.subpass.clone(),
 			&self.samplers,
 			self.pipeline.color_blend_state().cloned()
 		)?;
