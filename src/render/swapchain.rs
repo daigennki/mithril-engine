@@ -171,11 +171,6 @@ impl Swapchain
 	{
 		self.swapchain.image_extent()
 	}
-
-	/*pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
-	{
-		self.swapchain.surface().clone()
-	}*/
 }
 
 fn create_framebuffers(

@@ -123,16 +123,6 @@ impl RenderContext
 		Ok(())
 	}
 
-	/*pub fn begin_gui_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
-	{
-		self.cur_cb.begin_render_pass(
-			self.swapchain.get_current_image(),
-			vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers,
-			vec![[0.0, 0.0, 1.0, 1.0].into()/*, 1f32.into()*/],
-		)?;
-		Ok(())
-	}*/
-
 	pub fn end_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.cur_cb.end_render_pass()?;
@@ -265,32 +255,13 @@ impl RenderContext
 		Ok(())
 	}
 
-	/*pub fn surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
-	{
-		self.swapchain.surface()
-	}
-	pub fn queue(&self) -> Arc<vulkano::device::Queue>
-	{
-		self.dev_queue.clone()
-	}
-
-	pub fn submit_secondary(&mut self, s: vulkano::command_buffer::SecondaryAutoCommandBuffer) -> Result<(), ExecuteCommandsError>
-	{
-		self.cur_cb.execute_commands(s)?;
-		Ok(())
-	}
-
+	/*
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()
 	}
 
-	pub fn get_main_subpass(&self) -> vulkano::render_pass::Subpass
-	{
-		self.swapchain.render_pass().first_subpass()
-	}*/
-
-	/*pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	pub fn wait_for_fence(&self) -> Result<(), FlushError>
 	{
 		self.swapchain.wait_for_fence()
 	}*/
@@ -455,3 +426,4 @@ fn create_vk_logical_device<'a, I>(physical_device: PhysicalDevice, queue_famili
 
 	vulkano::device::Device::new(physical_device, dev_create_info)
 }
+

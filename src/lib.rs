@@ -99,7 +99,7 @@ impl GameContext
 		self.world.run_with_data(draw_3d, &mut self.render_context)??;
 
 		// Draw the UI element components.
-		//self.render_context.bind_ui_pipeline();
+		//self.render_context.bind_pipeline("UI");
 		//self.world.run_with_data(draw_ui_elements, &mut self.render_context)??;
 		
 		self.render_context.end_render_pass()?;
