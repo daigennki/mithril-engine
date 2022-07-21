@@ -7,7 +7,6 @@ use std::sync::Arc;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::command_buffer::DrawError;
 use glam::*;
 use crate::vertex::*;
 use crate::render::texture::Texture;

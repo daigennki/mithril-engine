@@ -3,7 +3,6 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use vulkano::command_buffer::DrawError;
 use vulkano::format::Format;
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 use image::{ DynamicImage, Rgba };

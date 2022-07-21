@@ -6,10 +6,8 @@
 use std::sync::Arc;
 use glam::*;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
-use vulkano::command_buffer::DrawError;
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use crate::vertex::*;
-use crate::render::texture::Texture;
 use crate::render::RenderContext;
 
 pub struct Mesh

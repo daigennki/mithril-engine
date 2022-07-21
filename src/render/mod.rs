@@ -18,9 +18,8 @@ use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, Pri
 use vulkano::command_buffer::{ SubpassContents };
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
-use vulkano::pipeline::graphics::input_assembly::{ PrimitiveTopology, Index };
+use vulkano::pipeline::graphics::input_assembly::Index;
 use vulkano::descriptor_set::{ DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet };
-use vulkano::sampler::Sampler;
 use vulkano::format::{ Format };
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess };
 use vulkano::sync::{ GpuFuture };
