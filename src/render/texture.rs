@@ -18,15 +18,14 @@ pub struct Texture
 }
 impl Texture
 {
-	pub fn new(queue: Arc<vulkano::device::Queue>, filename: &Path) 
+	pub fn new(queue: Arc<vulkano::device::Queue>, path: &Path) 
 		-> Result<(Texture, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error>>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
-		let file_ext = filename.extension().ok_or("Could not determine texture file extension!")?.to_str();
-		let filename_str = &filename.display().to_string();
+		let file_ext = path.extension().ok_or("Could not determine texture file extension!")?.to_str();
 		let (vk_fmt, dim, mip, img_raw) = match file_ext {
-			Some("dds") => load_dds(filename_str)?,
-			_ => load_other_format(filename_str)?
+			Some("dds") => load_dds(path)?,
+			_ => load_other_format(path)?
 		};
 
 		Self::new_from_iter(queue, img_raw, vk_fmt, dim, mip)
@@ -67,10 +66,10 @@ impl Texture
 	}
 }
 
-fn load_dds(filename: &str) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), Box<dyn std::error::Error>>
+fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), Box<dyn std::error::Error>>
 {
-	let dds_file = std::fs::File::open(filename)
-		.or_else(|e| Err(format!("Could not open '{}': {}", filename, e)))?;
+	let dds_file = std::fs::File::open(path)
+		.or_else(|e| Err(format!("Could not open '{}': {}", path.display(), e)))?;
 
 	let dds = ddsfile::Dds::read(dds_file)?;
 	let dds_format = dds.get_dxgi_format()
@@ -84,9 +83,9 @@ fn load_dds(filename: &str) -> Result<(Format, ImageDimensions, MipmapsCount, Ve
 	Ok((vk_fmt, dim, mip, img_raw))
 }
 
-fn load_other_format(filename: &str) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), Box<dyn std::error::Error>>
+fn load_other_format(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), Box<dyn std::error::Error>>
 {
-	let img = image::io::Reader::open(filename)?.decode()?;
+	let img = image::io::Reader::open(path)?.decode()?;
 
 	let vk_fmt = Format::R8G8B8A8_SRGB;	// TODO: other formats such as greyscale
 	let dim = ImageDimensions::Dim2d{ width: img.width(), height: img.height(), array_layers: 1 };
@@ -98,12 +97,13 @@ fn load_other_format(filename: &str) -> Result<(Format, ImageDimensions, Mipmaps
 
 fn dxgi_to_vulkan_format(dxgi_format: DxgiFormat) -> Result<Format, Box<dyn std::error::Error>>
 {
-	match dxgi_format {
-		DxgiFormat::BC1_UNorm_sRGB => Ok(Format::BC1_RGBA_SRGB_BLOCK),
-		DxgiFormat::BC2_UNorm_sRGB => Ok(Format::BC2_SRGB_BLOCK),
-		DxgiFormat::BC3_UNorm_sRGB => Ok(Format::BC3_SRGB_BLOCK),
-		DxgiFormat::BC4_UNorm => Ok(Format::BC4_UNORM_BLOCK),
-		DxgiFormat::BC5_UNorm => Ok(Format::BC5_UNORM_BLOCK),
-		_ => Err("Unsupported DDS format!".into())
-	}
+	Ok(match dxgi_format {
+		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,
+		DxgiFormat::BC2_UNorm_sRGB => Format::BC2_SRGB_BLOCK,
+		DxgiFormat::BC3_UNorm_sRGB => Format::BC3_SRGB_BLOCK,
+		DxgiFormat::BC4_UNorm => Format::BC4_UNORM_BLOCK,
+		DxgiFormat::BC5_UNorm => Format::BC5_UNORM_BLOCK,
+		_ => return Err("Unsupported DDS format!".into())
+	})
 }
+

@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use std::io::Read;
+use std::path::Path;
 use vulkano::shader::ShaderModule;
 use vulkano::render_pass::{ RenderPass, Subpass };
 use vulkano::pipeline::GraphicsPipeline;
@@ -45,13 +45,13 @@ impl Pipeline
 
 		// load vertex shader
 		log::info!("Loading vertex shader {}...", vs_filename);
-		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &format!("shaders/{}", vs_filename))?;
+		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
 		// load fragment shader (optional)
 		let fs = match fs_filename {
 			Some(f) => {
 				log::info!("Loading fragment shader {}...", f);
-				Some(load_spirv(vk_dev.clone(), &format!("shaders/{}", f))?)
+				Some(load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))?)
 			}
 			None => None
 		};
@@ -94,9 +94,7 @@ impl Pipeline
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 
-		let mut yaml_file = std::fs::File::open(format!("shaders/{}", yaml_filename))?;
-		let mut yaml_string = String::new();
-		yaml_file.read_to_string(&mut yaml_string)?;
+		let yaml_string = String::from_utf8(std::fs::read(Path::new("shaders").join(yaml_filename))?)?;
 
 		let yaml_docs = YamlLoader::load_from_str(&yaml_string)?;
 		let yaml_doc = &yaml_docs[0];
@@ -184,43 +182,43 @@ fn sampler_from_yaml(sampler_yaml: &yaml_rust::Yaml, render_pass: Arc<RenderPass
 
 fn prim_topo_str_to_enum(topology_str: &str) -> Result<PrimitiveTopology, Box<dyn std::error::Error>>
 {
-	match topology_str {
-		"PointList" => Ok(PrimitiveTopology::PointList),
-		"LineList" => Ok(PrimitiveTopology::LineList),
-		"LineStrip" => Ok(PrimitiveTopology::LineStrip),
-		"TriangleList" => Ok(PrimitiveTopology::TriangleList),
-		"TriangleStrip" => Ok(PrimitiveTopology::TriangleStrip),
-		"TriangleFan" => Ok(PrimitiveTopology::TriangleFan),
-		"LineListWithAdjacency" => Ok(PrimitiveTopology::LineListWithAdjacency),
-		"LineStripWithAdjacency" => Ok(PrimitiveTopology::LineStripWithAdjacency),
-		"TriangleListWithAdjacency" => Ok(PrimitiveTopology::TriangleListWithAdjacency),
-		"TriangleStripWithAdjacency" => Ok(PrimitiveTopology::TriangleStripWithAdjacency),
-		"PatchList" => Ok(PrimitiveTopology::PatchList),
-		_ => Err("Invalid primitive topology specified".into())
-	}
+	Ok(match topology_str {
+		"PointList" => PrimitiveTopology::PointList,
+		"LineList" => PrimitiveTopology::LineList,
+		"LineStrip" => PrimitiveTopology::LineStrip,
+		"TriangleList" => PrimitiveTopology::TriangleList,
+		"TriangleStrip" => PrimitiveTopology::TriangleStrip,
+		"TriangleFan" => PrimitiveTopology::TriangleFan,
+		"LineListWithAdjacency" => PrimitiveTopology::LineListWithAdjacency,
+		"LineStripWithAdjacency" => PrimitiveTopology::LineStripWithAdjacency,
+		"TriangleListWithAdjacency" => PrimitiveTopology::TriangleListWithAdjacency,
+		"TriangleStripWithAdjacency" => PrimitiveTopology::TriangleStripWithAdjacency,
+		"PatchList" => PrimitiveTopology::PatchList,
+		_ => return Err("Invalid primitive topology specified".into())
+	})
 }
 
 fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<dyn std::error::Error>>
 {
-	match filter_str {
-		"Nearest" => Ok(vulkano::sampler::Filter::Nearest),
-		"Linear" => Ok(vulkano::sampler::Filter::Linear),
-		_ => Err("Invalid sampler filter".into())
-	}
+	Ok(match filter_str {
+		"Nearest" => vulkano::sampler::Filter::Nearest,
+		"Linear" => vulkano::sampler::Filter::Linear,
+		_ => return Err("Invalid sampler filter".into())
+	})
 }
 
-fn load_spirv(device: Arc<vulkano::device::Device>, filename: &str) 
+fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) 
 	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error>>
 {
-	let spv_data = std::fs::read(&filename)?;
+	let spv_data = std::fs::read(path)?;
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
-fn load_spirv_vertex(device: Arc<vulkano::device::Device>, filename: &str) 
+fn load_spirv_vertex(device: Arc<vulkano::device::Device>, path: &Path)
 	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), Box<dyn std::error::Error>>
 {
-	let spv_data = std::fs::read(&filename)?;
+	let spv_data = std::fs::read(path)?;
 	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
 	let input_variables = shader_module.enumerate_input_variables(Some("main"))?;
 
@@ -250,21 +248,21 @@ impl std::fmt::Display for UnsupportedVertexInputFormat {
 fn reflect_format_to_vulkano_format(reflect_format: spirv_reflect::types::image::ReflectFormat) 
 	-> Result<Format, UnsupportedVertexInputFormat>
 {
-	match reflect_format {
-		ReflectFormat::R32_UINT => Ok(Format::R32_UINT),
-		ReflectFormat::R32_SINT => Ok(Format::R32_UINT),
-		ReflectFormat::R32_SFLOAT => Ok(Format::R32_SFLOAT),
-		ReflectFormat::R32G32_UINT => Ok(Format::R32G32_UINT),
-		ReflectFormat::R32G32_SINT => Ok(Format::R32G32_SINT),
-		ReflectFormat::R32G32_SFLOAT => Ok(Format::R32G32_SFLOAT),
-		ReflectFormat::R32G32B32_UINT => Ok(Format::R32G32B32_UINT),
-		ReflectFormat::R32G32B32_SINT => Ok(Format::R32G32B32_SINT),
-		ReflectFormat::R32G32B32_SFLOAT => Ok(Format::R32G32B32_SFLOAT),
-		ReflectFormat::R32G32B32A32_UINT => Ok(Format::R32G32B32A32_UINT),
-		ReflectFormat::R32G32B32A32_SINT => Ok(Format::R32G32B32A32_SINT),
-		ReflectFormat::R32G32B32A32_SFLOAT => Ok(Format::R32G32B32A32_SFLOAT),
-		_ => Err(UnsupportedVertexInputFormat)
-	}
+	Ok(match reflect_format {
+		ReflectFormat::R32_UINT => Format::R32_UINT,
+		ReflectFormat::R32_SINT => Format::R32_UINT,
+		ReflectFormat::R32_SFLOAT => Format::R32_SFLOAT,
+		ReflectFormat::R32G32_UINT => Format::R32G32_UINT,
+		ReflectFormat::R32G32_SINT => Format::R32G32_SINT,
+		ReflectFormat::R32G32_SFLOAT => Format::R32G32_SFLOAT,
+		ReflectFormat::R32G32B32_UINT => Format::R32G32B32_UINT,
+		ReflectFormat::R32G32B32_SINT => Format::R32G32B32_SINT,
+		ReflectFormat::R32G32B32_SFLOAT => Format::R32G32B32_SFLOAT,
+		ReflectFormat::R32G32B32A32_UINT => Format::R32G32B32A32_UINT,
+		ReflectFormat::R32G32B32A32_SINT => Format::R32G32B32A32_SINT,
+		ReflectFormat::R32G32B32A32_SFLOAT => Format::R32G32B32A32_SFLOAT,
+		_ => return Err(UnsupportedVertexInputFormat)
+	})
 }
 
 fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
