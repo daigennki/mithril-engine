@@ -97,7 +97,6 @@ impl Pipeline
 		let yaml_string = String::from_utf8(std::fs::read(Path::new("shaders").join(yaml_filename))?)?;
 
 		let deserialized: PipelineConfig = serde_yaml::from_str(&yaml_string)?;
-		let primitive_topology = prim_topo_str_to_enum(&deserialized.primitive_topology)?;
 
 		let mut generated_samplers: Vec<(usize, u32, Arc<Sampler>)> = vec![];
 		match deserialized.samplers {
@@ -119,7 +118,7 @@ impl Pipeline
 		}
 
 		Pipeline::new(
-			primitive_topology, 
+			deserialized.primitive_topology, 
 			deserialized.vertex_shader, 
 			deserialized.fragment_shader, 
 			generated_samplers, render_pass, width, height
@@ -176,26 +175,28 @@ struct PipelineSamplerConfig {
 struct PipelineConfig {
 	vertex_shader: String,
 	fragment_shader: Option<String>,
-	primitive_topology: String,
+
+	#[serde(with = "PrimitiveTopologyDef")]
+	primitive_topology: PrimitiveTopology,
+
 	samplers: Option<Vec<PipelineSamplerConfig>>
 }
 
-fn prim_topo_str_to_enum(topology_str: &str) -> Result<PrimitiveTopology, Box<dyn std::error::Error>>
-{
-	Ok(match topology_str {
-		"PointList" => PrimitiveTopology::PointList,
-		"LineList" => PrimitiveTopology::LineList,
-		"LineStrip" => PrimitiveTopology::LineStrip,
-		"TriangleList" => PrimitiveTopology::TriangleList,
-		"TriangleStrip" => PrimitiveTopology::TriangleStrip,
-		"TriangleFan" => PrimitiveTopology::TriangleFan,
-		"LineListWithAdjacency" => PrimitiveTopology::LineListWithAdjacency,
-		"LineStripWithAdjacency" => PrimitiveTopology::LineStripWithAdjacency,
-		"TriangleListWithAdjacency" => PrimitiveTopology::TriangleListWithAdjacency,
-		"TriangleStripWithAdjacency" => PrimitiveTopology::TriangleStripWithAdjacency,
-		"PatchList" => PrimitiveTopology::PatchList,
-		_ => return Err("Invalid primitive topology specified".into())
-	})
+// copy of `vulkano::pipeline::graphics::input_assembly::PrimitiveTopology` so we can more directly (de)serialize it
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "PrimitiveTopology")]
+enum PrimitiveTopologyDef {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+    TriangleFan,
+    LineListWithAdjacency,
+    LineStripWithAdjacency,
+    TriangleListWithAdjacency,
+    TriangleStripWithAdjacency,
+    PatchList,
 }
 
 fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<dyn std::error::Error>>
