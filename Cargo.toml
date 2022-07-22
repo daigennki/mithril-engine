@@ -33,3 +33,5 @@ log = "0.4"
 simplelog = "0.12"
 shipyard = "0.5"
 bytemuck = "1.9"
+dirs = "4.0"
+

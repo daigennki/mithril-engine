@@ -7,6 +7,7 @@ mod render;
 pub mod component;
 pub mod vertex;
 
+use std::path::PathBuf;
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use glam::*;
@@ -186,15 +187,15 @@ pub fn run_game(org_name: &str, game_name: &str)
 }
 
 // Get preferences path, set up logging, and return the preferences path.
-fn setup_log(org_name: &str, game_name: &str) -> Result<String, Box<dyn std::error::Error>>
+fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::error::Error>>
 {
 	let pref_path = get_pref_path(org_name, game_name)?;	// log, config, and save data files will be saved here
-	println!("Using preferences path: {}", &pref_path);
+	println!("Using preferences path: {}", pref_path.display());
 
 	// open log file
-	let log_file_path = format!("{}game.log", &pref_path);
+	let log_file_path = pref_path.join("game.log");
 	let log_file = std::fs::File::create(&log_file_path).or_else(|e| {
-		Err(format!("Failed to create log file '{}': {}", &log_file_path, e))
+		Err(format!("Failed to create log file '{}': {}", log_file_path.display(), e))
 	})?;
 
 	// set up logger
@@ -232,9 +233,10 @@ fn log_error(e: Box<dyn std::error::Error>)
 		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
 }
 
-fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<String, String>
+fn get_pref_path(org_name: &str, game_name: &str) -> Result<PathBuf, String>
 {
-	let pref_path = format!("{}/{}/{}/", prefix, org_name, game_name);
+	let prefix = dirs::data_dir().ok_or("Failed to get preferences path")?;
+	let pref_path = prefix.join(org_name).join(game_name);
 
 	// try to create the path if it doesn't exist
 	match std::fs::create_dir_all(&pref_path) {
@@ -248,29 +250,4 @@ fn create_pref_path(prefix: &str, org_name: &str, game_name: &str) -> Result<Str
 		}
 	}
 }
-fn get_pref_path(org_name: &str, game_name: &str) -> Result<String, String>
-{
-	#[cfg(target_family = "windows")]
-	let path_prefix = std::env::var("APPDATA");
-	#[cfg(target_family = "unix")]
-	let path_prefix = std::env::var("XDG_DATA_HOME");
-	
-	match path_prefix {
-		Ok(env_result) => Ok(create_pref_path(&env_result, org_name, game_name)?),
-		Err(e) => {
-			#[cfg(target_family = "windows")]
-			return Err(format!("Failed to get preferences path: {}", e));
-			#[cfg(target_family = "unix")]
-			{
-				println!("XDG_DATA_HOME was invalid ({}), trying HOME instead...", e);
-				match std::env::var("HOME") {
-					Ok(env_result) => {
-						let pref_prefix = format!("{}/.local/share", env_result);
-						Ok(create_pref_path(&pref_prefix, org_name, game_name)?)
-					},
-					Err(e) => Err(format!("Failed to get preferences path: {}", e))
-				}
-			}
-		}
-	}
-}
+
