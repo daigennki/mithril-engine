@@ -1,4 +1,4 @@
-VertexShader: basic_3d.vert.spv
-FragmentShader: mat_single_color.frag.spv
-PrimitiveTopology: TriangleList
+vertex_shader: basic_3d.vert.spv
+fragment_shader: mat_single_color.frag.spv
+primitive_topology: TriangleList
 

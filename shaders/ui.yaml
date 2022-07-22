@@ -1,9 +1,9 @@
-VertexShader: ui.vert.spv
-FragmentShader: ui.frag.spv
-PrimitiveTopology: TriangleStrip
-Samplers:
-  1:
-    1:
-      MagFilter: Linear
-      MinFilter: Linear
+vertex_shader: ui.vert.spv
+fragment_shader: ui.frag.spv
+primitive_topology: TriangleStrip
+samplers:
+- set: 1
+  binding: 1
+  mag_filter: Linear
+  min_filter: Linear
 

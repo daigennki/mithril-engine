@@ -20,7 +20,7 @@ use vulkano::sampler::Sampler;
 use vulkano::descriptor_set::{ layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::device::DeviceOwned;
 use spirv_reflect::types::image::ReflectFormat;
-use yaml_rust::YamlLoader;
+use serde::{Serialize, Deserialize};
 
 pub struct Pipeline
 {
@@ -34,8 +34,8 @@ impl Pipeline
 {
 	pub fn new( 
 		primitive_topology: PrimitiveTopology,	
-		vs_filename: &str,
-		fs_filename: Option<&str>,
+		vs_filename: String,
+		fs_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		width: u32, height: u32,
@@ -96,34 +96,34 @@ impl Pipeline
 
 		let yaml_string = String::from_utf8(std::fs::read(Path::new("shaders").join(yaml_filename))?)?;
 
-		let yaml_docs = YamlLoader::load_from_str(&yaml_string)?;
-		let yaml_doc = &yaml_docs[0];
-
-		let primitive_topology_str = yaml_doc["PrimitiveTopology"].as_str().ok_or("Primitive topology not specified!")?;
-		let primitive_topology = prim_topo_str_to_enum(primitive_topology_str)?;
-
-		let vs_filename = yaml_doc["VertexShader"].as_str().ok_or("Vertex shader not specified!")?;
-		let fs_filename = yaml_doc["FragmentShader"].as_str();
+		let deserialized: PipelineConfig = serde_yaml::from_str(&yaml_string)?;
+		let primitive_topology = prim_topo_str_to_enum(&deserialized.primitive_topology)?;
 
 		let mut generated_samplers: Vec<(usize, u32, Arc<Sampler>)> = vec![];
-		match yaml_doc["Samplers"].as_hash() {
-			Some(samplers) => {
-				for (set_key, set) in samplers {
-					let set_number = set_key.as_i64().ok_or("Invalid set number in sampler list")?;
-					for (binding_key, binding) in set.as_hash().ok_or("Invalid sampler binding")? {
-						let binding_number = binding_key.as_i64().ok_or("Invalid binding number in sampler list")?;
-						let sampler = sampler_from_yaml(binding, render_pass.clone())?;
-
-						generated_samplers.push((set_number.try_into()?, binding_number.try_into()?, sampler));
-
-						log::debug!("created sampler at set {}, binding {}", set_number, binding_number);
-					}
+		match deserialized.samplers {
+			Some(sampler_configs) => for sampler_config in sampler_configs {
+				let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
+				match sampler_config.mag_filter {
+					Some(f) => sampler_create_info.mag_filter = filter_str_to_enum(&f)?,
+					None => ()
 				}
-			}
+				match sampler_config.min_filter {
+					Some(f) => sampler_create_info.min_filter = filter_str_to_enum(&f)?,
+					None => ()
+				}
+
+				let new_sampler = Sampler::new(render_pass.device().clone(), sampler_create_info)?;
+				generated_samplers.push((sampler_config.set, sampler_config.binding, new_sampler));
+			},
 			None => ()
 		}
 
-		Pipeline::new(primitive_topology, vs_filename, fs_filename, generated_samplers, render_pass, width, height)
+		Pipeline::new(
+			primitive_topology, 
+			deserialized.vertex_shader, 
+			deserialized.fragment_shader, 
+			generated_samplers, render_pass, width, height
+		)
 	}
 
 	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>>
@@ -165,19 +165,19 @@ impl Pipeline
 	}
 }
 
-fn sampler_from_yaml(sampler_yaml: &yaml_rust::Yaml, render_pass: Arc<RenderPass>) -> Result<Arc<Sampler>, Box<dyn std::error::Error>>
-{
-	let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
-
-	for (item_name, data) in sampler_yaml.as_hash().ok_or("Invalid sampler entry")? {
-		match item_name.as_str().ok_or("Invalid sampler data entry")? {
-			"MagFilter" => sampler_create_info.mag_filter = filter_str_to_enum(data.as_str().ok_or("Invalid value in MagFilter")?)?,
-			"MinFilter" => sampler_create_info.min_filter = filter_str_to_enum(data.as_str().ok_or("Invalid value in MinFilter")?)?,
-			_ => ()
-		}
-	}
-
-	Ok(Sampler::new(render_pass.device().clone(), sampler_create_info)?)
+#[derive(Serialize, Deserialize)]
+struct PipelineSamplerConfig {
+	set: usize,
+	binding: u32,
+	min_filter: Option<String>,
+	mag_filter: Option<String>
+}
+#[derive(Serialize, Deserialize)]
+struct PipelineConfig {
+	vertex_shader: String,
+	fragment_shader: Option<String>,
+	primitive_topology: String,
+	samplers: Option<Vec<PipelineSamplerConfig>>
 }
 
 fn prim_topo_str_to_enum(topology_str: &str) -> Result<PrimitiveTopology, Box<dyn std::error::Error>>
