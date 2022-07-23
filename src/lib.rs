@@ -43,10 +43,10 @@ impl GameContext
 		// add some 3D entities for testing
 		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;
 
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.0, 0.0, 0.0 ].into(), Vec3::ONE, [ 0.1, 0.0, 0.0, 0.8 ].into())?);
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.2, 0.0, 0.2 ].into(), Vec3::ONE, [ 0.0, 0.1, 0.0, 0.8 ].into())?);
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.4, 0.0, 0.4 ].into(), Vec3::ONE, [ 0.0, 0.0, 0.1, 0.8 ].into())?);
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.6, 0.0, 0.6 ].into(), Vec3::ONE, [ 0.1, 0.1, 0.0, 0.8 ].into())?);
+		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.0, 0.0, 0.0 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.0, 0.0, 0.8 ].into())?);
+		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.2, 0.0, 0.2 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.1, 0.0, 0.8 ].into())?);
+		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.4, 0.0, 0.4 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.0, 0.1, 0.8 ].into())?);
+		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.6, 0.0, 0.6 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.1, 0.0, 0.8 ].into())?);
 
 
 		// add some UI entities for testing

@@ -20,20 +20,19 @@ pub struct Transform
 	// TODO: maybe we should use immutable buffers but only for static objects...
 	buf: Arc<CpuAccessibleBuffer<[f32]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
-	pos: Vec3,
+	position: Vec3,
 	scale: Vec3,
-	rot: Vec3	// rotation on X, Y, and Z axes
+	rot_quat: Quat
 }
 impl Transform
 {
-	pub fn new(render_ctx: &mut RenderContext, pos: Vec3, scale: Vec3) -> Result<Transform, Box<dyn std::error::Error>>
+	pub fn new(render_ctx: &mut RenderContext, position: Vec3, scale: Vec3, rotation: Vec3) -> Result<Transform, Box<dyn std::error::Error>>
 	{
-		let rot = Vec3::ZERO;
-		let rot_quat = Quat::from_euler(EulerRot::XYZ, rot.x, rot.y, rot.z);
+		let rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(
 			scale,
 			rot_quat,
-			pos
+			position
 		);
 		let buf = render_ctx.new_cpu_buffer(transform_mat.to_cols_array(), BufferUsage::uniform_buffer())?;
 
@@ -42,28 +41,36 @@ impl Transform
 			descriptor_set: render_ctx.new_descriptor_set("World", 0, [
 				WriteDescriptorSet::buffer(0, buf)
 			])?, 
-			pos: pos, 
+			position: position, 
 			scale: scale,
-			rot: rot
+			rot_quat: rot_quat
 		})
 	}
+	
 
 	fn update_buffer(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		let transform_mat = Mat4::from_scale_rotation_translation(
-			self.scale,
-			Quat::from_euler(EulerRot::XYZ, self.rot.x, self.rot.y, self.rot.z),
-			self.pos
-		);
-
+		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 		self.buf.write()?.clone_from_slice(&transform_mat.to_cols_array());
-			
 		Ok(())
 	}
 
-	pub fn set_pos(&mut self, pos: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_pos(&mut self, position: Vec3) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.pos = pos;
+		self.position = position;
+		self.update_buffer()
+	}
+	
+	pub fn set_scale(&mut self, scale: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	{
+		self.scale = scale;
+		self.update_buffer()
+	}
+
+	/// Set the rotation of this object, in terms of X, Y, and Z axis rotations.
+	pub fn set_rotation(&mut self, rotation: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	{
+		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
 		self.update_buffer()
 	}
 
@@ -74,10 +81,10 @@ impl Transform
 }
 
 /// Convenience function: create a tuple of `Transform` and `Mesh` to display a simple triangle.
-pub fn new_triangle(render_ctx: &mut RenderContext, pos: Vec3, scale: Vec3, color: Vec4)
+pub fn new_triangle(render_ctx: &mut RenderContext, pos: Vec3, scale: Vec3, rot: Vec3, color: Vec4)
 	-> Result<(Transform, mesh::Mesh), Box<dyn std::error::Error>>
 {
-	let tri_transform = Transform::new(render_ctx, pos, scale)?;
+	let tri_transform = Transform::new(render_ctx, pos, scale, rot)?;
 	let tri_mesh = mesh::Mesh::new(render_ctx, color)?;
 
 	Ok((tri_transform, tri_mesh))
