@@ -37,8 +37,8 @@ impl Camera
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let dim = render_ctx.swapchain_dimensions();
-		let projview = calculate_projview(pos, target, dim[0] as f32, dim[1] as f32);
-		self.projview_buf.write()?.clone_from_slice(&projview.to_cols_array());
+		self.projview = calculate_projview(pos, target, dim[0] as f32, dim[1] as f32);
+		self.projview_buf.write()?.clone_from_slice(&self.projview.to_cols_array());
 		Ok(())
 	}
 

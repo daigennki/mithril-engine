@@ -9,7 +9,7 @@ pub mod camera;
 
 use std::sync::Arc;
 use glam::*;
-use vulkano::buffer::{ /*ImmutableBuffer,*/ BufferUsage, cpu_access::CpuAccessibleBuffer };
+use vulkano::buffer::{ /*ImmutableBuffer,*/ BufferUsage, cpu_access::{ CpuAccessibleBuffer, WriteLockError} };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use crate::render::RenderContext;
@@ -29,11 +29,7 @@ impl Transform
 	pub fn new(render_ctx: &mut RenderContext, position: Vec3, scale: Vec3, rotation: Vec3) -> Result<Transform, Box<dyn std::error::Error>>
 	{
 		let rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
-		let transform_mat = Mat4::from_scale_rotation_translation(
-			scale,
-			rot_quat,
-			position
-		);
+		let transform_mat = Mat4::from_scale_rotation_translation(scale, rot_quat, position);
 		let buf = render_ctx.new_cpu_buffer(transform_mat.to_cols_array(), BufferUsage::uniform_buffer())?;
 
 		Ok(Transform{ 
@@ -48,27 +44,27 @@ impl Transform
 	}
 	
 
-	fn update_buffer(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	fn update_buffer(&mut self) -> Result<(), WriteLockError>
 	{
 		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 		self.buf.write()?.clone_from_slice(&transform_mat.to_cols_array());
 		Ok(())
 	}
 
-	pub fn set_pos(&mut self, position: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_pos(&mut self, position: Vec3) -> Result<(), WriteLockError>
 	{
 		self.position = position;
 		self.update_buffer()
 	}
 	
-	pub fn set_scale(&mut self, scale: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_scale(&mut self, scale: Vec3) -> Result<(), WriteLockError>
 	{
 		self.scale = scale;
 		self.update_buffer()
 	}
 
 	/// Set the rotation of this object, in terms of X, Y, and Z axis rotations.
-	pub fn set_rotation(&mut self, rotation: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_rotation(&mut self, rotation: Vec3) -> Result<(), WriteLockError>
 	{
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
 		self.update_buffer()
