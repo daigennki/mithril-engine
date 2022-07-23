@@ -270,13 +270,13 @@ impl RenderContext
 		Ok(())
 	}
 
-	/*
+	
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()
 	}
 
-	pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	/*pub fn wait_for_fence(&self) -> Result<(), FlushError>
 	{
 		self.swapchain.wait_for_fence()
 	}*/
