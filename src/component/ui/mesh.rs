@@ -44,7 +44,9 @@ impl Mesh
 		}
 
 		Ok(Mesh{
-			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
+			descriptor_set: render_ctx.new_descriptor_set(
+				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
+			)?,
 			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
 			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
 		})
@@ -68,7 +70,9 @@ impl Mesh
 		];
 
 		Ok(Mesh{
-			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ])?,
+			descriptor_set: render_ctx.new_descriptor_set(
+				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
+			)?,
 			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
 			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
 		})

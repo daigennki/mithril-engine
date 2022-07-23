@@ -17,7 +17,9 @@ use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend
 use vulkano::format::Format;
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, PrimaryAutoCommandBuffer };
 use vulkano::sampler::Sampler;
-use vulkano::descriptor_set::{ layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet };
+use vulkano::descriptor_set::{ 
+	layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet,
+};
 use vulkano::device::DeviceOwned;
 use spirv_reflect::types::image::ReflectFormat;
 use serde::{Serialize, Deserialize};
@@ -84,7 +86,7 @@ impl Pipeline
 			fs: fs,
 			samplers: samplers,
 			pipeline: pipeline_built,
-			subpass: subpass
+			subpass: subpass,
 		})
 	}
 

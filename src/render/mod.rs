@@ -19,9 +19,12 @@ use vulkano::command_buffer::{ SubpassContents };
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::Index;
-use vulkano::descriptor_set::{ DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet };
+use vulkano::descriptor_set::{
+	DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet
+};
 use vulkano::format::{ Format };
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess };
+use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess, cpu_access::CpuAccessibleBuffer };
+use vulkano::memory::DeviceMemoryAllocationError;
 use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
@@ -188,6 +191,7 @@ impl RenderContext
 		Ok(tex)
 	}
 
+	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer<D,T>(&mut self, data: D, usage: BufferUsage) 
 		-> Result<Arc<ImmutableBuffer<[T]>>, Box<dyn std::error::Error>>
 		where
@@ -204,7 +208,18 @@ impl RenderContext
 		self.upload_futures_count += 1;
 
 		Ok(buf)
-	} 	
+	}
+
+	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
+	pub fn new_cpu_buffer<I, T>(&mut self, data: I, usage: BufferUsage)
+		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryAllocationError>
+		where
+			I: IntoIterator<Item = T>,
+			I::IntoIter: ExactSizeIterator,
+			[T]: vulkano::buffer::BufferContents
+	{
+		CpuAccessibleBuffer::from_iter(self.vk_dev.clone(), usage, false, data)
+	}
 
 	pub fn bind_pipeline(&mut self, pipeline_name: &str)
 		-> Result<(), PipelineNotLoaded>
