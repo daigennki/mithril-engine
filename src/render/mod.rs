@@ -22,7 +22,7 @@ use vulkano::pipeline::graphics::input_assembly::Index;
 use vulkano::descriptor_set::{
 	DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet
 };
-use vulkano::format::{ Format };
+use vulkano::format::{ ClearValue, Format };
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess, cpu_access::CpuAccessibleBuffer };
 use vulkano::memory::DeviceMemoryAllocationError;
 use vulkano::sync::{ GpuFuture };
@@ -120,7 +120,10 @@ impl RenderContext
 		}
 		
 		let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(next_img_fb);
-		rp_begin_info.clear_values = vec![Some([0.1, 0.1, 0.1, 1.0].into())];
+		rp_begin_info.clear_values = vec![
+			Some(ClearValue::Float([0.1, 0.1, 0.1, 1.0])),
+			Some(ClearValue::DepthStencil((1.0, 1)))
+		];
 
 		self.cur_cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
 		Ok(())
