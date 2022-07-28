@@ -6,16 +6,21 @@
 mod render;
 pub mod component;
 pub mod vertex;
+pub mod entities;
 
 use std::path::PathBuf;
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use glam::*;
+
 use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
+use entities::new_triangle;
+
 use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
 use shipyard::iter::{ IntoIter, IntoWithId };
+
 
 #[cfg(debug_assertions)]
 use LevelFilter::Debug as EngineLogLevel;
@@ -49,10 +54,10 @@ impl GameContext
 		// add some 3D entities for testing
 		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;
 
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.0, 0.0, 0.0 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.0, 0.0, 0.8 ].into())?);
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.2, 0.0, 0.2 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.1, 0.0, 0.8 ].into())?);
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.4, 0.0, 0.4 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.0, 0.1, 0.8 ].into())?);
-		world.add_entity(component::new_triangle(&mut render_ctx, [ 0.6, 0.0, 0.6 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.1, 0.0, 0.8 ].into())?);
+		world.add_entity(new_triangle(&mut render_ctx, [ 0.0, 0.0, 0.0 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.0, 0.0, 0.8 ].into())?);
+		world.add_entity(new_triangle(&mut render_ctx, [ 0.2, 0.0, 0.2 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.1, 0.0, 0.8 ].into())?);
+		world.add_entity(new_triangle(&mut render_ctx, [ 0.4, 0.0, 0.4 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.0, 0.1, 0.8 ].into())?);
+		world.add_entity(new_triangle(&mut render_ctx, [ 0.6, 0.0, 0.6 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.1, 0.0, 0.8 ].into())?);
 
 
 		// add some UI entities for testing
@@ -169,7 +174,11 @@ fn draw_ui_elements(
 	Ok(())
 }
 
-pub fn run_game(org_name: &str, game_name: &str)
+/// Run the game. This should go in your `main.rs`.
+/// `org_name` and `game_name` will be used for the data directory.
+/// `game_name` will also be used for the window title.
+/// `start_map` is the first map (level/world) to be loaded.
+pub fn run_game(org_name: &str, game_name: &str/*, start_map: &str*/)
 {
 	let event_loop = winit::event_loop::EventLoop::new();
 
