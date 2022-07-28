@@ -14,9 +14,8 @@ fn main()
 	options.set_source_language(shaderc::SourceLanguage::HLSL);
 	options.set_include_callback(| src_req, _include_type, src_containing, _include_depth | {
 		let src_req_path = Path::new("./src/shaders/").join(src_req);
-
-		// TODO: replace `exists()` here with `try_exists()` when Rust package gets updated to 1.63
-		if src_req_path.exists() {
+		
+		if src_req_path.is_file() {
 			Ok(shaderc::ResolvedInclude{
 				resolved_name: src_req_path.to_str().unwrap().to_string(),
 				content: String::from_utf8(std::fs::read(&src_req_path).unwrap()).unwrap()

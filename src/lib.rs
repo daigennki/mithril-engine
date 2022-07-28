@@ -17,6 +17,12 @@ use component::camera::Camera;
 use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
+#[cfg(debug_assertions)]
+use LevelFilter::Debug as EngineLogLevel;
+#[cfg(not(debug_assertions))]
+use LevelFilter::Info as EngineLogLevel;
+
+
 struct GameContext
 {
 	//pref_path: String,
@@ -185,40 +191,36 @@ pub fn run_game(org_name: &str, game_name: &str)
 	}
 }
 
-// Get preferences path, set up logging, and return the preferences path.
+// Get data path, set up logging, and return the data path.
 fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::error::Error>>
 {
-	let pref_path = get_pref_path(org_name, game_name)?;	// log, config, and save data files will be saved here
-	println!("Using preferences path: {}", pref_path.display());
+	let data_path = dirs::data_dir().ok_or("Failed to get data directory")?.join(org_name).join(game_name);
+	println!("Using data directory: {}", data_path.display());
 
+	// Create the game data directory. Log, config, and save data files will be saved here.
+	std::fs::create_dir_all(&data_path).or_else(|e| Err(format!("Failed to create data directory: {}", e)))?;
+	
 	// open log file
-	let log_file_path = pref_path.join("game.log");
+	let log_file_path = data_path.join("game.log");
 	let log_file = std::fs::File::create(&log_file_path).or_else(|e| {
-		Err(format!("Failed to create log file '{}': {}", log_file_path.display(), e))
+		Err(format!("Failed to create '{}': {}", log_file_path.display(), e))
 	})?;
 
 	// set up logger
 	let logger_config = ConfigBuilder::new()
-		.set_time_offset_to_local().unwrap_or_else(|e| {
-			println!("WARNING: simplelog::ConfigBuilder::set_time_offset_to_local failed!");
-			e
-		})	// use time in time zone local to system
-		.set_time_format_rfc3339()	// use RFC 3339 format
+		.set_time_offset_to_local()
+		.unwrap_or_else(|config_builder| {
+			println!("WARNING: simplelog::ConfigBuilder::set_time_offset_to_local failed! Using UTC+0 instead.");
+			config_builder
+		})	
+		.set_time_format_rfc3339()
 		.build();
-	let term_log_level;
-	#[cfg(debug_assertions)] 
-	{
-		term_log_level = LevelFilter::Debug;
-	}
-	#[cfg(not(debug_assertions))] 
-	{
-		term_log_level = LevelFilter::Info;
-	}	
-	let term_logger = TermLogger::new(term_log_level, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
-	let write_logger = WriteLogger::new(term_log_level /*LevelFilter::Info*/, logger_config, log_file);
+
+	let term_logger = TermLogger::new(EngineLogLevel, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
+	let write_logger = WriteLogger::new(EngineLogLevel, logger_config, log_file);
     CombinedLogger::init(vec![ term_logger, write_logger ])?;
 
-	Ok(pref_path)
+	Ok(data_path)
 }
 
 fn log_error(e: Box<dyn std::error::Error>)
@@ -230,23 +232,5 @@ fn log_error(e: Box<dyn std::error::Error>)
 	}
 	msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) 
 		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
-}
-
-fn get_pref_path(org_name: &str, game_name: &str) -> Result<PathBuf, String>
-{
-	let prefix = dirs::data_dir().ok_or("Failed to get preferences path")?;
-	let pref_path = prefix.join(org_name).join(game_name);
-
-	// try to create the path if it doesn't exist
-	match std::fs::create_dir_all(&pref_path) {
-		Ok(()) => Ok(pref_path),
-		Err(e) => match e.kind() {
-			std::io::ErrorKind::AlreadyExists => {
-				println!("Preferences path already exists, skipping creation...");
-				Ok(pref_path)
-			},
-			_ => Err(format!("Failed to create preferences path: {}", e))
-		}
-	}
 }
 
