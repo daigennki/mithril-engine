@@ -5,12 +5,13 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use winit::window::Window;
-use vulkano::device::Queue;
+use vulkano::device::{ Queue, DeviceOwned };
 use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, CommandBufferExecFuture };
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture};
 use vulkano::swapchain::{ Surface, AcquireError, SwapchainAcquireFuture, PresentFuture };
+use vulkano::image::{ ImageAccess, attachment::AttachmentImage, view::{ ImageViewCreateInfo, ImageView } };
 
 pub struct Swapchain
 {
@@ -54,11 +55,17 @@ impl Swapchain
 					store: Store,
 					format: swapchain.image_format(),
 					samples: 1,
+				},
+				depth: {
+					load: Clear,
+					store: DontCare,
+					format: Format::D24_UNORM_S8_UINT,
+					samples: 1,
 				}
 			}, 
 			pass: {
 				color: [color],
-				depth_stencil: {}
+				depth_stencil: {depth}
 			}
 		)?;
 
@@ -180,11 +187,20 @@ fn create_framebuffers(
 {
 	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(images.len());
 	for img in images {
-		let view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&img);
-		let view = vulkano::image::view::ImageView::new(img, view_create_info)?;
-		// TODO: add depth buffers
+		let view_create_info = ImageViewCreateInfo::from_image(&img);
+		let view = ImageView::new(img.clone(), view_create_info)?;
+
+		let img_dim = img.dimensions();
+		let depth_image = AttachmentImage::new(
+			img.device().clone(),
+			[ img_dim.width(), img_dim.height() ],
+			Format::D24_UNORM_S8_UINT
+		)?;
+		let depth_view_create_info = ImageViewCreateInfo::from_image(&depth_image);
+		let depth_view = ImageView::new(depth_image, depth_view_create_info)?; 
+
 		let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
-			attachments: vec![ view ],
+			attachments: vec![ view, depth_view ],
 			..Default::default()
 		};
 		framebuffers.push(Framebuffer::new(render_pass.clone(), fb_create_info)?);

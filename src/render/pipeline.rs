@@ -14,6 +14,7 @@ use vulkano::pipeline::graphics::vertex_input::{ VertexInputState, VertexInputRa
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
 use vulkano::pipeline::graphics::input_assembly::{ InputAssemblyState, PrimitiveTopology };
 use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend };
+use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::format::Format;
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, PrimaryAutoCommandBuffer };
 use vulkano::sampler::Sampler;
@@ -305,6 +306,7 @@ fn build_pipeline_common(
 	let mut pipeline_builder = GraphicsPipeline::start()
 		.input_assembly_state(input_assembly_state)
 		.vertex_input_state(vertex_input_state)
+		.depth_stencil_state(DepthStencilState::simple_depth_test())
 		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 		.render_pass(subpass);
 
