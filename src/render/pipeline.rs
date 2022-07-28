@@ -51,13 +51,10 @@ impl Pipeline
 		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
 		// load fragment shader (optional)
-		let fs = match fs_filename {
-			Some(f) => {
-				log::info!("Loading fragment shader {}...", f);
-				Some(load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))?)
-			}
-			None => None
-		};
+		let fs = fs_filename.and_then(|f| {
+			log::info!("Loading fragment shader {}...", f);
+			Some(load_spirv(vk_dev.clone(), &Path::new("shaders").join(f)))
+		}).transpose()?;
 
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
 		let input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
@@ -337,10 +334,8 @@ fn build_pipeline_common(
 						Some(b) => b.immutable_samplers = vec![ sampler.clone() ],
 						None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i)
 					}
-				}
-				None => {
-					log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i);
-				}
+				},
+				None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i)
 			}
 		}
 	})?;
