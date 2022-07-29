@@ -140,7 +140,7 @@ impl Swapchain
 		}
 	}*/
 
-	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Option<Box<dyn GpuFuture>>)
+	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Box<dyn GpuFuture>)
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
@@ -150,10 +150,7 @@ impl Swapchain
 		};
 
 		// join the joined futures from images and buffers being uploaded
-		match futures {
-			Some(f) => joined_future = joined_future.join(f).boxed(),
-			None => ()
-		}
+		joined_future = joined_future.join(futures).boxed();
 
 		let future_result = joined_future
 			.then_execute(queue.clone(), cb)?

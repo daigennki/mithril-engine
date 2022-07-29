@@ -10,6 +10,7 @@ pub mod texture;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
@@ -35,7 +36,7 @@ pub struct RenderContext
 	dev_queue: Arc<vulkano::device::Queue>,
 	cur_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 
-	upload_futures: Option<Box<dyn vulkano::sync::GpuFuture>>,
+	upload_futures: Box<dyn vulkano::sync::GpuFuture>,
 	upload_futures_count: usize,
 
 	// User-accessible material pipelines; these will have their viewports resized
@@ -85,11 +86,11 @@ impl RenderContext
 		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 			
 		Ok(RenderContext{
-			vk_dev: vk_dev,
+			vk_dev: vk_dev.clone(),
 			swapchain: swapchain,
 			dev_queue: dev_queue,
 			cur_cb: cur_cb,
-			upload_futures: None,
+			upload_futures: vulkano::sync::now(vk_dev).boxed(),
 			upload_futures_count: 0,
 			material_pipelines: material_pipelines,
 			bound_pipeline: std::rc::Weak::new()
@@ -144,24 +145,27 @@ impl RenderContext
 		let mut swap_cb = AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 		std::mem::swap(&mut swap_cb, &mut self.cur_cb);
 
-		let submit_futures = self.upload_futures.take();	// consume the futures to join them upon submission
-		if submit_futures.is_some() {
+		// consume the futures to join them upon submission
+		let submit_futures = std::mem::replace(&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed());			
+		if self.upload_futures_count > 0 {
 			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
 		}
 		self.upload_futures_count = 0;
 		self.swapchain.submit_commands(swap_cb.build()?, self.dev_queue.clone(), submit_futures)
 	}
 
+	fn join_future<F>(&mut self, next_future: F)
+		where F: vulkano::sync::GpuFuture + 'static
+	{
+		let taken_futures = std::mem::replace(&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed());
+		self.upload_futures = taken_futures.join(next_future).boxed();
+		self.upload_futures_count += 1;
+	}
+
 	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, Box<dyn std::error::Error>>
 	{
 		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
-
-		self.upload_futures = Some(match self.upload_futures.take() {
-			Some(f) => upload_future.join(f).boxed(),
-			None => upload_future.boxed()
-		});
-		self.upload_futures_count += 1;
-
+		self.join_future(upload_future);
 		Ok(tex)
 	}
 
@@ -184,13 +188,7 @@ impl RenderContext
 			dimensions, 
 			mip
 		)?;
-
-		self.upload_futures = Some(match self.upload_futures.take() {
-			Some(f) => upload_future.join(f).boxed(),
-			None => upload_future.boxed()
-		});
-		self.upload_futures_count += 1;
-
+		self.join_future(upload_future);
 		Ok(tex)
 	}
 
@@ -203,13 +201,7 @@ impl RenderContext
 			[T]: vulkano::buffer::BufferContents, 
 	{
 		let (buf, upload_future) = ImmutableBuffer::from_iter(data, usage, self.dev_queue.clone())?;
-		
-		self.upload_futures = Some(match self.upload_futures.take() {
-			Some(f) => upload_future.join(f).boxed(),
-			None => upload_future.boxed()
-		});
-		self.upload_futures_count += 1;
-
+		self.join_future(upload_future);
 		Ok(buf)
 	}
 
@@ -390,17 +382,14 @@ fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 {	
 	print_physical_devices(vkinst);
 
-	// Look for a discrete GPU.
-	let dgpu = PhysicalDevice::enumerate(&vkinst)
-		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
-	let physical_device = match dgpu {
-		Some(g) => g,
+	let physical_device = PhysicalDevice::enumerate(&vkinst)
+		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu)	// Look for a discrete GPU.
+		.or_else(|| {
+			// If there is no discrete GPU, try to look for an integrated GPU instead.
+			PhysicalDevice::enumerate(&vkinst)
+				.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu)	
+		}).ok_or("No GPUs were found!")?;
 
-		// If there is no discrete GPU, try to look for an integrated GPU instead.
-		None => PhysicalDevice::enumerate(&vkinst)
-			.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu)
-			.ok_or("No GPUs were found!")?
-	};
 	log::info!("Using physical device: {}", physical_device.properties().device_name);
 
 	// get queue family that supports graphics
