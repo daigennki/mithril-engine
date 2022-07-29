@@ -58,8 +58,8 @@ impl Swapchain
 				},
 				depth: {
 					load: Clear,
-					store: DontCare,
-					format: Format::D24_UNORM_S8_UINT,
+					store: Store,
+					format: Format::D32_SFLOAT,		// 24-bit depth formats appear to be unsupported on AMD GPUs.
 					samples: 1,
 				}
 			}, 
@@ -100,10 +100,7 @@ impl Swapchain
 		};
 		self.need_new_swapchain = false;
 		
-		match self.fence_signal_future.as_mut() {
-			Some(p) => p.cleanup_finished(),
-			None => ()
-		}
+		self.fence_signal_future.as_mut().map(|p| p.cleanup_finished());
 
 		let (image_num, suboptimal, acquire_future) =
 			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
@@ -191,7 +188,7 @@ fn create_framebuffers(
 		let depth_image = AttachmentImage::new(
 			img.device().clone(),
 			[ img_dim.width(), img_dim.height() ],
-			Format::D24_UNORM_S8_UINT
+			Format::D32_SFLOAT
 		)?;
 		let depth_view_create_info = ImageViewCreateInfo::from_image(&depth_image);
 		let depth_view = ImageView::new(depth_image, depth_view_create_info)?; 

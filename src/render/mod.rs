@@ -123,7 +123,7 @@ impl RenderContext
 		let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(next_img_fb);
 		rp_begin_info.clear_values = vec![
 			Some(ClearValue::Float([0.1, 0.1, 0.1, 1.0])),
-			Some(ClearValue::DepthStencil((1.0, 1)))
+			Some(ClearValue::Depth(1.0))
 		];
 
 		self.cur_cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
