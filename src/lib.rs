@@ -134,11 +134,8 @@ fn draw_3d(
 		transform.bind_descriptor_set(render_ctx)?;
 
 		// draw 3D meshes
-		match meshes.get(eid) {
-			Ok(c) => {
-				c.draw(render_ctx)?
-			},
-			Err(_) => ()
+		if let Ok(c) = meshes.get(eid) {
+			c.draw(render_ctx)?;
 		}
 	}
 
@@ -161,13 +158,11 @@ fn draw_ui_elements(
 
 		// draw UI meshes
 		// TODO: how do we respect the render order?
-		match meshes.get(eid) {
-			Ok(c) => c.draw(render_ctx)?,
-			Err(_) => ()
+		if let Ok(c) = meshes.get(eid) {
+			c.draw(render_ctx)?;
 		}
-		match texts.get(eid) {
-			Ok(c) => c.draw(render_ctx)?,
-			Err(_) => ()
+		if let Ok(c) = texts.get(eid) {
+			c.draw(render_ctx)?;
 		}
 	}
 

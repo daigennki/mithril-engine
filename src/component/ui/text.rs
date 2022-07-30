@@ -49,9 +49,9 @@ impl Text
 
 		// Loop through the glyphs in the text, positing each one on a line
 		for glyph in glyphs {
-			match glyph.pixel_bounding_box() {
+			if let Some(bounding_box) = glyph.pixel_bounding_box() {
 				// Draw the glyph into the image per-pixel by using the draw closure
-				Some(bounding_box) => glyph.draw(|x, y, v| {
+				glyph.draw(|x, y, v| {
 					// Offset the position by the glyph bounding box
 					let x_offset = x + bounding_box.min.x as u32;
 					let y_offset = y + bounding_box.min.y as u32;
@@ -65,9 +65,7 @@ impl Text
 						// Turn the coverage into an alpha value
 						image.put_pixel(x_offset, y_offset, Rgba([color.0, color.1, color.2, (v * 255.0) as u8]))
 					}
-					
-				}),
-				None => ()
+				});
 			}
 		}
 

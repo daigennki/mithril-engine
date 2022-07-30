@@ -51,9 +51,9 @@ impl Pipeline
 		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
 		// load fragment shader (optional)
-		let fs = fs_filename.and_then(|f| {
+		let fs = fs_filename.map(|f| {
 			log::info!("Loading fragment shader {}...", f);
-			Some(load_spirv(vk_dev.clone(), &Path::new("shaders").join(f)))
+			load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))
 		}).transpose()?;
 
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
@@ -99,22 +99,19 @@ impl Pipeline
 		let deserialized: PipelineConfig = serde_yaml::from_str(&yaml_string)?;
 
 		let mut generated_samplers: Vec<(usize, u32, Arc<Sampler>)> = vec![];
-		match deserialized.samplers {
-			Some(sampler_configs) => for sampler_config in sampler_configs {
+		if let Some(sampler_configs) = deserialized.samplers {
+			for sampler_config in sampler_configs {
 				let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
-				match sampler_config.mag_filter {
-					Some(f) => sampler_create_info.mag_filter = filter_str_to_enum(&f)?,
-					None => ()
+				if let Some(f) = sampler_config.mag_filter {
+					sampler_create_info.mag_filter = filter_str_to_enum(&f)?;
 				}
-				match sampler_config.min_filter {
-					Some(f) => sampler_create_info.min_filter = filter_str_to_enum(&f)?,
-					None => ()
+				if let Some(f) = sampler_config.min_filter {
+					sampler_create_info.min_filter = filter_str_to_enum(&f)?;
 				}
 
 				let new_sampler = Sampler::new(render_pass.device().clone(), sampler_create_info)?;
 				generated_samplers.push((sampler_config.set, sampler_config.binding, new_sampler));
-			},
-			None => ()
+			}
 		}
 
 		Pipeline::new(
@@ -306,34 +303,26 @@ fn build_pipeline_common(
 		.depth_stencil_state(DepthStencilState::simple_depth_test())
 		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 		.render_pass(subpass);
-
-	match color_blend_state {
-		Some(c) => pipeline_builder = pipeline_builder.color_blend_state(c),
-		None => ()
+	
+	if let Some(c) = color_blend_state {
+		pipeline_builder = pipeline_builder.color_blend_state(c);
 	}
 	
 	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 	pipeline_builder = pipeline_builder.vertex_shader(vs_entry, ());
 
-	let fs_moved;
-	match fs {
-		Some(fs_exists) => {
-			fs_moved = fs_exists;
-			let fs_entry = fs_moved.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-			pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
-		}
-		None => ()
+	if let Some(fs_exists) = fs.as_ref() {
+		let fs_entry = fs_exists.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
+		pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
 	}
 
 	// build pipeline with immutable samplers, if it needs any
 	let pipeline = pipeline_builder.with_auto_layout(vk_dev, |sets| {
 		for (set_i, binding_i, sampler) in samplers {
 			match sets.get_mut(*set_i) {
-				Some(s) => {
-					match s.bindings.get_mut(binding_i) {
-						Some(b) => b.immutable_samplers = vec![ sampler.clone() ],
-						None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i)
-					}
+				Some(s) => match s.bindings.get_mut(binding_i) {
+					Some(b) => b.immutable_samplers = vec![ sampler.clone() ],
+					None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i)
 				},
 				None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i)
 			}
