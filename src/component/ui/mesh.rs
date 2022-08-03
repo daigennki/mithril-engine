@@ -22,37 +22,17 @@ impl Mesh
 {
 	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Mesh, Box<dyn std::error::Error>>
 	{
-		// vertex data
-		let mut pos_verts = [
-			Vec2::new(0.0, 0.0),
-			Vec2::new(1.0, 0.0),
-			Vec2::new(0.0, 1.0),
-			Vec2::new(1.0, 1.0)
-		];
-		let uv_verts = pos_verts;
-
 		// resize position vertices according to texture dimensions
-		let dimensions_uvec2: UVec2 = tex.dimensions().width_height().into();
-		let dimensions = dimensions_uvec2.as_vec2();
+		let dimensions = UVec2::from_array(tex.dimensions().width_height()).as_vec2();
 		let half_dimensions = dimensions * 0.5;
-		for pos in &mut pos_verts {
-			*pos = *pos * dimensions - half_dimensions;
-		}
-
-		Ok(Mesh{
-			descriptor_set: render_ctx.new_descriptor_set(
-				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
-			)?,
-			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, BufferUsage::vertex_buffer())?,
-			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, BufferUsage::vertex_buffer())?,
-		})
+		Self::new_from_corners(render_ctx, -half_dimensions, half_dimensions, tex)
 	}
 
 	pub fn new_from_corners(render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Texture)
 		-> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		// vertex data
-		let pos_verts: [Vec2; 4] = [
+		let pos_verts = [
 			top_left,
 			Vec2::new(bottom_right.x, top_left.y),
 			Vec2::new(top_left.x, bottom_right.y),
@@ -82,3 +62,4 @@ impl Mesh
 		Ok(())
 	}
 }
+
