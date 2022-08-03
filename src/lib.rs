@@ -61,9 +61,9 @@ impl GameContext
 		// add some UI entities for testing
 		world.add_unique(Canvas::new(1280, 720)?)?;
 
-		/*world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
+		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
-		*/
+		
 
 		// Update the projection matrix on UI `Transform` components.
 		// TODO: use tracking instead, when it gets implemented in shipyard stable

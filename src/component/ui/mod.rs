@@ -54,7 +54,7 @@ fn update_matrix(render_ctx: &mut RenderContext, proj: Mat4, pos: IVec2, scale: 
 		Quat::IDENTITY, 
 		pos.as_vec2().extend(0.0)
 	);
-	let buf = render_ctx.new_buffer(projected.to_cols_array(), BufferUsage::uniform_buffer())?;
+	let buf = render_ctx.new_buffer_from_data(projected, BufferUsage::uniform_buffer())?;
 
 	// create descriptor set
 	render_ctx.new_descriptor_set("UI", 0, [

@@ -34,20 +34,17 @@ impl Mesh
 		// resize position vertices according to texture dimensions
 		let dimensions_uvec2: UVec2 = tex.dimensions().width_height().into();
 		let dimensions = dimensions_uvec2.as_vec2();
-		let half_dimensions = dimensions / 2.0;
+		let half_dimensions = dimensions * 0.5;
 		for pos in &mut pos_verts {
-			let pos_clone = pos.clone();
-			let x = pos_clone.x * dimensions.x - half_dimensions.x;
-			let y = pos_clone.y * dimensions.y - half_dimensions.y;
-			*pos = Vec2::new(x, y);
+			*pos = *pos * dimensions - half_dimensions;
 		}
 
 		Ok(Mesh{
 			descriptor_set: render_ctx.new_descriptor_set(
 				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
 			)?,
-			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
-			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
+			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, BufferUsage::vertex_buffer())?,
+			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, BufferUsage::vertex_buffer())?,
 		})
 	}
 
@@ -72,8 +69,8 @@ impl Mesh
 			descriptor_set: render_ctx.new_descriptor_set(
 				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
 			)?,
-			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
-			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
+			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, BufferUsage::vertex_buffer())?,
+			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, BufferUsage::vertex_buffer())?,
 		})
 	}
 

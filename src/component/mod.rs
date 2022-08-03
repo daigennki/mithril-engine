@@ -12,13 +12,13 @@ use glam::*;
 use vulkano::buffer::{ /*ImmutableBuffer,*/ BufferUsage, cpu_access::{ CpuAccessibleBuffer, WriteLockError} };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use crate::render::RenderContext;
+use crate::render::{ RenderContext, PipelineNotLoaded };
 
 pub struct Transform
 {
 	// TODO: parent-child relationship
 	// TODO: maybe we should use immutable buffers but only for static objects...
-	buf: Arc<CpuAccessibleBuffer<[f32]>>,
+	buf: Arc<CpuAccessibleBuffer<Mat4>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	position: Vec3,
 	scale: Vec3,
@@ -26,11 +26,12 @@ pub struct Transform
 }
 impl Transform
 {
-	pub fn new(render_ctx: &mut RenderContext, position: Vec3, scale: Vec3, rotation: Vec3) -> Result<Transform, Box<dyn std::error::Error>>
+	pub fn new(render_ctx: &mut RenderContext, position: Vec3, scale: Vec3, rotation: Vec3) 
+		-> Result<Transform, Box<dyn std::error::Error>>
 	{
 		let rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(scale, rot_quat, position);
-		let buf = render_ctx.new_cpu_buffer(transform_mat.to_cols_array(), BufferUsage::uniform_buffer())?;
+		let buf = render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage::uniform_buffer())?;
 
 		Ok(Transform{ 
 			buf: buf.clone(),
@@ -46,8 +47,7 @@ impl Transform
 
 	fn update_buffer(&mut self) -> Result<(), WriteLockError>
 	{
-		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-		self.buf.write()?.clone_from_slice(&transform_mat.to_cols_array());
+		*self.buf.write()? = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 		Ok(())
 	}
 
@@ -70,7 +70,7 @@ impl Transform
 		self.update_buffer()
 	}
 
-	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), crate::render::PipelineNotLoaded>
+	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), PipelineNotLoaded>
 	{
 		render_ctx.bind_descriptor_set(0, self.descriptor_set.clone())
 	}

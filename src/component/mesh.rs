@@ -38,15 +38,15 @@ impl Mesh
 			0, 1, 2
 		];
 
-		let mat_buf = render_ctx.new_buffer(color.to_array(), BufferUsage::uniform_buffer())?;
+		let mat_buf = render_ctx.new_buffer_from_data(color, BufferUsage::uniform_buffer())?;
 		let mat_set = render_ctx.new_descriptor_set("World", 2, [
 			WriteDescriptorSet::buffer(0, mat_buf)
 		])?;
 
 		Ok(Mesh{
-			pos_vert_buf: render_ctx.new_buffer(pos_verts, BufferUsage::vertex_buffer())?,
-			uv_vert_buf: render_ctx.new_buffer(uv_verts, BufferUsage::vertex_buffer())?,
-			index_buf: render_ctx.new_buffer(indices, BufferUsage::index_buffer())?,
+			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, BufferUsage::vertex_buffer())?,
+			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, BufferUsage::vertex_buffer())?,
+			index_buf: render_ctx.new_buffer_from_iter(indices, BufferUsage::index_buffer())?,
 			mat_set: mat_set
 		})
 	}
