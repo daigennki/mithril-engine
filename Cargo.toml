@@ -23,7 +23,7 @@ spirv-reflect = "0.2"
 # physx = "0.12"
 # ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
 # steamworks = "0.8"
-glam = "0.21"
+glam = { version = "0.21", features = ["bytemuck", "serde"] }
 # openal = "0.2"
 # mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 msgbox = "0.7"

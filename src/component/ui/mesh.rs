@@ -8,15 +8,14 @@ use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use glam::*;
-use crate::vertex::*;
 use crate::render::texture::Texture;
 use crate::render::RenderContext;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 pub struct Mesh
 {
-	pos_vert_buf: Arc<ImmutableBuffer<[Vertex2]>>,
-	uv_vert_buf: Arc<ImmutableBuffer<[Vertex2]>>,
+	pos_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
+	uv_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 }
 impl Mesh
@@ -25,10 +24,10 @@ impl Mesh
 	{
 		// vertex data
 		let mut pos_verts = [
-			Vertex2::new(0.0, 0.0),
-			Vertex2::new(1.0, 0.0),
-			Vertex2::new(0.0, 1.0),
-			Vertex2::new(1.0, 1.0)
+			Vec2::new(0.0, 0.0),
+			Vec2::new(1.0, 0.0),
+			Vec2::new(0.0, 1.0),
+			Vec2::new(1.0, 1.0)
 		];
 		let uv_verts = pos_verts;
 
@@ -40,7 +39,7 @@ impl Mesh
 			let pos_clone = pos.clone();
 			let x = pos_clone.x * dimensions.x - half_dimensions.x;
 			let y = pos_clone.y * dimensions.y - half_dimensions.y;
-			*pos = Vertex2::new(x, y);
+			*pos = Vec2::new(x, y);
 		}
 
 		Ok(Mesh{
@@ -56,17 +55,17 @@ impl Mesh
 		-> Result<Mesh, Box<dyn std::error::Error>>
 	{
 		// vertex data
-		let pos_verts: [Vertex2; 4] = [
-			Vertex2::new_from_vec2(top_left),
-			Vertex2::new(bottom_right.x, top_left.y),
-			Vertex2::new(top_left.x, bottom_right.y),
-			Vertex2::new_from_vec2(bottom_right)
+		let pos_verts: [Vec2; 4] = [
+			top_left,
+			Vec2::new(bottom_right.x, top_left.y),
+			Vec2::new(top_left.x, bottom_right.y),
+			bottom_right
 		];
 		let uv_verts = [
-			Vertex2::new(0.0, 0.0),
-			Vertex2::new(1.0, 0.0),
-			Vertex2::new(0.0, 1.0),
-			Vertex2::new(1.0, 1.0)
+			Vec2::new(0.0, 0.0),
+			Vec2::new(1.0, 0.0),
+			Vec2::new(0.0, 1.0),
+			Vec2::new(1.0, 1.0)
 		];
 
 		Ok(Mesh{
