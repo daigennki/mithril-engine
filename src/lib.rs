@@ -5,7 +5,6 @@
 ----------------------------------------------------------------------------- */
 mod render;
 pub mod component;
-pub mod vertex;
 pub mod entities;
 
 use std::path::PathBuf;
@@ -43,7 +42,6 @@ impl GameContext
 		/*let pref_path =*/ setup_log(org_name, game_name)?;
 
 		log::info!("--- Initializing MithrilEngine... ---");
-
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
@@ -63,9 +61,9 @@ impl GameContext
 		// add some UI entities for testing
 		world.add_unique(Canvas::new(1280, 720)?)?;
 
-		/*world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
+		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
-		*/
+		
 
 		// Update the projection matrix on UI `Transform` components.
 		// TODO: use tracking instead, when it gets implemented in shipyard stable
@@ -103,10 +101,7 @@ impl GameContext
 
 		// Draw the 3D stuff
 		self.render_context.bind_pipeline("World")?;
-		self.world.run(|camera: UniqueViewMut<Camera>|
-		{
-			camera.bind(&mut self.render_context)
-		})??;
+		self.world.run(|camera: UniqueViewMut<Camera>| camera.bind(&mut self.render_context))??;
 		self.world.run_with_data(draw_3d, &mut self.render_context)??;
 
 		// Draw the UI element components.
@@ -177,8 +172,8 @@ pub fn run_game(org_name: &str, game_name: &str/*, start_map: &str*/)
 {
 	let event_loop = winit::event_loop::EventLoop::new();
 
-	match GameContext::new(org_name, game_name, &event_loop) {
-		Ok(mut gctx) => event_loop.run(move |event, _, control_flow| {
+	GameContext::new(org_name, game_name, &event_loop)
+		.and_then(|mut gctx| event_loop.run(move |event, _, control_flow| {
 			match event {
 				Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
 					*control_flow = winit::event_loop::ControlFlow::Exit;	// TODO: show exit confirmation dialog here
@@ -186,13 +181,12 @@ pub fn run_game(org_name: &str, game_name: &str/*, start_map: &str*/)
 				_ => (),
 			};
 			
-			gctx.handle_event(&event).unwrap_or_else(|e| {
+			if let Err(e) = gctx.handle_event(&event) {
 				log_error(e);
 				*control_flow = winit::event_loop::ControlFlow::Exit;
-			});
-		}),	
-		Err(e) => log_error(e)
-	}
+			}
+		}))
+		.unwrap_or_else(|e| log_error(e));
 }
 
 // Get data path, set up logging, and return the data path.
@@ -206,9 +200,8 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::er
 	
 	// open log file
 	let log_file_path = data_path.join("game.log");
-	let log_file = std::fs::File::create(&log_file_path).or_else(|e| {
-		Err(format!("Failed to create '{}': {}", log_file_path.display(), e))
-	})?;
+	let log_file = std::fs::File::create(&log_file_path)
+		.or_else(|e| Err(format!("Failed to create '{}': {}", log_file_path.display(), e)))?;
 
 	// set up logger
 	let logger_config = ConfigBuilder::new()

@@ -193,11 +193,11 @@ impl RenderContext
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer<D,T>(&mut self, data: D, usage: BufferUsage) 
+	pub fn new_buffer_from_iter<I,T>(&mut self, data: I, usage: BufferUsage) 
 		-> Result<Arc<ImmutableBuffer<[T]>>, Box<dyn std::error::Error>>
 		where
-			D: IntoIterator<Item = T>,
-			D::IntoIter: ExactSizeIterator,
+			I: IntoIterator<Item = T>,
+			I::IntoIter: ExactSizeIterator,
 			[T]: vulkano::buffer::BufferContents, 
 	{
 		let (buf, upload_future) = ImmutableBuffer::from_iter(data, usage, self.dev_queue.clone())?;
@@ -205,8 +205,18 @@ impl RenderContext
 		Ok(buf)
 	}
 
+	/// Create an immutable buffer, initialized with `data` for `usage`.
+	pub fn new_buffer_from_data<T>(&mut self, data: T, usage: BufferUsage) 
+		-> Result<Arc<ImmutableBuffer<T>>, Box<dyn std::error::Error>>
+		where T: vulkano::buffer::BufferContents, 
+	{
+		let (buf, upload_future) = ImmutableBuffer::from_data(data, usage, self.dev_queue.clone())?;
+		self.join_future(upload_future);
+		Ok(buf)
+	}
+
 	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
-	pub fn new_cpu_buffer<I, T>(&mut self, data: I, usage: BufferUsage)
+	pub fn new_cpu_buffer_from_iter<I, T>(&mut self, data: I, usage: BufferUsage)
 		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryAllocationError>
 		where
 			I: IntoIterator<Item = T>,
@@ -214,6 +224,14 @@ impl RenderContext
 			[T]: vulkano::buffer::BufferContents
 	{
 		CpuAccessibleBuffer::from_iter(self.vk_dev.clone(), usage, false, data)
+	}
+
+	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
+	pub fn new_cpu_buffer_from_data<T>(&mut self, data: T, usage: BufferUsage)
+		-> Result<Arc<CpuAccessibleBuffer<T>>, DeviceMemoryAllocationError>
+		where T: vulkano::buffer::BufferContents
+	{
+		CpuAccessibleBuffer::from_data(self.vk_dev.clone(), usage, false, data)
 	}
 
 	pub fn bind_pipeline(&mut self, pipeline_name: &str)
