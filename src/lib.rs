@@ -5,21 +5,19 @@
 ----------------------------------------------------------------------------- */
 mod render;
 pub mod component;
-pub mod entities;
 
-use std::path::PathBuf;
+use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
-use glam::*;
+use serde::Deserialize;
+use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
+use shipyard::iter::{ IntoIter, IntoWithId };
 
 use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
-use entities::new_triangle;
-
-use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
-use shipyard::iter::{ IntoIter, IntoWithId };
-
+use component::DeferGpuResourceLoading;
+//use entities::new_triangle;
 
 #[cfg(debug_assertions)]
 use LevelFilter::Debug as EngineLogLevel;
@@ -36,7 +34,7 @@ struct GameContext
 impl GameContext
 {
 	// game context "constructor"
-	pub fn new(org_name: &str, game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
+	pub fn new(org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>) 
 		-> Result<GameContext, Box<dyn std::error::Error>>
 	{
 		/*let pref_path =*/ setup_log(org_name, game_name)?;
@@ -47,16 +45,9 @@ impl GameContext
 
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 
-		let mut world = World::new();
+		let mut world = load_map(&mut render_ctx, start_map)?;
 
-		// add some 3D entities for testing
-		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;
-
-		world.add_entity(new_triangle(&mut render_ctx, [ 0.0, 0.0, 0.0 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.0, 0.0, 0.8 ].into())?);
-		world.add_entity(new_triangle(&mut render_ctx, [ 0.2, 0.0, 0.2 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.1, 0.0, 0.8 ].into())?);
-		world.add_entity(new_triangle(&mut render_ctx, [ 0.4, 0.0, 0.4 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.0, 0.0, 0.1, 0.8 ].into())?);
-		world.add_entity(new_triangle(&mut render_ctx, [ 0.6, 0.0, 0.6 ].into(), Vec3::ONE, Vec3::ZERO, [ 0.1, 0.1, 0.0, 0.8 ].into())?);
-
+		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;		
 
 		// add some UI entities for testing
 		world.add_unique(Canvas::new(1280, 720)?)?;
@@ -116,6 +107,66 @@ impl GameContext
 	}
 }
 
+#[derive(Deserialize)]
+struct WorldData
+{
+	uniques: Vec<serde_yaml::Value>,
+	entities: Vec<Vec<serde_yaml::Value>>
+}
+impl TryInto<World> for WorldData
+{
+	type Error = Box<dyn std::error::Error>;
+
+	fn try_into(self) -> Result<World, Self::Error>
+	{
+		let mut world = World::new();
+
+		for entity in self.entities {
+			let eid = world.add_entity(());
+			for component in entity {
+				match component {
+					serde_yaml::Value::Tagged(tagged) =>{
+						// TODO: figure out how to (de)serialize prefabs
+						// TODO: figure out a way to add user-defined components
+						if tagged.tag == "Transform" {
+							world.add_component(eid, (serde_yaml::value::from_value::<component::Transform>(tagged.value)?,))
+						} else if tagged.tag == "Mesh" {
+							world.add_component(eid, (serde_yaml::value::from_value::<component::mesh::Mesh>(tagged.value)?,))
+						}
+					},
+					_ => ()
+				}
+			}
+		}
+
+		Ok(world)
+	}
+}
+
+fn load_map(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error>>
+{
+	let yaml_string = String::from_utf8(std::fs::read(Path::new("maps").join(file))?)?;
+	let world_data: WorldData = serde_yaml::from_str(&yaml_string)?;
+	let world: World = world_data.try_into()?;
+
+	// finish loading GPU resources for components
+	// TODO: maybe figure out a way to get trait objects from shipyard
+	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), Box<dyn std::error::Error>> {
+		for mut component in (&mut components).iter() {
+			component.finish_loading(render_ctx)?;
+		}
+		Ok(())
+	})??;
+	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), Box<dyn std::error::Error>> {
+		for mut component in (&mut components).iter() {
+			component.finish_loading(render_ctx)?;
+		}
+		Ok(())
+	})??;
+
+	Ok(world)
+}
+
 /// Draw 3D objects.
 /// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 fn draw_3d(
@@ -168,11 +219,11 @@ fn draw_ui_elements(
 /// `org_name` and `game_name` will be used for the data directory.
 /// `game_name` will also be used for the window title.
 /// `start_map` is the first map (level/world) to be loaded.
-pub fn run_game(org_name: &str, game_name: &str/*, start_map: &str*/)
+pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 {
 	let event_loop = winit::event_loop::EventLoop::new();
 
-	GameContext::new(org_name, game_name, &event_loop)
+	GameContext::new(org_name, game_name, start_map, &event_loop)
 		.and_then(|mut gctx| event_loop.run(move |event, _, control_flow| {
 			match event {
 				Event::WindowEvent{ event: WindowEvent::CloseRequested, .. } => {
