@@ -17,7 +17,6 @@ use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
 use component::DeferGpuResourceLoading;
-use component::EntityComponentType;
 //use entities::new_triangle;
 
 #[cfg(debug_assertions)]
@@ -108,13 +107,11 @@ impl GameContext
 	}
 }
 
-
-
 #[derive(Deserialize)]
 struct WorldData
 {
-	uniques: Vec<serde_yaml::Value>,
-	entities: Vec<Vec<EntityComponentType>>
+	//uniques: Vec<serde_yaml::Value>,
+	entities: Vec<Vec<Box<dyn component::EntityComponent>>>
 }
 impl Into<World> for WorldData
 {
@@ -124,18 +121,12 @@ impl Into<World> for WorldData
 		for entity in self.entities {
 			let eid = world.add_entity(());
 			for component in entity {
-				// TODO: automatically generate this at compile time
-				match component {
-					EntityComponentType::Transform(c) => world.add_component(eid, (c,)),
-					EntityComponentType::Mesh(c) => world.add_component(eid, (c,)),
-				}
+				component.add_to_entity(&mut world, eid);
 			}
 		}
-
 		world
 	}
 }
-
 fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error>>
 {
 	let yaml_string = String::from_utf8(std::fs::read(Path::new("maps").join(file))?)?;

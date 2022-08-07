@@ -101,8 +101,20 @@ impl DeferGpuResourceLoading for Transform
 		Ok(())
 	}
 }
+
+#[typetag::deserialize]
+pub trait EntityComponent
+{
+	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
+}
+#[typetag::deserialize]
 impl EntityComponent for Transform
-{}
+{
+	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId)
+	{
+		world.add_component(eid, (*self,));
+	}
+}
 
 /// Trait for components which need `RenderContext` to finish loading their GPU resources after being deserialized.
 pub trait DeferGpuResourceLoading
@@ -112,15 +124,6 @@ pub trait DeferGpuResourceLoading
 
 pub trait UniqueComponent
 {}
-pub trait EntityComponent
-{}
 
-/// Enum variants for all components that implement `EntityComponent`.
-// TODO: automatically generate this at compile time
-#[derive(Deserialize)]
-pub enum EntityComponentType
-{
-	Transform(Transform),
-	Mesh(mesh::Mesh)
-}
+
 

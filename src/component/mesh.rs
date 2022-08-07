@@ -84,8 +84,15 @@ impl DeferGpuResourceLoading for Mesh
 		Ok(())
 	}
 }
+
+#[typetag::deserialize]
 impl EntityComponent for Mesh
-{}
+{
+	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId)
+	{
+		world.add_component(eid, (*self,));
+	}
+}
 
 #[derive(Deserialize)]
 struct MeshData
