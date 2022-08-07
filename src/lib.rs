@@ -17,6 +17,7 @@ use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
 use component::DeferGpuResourceLoading;
+use component::EntityComponentType;
 //use entities::new_triangle;
 
 #[cfg(debug_assertions)]
@@ -45,7 +46,7 @@ impl GameContext
 
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 
-		let mut world = load_map(&mut render_ctx, start_map)?;
+		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;		
 
@@ -107,47 +108,39 @@ impl GameContext
 	}
 }
 
+
+
 #[derive(Deserialize)]
 struct WorldData
 {
 	uniques: Vec<serde_yaml::Value>,
-	entities: Vec<Vec<serde_yaml::Value>>
+	entities: Vec<Vec<EntityComponentType>>
 }
-impl TryInto<World> for WorldData
+impl Into<World> for WorldData
 {
-	type Error = Box<dyn std::error::Error>;
-
-	fn try_into(self) -> Result<World, Self::Error>
+	fn into(self) -> World
 	{
 		let mut world = World::new();
-
 		for entity in self.entities {
 			let eid = world.add_entity(());
 			for component in entity {
+				// TODO: automatically generate this at compile time
 				match component {
-					serde_yaml::Value::Tagged(tagged) =>{
-						// TODO: figure out how to (de)serialize prefabs
-						// TODO: figure out a way to add user-defined components
-						if tagged.tag == "Transform" {
-							world.add_component(eid, (serde_yaml::value::from_value::<component::Transform>(tagged.value)?,))
-						} else if tagged.tag == "Mesh" {
-							world.add_component(eid, (serde_yaml::value::from_value::<component::mesh::Mesh>(tagged.value)?,))
-						}
-					},
-					_ => ()
+					EntityComponentType::Transform(c) => world.add_component(eid, (c,)),
+					EntityComponentType::Mesh(c) => world.add_component(eid, (c,)),
 				}
 			}
 		}
 
-		Ok(world)
+		world
 	}
 }
 
-fn load_map(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error>>
+fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error>>
 {
 	let yaml_string = String::from_utf8(std::fs::read(Path::new("maps").join(file))?)?;
 	let world_data: WorldData = serde_yaml::from_str(&yaml_string)?;
-	let world: World = world_data.try_into()?;
+	let world: World = world_data.into();
 
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
