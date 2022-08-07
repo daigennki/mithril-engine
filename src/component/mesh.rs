@@ -12,7 +12,7 @@ use crate::render::RenderContext;
 use crate::component::DeferGpuResourceLoading;
 use crate::component::EntityComponent;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, EntityComponent)]
 #[serde(from = "MeshData")]
 pub struct Mesh
 {
@@ -82,15 +82,6 @@ impl DeferGpuResourceLoading for Mesh
 			self.index_buf = Some(render_ctx.new_buffer_from_iter(data.indices, BufferUsage::index_buffer())?);
 		}
 		Ok(())
-	}
-}
-
-#[typetag::deserialize]
-impl EntityComponent for Mesh
-{
-	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId)
-	{
-		world.add_component(eid, (*self,));
 	}
 }
 

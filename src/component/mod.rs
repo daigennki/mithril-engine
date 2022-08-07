@@ -14,8 +14,9 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use crate::render::RenderContext;
 use serde::Deserialize;
+use component_derive::EntityComponent;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, EntityComponent)]
 pub struct Transform
 {
 	// TODO: parent-child relationship
@@ -106,14 +107,6 @@ impl DeferGpuResourceLoading for Transform
 pub trait EntityComponent
 {
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
-}
-#[typetag::deserialize]
-impl EntityComponent for Transform
-{
-	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId)
-	{
-		world.add_component(eid, (*self,));
-	}
 }
 
 /// Trait for components which need `RenderContext` to finish loading their GPU resources after being deserialized.
