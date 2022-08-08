@@ -16,7 +16,7 @@ use winit::window::WindowBuilder;
 use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
 use vulkano::device::{ DeviceCreationError, Queue };
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, DrawError };
-use vulkano::command_buffer::{ SubpassContents };
+use vulkano::command_buffer::{ SubpassContents, RenderPassError };
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::Index;
@@ -24,7 +24,9 @@ use vulkano::descriptor_set::{
 	DescriptorSetsCollection, WriteDescriptorSet, PersistentDescriptorSet
 };
 use vulkano::format::{ ClearValue, Format };
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage, TypedBufferAccess, cpu_access::CpuAccessibleBuffer };
+use vulkano::buffer::{ 
+	ImmutableBuffer, BufferUsage, TypedBufferAccess, cpu_access::CpuAccessibleBuffer, immutable::ImmutableBufferCreationError
+};
 use vulkano::memory::DeviceMemoryAllocationError;
 use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
@@ -130,7 +132,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn end_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	pub fn end_render_pass(&mut self) -> Result<(), RenderPassError>
 	{
 		self.cur_cb.end_render_pass()?;
 		Ok(())
@@ -194,7 +196,7 @@ impl RenderContext
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer_from_iter<I,T>(&mut self, data: I, usage: BufferUsage) 
-		-> Result<Arc<ImmutableBuffer<[T]>>, Box<dyn std::error::Error>>
+		-> Result<Arc<ImmutableBuffer<[T]>>, ImmutableBufferCreationError>
 		where
 			I: IntoIterator<Item = T>,
 			I::IntoIter: ExactSizeIterator,
@@ -207,7 +209,7 @@ impl RenderContext
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer_from_data<T>(&mut self, data: T, usage: BufferUsage) 
-		-> Result<Arc<ImmutableBuffer<T>>, Box<dyn std::error::Error>>
+		-> Result<Arc<ImmutableBuffer<T>>, ImmutableBufferCreationError>
 		where T: vulkano::buffer::BufferContents, 
 	{
 		let (buf, upload_future) = ImmutableBuffer::from_data(data, usage, self.dev_queue.clone())?;

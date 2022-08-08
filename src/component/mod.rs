@@ -94,11 +94,12 @@ impl DeferGpuResourceLoading for Transform
 	{
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, self.rotation.x, self.rotation.y, self.rotation.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-		self.buf = Some(render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage::uniform_buffer())?);
+		let buf = render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage::uniform_buffer())?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("World", 0, [
-			WriteDescriptorSet::buffer(0, self.buf.as_ref().ok_or("transform not loaded")?.clone())
+			WriteDescriptorSet::buffer(0, buf.clone())
 		])?);
+		self.buf = Some(buf);
 
 		Ok(())
 	}
