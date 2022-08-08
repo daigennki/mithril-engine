@@ -15,8 +15,9 @@ use vulkano::descriptor_set::WriteDescriptorSet;
 use crate::render::RenderContext;
 use serde::Deserialize;
 use component_derive::EntityComponent;
+use component_derive::UniqueComponent;
 
-#[derive(Deserialize, EntityComponent)]
+#[derive(shipyard::Component, Deserialize,  EntityComponent)]
 pub struct Transform
 {
 	// TODO: parent-child relationship
@@ -108,6 +109,12 @@ pub trait EntityComponent
 {
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
 }
+#[typetag::deserialize]
+pub trait UniqueComponent
+{
+	fn add_to_world(self: Box<Self>, world: &mut shipyard::World);
+}
+
 
 /// Trait for components which need `RenderContext` to finish loading their GPU resources after being deserialized.
 pub trait DeferGpuResourceLoading
@@ -115,8 +122,6 @@ pub trait DeferGpuResourceLoading
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>;
 }
 
-pub trait UniqueComponent
-{}
 
 
 

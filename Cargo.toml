@@ -31,7 +31,7 @@ msgbox = "0.7"
 # chrono = "0.4"
 log = "0.4"
 simplelog = "0.12"
-shipyard = "0.5"
+shipyard = "0.6"
 bytemuck = "1.9"
 dirs = "4.0"
 serde = { version = "1.0", features = ["derive"] }

@@ -12,7 +12,7 @@ use crate::render::RenderContext;
 use crate::component::DeferGpuResourceLoading;
 use crate::component::EntityComponent;
 
-#[derive(Deserialize, EntityComponent)]
+#[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[serde(from = "MeshData")]
 pub struct Mesh
 {

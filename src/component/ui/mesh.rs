@@ -12,6 +12,7 @@ use crate::render::texture::Texture;
 use crate::render::RenderContext;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
+#[derive(shipyard::Component)]
 pub struct Mesh
 {
 	pos_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,

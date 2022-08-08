@@ -17,7 +17,6 @@ use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
 use component::DeferGpuResourceLoading;
-//use entities::new_triangle;
 
 #[cfg(debug_assertions)]
 use LevelFilter::Debug as EngineLogLevel;
@@ -47,10 +46,8 @@ impl GameContext
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
-		world.add_unique(Camera::new(&mut render_ctx, [ 1.0, 3.0, 3.0 ].into(), [ 0.0, 0.0, 0.0 ].into())?)?;		
-
 		// add some UI entities for testing
-		world.add_unique(Canvas::new(1280, 720)?)?;
+		world.add_unique(Canvas::new(1280, 720)?);
 
 		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
@@ -61,13 +58,13 @@ impl GameContext
 		world.run(|mut canvas: UniqueViewMut<Canvas>, mut transforms: ViewMut<ui::Transform>| 
 			-> Result<(), Box<dyn std::error::Error>> 
 		{
-			for (eid, mut transform) in (&mut transforms).iter().with_id() {
+			for (eid, transform) in (&mut transforms).iter().with_id() {
 				transform.update_projection(&mut render_ctx, canvas.projection())?;
 				canvas.add_child(eid);	// TODO: only do this upon component insertion, when tracking is implemented
 			}
 
 			Ok(())
-		})??;
+		})?;
 
 		let gctx = GameContext { 
 			//pref_path: pref_path,
@@ -92,12 +89,12 @@ impl GameContext
 
 		// Draw the 3D stuff
 		self.render_context.bind_pipeline("World")?;
-		self.world.run(|camera: UniqueViewMut<Camera>| camera.bind(&mut self.render_context))??;
-		self.world.run_with_data(draw_3d, &mut self.render_context)??;
+		self.world.run(|camera: UniqueViewMut<Camera>| camera.bind(&mut self.render_context))?;
+		self.world.run_with_data(draw_3d, &mut self.render_context)?;
 
 		// Draw the UI element components.
 		self.render_context.bind_pipeline("UI")?;
-		self.world.run_with_data(draw_ui_elements, &mut self.render_context)??;
+		self.world.run_with_data(draw_ui_elements, &mut self.render_context)?;
 		
 		self.render_context.end_render_pass()?;
 
@@ -110,7 +107,7 @@ impl GameContext
 #[derive(Deserialize)]
 struct WorldData
 {
-	//uniques: Vec<serde_yaml::Value>,
+	uniques: Vec<Box<dyn component::UniqueComponent>>,
 	entities: Vec<Vec<Box<dyn component::EntityComponent>>>
 }
 impl Into<World> for WorldData
@@ -118,6 +115,9 @@ impl Into<World> for WorldData
 	fn into(self) -> World
 	{
 		let mut world = World::new();
+		for unique in self.uniques {
+			unique.add_to_world(&mut world);
+		}
 		for entity in self.entities {
 			let eid = world.add_entity(());
 			for component in entity {
@@ -135,18 +135,22 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
+	world.run(|mut component: UniqueViewMut<Camera>| -> Result<(), Box<dyn std::error::Error>> {
+		component.finish_loading(render_ctx)?;
+		Ok(())
+	})?;
 	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), Box<dyn std::error::Error>> {
-		for mut component in (&mut components).iter() {
+		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
 		}
 		Ok(())
-	})??;
+	})?;
 	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), Box<dyn std::error::Error>> {
-		for mut component in (&mut components).iter() {
+		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
 		}
 		Ok(())
-	})??;
+	})?;
 
 	Ok(world)
 }

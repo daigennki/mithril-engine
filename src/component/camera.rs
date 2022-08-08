@@ -8,16 +8,24 @@ use glam::*;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
-use crate::render::{ RenderContext, PipelineNotLoaded };
+use serde::Deserialize;
+use crate::render::{ RenderContext };
+use crate::component::{ UniqueComponent, DeferGpuResourceLoading };
 
+#[derive(shipyard::Unique, Deserialize, UniqueComponent)]
 pub struct Camera
 {
-	projview_buf: Arc<CpuAccessibleBuffer<Mat4>>,
-	descriptor_set: Arc<PersistentDescriptorSet>,
+	#[serde(skip)]
+	projview_buf: Option<Arc<CpuAccessibleBuffer<Mat4>>>,
+	#[serde(skip)]
+	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
+
+	position: Vec3,
+	target: Vec3
 }
 impl Camera
 {
-	pub fn new(render_ctx: &mut RenderContext, pos: Vec3, target: Vec3) -> Result<Camera, Box<dyn std::error::Error>>
+	/*pub fn new(render_ctx: &mut RenderContext, pos: Vec3, target: Vec3) -> Result<Camera, Box<dyn std::error::Error>>
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let projview = calculate_projview(pos, target, dim[0], dim[1]);
@@ -29,21 +37,36 @@ impl Camera
 				WriteDescriptorSet::buffer(0, projview_buf)
 			])?,
 		})
-	}
+	}*/
 
 	pub fn set_pos_and_target(&mut self, render_ctx: &mut RenderContext, pos: Vec3, target: Vec3)
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let dim = render_ctx.swapchain_dimensions();
-		*self.projview_buf.write()? = calculate_projview(pos, target, dim[0], dim[1]);
+		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = calculate_projview(pos, target, dim[0], dim[1]);
 		Ok(())
 	}
 
 	/// Bind this camera's projection and view matrices so they can be used in shaders.
-	pub fn bind(&self, render_ctx: &mut RenderContext) -> Result<(), PipelineNotLoaded>
+	pub fn bind(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
 	{
 		// this must be bound as descriptor set 1
-		render_ctx.bind_descriptor_set(1, self.descriptor_set.clone())
+		render_ctx.bind_descriptor_set(1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
+		Ok(())
+	}
+}
+impl DeferGpuResourceLoading for Camera
+{
+	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	{
+		let dim = render_ctx.swapchain_dimensions();
+		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
+		let projview_buf = render_ctx.new_cpu_buffer_from_data(projview, BufferUsage::uniform_buffer())?;
+		self.descriptor_set = Some(render_ctx.new_descriptor_set("World", 1, [
+			WriteDescriptorSet::buffer(0, projview_buf.clone())
+		])?);
+		self.projview_buf = Some(projview_buf);
+		Ok(())
 	}
 }
 

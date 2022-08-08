@@ -14,6 +14,7 @@ use vulkano::descriptor_set::WriteDescriptorSet;
 use glam::*;
 use crate::render::RenderContext;
 
+#[derive(shipyard::Component)]
 pub struct Transform
 {
 	// TODO: parent-child relationship

@@ -7,6 +7,7 @@ use std::collections::LinkedList;
 use shipyard::EntityId;
 use glam::*;
 
+#[derive(shipyard::Unique)]
 pub struct Canvas
 {
 	children: LinkedList<EntityId>,
