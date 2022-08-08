@@ -47,7 +47,8 @@ impl GameContext
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		// add some UI entities for testing
-		world.add_unique(Canvas::new(1280, 720)?);
+		let dim = render_ctx.swapchain_dimensions();
+		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
 		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);	
 		
@@ -166,18 +167,17 @@ fn draw_3d(
 /// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 fn draw_ui_elements(
 	render_ctx: &mut render::RenderContext, 
-	mut canvas: UniqueViewMut<Canvas>,
+	canvas: UniqueViewMut<Canvas>,
 	mut transforms: ViewMut<ui::Transform>, 
 	meshes: View<ui::mesh::Mesh>,
 	texts: View<ui::text::Text>
 )
 	-> Result<(), Box<dyn std::error::Error>>
 {
-	// Update the projection matrix on UI `Transform` components, and add them to the canvas children,
+	// Update the projection matrix on UI `Transform` components, 
 	// for entities that have been inserted since last time.
-	for (eid, transform) in transforms.inserted_mut().iter().with_id() {
+	for transform in transforms.inserted_mut().iter() {
 		transform.update_projection(render_ctx, canvas.projection())?;
-		canvas.add_child(eid);
 	}	
 
 	for (eid, transform) in transforms.iter().with_id() {
