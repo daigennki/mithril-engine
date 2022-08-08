@@ -15,6 +15,7 @@ use glam::*;
 use crate::render::RenderContext;
 
 #[derive(shipyard::Component)]
+#[track(Insertion)]
 pub struct Transform
 {
 	// TODO: parent-child relationship

@@ -48,24 +48,9 @@ impl GameContext
 
 		// add some UI entities for testing
 		world.add_unique(Canvas::new(1280, 720)?);
-
 		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
-		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
+		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);	
 		
-
-		// Update the projection matrix on UI `Transform` components.
-		// TODO: use tracking instead, when it gets implemented in shipyard stable
-		world.run(|mut canvas: UniqueViewMut<Canvas>, mut transforms: ViewMut<ui::Transform>| 
-			-> Result<(), Box<dyn std::error::Error>> 
-		{
-			for (eid, transform) in (&mut transforms).iter().with_id() {
-				transform.update_projection(&mut render_ctx, canvas.projection())?;
-				canvas.add_child(eid);	// TODO: only do this upon component insertion, when tracking is implemented
-			}
-
-			Ok(())
-		})?;
-
 		let gctx = GameContext { 
 			//pref_path: pref_path,
 			render_context: render_ctx,
@@ -181,12 +166,20 @@ fn draw_3d(
 /// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 fn draw_ui_elements(
 	render_ctx: &mut render::RenderContext, 
-	transforms: View<ui::Transform>, 
+	mut canvas: UniqueViewMut<Canvas>,
+	mut transforms: ViewMut<ui::Transform>, 
 	meshes: View<ui::mesh::Mesh>,
 	texts: View<ui::text::Text>
 )
 	-> Result<(), Box<dyn std::error::Error>>
-{	
+{
+	// Update the projection matrix on UI `Transform` components, and add them to the canvas children,
+	// for entities that have been inserted since last time.
+	for (eid, transform) in transforms.inserted_mut().iter().with_id() {
+		transform.update_projection(render_ctx, canvas.projection())?;
+		canvas.add_child(eid);
+	}	
+
 	for (eid, transform) in transforms.iter().with_id() {
 		transform.bind_descriptor_set(render_ctx)?;
 
@@ -199,6 +192,8 @@ fn draw_ui_elements(
 			c.draw(render_ctx)?;
 		}
 	}
+
+	transforms.clear_all_inserted();
 
 	Ok(())
 }

@@ -13,6 +13,7 @@ use crate::render::RenderContext;
 
 /// UI component that rasterizes fonts into textures.
 #[derive(shipyard::Component)]
+#[track(Insertion)]
 pub struct Text
 {
 	quad: Option<Mesh>,
