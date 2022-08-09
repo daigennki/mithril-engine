@@ -10,7 +10,7 @@ use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use serde::Deserialize;
-use shipyard::{ World, View, ViewMut, Get, UniqueViewMut };
+use shipyard::{ World, View, ViewMut, Get, UniqueViewMut, Workload, IntoWorkload };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
 use component::ui;
@@ -27,7 +27,6 @@ use LevelFilter::Info as EngineLogLevel;
 struct GameContext
 {
 	//pref_path: String,
-	render_context: render::RenderContext,
 	world: World
 }
 impl GameContext
@@ -50,15 +49,15 @@ impl GameContext
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
 		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
-		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);	
-		
-		let gctx = GameContext { 
-			//pref_path: pref_path,
-			render_context: render_ctx,
-			world: world
-		};
+		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
-		Ok(gctx)
+		world.add_unique(render_ctx);
+		world.add_workload(render_loop);
+
+		Ok(GameContext { 
+			//pref_path: pref_path,
+			world: world
+		})
 	}
 
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error>>
@@ -71,21 +70,7 @@ impl GameContext
 
 	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
 	{
-		self.render_context.begin_main_render_pass()?;
-
-		// Draw the 3D stuff
-		self.render_context.bind_pipeline("World")?;
-		self.world.run(|camera: UniqueViewMut<Camera>| camera.bind(&mut self.render_context))?;
-		self.world.run_with_data(draw_3d, &mut self.render_context)?;
-
-		// Draw the UI element components.
-		self.render_context.bind_pipeline("UI")?;
-		self.world.run_with_data(draw_ui_elements, &mut self.render_context)?;
-		
-		self.render_context.end_render_pass()?;
-
-		self.render_context.submit_commands()?;
-
+		self.world.run_workload(render_loop)?;
 		Ok(())
 	}
 }
@@ -141,59 +126,64 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	Ok(world)
 }
 
-/// Draw 3D objects.
-/// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-fn draw_3d(
-	render_ctx: &mut render::RenderContext,
-	transforms: View<component::Transform>,
-	meshes: View<component::mesh::Mesh>
-)
-	-> Result<(), Box<dyn std::error::Error>>
+fn render_loop() -> Workload
 {
-	for (eid, transform) in transforms.iter().with_id() {
-		transform.bind_descriptor_set(render_ctx)?;
-
-		// draw 3D meshes
-		if let Ok(c) = meshes.get(eid) {
-			c.draw(render_ctx)?;
-		}
-	}
-
-	Ok(())
+	(draw_everything,).into_workload()
 }
+// TODO: split this into multiple functions to run them in multiple threads
+fn draw_everything(
+	mut render_ctx: UniqueViewMut<render::RenderContext>, 
 
+	camera: UniqueViewMut<Camera>,
+	transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
 
-/// Draw UI elements.
-/// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-fn draw_ui_elements(
-	render_ctx: &mut render::RenderContext, 
 	canvas: UniqueViewMut<Canvas>,
-	mut transforms: ViewMut<ui::Transform>, 
-	meshes: View<ui::mesh::Mesh>,
+	mut ui_transforms: ViewMut<ui::Transform>, 
+	ui_meshes: View<ui::mesh::Mesh>,
 	texts: View<ui::text::Text>
 )
 	-> Result<(), Box<dyn std::error::Error>>
 {
+	let mut command_buffer = render_ctx.begin_render_pass()?;
+
+	// Draw 3D objects.
+	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	command_buffer.bind_pipeline(render_ctx.get_pipeline("World")?);
+	camera.bind(&mut command_buffer)?;
+	for (eid, transform) in transforms.iter().with_id() {
+		transform.bind_descriptor_set(&mut command_buffer)?;
+
+		// draw 3D meshes
+		if let Ok(c) = meshes.get(eid) {
+			c.draw(&mut command_buffer)?;
+		}
+	}
+	
 	// Update the projection matrix on UI `Transform` components, 
 	// for entities that have been inserted since last time.
-	for transform in transforms.inserted_mut().iter() {
-		transform.update_projection(render_ctx, canvas.projection())?;
+	for t in ui_transforms.inserted_mut().iter() {
+		t.update_projection(render_ctx.as_mut(), canvas.projection())?;
 	}	
-
-	for (eid, transform) in transforms.iter().with_id() {
-		transform.bind_descriptor_set(render_ctx)?;
+	
+	// Draw UI elements.
+	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	command_buffer.bind_pipeline(render_ctx.get_pipeline("UI")?);
+	for (eid, t) in ui_transforms.iter().with_id() {
+		t.bind_descriptor_set(&mut command_buffer)?;
 
 		// draw UI meshes
 		// TODO: how do we respect the render order?
-		if let Ok(c) = meshes.get(eid) {
-			c.draw(render_ctx)?;
+		if let Ok(c) = ui_meshes.get(eid) {
+			c.draw(&mut command_buffer)?;
 		}
 		if let Ok(c) = texts.get(eid) {
-			c.draw(render_ctx)?;
+			c.draw(&mut command_buffer)?;
 		}
 	}
 
-	transforms.clear_all_inserted();
+	command_buffer.end_render_pass()?;
+	render_ctx.submit_commands(command_buffer.build()?)?;
 
 	Ok(())
 }

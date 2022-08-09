@@ -9,7 +9,7 @@ use image::{ DynamicImage, Rgba };
 use rusttype::{ point, Font, Scale };
 use glam::*;
 use super::mesh::Mesh;
-use crate::render::RenderContext;
+use crate::render::{ RenderContext, CommandBuffer };
 
 /// UI component that rasterizes fonts into textures.
 #[derive(shipyard::Component)]
@@ -89,11 +89,12 @@ impl Text
 		self.cur_str.clone()
 	}
 
-	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
-		match self.quad.as_ref() {
-			Some(q) => q.draw(render_ctx),
+		self.quad.as_ref().map_or(Ok(()), |q| q.draw(cb))
+		/*match self.quad.as_ref() {
+			Some(q) => q.draw(cb),
 			None => Ok(())
-		}
+		}*/
 	}
 }

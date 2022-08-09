@@ -7,7 +7,6 @@ mod swapchain;
 pub mod pipeline;
 pub mod texture;
 
-use std::rc::Rc;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -31,22 +30,20 @@ use vulkano::memory::DeviceMemoryAllocationError;
 use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
+#[derive(shipyard::Unique)]
 pub struct RenderContext
 {
 	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: swapchain::Swapchain,
 	dev_queue: Arc<vulkano::device::Queue>,
-	cur_cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 
-	upload_futures: Box<dyn vulkano::sync::GpuFuture>,
+	upload_futures: Box<dyn vulkano::sync::GpuFuture + Send + Sync>,
 	upload_futures_count: usize,
 
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
 	// TODO: give ownership of these to "Material" objects?
-	material_pipelines: HashMap<String, Rc<pipeline::Pipeline>>,
-
-	bound_pipeline: std::rc::Weak<pipeline::Pipeline>,
+	material_pipelines: HashMap<String, Arc<pipeline::Pipeline>>,
 	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 }
@@ -70,97 +67,36 @@ impl RenderContext
 		// create swapchain
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 		let dim = swapchain.dimensions();
-		
+
 		let mut material_pipelines = HashMap::new();
 
 		// create UI pipeline
 		material_pipelines.insert(
 			"UI".to_string(),
-			Rc::new(pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?)
+			Arc::new(pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?)
 		);
 
 		// create 3D pipeline
 		material_pipelines.insert(
 			"World".to_string(),
-			Rc::new(pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?)
+			Arc::new(pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?)
 		);
-
-		let cur_cb = AutoCommandBufferBuilder::primary(vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 			
 		Ok(RenderContext{
 			vk_dev: vk_dev.clone(),
 			swapchain: swapchain,
 			dev_queue: dev_queue,
-			cur_cb: cur_cb,
-			upload_futures: vulkano::sync::now(vk_dev).boxed(),
+			upload_futures: vulkano::sync::now(vk_dev).boxed_send_sync(),
 			upload_futures_count: 0,
-			material_pipelines: material_pipelines,
-			bound_pipeline: std::rc::Weak::new()
+			material_pipelines: material_pipelines
 		})
 	}
-
-	/// THIS MAY UNBIND THE CURRENTLY BOUND PIPELINE!!! (if there is a viewport resize)
-	/// Do not bind pipelines before this function for use after it!
-	pub fn begin_main_render_pass(&mut self) -> Result<(), Box<dyn std::error::Error>>
-	{
-		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
-
-		if resize_viewports {
-			let new_dimensions = self.swapchain.dimensions();
-			log::debug!("Recreating pipelines with new viewport...");
-			
-			// destroy the existing "weak" to the bound pipeline since it will become invalid with the viewport resize,
-			// and we need to do so for `Rc::get_mut()` to work.
-			// pipelines to be used during this render pass should be bound after this function, and nothing else should be 
-			// accessing it at the same time anyways.
-			self.bound_pipeline = std::rc::Weak::new();	
-
-			for (_, pl) in &mut self.material_pipelines {
-				// TODO: there might be a better time than when the render pass begins to do the pipeline viewports resizing...
-				Rc::get_mut(pl).ok_or("a pipeline whose viewport is being resized is in use!")?
-					.resize_viewport(new_dimensions[0], new_dimensions[1])?;
-			}
-		}
-		
-		let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(next_img_fb);
-		rp_begin_info.clear_values = vec![
-			Some(ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
-			Some(ClearValue::Depth(1.0))
-		];
-
-		self.cur_cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
-		Ok(())
-	}
-
-	pub fn end_render_pass(&mut self) -> Result<(), RenderPassError>
-	{
-		self.cur_cb.end_render_pass()?;
-		Ok(())
-	}
-
-	pub fn submit_commands(&mut self) -> Result<(), Box<dyn std::error::Error>>
-	{
-		let q_fam = self.vk_dev.active_queue_families().next()
-			.ok_or("There are no active queue families in the logical device!")?;
-
-		// Leave a new command buffer builder in place of the one we're about to take to build and submit.
-		let mut swap_cb = AutoCommandBufferBuilder::primary(self.vk_dev.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
-		std::mem::swap(&mut swap_cb, &mut self.cur_cb);
-
-		// consume the futures to join them upon submission
-		let submit_futures = std::mem::replace(&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed());			
-		if self.upload_futures_count > 0 {
-			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
-		}
-		self.upload_futures_count = 0;
-		self.swapchain.submit_commands(swap_cb.build()?, self.dev_queue.clone(), submit_futures)
-	}
-
+	
 	fn join_future<F>(&mut self, next_future: F)
-		where F: vulkano::sync::GpuFuture + 'static
+		where F: vulkano::sync::GpuFuture + 'static + Send + Sync
 	{
-		let taken_futures = std::mem::replace(&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed());
-		self.upload_futures = taken_futures.join(next_future).boxed();
+		let taken_futures = std::mem::replace(&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed_send_sync());
+		self.upload_futures = taken_futures.join(next_future).boxed_send_sync();
 		self.upload_futures_count += 1;
 	}
 
@@ -218,7 +154,7 @@ impl RenderContext
 	}
 
 	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
-	pub fn new_cpu_buffer_from_iter<I, T>(&mut self, data: I, usage: BufferUsage)
+	pub fn new_cpu_buffer_from_iter<I, T>(&self, data: I, usage: BufferUsage)
 		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryAllocationError>
 		where
 			I: IntoIterator<Item = T>,
@@ -229,20 +165,11 @@ impl RenderContext
 	}
 
 	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
-	pub fn new_cpu_buffer_from_data<T>(&mut self, data: T, usage: BufferUsage)
+	pub fn new_cpu_buffer_from_data<T>(&self, data: T, usage: BufferUsage)
 		-> Result<Arc<CpuAccessibleBuffer<T>>, DeviceMemoryAllocationError>
 		where T: vulkano::buffer::BufferContents
 	{
 		CpuAccessibleBuffer::from_data(self.vk_dev.clone(), usage, false, data)
-	}
-
-	pub fn bind_pipeline(&mut self, pipeline_name: &str)
-		-> Result<(), PipelineNotLoaded>
-	{
-		let pipeline_to_bind = self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?;
-		pipeline_to_bind.bind(&mut self.cur_cb);
-		self.bound_pipeline = Rc::downgrade(pipeline_to_bind);
-		Ok(())
 	}
 
 	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
@@ -251,40 +178,52 @@ impl RenderContext
 		self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.new_descriptor_set(set, writes)
 	}
 
-	/// Bind the given descriptor sets to the currently bound pipeline.
-	/// This will fail if there is no pipeline currently bound.
-	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) 
-		-> Result<(), PipelineNotLoaded>
-		where S: DescriptorSetsCollection
+	/// Issue a new command buffer to begin recording to, and begin a render pass 
+	/// with it for rendering to the swapchain frame buffer.
+	/// DO NOT RUN THIS FUNCTION WHILE ANY PIPELINES ARE BOUND!!! 
+	/// (it uses Arc::get_mut to resize pipelines' viewports)
+	pub fn begin_render_pass(&mut self) -> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
 	{
-		self.cur_cb.bind_descriptor_sets(
-			PipelineBindPoint::Graphics,
-			self.bound_pipeline.upgrade().ok_or(PipelineNotLoaded)?.layout(), first_set, descriptor_sets
+		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
+
+		if resize_viewports {
+			let new_dimensions = self.swapchain.dimensions();
+			log::debug!("Recreating pipelines with new viewport...");
+			for (_, pl) in &mut self.material_pipelines {
+				// TODO: there might be a better time than when the render pass begins to do the pipeline viewports resizing...
+				Arc::get_mut(pl).ok_or("a pipeline whose viewport is being resized is in use!")?
+					.resize_viewport(new_dimensions[0], new_dimensions[1])?;
+			}
+		}
+		
+		let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(next_img_fb);
+		rp_begin_info.clear_values = vec![
+			Some(ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
+			Some(ClearValue::Depth(1.0))
+		];
+
+		let mut new_cb = CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.vk_dev.clone())?;
+		new_cb.begin_render_pass(rp_begin_info)?;
+		Ok(new_cb)
+	}
+
+	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), Box<dyn std::error::Error>>
+	{
+		// consume the futures to join them upon submission
+		let submit_futures = std::mem::replace(
+			&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed_send_sync()
 		);
-		Ok(())
-	}
-	
-	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V)
-		where V: VertexBuffersCollection
-	{
-		self.cur_cb.bind_vertex_buffers(first_binding, vertex_buffers);
+		if self.upload_futures_count > 0 {
+			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
+		}
+		self.upload_futures_count = 0;
+		self.swapchain.submit_commands(built_cb, self.dev_queue.clone(), submit_futures)
 	}
 
-	pub fn bind_index_buffers<Ib, I>(&mut self, index_buffer: Arc<Ib>)
-		where 
-			Ib: TypedBufferAccess<Content = [I]> + 'static,
-			I: Index + 'static
+	pub fn get_pipeline(&mut self, name: &str) -> Result<Arc<pipeline::Pipeline>, PipelineNotLoaded>
 	{
-		self.cur_cb.bind_index_buffer(index_buffer);
+		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?.clone())
 	}
-
-	pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
-		-> Result<(), DrawError>
-	{
-		self.cur_cb.draw(vertex_count, instance_count, first_vertex, first_instance)?;
-		Ok(())
-	}
-
 	
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
@@ -304,6 +243,87 @@ impl std::fmt::Display for PipelineNotLoaded {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "the specified pipeline is not loaded")
     }
+}
+
+pub struct CommandBuffer<L>
+{
+	cb: AutoCommandBufferBuilder<L>,
+	bound_pipeline: std::sync::Weak<pipeline::Pipeline>
+}
+impl CommandBuffer<PrimaryAutoCommandBuffer>
+{
+	pub fn new(device: Arc<vulkano::device::Device>)
+		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
+	{
+		let q_fam = device.active_queue_families().next()
+			.ok_or("There are no active queue families in the logical device!")?;
+		let new_cb = AutoCommandBufferBuilder::primary(device.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
+		
+
+		Ok(CommandBuffer{
+			cb: new_cb,
+			bound_pipeline: std::sync::Weak::new()
+		})
+	}
+
+	pub fn build(self) -> Result<PrimaryAutoCommandBuffer, vulkano::command_buffer::BuildError>
+	{
+		self.cb.build()	
+	}
+
+	pub fn begin_render_pass(&mut self, rp_begin_info: vulkano::command_buffer::RenderPassBeginInfo) 
+		-> Result<(), RenderPassError>
+	{
+		self.cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
+		Ok(())
+	}
+
+	pub fn end_render_pass(&mut self) -> Result<(), RenderPassError>
+	{
+		self.cb.end_render_pass()?;
+		Ok(())
+	}
+}
+impl<L> CommandBuffer<L>
+{	
+	pub fn bind_pipeline(&mut self, pipeline_to_bind: Arc<pipeline::Pipeline>)
+	{
+		pipeline_to_bind.bind(&mut self.cb);
+		self.bound_pipeline = Arc::downgrade(&pipeline_to_bind);
+	}
+
+	/// Bind the given descriptor sets to the currently bound pipeline.
+	/// This will fail if there is no pipeline currently bound.
+	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) -> Result<(), PipelineNotLoaded>
+		where S: DescriptorSetsCollection
+	{
+		self.cb.bind_descriptor_sets(
+			PipelineBindPoint::Graphics,
+			self.bound_pipeline.upgrade().ok_or(PipelineNotLoaded)?.layout(), first_set, descriptor_sets
+		);
+		Ok(())
+	}
+	
+	pub fn bind_vertex_buffers<V>(&mut self, first_binding: u32, vertex_buffers: V)
+		where V: VertexBuffersCollection
+	{
+		self.cb.bind_vertex_buffers(first_binding, vertex_buffers);
+	}
+
+	pub fn bind_index_buffers<Ib, I>(&mut self, index_buffer: Arc<Ib>)
+		where 
+			Ib: TypedBufferAccess<Content = [I]> + 'static,
+			I: Index + 'static
+	{
+		self.cb.bind_index_buffer(index_buffer);
+	}
+
+	pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
+		-> Result<(), DrawError>
+	{
+		self.cb.draw(vertex_count, instance_count, first_vertex, first_instance)?;
+		Ok(())
+	}
 }
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>

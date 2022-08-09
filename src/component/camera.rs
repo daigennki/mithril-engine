@@ -9,7 +9,7 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
 use serde::Deserialize;
-use crate::render::{ RenderContext };
+use crate::render::{ RenderContext, CommandBuffer };
 use crate::component::{ UniqueComponent, DeferGpuResourceLoading };
 
 #[derive(shipyard::Unique, Deserialize, UniqueComponent)]
@@ -48,10 +48,10 @@ impl Camera
 	}
 
 	/// Bind this camera's projection and view matrices so they can be used in shaders.
-	pub fn bind(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn bind<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
 		// this must be bound as descriptor set 1
-		render_ctx.bind_descriptor_set(1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
+		cb.bind_descriptor_set(1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
 		Ok(())
 	}
 }

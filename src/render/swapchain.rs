@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use winit::window::Window;
 use vulkano::device::{ Queue, DeviceOwned };
-use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, CommandBufferExecFuture };
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
-use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture};
-use vulkano::swapchain::{ Surface, AcquireError, SwapchainAcquireFuture, PresentFuture };
+use vulkano::sync::{ FlushError, GpuFuture };
+use vulkano::swapchain::{ Surface, AcquireError, SwapchainAcquireFuture };
 use vulkano::image::{ ImageAccess, attachment::AttachmentImage, view::{ ImageViewCreateInfo, ImageView } };
 
 pub struct Swapchain
@@ -20,9 +20,7 @@ pub struct Swapchain
 	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
 	acquire_future: Option<SwapchainAcquireFuture<Window>>,
-	fence_signal_future: Option<
-		FenceSignalFuture<PresentFuture<CommandBufferExecFuture<Box<dyn GpuFuture>, PrimaryAutoCommandBuffer>, Window>>
-	>,	// sheesh, that's a mouthful
+	fence_signal_future: Option<Box<dyn GpuFuture + Send + Sync>>,
 	need_new_swapchain: bool,
 	create_info: vulkano::swapchain::SwapchainCreateInfo
 }
@@ -137,17 +135,19 @@ impl Swapchain
 		}
 	}*/
 
-	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Box<dyn GpuFuture>)
+	pub fn submit_commands(
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Box<dyn GpuFuture + Send + Sync>
+	)
 		-> Result<(), Box<dyn std::error::Error>>
 	{
 		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
 		let mut joined_future = match self.fence_signal_future.take() {
-			Some(f) => f.join(acquire_future).boxed(),
-			None => acquire_future.boxed()
+			Some(f) => f.join(acquire_future).boxed_send_sync(),
+			None => acquire_future.boxed_send_sync()
 		};
 
 		// join the joined futures from images and buffers being uploaded
-		joined_future = joined_future.join(futures).boxed();
+		joined_future = joined_future.join(futures).boxed_send_sync();
 
 		let future_result = joined_future
 			.then_execute(queue.clone(), cb)?
@@ -155,7 +155,7 @@ impl Swapchain
 			.then_signal_fence_and_flush();
 
 		match future_result {
-			Ok(future) => self.fence_signal_future = Some(future),
+			Ok(future) => self.fence_signal_future = Some(future.boxed_send_sync()),
 			Err(FlushError::OutOfDate) => self.need_new_swapchain = true,
 			Err(e) => return Err(Box::new(e))
 		}

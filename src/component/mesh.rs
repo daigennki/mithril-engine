@@ -8,7 +8,7 @@ use glam::*;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use serde::Deserialize;
-use crate::render::RenderContext;
+use crate::render::{ RenderContext, CommandBuffer };
 use crate::component::DeferGpuResourceLoading;
 use crate::component::EntityComponent;
 
@@ -42,15 +42,15 @@ impl Mesh
 		})
 	}*/
 
-	pub fn draw(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
-		render_ctx.bind_descriptor_set(2, self.mat_set.as_ref().ok_or("mesh not loaded")?.clone())?;
-		render_ctx.bind_vertex_buffers(0, (
+		cb.bind_descriptor_set(2, self.mat_set.as_ref().ok_or("mesh not loaded")?.clone())?;
+		cb.bind_vertex_buffers(0, (
 			self.pos_vert_buf.as_ref().ok_or("mesh not loaded")?.clone(), 
 			self.uv_vert_buf.as_ref().ok_or("mesh not loaded")?.clone()
 		));
-		render_ctx.bind_index_buffers(self.index_buf.as_ref().ok_or("mesh not loaded")?.clone());
-		render_ctx.draw(3, 1, 0, 0)?;
+		cb.bind_index_buffers(self.index_buf.as_ref().ok_or("mesh not loaded")?.clone());
+		cb.draw(3, 1, 0, 0)?;
 		Ok(())
 	}
 }

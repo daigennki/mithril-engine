@@ -7,8 +7,7 @@ use std::sync::Arc;
 use std::path::Path;
 use vulkano::shader::ShaderModule;
 use vulkano::render_pass::{ RenderPass, Subpass };
-use vulkano::pipeline::GraphicsPipeline;
-use vulkano::pipeline::PipelineLayout;
+use vulkano::pipeline::{ GraphicsPipeline, PipelineLayout };
 use vulkano::pipeline::graphics::viewport::*;
 use vulkano::pipeline::graphics::vertex_input::{ VertexInputState, VertexInputRate, VertexInputBindingDescription };
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
@@ -16,7 +15,7 @@ use vulkano::pipeline::graphics::input_assembly::{ InputAssemblyState, Primitive
 use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend };
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::format::Format;
-use vulkano::command_buffer::{ AutoCommandBufferBuilder, PrimaryAutoCommandBuffer };
+use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::sampler::Sampler;
 use vulkano::descriptor_set::{ 
 	layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet,
@@ -137,7 +136,7 @@ impl Pipeline
 		Ok(())
 	}
 
-	pub fn bind(&self, command_buffer: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) 
+	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) 
 	{
 		command_buffer.bind_pipeline_graphics(self.pipeline.clone());
 	}

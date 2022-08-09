@@ -12,7 +12,7 @@ use glam::*;
 use vulkano::buffer::{ /*ImmutableBuffer,*/ BufferUsage, cpu_access::CpuAccessibleBuffer };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use crate::render::RenderContext;
+use crate::render::{ RenderContext, CommandBuffer };
 use serde::Deserialize;
 use component_derive::EntityComponent;
 use component_derive::UniqueComponent;
@@ -82,9 +82,9 @@ impl Transform
 		self.update_buffer()
 	}
 
-	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
-		render_ctx.bind_descriptor_set(0, self.descriptor_set.as_ref().ok_or("transform not loaded")?.clone())?;
+		cb.bind_descriptor_set(0, self.descriptor_set.as_ref().ok_or("transform not loaded")?.clone())?;
 		Ok(())
 	}
 }

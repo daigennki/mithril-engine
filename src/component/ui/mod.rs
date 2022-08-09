@@ -12,7 +12,7 @@ use vulkano::buffer::BufferUsage;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use glam::*;
-use crate::render::RenderContext;
+use crate::render::{ RenderContext, CommandBuffer };
 
 #[derive(shipyard::Component)]
 #[track(Insertion)]
@@ -31,11 +31,11 @@ impl Transform
 		Transform{ descriptor_set: None, proj: None, pos: pos, scale: scale }
 	}
 
-	pub fn bind_descriptor_set(&self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
 		let descriptor_set_ref = self.descriptor_set.as_ref()
 			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
-		render_ctx.bind_descriptor_set(0, descriptor_set_ref.clone())?;
+		cb.bind_descriptor_set(0, descriptor_set_ref.clone())?;
 		Ok(())
 	}
 
