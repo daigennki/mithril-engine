@@ -10,6 +10,7 @@ use rusttype::{ point, Font, Scale };
 use glam::*;
 use super::mesh::Mesh;
 use crate::render::{ RenderContext, CommandBuffer };
+use crate::component::Draw;
 
 /// UI component that rasterizes fonts into textures.
 #[derive(shipyard::Component)]
@@ -88,8 +89,10 @@ impl Text
 	{
 		self.cur_str.clone()
 	}
-
-	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
+}
+impl Draw for Text
+{
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
 		self.quad.as_ref().map_or(Ok(()), |q| q.draw(cb))
 		/*match self.quad.as_ref() {
@@ -98,3 +101,4 @@ impl Text
 		}*/
 	}
 }
+

@@ -9,8 +9,7 @@ use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use serde::Deserialize;
 use crate::render::{ RenderContext, CommandBuffer };
-use crate::component::DeferGpuResourceLoading;
-use crate::component::EntityComponent;
+use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[serde(from = "MeshData")]
@@ -41,18 +40,6 @@ impl Mesh
 			mat_set: mat_set
 		})
 	}*/
-
-	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
-	{
-		cb.bind_descriptor_set(2, self.mat_set.as_ref().ok_or("mesh not loaded")?.clone())?;
-		cb.bind_vertex_buffers(0, (
-			self.pos_vert_buf.as_ref().ok_or("mesh not loaded")?.clone(), 
-			self.uv_vert_buf.as_ref().ok_or("mesh not loaded")?.clone()
-		));
-		cb.bind_index_buffers(self.index_buf.as_ref().ok_or("mesh not loaded")?.clone());
-		cb.draw(3, 1, 0, 0)?;
-		Ok(())
-	}
 }
 impl From<MeshData> for Mesh
 {
@@ -81,6 +68,20 @@ impl DeferGpuResourceLoading for Mesh
 			self.uv_vert_buf = Some(render_ctx.new_buffer_from_iter(data.verts_uv, BufferUsage::vertex_buffer())?);
 			self.index_buf = Some(render_ctx.new_buffer_from_iter(data.indices, BufferUsage::index_buffer())?);
 		}
+		Ok(())
+	}
+}
+impl Draw for Mesh
+{
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
+	{
+		cb.bind_descriptor_set(2, self.mat_set.as_ref().ok_or("mesh not loaded")?.clone())?;
+		cb.bind_vertex_buffers(0, (
+			self.pos_vert_buf.as_ref().ok_or("mesh not loaded")?.clone(), 
+			self.uv_vert_buf.as_ref().ok_or("mesh not loaded")?.clone()
+		));
+		cb.bind_index_buffers(self.index_buf.as_ref().ok_or("mesh not loaded")?.clone());
+		cb.draw(3, 1, 0, 0)?;
 		Ok(())
 	}
 }

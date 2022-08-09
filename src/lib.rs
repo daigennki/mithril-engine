@@ -16,7 +16,7 @@ use shipyard::iter::{ IntoIter, IntoWithId };
 use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
-use component::DeferGpuResourceLoading;
+use component::{ DeferGpuResourceLoading, Draw };
 
 #[cfg(debug_assertions)]
 use LevelFilter::Debug as EngineLogLevel;

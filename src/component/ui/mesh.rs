@@ -10,6 +10,7 @@ use vulkano::descriptor_set::WriteDescriptorSet;
 use glam::*;
 use crate::render::texture::Texture;
 use crate::render::{ RenderContext, CommandBuffer };
+use crate::component::Draw;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 #[derive(shipyard::Component)]
@@ -54,8 +55,10 @@ impl Mesh
 			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, BufferUsage::vertex_buffer())?,
 		})
 	}
-
-	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
+}
+impl Draw for Mesh
+{
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
 	{
 		cb.bind_descriptor_set(1, self.descriptor_set.clone())?;
 		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
@@ -63,4 +66,3 @@ impl Mesh
 		Ok(())
 	}
 }
-

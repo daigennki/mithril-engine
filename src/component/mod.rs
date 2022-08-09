@@ -123,6 +123,10 @@ pub trait DeferGpuResourceLoading
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>;
 }
 
-
+/// Trait for drawable components.
+pub trait Draw
+{
+	fn draw<L>(&self, command_buffer: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>;
+}
 
 
