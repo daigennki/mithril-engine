@@ -43,7 +43,7 @@ pub struct RenderContext
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
 	// TODO: give ownership of these to "Material" objects?
-	material_pipelines: HashMap<String, Arc<pipeline::Pipeline>>,
+	material_pipelines: HashMap<String, pipeline::Pipeline>,
 	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 }
@@ -73,13 +73,13 @@ impl RenderContext
 		// create UI pipeline
 		material_pipelines.insert(
 			"UI".to_string(),
-			Arc::new(pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?)
+			pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?
 		);
 
 		// create 3D pipeline
 		material_pipelines.insert(
 			"World".to_string(),
-			Arc::new(pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?)
+			pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?
 		);
 			
 		Ok(RenderContext{
@@ -180,8 +180,6 @@ impl RenderContext
 
 	/// Issue a new command buffer to begin recording to, and begin a render pass 
 	/// with it for rendering to the swapchain frame buffer.
-	/// DO NOT RUN THIS FUNCTION WHILE ANY PIPELINES ARE BOUND!!! 
-	/// (it uses Arc::get_mut to resize pipelines' viewports)
 	pub fn begin_render_pass(&mut self) -> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
 	{
 		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
@@ -190,9 +188,7 @@ impl RenderContext
 			let new_dimensions = self.swapchain.dimensions();
 			log::debug!("Recreating pipelines with new viewport...");
 			for (_, pl) in &mut self.material_pipelines {
-				// TODO: there might be a better time than when the render pass begins to do the pipeline viewports resizing...
-				Arc::get_mut(pl).ok_or("a pipeline whose viewport is being resized is in use!")?
-					.resize_viewport(new_dimensions[0], new_dimensions[1])?;
+				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
 			}
 		}
 		
@@ -220,9 +216,9 @@ impl RenderContext
 		self.swapchain.submit_commands(built_cb, self.dev_queue.clone(), submit_futures)
 	}
 
-	pub fn get_pipeline(&mut self, name: &str) -> Result<Arc<pipeline::Pipeline>, PipelineNotLoaded>
+	pub fn get_pipeline(&mut self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
 	{
-		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?.clone())
+		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
 	}
 	
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
@@ -281,7 +277,7 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 }
 impl<L> CommandBuffer<L>
 {	
-	pub fn bind_pipeline(&mut self, pipeline_to_bind: Arc<pipeline::Pipeline>)
+	pub fn bind_pipeline(&mut self, pipeline_to_bind: &pipeline::Pipeline)
 	{
 		pipeline_to_bind.bind(&mut self.cb);
 	}
