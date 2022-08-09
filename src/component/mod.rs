@@ -12,7 +12,7 @@ use glam::*;
 use vulkano::buffer::{ /*ImmutableBuffer,*/ BufferUsage, cpu_access::CpuAccessibleBuffer };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use crate::render::{ RenderContext, CommandBuffer };
+use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use serde::Deserialize;
 use component_derive::EntityComponent;
 use component_derive::UniqueComponent;

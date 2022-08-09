@@ -8,7 +8,7 @@ use glam::*;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use serde::Deserialize;
-use crate::render::{ RenderContext, CommandBuffer };
+use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]

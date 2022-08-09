@@ -9,7 +9,7 @@ use image::{ DynamicImage, Rgba };
 use rusttype::{ point, Font, Scale };
 use glam::*;
 use super::mesh::Mesh;
-use crate::render::{ RenderContext, CommandBuffer };
+use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::Draw;
 
 /// UI component that rasterizes fonts into textures.

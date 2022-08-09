@@ -12,7 +12,7 @@ use vulkano::buffer::BufferUsage;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use glam::*;
-use crate::render::{ RenderContext, CommandBuffer };
+use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 
 #[derive(shipyard::Component)]
 #[track(Insertion)]

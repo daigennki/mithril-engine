@@ -9,7 +9,7 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
 use serde::Deserialize;
-use crate::render::{ RenderContext, CommandBuffer };
+use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ UniqueComponent, DeferGpuResourceLoading };
 
 #[derive(shipyard::Unique, Deserialize, UniqueComponent)]
