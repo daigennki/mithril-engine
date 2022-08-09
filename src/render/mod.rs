@@ -15,8 +15,8 @@ use winit::window::WindowBuilder;
 use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
 use vulkano::device::{ DeviceCreationError, Queue };
 use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, DrawError };
-use vulkano::command_buffer::{ SubpassContents, RenderPassError };
-use vulkano::pipeline::PipelineBindPoint;
+use vulkano::command_buffer::{ SubpassContents, RenderPassError, CheckPipelineError };
+use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::Index;
 use vulkano::descriptor_set::{
@@ -247,8 +247,7 @@ impl std::fmt::Display for PipelineNotLoaded {
 
 pub struct CommandBuffer<L>
 {
-	cb: AutoCommandBufferBuilder<L>,
-	bound_pipeline: std::sync::Weak<pipeline::Pipeline>
+	cb: AutoCommandBufferBuilder<L>
 }
 impl CommandBuffer<PrimaryAutoCommandBuffer>
 {
@@ -259,11 +258,7 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 			.ok_or("There are no active queue families in the logical device!")?;
 		let new_cb = AutoCommandBufferBuilder::primary(device.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
 		
-
-		Ok(CommandBuffer{
-			cb: new_cb,
-			bound_pipeline: std::sync::Weak::new()
-		})
+		Ok(CommandBuffer{ cb: new_cb })
 	}
 
 	pub fn build(self) -> Result<PrimaryAutoCommandBuffer, vulkano::command_buffer::BuildError>
@@ -289,18 +284,19 @@ impl<L> CommandBuffer<L>
 	pub fn bind_pipeline(&mut self, pipeline_to_bind: Arc<pipeline::Pipeline>)
 	{
 		pipeline_to_bind.bind(&mut self.cb);
-		self.bound_pipeline = Arc::downgrade(&pipeline_to_bind);
 	}
 
 	/// Bind the given descriptor sets to the currently bound pipeline.
 	/// This will fail if there is no pipeline currently bound.
-	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) -> Result<(), PipelineNotLoaded>
+	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) -> Result<(), CheckPipelineError>
 		where S: DescriptorSetsCollection
 	{
-		self.cb.bind_descriptor_sets(
-			PipelineBindPoint::Graphics,
-			self.bound_pipeline.upgrade().ok_or(PipelineNotLoaded)?.layout(), first_set, descriptor_sets
-		);
+		let pipeline_layout = self.cb.state()
+			.pipeline_graphics()
+			.ok_or(CheckPipelineError::PipelineNotBound)?
+			.layout()
+			.clone();
+		self.cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
 		Ok(())
 	}
 	
