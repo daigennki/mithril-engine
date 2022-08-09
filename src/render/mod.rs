@@ -47,7 +47,7 @@ pub struct RenderContext
 impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
-		-> Result<RenderContext, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error>>
 	{
 		let vkinst = create_vulkan_instance(game_name)?;
 		let (physical_device, q_fam) = get_physical_device(&vkinst)?;

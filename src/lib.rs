@@ -33,7 +33,7 @@ impl GameContext
 {
 	// game context "constructor"
 	pub fn new(org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>) 
-		-> Result<GameContext, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error>>
 	{
 		/*let pref_path =*/ setup_log(org_name, game_name)?;
 

@@ -19,7 +19,7 @@ pub struct Texture
 impl Texture
 {
 	pub fn new(queue: Arc<vulkano::device::Queue>, path: &Path) 
-		-> Result<(Texture, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error>>
+		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error>>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
 		let file_ext = path.extension().ok_or("Could not determine texture file extension!")?.to_str();
@@ -38,7 +38,7 @@ impl Texture
 		dimensions: ImageDimensions,
 		mip: MipmapsCount
 	) 
-		-> Result<(Texture, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error>>
+		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error>>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,

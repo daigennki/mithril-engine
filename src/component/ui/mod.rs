@@ -26,7 +26,7 @@ pub struct Transform
 }
 impl Transform
 {
-	pub fn new(pos: IVec2, scale: Vec2) -> Transform
+	pub fn new(pos: IVec2, scale: Vec2) -> Self
 	{
 		Transform{ descriptor_set: None, proj: None, pos: pos, scale: scale }
 	}

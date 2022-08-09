@@ -41,7 +41,7 @@ impl Pipeline
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		width: u32, height: u32,
-	) -> Result<Pipeline, Box<dyn std::error::Error>>
+	) -> Result<Self, Box<dyn std::error::Error>>
 	{
 		let vk_dev = render_pass.device().clone();
 
@@ -89,7 +89,7 @@ impl Pipeline
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>, width: u32, height: u32)
-		-> Result<Pipeline, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error>>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 

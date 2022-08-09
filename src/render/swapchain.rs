@@ -27,7 +27,7 @@ pub struct Swapchain
 impl Swapchain
 {
 	pub fn new(vk_dev: Arc<vulkano::device::Device>, window_surface: Arc<Surface<Window>>) 
-		-> Result<Swapchain, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error>>
 	{
 		// query surface capabilities
 		let surf_caps = vk_dev.physical_device().surface_capabilities(

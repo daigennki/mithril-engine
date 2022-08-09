@@ -13,7 +13,8 @@ pub struct Canvas
 }
 impl Canvas
 {
-	pub fn new(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) -> Result<Canvas, Box<dyn std::error::Error>>
+	pub fn new(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) 
+		-> Result<Self, Box<dyn std::error::Error>>
 	{	
 		Ok(Canvas{ 
 			base_dimensions: [ canvas_width, canvas_height ], 
