@@ -4,13 +4,15 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, DrawError };
-use vulkano::command_buffer::{ SubpassContents, RenderPassError, CheckPipelineError };
+use vulkano::command_buffer::{ AutoCommandBufferBuilder, CommandBufferUsage, DrawError, CommandBufferInheritanceInfo };
+use vulkano::command_buffer::{ SubpassContents, RenderPassError, CheckPipelineError, CommandBufferInheritanceRenderPassType };
+use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, CommandBufferInheritanceRenderPassInfo };
 use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::Index;
 use vulkano::descriptor_set::DescriptorSetsCollection;
 use vulkano::buffer::TypedBufferAccess;
+use vulkano::render_pass::Framebuffer;
 
 use crate::render::pipeline;
 
@@ -22,7 +24,7 @@ pub struct CommandBuffer<L>
 impl CommandBuffer<PrimaryAutoCommandBuffer>
 {
 	pub fn new(device: Arc<vulkano::device::Device>)
-		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error>>
 	{
 		let q_fam = device.active_queue_families().next()
 			.ok_or("There are no active queue families in the logical device!")?;
@@ -47,6 +49,36 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 	{
 		self.cb.end_render_pass()?;
 		Ok(())
+	}
+}
+impl CommandBuffer<SecondaryAutoCommandBuffer>
+{
+	pub fn new(device: Arc<vulkano::device::Device>, framebuffer: Arc<Framebuffer>)
+		-> Result<Self, Box<dyn std::error::Error>>
+	{
+		let q_fam = device.active_queue_families().next()
+			.ok_or("There are no active queue families in the logical device!")?;
+		let render_pass = framebuffer.render_pass().clone();
+		let subpass = render_pass.first_subpass();
+		let inheritance = CommandBufferInheritanceInfo{
+			render_pass: Some(
+				CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo{
+					subpass: subpass,
+					framebuffer: Some(framebuffer)
+				})
+			),
+			..Default::default()
+		};
+		let new_cb = AutoCommandBufferBuilder::secondary(
+			device.clone(), q_fam, CommandBufferUsage::OneTimeSubmit, inheritance
+		)?;
+
+		Ok(CommandBuffer{ cb: new_cb })
+	}
+
+	pub fn build(self) -> Result<SecondaryAutoCommandBuffer, vulkano::command_buffer::BuildError>
+	{
+		self.cb.build()
 	}
 }
 impl<L> CommandBuffer<L>
