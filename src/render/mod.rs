@@ -13,8 +13,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
-use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
-use vulkano::device::{ DeviceCreationError, Queue };
+use vulkano::device::{ Queue, physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily } };
 use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::format::Format;
@@ -30,9 +29,8 @@ use command_buffer::CommandBuffer;
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
-	vk_dev: Arc<vulkano::device::Device>,
 	swapchain: swapchain::Swapchain,
-	dev_queue: Arc<vulkano::device::Queue>,
+	dev_queue: Arc<vulkano::device::Queue>,	// this also owns the logical device
 
 	upload_futures: Box<dyn vulkano::sync::GpuFuture + Send + Sync>,
 	upload_futures_count: usize,
@@ -49,41 +47,31 @@ impl RenderContext
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
 		-> Result<Self, Box<dyn std::error::Error>>
 	{
-		let vkinst = create_vulkan_instance(game_name)?;
-		let (physical_device, q_fam) = get_physical_device(&vkinst)?;
-		let (vk_dev, mut queues) = create_vk_logical_device(physical_device, [(q_fam, 0.5)])?;
-		let dev_queue = queues.next().ok_or("No queues are available!")?;
+		let dev_queue = vulkan_setup(game_name)?;
 
 		// create window
 		let window_surface = WindowBuilder::new()
 			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
 			.with_title(game_name)
 			.with_resizable(false)
-			.build_vk_surface(&event_loop, vk_dev.instance().clone())?;
+			.build_vk_surface(&event_loop, dev_queue.device().instance().clone())?;
 
 		// create swapchain
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
+		let swapchain = swapchain::Swapchain::new(dev_queue.device().clone(), window_surface)?;
 		let dim = swapchain.dimensions();
 
-		let mut material_pipelines = HashMap::new();
+		let material_pipelines = HashMap::from_iter([
+			// UI pipeline
+			("UI".into(), pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?),
 
-		// create UI pipeline
-		material_pipelines.insert(
-			"UI".to_string(),
-			pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?
-		);
+			// 3D pipeline
+			("World".into(), pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?)
+		]);
 
-		// create 3D pipeline
-		material_pipelines.insert(
-			"World".to_string(),
-			pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?
-		);
-			
 		Ok(RenderContext{
-			vk_dev: vk_dev.clone(),
 			swapchain: swapchain,
-			dev_queue: dev_queue,
-			upload_futures: vulkano::sync::now(vk_dev).boxed_send_sync(),
+			dev_queue: dev_queue.clone(),
+			upload_futures: vulkano::sync::now(dev_queue.device().clone()).boxed_send_sync(),
 			upload_futures_count: 0,
 			material_pipelines: material_pipelines
 		})
@@ -92,7 +80,10 @@ impl RenderContext
 	fn join_future<F>(&mut self, next_future: F)
 		where F: vulkano::sync::GpuFuture + 'static + Send + Sync
 	{
-		let taken_futures = std::mem::replace(&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed_send_sync());
+		let taken_futures = std::mem::replace(
+			&mut self.upload_futures, 
+			vulkano::sync::now(self.dev_queue.device().clone()).boxed_send_sync()
+		);
 		self.upload_futures = taken_futures.join(next_future).boxed_send_sync();
 		self.upload_futures_count += 1;
 	}
@@ -158,7 +149,7 @@ impl RenderContext
 			I::IntoIter: ExactSizeIterator,
 			[T]: vulkano::buffer::BufferContents
 	{
-		CpuAccessibleBuffer::from_iter(self.vk_dev.clone(), usage, false, data)
+		CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), usage, false, data)
 	}
 
 	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
@@ -166,7 +157,7 @@ impl RenderContext
 		-> Result<Arc<CpuAccessibleBuffer<T>>, DeviceMemoryAllocationError>
 		where T: vulkano::buffer::BufferContents
 	{
-		CpuAccessibleBuffer::from_data(self.vk_dev.clone(), usage, false, data)
+		CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), usage, false, data)
 	}
 
 	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
@@ -179,7 +170,7 @@ impl RenderContext
 	pub fn new_primary_command_buffer(&mut self) 
 		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
 	{
-		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.vk_dev.clone())
+		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.dev_queue.clone())
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
@@ -187,7 +178,7 @@ impl RenderContext
 	pub fn new_secondary_command_buffer(&mut self, framebuffer: Arc<vulkano::render_pass::Framebuffer>) 
 		-> Result<CommandBuffer<SecondaryAutoCommandBuffer>, Box<dyn std::error::Error>>
 	{
-		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.vk_dev.clone(), framebuffer)
+		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), framebuffer)
 	}
 
 	/// Tell the swapchain to go to the next image.
@@ -214,7 +205,7 @@ impl RenderContext
 	{
 		// consume the futures to join them upon submission
 		let submit_futures = std::mem::replace(
-			&mut self.upload_futures, vulkano::sync::now(self.vk_dev.clone()).boxed_send_sync()
+			&mut self.upload_futures, vulkano::sync::now(self.dev_queue.device().clone()).boxed_send_sync()
 		);
 		if self.upload_futures_count > 0 {
 			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
@@ -248,29 +239,6 @@ impl std::fmt::Display for PipelineNotLoaded {
     }
 }
 
-fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
-{
-	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
-	// implementations like MoltenVK. for now, we can go without it.
-	let vk_ext = vulkano_win::required_extensions();
-	
-	// only use the validation layer in debug builds
-	#[cfg(debug_assertions)]
-	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".to_string()];
-	#[cfg(not(debug_assertions))]
-	let vk_layers: Vec<String> = vec![];
-
-	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
-	inst_create_info.application_name = Some(game_name.to_string());
-	inst_create_info.engine_name = Some("MithrilEngine".to_string());
-	inst_create_info.engine_version = inst_create_info.application_version.clone();
-	inst_create_info.enabled_extensions = vk_ext;
-	inst_create_info.enabled_layers = vk_layers;
-	inst_create_info.max_api_version = Some(vulkano::Version::V1_2);
-	
-	Ok(vulkano::instance::Instance::new(inst_create_info)?)
-}
-
 fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
 {
 	// NVIDIA
@@ -294,27 +262,19 @@ fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
 	(version >> 12) & 0x3ff,
 	version & 0xfff, 0)
 }
-fn print_physical_devices<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
+fn print_physical_devices(vkinst: &Arc<vulkano::instance::Instance>)
 {
 	log::info!("Available Vulkan physical devices:");
-	for pd in PhysicalDevice::enumerate(&vkinst) {
-		let pd_type_str = match pd.properties().device_type {
-			PhysicalDeviceType::IntegratedGpu => "Integrated GPU",
-			PhysicalDeviceType::DiscreteGpu => "Discrete GPU",
-			PhysicalDeviceType::VirtualGpu => "Virtual GPU",
-			PhysicalDeviceType::Cpu => "CPU",
-			PhysicalDeviceType::Other => "Other",
-		};
+	for pd in PhysicalDevice::enumerate(vkinst) {
 		let driver_ver = decode_driver_version(pd.properties().driver_version, pd.properties().vendor_id);
-		let api_ver = pd.properties().api_version;
 		
-		log::info!("{}: {} ({}), driver '{}' version {}.{}.{}.{} (Vulkan {}.{}.{})", 
+		log::info!("{}: {} ({:?}), driver '{}' version {}.{}.{}.{} (Vulkan {})", 
 			pd.index(), 
 			pd.properties().device_name, 
-			pd_type_str,
-			pd.properties().driver_name.clone().unwrap_or("unknown driver".to_string()), 
+			pd.properties().device_type,
+			pd.properties().driver_name.clone().unwrap_or("unknown driver".into()), 
 			driver_ver.0, driver_ver.1, driver_ver.2, driver_ver.3,
-			api_ver.major, api_ver.minor, api_ver.patch
+			pd.properties().api_version
 		);
 	}
 }
@@ -338,11 +298,34 @@ fn print_queue_families<'a>(queue_families: impl ExactSizeIterator<Item = QueueF
 	}
 }
 
+fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error>>
+{
+	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
+	// implementations like MoltenVK. for now, we can go without it.
+	let vk_ext = vulkano_win::required_extensions();
+	
+	// only use the validation layer in debug builds
+	#[cfg(debug_assertions)]
+	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".to_string()];
+	#[cfg(not(debug_assertions))]
+	let vk_layers: Vec<String> = vec![];
+
+	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
+	inst_create_info.application_name = Some(game_name.to_string());
+	inst_create_info.engine_name = Some("MithrilEngine".to_string());
+	inst_create_info.engine_version = inst_create_info.application_version.clone();
+	inst_create_info.enabled_extensions = vk_ext;
+	inst_create_info.enabled_layers = vk_layers;
+	inst_create_info.max_api_version = Some(vulkano::Version::V1_2);
+	
+	Ok(vulkano::instance::Instance::new(inst_create_info)?)
+}
+
 /// Get the most appropriate GPU, along with a graphics queue family.
 fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>) 
 	-> Result<(PhysicalDevice<'a>, QueueFamily<'a>), Box<dyn std::error::Error>>
 {	
-	print_physical_devices(vkinst);
+	print_physical_devices(&vkinst);
 
 	let physical_device = PhysicalDevice::enumerate(&vkinst)
 		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu)	// Look for a discrete GPU.
@@ -357,15 +340,19 @@ fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 	// get queue family that supports graphics
 	print_queue_families(physical_device.queue_families());
 	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
-			.ok_or("No appropriate queue family found!")?;
+			.ok_or("No graphics queue family found!")?;
 
 	Ok((physical_device, q_fam))
 }
 
-fn create_vk_logical_device<'a, I>(physical_device: PhysicalDevice, queue_families: I) 
-	-> Result<(Arc<vulkano::device::Device>, impl ExactSizeIterator<Item = Arc<Queue>>), DeviceCreationError>
-	where I: IntoIterator<Item = (QueueFamily<'a>, f32)>
+/// Set up the Vulkan instance, physical device, logical device, and queue.
+/// The `Queue` this returns will own all of them.
+fn vulkan_setup(game_name: &str) 
+	-> Result<Arc<Queue>, Box<dyn std::error::Error>>
 {
+	let vkinst = create_vulkan_instance(game_name)?;
+	let (physical_device, queue_family) = get_physical_device(&vkinst)?;
+
 	// Select features and extensions.
 	// The ones chosen here are practically universally supported by any device with Vulkan support.
 	let dev_features = vulkano::device::Features{
@@ -380,19 +367,15 @@ fn create_vk_logical_device<'a, I>(physical_device: PhysicalDevice, queue_famili
 		khr_swapchain: true,
 		..vulkano::device::DeviceExtensions::none()
 	};
-
-	let mut queue_create_infos: Vec<vulkano::device::QueueCreateInfo<'a>> = Vec::new();
-	for qf in queue_families {
-		queue_create_infos.push(vulkano::device::QueueCreateInfo::family(qf.0));
-	}
-
+	
 	let dev_create_info = vulkano::device::DeviceCreateInfo{
 		enabled_extensions: dev_extensions,
 		enabled_features: dev_features,
-		queue_create_infos: queue_create_infos,
+		queue_create_infos: vec![ vulkano::device::QueueCreateInfo::family(queue_family) ],
 		..Default::default()
 	};
 
-	vulkano::device::Device::new(physical_device, dev_create_info)
-}
+	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
 
+	Ok(queues.next().ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?)
+}

@@ -9,6 +9,7 @@ use vulkano::command_buffer::{
 	CommandBufferUsage, SubpassContents, DrawError, RenderPassError, CheckPipelineError, BuildError, ExecuteCommandsError,
 	CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassType, CommandBufferInheritanceRenderPassInfo
 };
+use vulkano::device::Queue;
 use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::Index;
@@ -25,13 +26,11 @@ pub struct CommandBuffer<L>
 }
 impl CommandBuffer<PrimaryAutoCommandBuffer>
 {
-	pub fn new(device: Arc<vulkano::device::Device>) -> Result<Self, Box<dyn std::error::Error>>
+	pub fn new(queue: Arc<Queue>) -> Result<Self, Box<dyn std::error::Error>>
 	{
-		let q_fam = device.active_queue_families().next()
-			.ok_or("There are no active queue families in the logical device!")?;
-		let new_cb = AutoCommandBufferBuilder::primary(device.clone(), q_fam, CommandBufferUsage::OneTimeSubmit)?;
-		
-		Ok(CommandBuffer{ cb: new_cb })
+		Ok(CommandBuffer{ 
+			cb: AutoCommandBufferBuilder::primary(queue.device().clone(), queue.family(), CommandBufferUsage::OneTimeSubmit)?
+		})
 	}
 
 	pub fn build(self) -> Result<PrimaryAutoCommandBuffer, BuildError>
@@ -60,10 +59,8 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 }
 impl CommandBuffer<SecondaryAutoCommandBuffer>
 {
-	pub fn new(device: Arc<vulkano::device::Device>, framebuffer: Arc<Framebuffer>) -> Result<Self, Box<dyn std::error::Error>>
+	pub fn new(queue: Arc<Queue>, framebuffer: Arc<Framebuffer>) -> Result<Self, Box<dyn std::error::Error>>
 	{
-		let q_fam = device.active_queue_families().next()
-			.ok_or("There are no active queue families in the logical device!")?;
 		let render_pass = framebuffer.render_pass().clone();
 		let subpass = render_pass.first_subpass();
 		let inheritance = CommandBufferInheritanceInfo{
@@ -76,7 +73,7 @@ impl CommandBuffer<SecondaryAutoCommandBuffer>
 			..Default::default()
 		};
 		let new_cb = AutoCommandBufferBuilder::secondary(
-			device.clone(), q_fam, CommandBufferUsage::OneTimeSubmit, inheritance
+			queue.device().clone(), queue.family(), CommandBufferUsage::OneTimeSubmit, inheritance
 		)?;
 
 		Ok(CommandBuffer{ cb: new_cb })
