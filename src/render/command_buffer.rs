@@ -18,6 +18,7 @@ use vulkano::buffer::TypedBufferAccess;
 use vulkano::render_pass::Framebuffer;
 
 use crate::render::pipeline;
+use crate::GenericEngineError;
 
 
 pub struct CommandBuffer<L>
@@ -26,7 +27,7 @@ pub struct CommandBuffer<L>
 }
 impl CommandBuffer<PrimaryAutoCommandBuffer>
 {
-	pub fn new(queue: Arc<Queue>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+	pub fn new(queue: Arc<Queue>) -> Result<Self, GenericEngineError>
 	{
 		Ok(CommandBuffer{ 
 			cb: AutoCommandBufferBuilder::primary(queue.device().clone(), queue.family(), CommandBufferUsage::OneTimeSubmit)?
@@ -65,7 +66,7 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 }
 impl CommandBuffer<SecondaryAutoCommandBuffer>
 {
-	pub fn new(queue: Arc<Queue>, framebuffer: Arc<Framebuffer>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+	pub fn new(queue: Arc<Queue>, framebuffer: Arc<Framebuffer>) -> Result<Self, GenericEngineError>
 	{
 		let render_pass = framebuffer.render_pass().clone();
 		let subpass = render_pass.first_subpass();

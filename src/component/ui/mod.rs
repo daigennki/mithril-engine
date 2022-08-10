@@ -13,6 +13,7 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use glam::*;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
+use crate::GenericEngineError;
 
 #[derive(shipyard::Component)]
 #[track(Insertion)]
@@ -31,7 +32,7 @@ impl Transform
 		Transform{ descriptor_set: None, proj: None, pos: pos, scale: scale }
 	}
 
-	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
 	{
 		let descriptor_set_ref = self.descriptor_set.as_ref()
 			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
@@ -40,7 +41,7 @@ impl Transform
 	}
 
 	pub fn update_projection(&mut self, render_ctx: &mut RenderContext, proj: Mat4)
-		-> Result<(), Box<dyn std::error::Error + Send + Sync>>
+		-> Result<(), GenericEngineError>
 	{
 		self.proj = Some(proj);
 		self.descriptor_set = Some(update_matrix(render_ctx, proj, self.pos, self.scale)?);
@@ -49,7 +50,7 @@ impl Transform
 }
 
 fn update_matrix(render_ctx: &mut RenderContext, proj: Mat4, pos: IVec2, scale: Vec2) 
-	-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error + Send + Sync>>
+	-> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 {
 	let projected = proj * Mat4::from_scale_rotation_translation(scale.extend(0.0), Quat::IDENTITY, pos.as_vec2().extend(0.0));
 	let buf = render_ctx.new_buffer_from_data(projected, BufferUsage::uniform_buffer())?;
@@ -60,7 +61,7 @@ fn update_matrix(render_ctx: &mut RenderContext, proj: Mat4, pos: IVec2, scale: 
 
 /// Convenience function: create a tuple of `Transform` and `Mesh` to display an image loaded from a file on the UI.
 pub fn new_image(render_ctx: &mut RenderContext, path: &str, pos: IVec2) 
-	-> Result<(Transform, mesh::Mesh), Box<dyn std::error::Error + Send + Sync>>
+	-> Result<(Transform, mesh::Mesh), GenericEngineError>
 {
 	let img_transform = Transform::new(pos, Vec2::new(1.0, 1.0));
 	let img_tex = render_ctx.new_texture(std::path::Path::new(path))?;
@@ -71,7 +72,7 @@ pub fn new_image(render_ctx: &mut RenderContext, path: &str, pos: IVec2)
 
 /// Convenience function: create a tuple of `Transform` and `Text` to display text.
 pub fn new_text(render_ctx: &mut RenderContext, text_str: &str, size: f32, pos: IVec2) 
-	-> Result<(Transform, text::Text), Box<dyn std::error::Error + Send + Sync>>
+	-> Result<(Transform, text::Text), GenericEngineError>
 {
 	let text_transform = Transform::new(pos, Vec2::new(1.0, 1.0));
 	let text_mesh = text::Text::new(render_ctx, text_str, size)?;

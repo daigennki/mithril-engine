@@ -11,6 +11,7 @@ use glam::*;
 use super::mesh::Mesh;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::Draw;
+use crate::GenericEngineError;
 
 /// UI component that rasterizes fonts into textures.
 #[derive(shipyard::Component)]
@@ -23,7 +24,7 @@ pub struct Text
 impl Text
 {
 	pub fn new(render_ctx: &mut RenderContext, text_str: &str, size: f32) 
-		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Self, GenericEngineError>
 	{
 		if text_str.is_empty() {
 			return Ok(Text{ quad: None, cur_str: text_str.to_string() })
@@ -93,7 +94,7 @@ impl Text
 }
 impl Draw for Text
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
 	{
 		self.quad.as_ref().map_or(Ok(()), |q| q.draw(cb))
 		/*match self.quad.as_ref() {

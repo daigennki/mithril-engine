@@ -26,6 +26,7 @@ use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
 use command_buffer::CommandBuffer;
+use crate::GenericEngineError;
 
 #[derive(shipyard::Unique)]
 pub struct RenderContext
@@ -46,7 +47,7 @@ pub struct RenderContext
 impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
-		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Self, GenericEngineError>
 	{
 		let dev_queue = vulkan_setup(game_name)?;
 
@@ -89,7 +90,7 @@ impl RenderContext
 		self.upload_futures_count += 1;
 	}
 
-	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, Box<dyn std::error::Error + Send + Sync>>
+	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, GenericEngineError>
 	{
 		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
 		self.join_future(upload_future);
@@ -102,7 +103,7 @@ impl RenderContext
 		dimensions: ImageDimensions,
 		mip: MipmapsCount
 	) 
-	-> Result<texture::Texture, Box<dyn std::error::Error + Send + Sync>>
+	-> Result<texture::Texture, GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
@@ -162,14 +163,14 @@ impl RenderContext
 	}
 
 	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
-		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
 		self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.new_descriptor_set(set, writes)
 	}
 
 	/// Issue a new primary command buffer builder to begin recording to.
 	pub fn new_primary_command_buffer(&mut self) 
-		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, GenericEngineError>
 	{
 		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.dev_queue.clone())
 	}
@@ -177,7 +178,7 @@ impl RenderContext
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to `framebuffer`.
 	pub fn new_secondary_command_buffer(&mut self, framebuffer: Arc<vulkano::render_pass::Framebuffer>) 
-		-> Result<CommandBuffer<SecondaryAutoCommandBuffer>, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<CommandBuffer<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), framebuffer)
 	}
@@ -187,7 +188,7 @@ impl RenderContext
 	/// This must only be called once per frame, at the beginning of each frame before any render pass.
 	///
 	/// This returns the framebuffer for the image.
-	pub fn next_swapchain_image(&mut self) -> Result<Arc<vulkano::render_pass::Framebuffer>, Box<dyn std::error::Error + Send + Sync>>
+	pub fn next_swapchain_image(&mut self) -> Result<Arc<vulkano::render_pass::Framebuffer>, GenericEngineError>
 	{
 		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
 
@@ -202,7 +203,7 @@ impl RenderContext
 		Ok(next_img_fb)
 	}
 
-	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
 		// consume the futures to join them upon submission
 		let submit_futures = std::mem::replace(
@@ -305,7 +306,7 @@ fn print_queue_families<'a>(queue_families: impl ExactSizeIterator<Item = QueueF
 	}
 }
 
-fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, Box<dyn std::error::Error + Send + Sync>>
+fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
 {
 	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
 	// implementations like MoltenVK. for now, we can go without it.
@@ -330,7 +331,7 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 
 /// Get the most appropriate GPU, along with a graphics queue family.
 fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>) 
-	-> Result<(PhysicalDevice<'a>, QueueFamily<'a>), Box<dyn std::error::Error + Send + Sync>>
+	-> Result<(PhysicalDevice<'a>, QueueFamily<'a>), GenericEngineError>
 {	
 	print_physical_devices(&vkinst);
 
@@ -355,7 +356,7 @@ fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 /// Set up the Vulkan instance, physical device, logical device, and queue.
 /// The `Queue` this returns will own all of them.
 fn vulkan_setup(game_name: &str) 
-	-> Result<Arc<Queue>, Box<dyn std::error::Error + Send + Sync>>
+	-> Result<Arc<Queue>, GenericEngineError>
 {
 	let vkinst = create_vulkan_instance(game_name)?;
 	let (physical_device, queue_family) = get_physical_device(&vkinst)?;

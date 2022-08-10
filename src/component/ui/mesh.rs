@@ -11,6 +11,7 @@ use glam::*;
 use crate::render::texture::Texture;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::Draw;
+use crate::GenericEngineError;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 #[derive(shipyard::Component)]
@@ -22,7 +23,7 @@ pub struct Mesh
 }
 impl Mesh
 {
-	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Self, GenericEngineError>
 	{
 		// resize position vertices according to texture dimensions
 		let dimensions = UVec2::from_array(tex.dimensions().width_height()).as_vec2();
@@ -31,7 +32,7 @@ impl Mesh
 	}
 
 	pub fn new_from_corners(render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Texture)
-		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Self, GenericEngineError>
 	{
 		// vertex data
 		let pos_verts = [
@@ -58,7 +59,7 @@ impl Mesh
 }
 impl Draw for Mesh
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
 	{
 		cb.bind_descriptor_set(1, self.descriptor_set.clone())?;
 		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));

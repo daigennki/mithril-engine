@@ -11,6 +11,8 @@ use vulkano::command_buffer::{ CommandBufferExecFuture, PrimaryAutoCommandBuffer
 use vulkano::sync::NowFuture;
 use ddsfile::DxgiFormat;
 
+use crate::GenericEngineError;
+
 pub struct Texture
 {
 	view: Arc<ImageView<ImmutableImage>>,
@@ -19,7 +21,7 @@ pub struct Texture
 impl Texture
 {
 	pub fn new(queue: Arc<vulkano::device::Queue>, path: &Path) 
-		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error + Send + Sync>>
+		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
 		let file_ext = path.extension().ok_or("Could not determine texture file extension!")?.to_str();
@@ -38,7 +40,7 @@ impl Texture
 		dimensions: ImageDimensions,
 		mip: MipmapsCount
 	) 
-		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), Box<dyn std::error::Error + Send + Sync>>
+		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
@@ -66,7 +68,7 @@ impl Texture
 	}
 }
 
-fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), Box<dyn std::error::Error + Send + Sync>>
+fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
 {
 	let dds_file = std::fs::File::open(path)
 		.or_else(|e| Err(format!("Could not open '{}': {}", path.display(), e)))?;
@@ -84,7 +86,7 @@ fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u
 }
 
 fn load_other_format(path: &Path) 
-	-> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), Box<dyn std::error::Error + Send + Sync>>
+	-> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
 {
 	let img = image::io::Reader::open(path)?.decode()?;
 
@@ -96,7 +98,7 @@ fn load_other_format(path: &Path)
 	Ok((vk_fmt, dim, mip, img_raw))
 }
 
-fn dxgi_to_vulkan_format(dxgi_format: DxgiFormat) -> Result<Format, Box<dyn std::error::Error + Send + Sync>>
+fn dxgi_to_vulkan_format(dxgi_format: DxgiFormat) -> Result<Format, GenericEngineError>
 {
 	Ok(match dxgi_format {
 		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,

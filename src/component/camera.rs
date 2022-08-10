@@ -11,6 +11,7 @@ use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
 use serde::Deserialize;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ UniqueComponent, DeferGpuResourceLoading };
+use crate::GenericEngineError;
 
 #[derive(shipyard::Unique, Deserialize, UniqueComponent)]
 pub struct Camera
@@ -25,7 +26,7 @@ pub struct Camera
 }
 impl Camera
 {
-	/*pub fn new(render_ctx: &mut RenderContext, pos: Vec3, target: Vec3) -> Result<Camera, Box<dyn std::error::Error + Send + Sync>>
+	/*pub fn new(render_ctx: &mut RenderContext, pos: Vec3, target: Vec3) -> Result<Camera, GenericEngineError>
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let projview = calculate_projview(pos, target, dim[0], dim[1]);
@@ -40,7 +41,7 @@ impl Camera
 	}*/
 
 	pub fn set_pos_and_target(&mut self, render_ctx: &mut RenderContext, pos: Vec3, target: Vec3)
-		-> Result<(), Box<dyn std::error::Error + Send + Sync>>
+		-> Result<(), GenericEngineError>
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = calculate_projview(pos, target, dim[0], dim[1]);
@@ -48,7 +49,7 @@ impl Camera
 	}
 
 	/// Bind this camera's projection and view matrices so they can be used in shaders.
-	pub fn bind<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	pub fn bind<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
 	{
 		// this must be bound as descriptor set 1
 		cb.bind_descriptor_set(1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
@@ -57,7 +58,7 @@ impl Camera
 }
 impl DeferGpuResourceLoading for Camera
 {
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);

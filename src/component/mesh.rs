@@ -10,6 +10,7 @@ use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use serde::Deserialize;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
+use crate::GenericEngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[serde(from = "MeshData")]
@@ -26,7 +27,7 @@ impl Mesh
 {
 	// TODO: set material
 	/*pub fn new(render_ctx: &mut RenderContext, verts_pos: Vec<Vec3>, verts_uv: Vec<Vec2>, indices: Vec<u32>, color: Vec4)
-		-> Result<Mesh, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Mesh, GenericEngineError>
 	{
 		let mat_buf = render_ctx.new_buffer_from_data(color, BufferUsage::uniform_buffer())?;
 		let mat_set = render_ctx.new_descriptor_set("World", 2, [
@@ -56,7 +57,7 @@ impl From<MeshData> for Mesh
 }
 impl DeferGpuResourceLoading for Mesh
 {
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		if let Some(data) = self.data_to_load.take() {
 			let mat_buf = render_ctx.new_buffer_from_data(data.color, BufferUsage::uniform_buffer())?;
@@ -73,7 +74,7 @@ impl DeferGpuResourceLoading for Mesh
 }
 impl Draw for Mesh
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
 	{
 		cb.bind_descriptor_set(2, self.mat_set.as_ref().ok_or("mesh not loaded")?.clone())?;
 		cb.bind_vertex_buffers(0, (

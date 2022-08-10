@@ -4,6 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use glam::*;
+use crate::GenericEngineError;
 
 #[derive(shipyard::Unique)]
 pub struct Canvas
@@ -14,7 +15,7 @@ pub struct Canvas
 impl Canvas
 {
 	pub fn new(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) 
-		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Self, GenericEngineError>
 	{	
 		Ok(Canvas{ 
 			base_dimensions: [ canvas_width, canvas_height ], 

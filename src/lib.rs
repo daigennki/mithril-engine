@@ -25,6 +25,8 @@ use LevelFilter::Debug as EngineLogLevel;
 #[cfg(not(debug_assertions))]
 use LevelFilter::Info as EngineLogLevel;
 
+type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
+
 struct GameContext
 {
 	//pref_path: String,
@@ -34,7 +36,7 @@ impl GameContext
 {
 	// game context "constructor"
 	pub fn new(org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>) 
-		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
+		-> Result<Self, GenericEngineError>
 	{
 		/*let pref_path =*/ setup_log(org_name, game_name)?;
 
@@ -71,7 +73,7 @@ impl GameContext
 		})
 	}
 
-	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
 			Event::RedrawEventsCleared => self.draw_in_event_loop(),
@@ -79,7 +81,7 @@ impl GameContext
 		}
 	}
 
-	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	fn draw_in_event_loop(&mut self) -> Result<(), GenericEngineError>
 	{
 		self.world.run_workload("Render loop")?;
 		Ok(())
@@ -109,7 +111,7 @@ impl Into<World> for WorldData
 		world
 	}
 }
-fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error + Send + Sync>>
+fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, GenericEngineError>
 {
 	let yaml_string = String::from_utf8(std::fs::read(Path::new("maps").join(file))?)?;
 	let world_data: WorldData = serde_yaml::from_str(&yaml_string)?;
@@ -117,17 +119,17 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
-	world.run(|mut component: UniqueViewMut<Camera>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+	world.run(|mut component: UniqueViewMut<Camera>| -> Result<(), GenericEngineError> {
 		component.finish_loading(render_ctx)?;
 		Ok(())
 	})?;
-	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), GenericEngineError> {
 		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
 		}
 		Ok(())
 	})?;
-	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), GenericEngineError> {
 		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
 		}
@@ -169,7 +171,7 @@ fn draw_3d(
 	camera: UniqueViewMut<Camera>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+) -> Result<(), GenericEngineError>
 {
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
@@ -197,7 +199,7 @@ fn draw_ui(
 	mut ui_transforms: ViewMut<ui::Transform>, 
 	ui_meshes: View<ui::mesh::Mesh>,
 	texts: View<ui::text::Text>
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+) -> Result<(), GenericEngineError>
 {
 	// Update the projection matrix on UI `Transform` components, 
 	// for entities that have been inserted since last time.
@@ -227,7 +229,7 @@ fn draw_ui(
 	Ok(())
 }
 fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>) 
-	-> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	-> Result<(), GenericEngineError>
 {
 	render_ctx.next_swapchain_image()?;
 	Ok(())
@@ -236,7 +238,7 @@ fn submit_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>, 
 	mut trm: UniqueViewMut<ThreadedRenderingManager>
 )
-	-> Result<(), Box<dyn std::error::Error + Send + Sync>>
+	-> Result<(), GenericEngineError>
 {	
 	let cur_fb = render_ctx.get_current_framebuffer();
 	let mut primary_cb = render_ctx.new_primary_command_buffer()?;
@@ -281,7 +283,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 }
 
 // Get data path, set up logging, and return the data path.
-fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>>
+fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineError>
 {
 	let data_path = dirs::data_dir().ok_or("Failed to get data directory")?.join(org_name).join(game_name);
 	println!("Using data directory: {}", data_path.display());
@@ -311,7 +313,7 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::er
 	Ok(data_path)
 }
 
-fn log_error(e: Box<dyn std::error::Error + Send + Sync>)
+fn log_error(e: GenericEngineError)
 {
 	if log::log_enabled!(log::Level::Error) {
 		log::error!("{}", e);
