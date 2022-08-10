@@ -15,9 +15,9 @@ use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 use vulkano::device::physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily };
 use vulkano::device::{ DeviceCreationError, Queue };
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
-use vulkano::format::{ ClearValue, Format };
+use vulkano::format::Format;
 use vulkano::buffer::{ 
 	ImmutableBuffer, BufferUsage, cpu_access::CpuAccessibleBuffer, immutable::ImmutableBufferCreationError
 };
@@ -175,9 +175,27 @@ impl RenderContext
 		self.material_pipelines.get(pipeline_name).ok_or(PipelineNotLoaded)?.new_descriptor_set(set, writes)
 	}
 
-	/// Issue a new command buffer to begin recording to, and begin a render pass 
-	/// with it for rendering to the swapchain frame buffer.
-	pub fn begin_render_pass(&mut self) -> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
+	/// Issue a new primary command buffer builder to begin recording to.
+	pub fn new_primary_command_buffer(&mut self) 
+		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, Box<dyn std::error::Error>>
+	{
+		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.vk_dev.clone())
+	}
+
+	/// Issue a new secondary command buffer builder to begin recording to.
+	/// It will be set up for drawing to `framebuffer`.
+	pub fn new_secondary_command_buffer(&mut self, framebuffer: Arc<vulkano::render_pass::Framebuffer>) 
+		-> Result<CommandBuffer<SecondaryAutoCommandBuffer>, Box<dyn std::error::Error>>
+	{
+		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.vk_dev.clone(), framebuffer)
+	}
+
+	/// Tell the swapchain to go to the next image.
+	/// The image size may change here, in which case pipelines will be re-created with resized viewports.
+	/// This must only be called once per frame, at the beginning of each frame before any render pass.
+	///
+	/// This returns the framebuffer for the image.
+	pub fn next_swapchain_image(&mut self) -> Result<Arc<vulkano::render_pass::Framebuffer>, Box<dyn std::error::Error>>
 	{
 		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
 
@@ -188,16 +206,8 @@ impl RenderContext
 				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
 			}
 		}
-		
-		let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(next_img_fb);
-		rp_begin_info.clear_values = vec![
-			Some(ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
-			Some(ClearValue::Depth(1.0))
-		];
 
-		let mut new_cb = CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.vk_dev.clone())?;
-		new_cb.begin_render_pass(rp_begin_info)?;
-		Ok(new_cb)
+		Ok(next_img_fb)
 	}
 
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), Box<dyn std::error::Error>>

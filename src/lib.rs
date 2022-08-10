@@ -145,7 +145,14 @@ fn draw_everything(
 )
 	-> Result<(), Box<dyn std::error::Error>>
 {
-	let mut command_buffer = render_ctx.begin_render_pass()?;
+	let cur_img_fb = render_ctx.next_swapchain_image()?;
+	let mut command_buffer = render_ctx.new_primary_command_buffer()?;
+	let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_img_fb);
+	rp_begin_info.clear_values = vec![
+		Some(vulkano::format::ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
+		Some(vulkano::format::ClearValue::Depth(1.0))
+	];
+	command_buffer.begin_render_pass(rp_begin_info, vulkano::command_buffer::SubpassContents::Inline)?;
 
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
