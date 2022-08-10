@@ -26,7 +26,7 @@ pub struct CommandBuffer<L>
 }
 impl CommandBuffer<PrimaryAutoCommandBuffer>
 {
-	pub fn new(queue: Arc<Queue>) -> Result<Self, Box<dyn std::error::Error>>
+	pub fn new(queue: Arc<Queue>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		Ok(CommandBuffer{ 
 			cb: AutoCommandBufferBuilder::primary(queue.device().clone(), queue.family(), CommandBufferUsage::OneTimeSubmit)?
@@ -41,6 +41,12 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 	pub fn execute_secondary(&mut self, secondary: SecondaryAutoCommandBuffer) -> Result<(), ExecuteCommandsError>
 	{
 		self.cb.execute_commands(secondary)?;
+		Ok(())
+	}
+
+	pub fn execute_secondaries(&mut self, secondaries: Vec<SecondaryAutoCommandBuffer>) -> Result<(), ExecuteCommandsError>
+	{
+		self.cb.execute_commands_from_vec(secondaries)?;
 		Ok(())
 	}
 
@@ -59,7 +65,7 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 }
 impl CommandBuffer<SecondaryAutoCommandBuffer>
 {
-	pub fn new(queue: Arc<Queue>, framebuffer: Arc<Framebuffer>) -> Result<Self, Box<dyn std::error::Error>>
+	pub fn new(queue: Arc<Queue>, framebuffer: Arc<Framebuffer>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		let render_pass = framebuffer.render_pass().clone();
 		let subpass = render_pass.first_subpass();

@@ -10,8 +10,10 @@ use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use serde::Deserialize;
-use shipyard::{ World, View, ViewMut, Get, UniqueViewMut, Workload, IntoWorkload };
+use shipyard::{ World, View, ViewMut, Get, UniqueViewMut, Workload, WorkloadModificator };
 use shipyard::iter::{ IntoIter, IntoWithId };
+
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 
 use component::ui;
 use component::ui::{ canvas::Canvas };
@@ -23,7 +25,6 @@ use LevelFilter::Debug as EngineLogLevel;
 #[cfg(not(debug_assertions))]
 use LevelFilter::Info as EngineLogLevel;
 
-
 struct GameContext
 {
 	//pref_path: String,
@@ -33,7 +34,7 @@ impl GameContext
 {
 	// game context "constructor"
 	pub fn new(org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>) 
-		-> Result<Self, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		/*let pref_path =*/ setup_log(org_name, game_name)?;
 
@@ -52,7 +53,17 @@ impl GameContext
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
 		world.add_unique(render_ctx);
-		world.add_workload(render_loop);
+		world.add_unique(ThreadedRenderingManager::new());
+
+		Workload::new("Render loop")
+			.with_try_system(prepare_primary_render)
+			.with_try_system(draw_3d)
+			.with_try_system(draw_ui)
+			.with_try_system(submit_primary_render)
+			.after_all(prepare_primary_render)
+			.before_all(submit_primary_render)
+			.add_to_world(&world)?;
+		//world.set_default_workload("Render loop")?;
 
 		Ok(GameContext { 
 			//pref_path: pref_path,
@@ -60,7 +71,7 @@ impl GameContext
 		})
 	}
 
-	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error>>
+	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		match event {
 			Event::RedrawEventsCleared => self.draw_in_event_loop(),
@@ -68,9 +79,9 @@ impl GameContext
 		}
 	}
 
-	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	fn draw_in_event_loop(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
-		self.world.run_workload(render_loop)?;
+		self.world.run_workload("Render loop")?;
 		Ok(())
 	}
 }
@@ -98,7 +109,7 @@ impl Into<World> for WorldData
 		world
 	}
 }
-fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error>>
+fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, Box<dyn std::error::Error + Send + Sync>>
 {
 	let yaml_string = String::from_utf8(std::fs::read(Path::new("maps").join(file))?)?;
 	let world_data: WorldData = serde_yaml::from_str(&yaml_string)?;
@@ -106,17 +117,17 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
-	world.run(|mut component: UniqueViewMut<Camera>| -> Result<(), Box<dyn std::error::Error>> {
+	world.run(|mut component: UniqueViewMut<Camera>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 		component.finish_loading(render_ctx)?;
 		Ok(())
 	})?;
-	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), Box<dyn std::error::Error>> {
+	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
 		}
 		Ok(())
 	})?;
-	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), Box<dyn std::error::Error>> {
+	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
 		}
@@ -126,36 +137,44 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	Ok(world)
 }
 
-fn render_loop() -> Workload
+#[derive(shipyard::Unique)]
+struct ThreadedRenderingManager
 {
-	(draw_everything,).into_workload()
+	built_command_buffers: Vec<SecondaryAutoCommandBuffer>
 }
-// TODO: split this into multiple functions to run them in multiple threads
-fn draw_everything(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, 
+impl ThreadedRenderingManager
+{
+	pub fn new() -> Self
+	{
+		ThreadedRenderingManager{ built_command_buffers: Vec::new() }
+	}
+
+	/// Add a secondary command buffer that has been built.
+	pub fn add_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		self.built_command_buffers.push(command_buffer);
+	}
+
+	/// Take all of the secondary command buffers that have been built.
+	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
+	{
+		std::mem::take(&mut self.built_command_buffers)
+	}
+}
+
+fn draw_3d(
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut trm: UniqueViewMut<ThreadedRenderingManager>,
 
 	camera: UniqueViewMut<Camera>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
-
-	canvas: UniqueViewMut<Canvas>,
-	mut ui_transforms: ViewMut<ui::Transform>, 
-	ui_meshes: View<ui::mesh::Mesh>,
-	texts: View<ui::text::Text>
-)
-	-> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
-	let cur_img_fb = render_ctx.next_swapchain_image()?;
-	let mut command_buffer = render_ctx.new_primary_command_buffer()?;
-	let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_img_fb);
-	rp_begin_info.clear_values = vec![
-		Some(vulkano::format::ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
-		Some(vulkano::format::ClearValue::Depth(1.0))
-	];
-	command_buffer.begin_render_pass(rp_begin_info, vulkano::command_buffer::SubpassContents::Inline)?;
-
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	let cur_fb = render_ctx.get_current_framebuffer();
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 	command_buffer.bind_pipeline(render_ctx.get_pipeline("World")?);
 	camera.bind(&mut command_buffer)?;
 	for (eid, transform) in transforms.iter().with_id() {
@@ -166,15 +185,30 @@ fn draw_everything(
 			c.draw(&mut command_buffer)?;
 		}
 	}
-	
+
+	trm.add_cb(command_buffer.build()?);
+	Ok(())
+}
+fn draw_ui(
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut trm: UniqueViewMut<ThreadedRenderingManager>,
+
+	canvas: UniqueViewMut<Canvas>,
+	mut ui_transforms: ViewMut<ui::Transform>, 
+	ui_meshes: View<ui::mesh::Mesh>,
+	texts: View<ui::text::Text>
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
 	// Update the projection matrix on UI `Transform` components, 
 	// for entities that have been inserted since last time.
 	for t in ui_transforms.inserted_mut().iter() {
 		t.update_projection(render_ctx.as_mut(), canvas.projection())?;
-	}	
-	
+	}
+
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	let cur_fb = render_ctx.get_current_framebuffer();
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 	command_buffer.bind_pipeline(render_ctx.get_pipeline("UI")?);
 	for (eid, t) in ui_transforms.iter().with_id() {
 		t.bind_descriptor_set(&mut command_buffer)?;
@@ -188,9 +222,35 @@ fn draw_everything(
 			c.draw(&mut command_buffer)?;
 		}
 	}
+	
+	trm.add_cb(command_buffer.build()?);
+	Ok(())
+}
+fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>) 
+	-> Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
+	render_ctx.next_swapchain_image()?;
+	Ok(())
+}
+fn submit_primary_render(
+	mut render_ctx: UniqueViewMut<render::RenderContext>, 
+	mut trm: UniqueViewMut<ThreadedRenderingManager>
+)
+	-> Result<(), Box<dyn std::error::Error + Send + Sync>>
+{	
+	let cur_fb = render_ctx.get_current_framebuffer();
+	let mut primary_cb = render_ctx.new_primary_command_buffer()?;
+	let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_fb);
+	rp_begin_info.clear_values = vec![
+		Some(vulkano::format::ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
+		Some(vulkano::format::ClearValue::Depth(1.0))
+	];
 
-	command_buffer.end_render_pass()?;
-	render_ctx.submit_commands(command_buffer.build()?)?;
+	primary_cb.begin_render_pass(rp_begin_info, vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
+	primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
+	primary_cb.end_render_pass()?;
+
+	render_ctx.submit_commands(primary_cb.build()?)?;
 
 	Ok(())
 }
@@ -221,7 +281,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 }
 
 // Get data path, set up logging, and return the data path.
-fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::error::Error>>
+fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>>
 {
 	let data_path = dirs::data_dir().ok_or("Failed to get data directory")?.join(org_name).join(game_name);
 	println!("Using data directory: {}", data_path.display());
@@ -251,7 +311,7 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, Box<dyn std::er
 	Ok(data_path)
 }
 
-fn log_error(e: Box<dyn std::error::Error>)
+fn log_error(e: Box<dyn std::error::Error + Send + Sync>)
 {
 	if log::log_enabled!(log::Level::Error) {
 		log::error!("{}", e);

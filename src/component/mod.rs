@@ -37,7 +37,7 @@ pub struct Transform
 impl Transform
 {
 	/*pub fn new(render_ctx: &mut RenderContext, position: Vec3, scale: Vec3, rotation: Vec3) 
-		-> Result<Transform, Box<dyn std::error::Error>>
+		-> Result<Transform, Box<dyn std::error::Error + Send + Sync>>
 	{
 		let rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(scale, rot_quat, position);
@@ -55,34 +55,34 @@ impl Transform
 	}*/
 	
 
-	fn update_buffer(&mut self) -> Result<(), Box<dyn std::error::Error>>
+	fn update_buffer(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		*self.buf.as_ref().ok_or("transform not loaded")?.write()? = 
 			Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 		Ok(())
 	}
 
-	pub fn set_pos(&mut self, position: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_pos(&mut self, position: Vec3) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		self.position = position;
 		self.update_buffer()
 	}
 	
-	pub fn set_scale(&mut self, scale: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_scale(&mut self, scale: Vec3) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		self.scale = scale;
 		self.update_buffer()
 	}
 
 	/// Set the rotation of this object, in terms of X, Y, and Z axis rotations.
-	pub fn set_rotation(&mut self, rotation: Vec3) -> Result<(), Box<dyn std::error::Error>>
+	pub fn set_rotation(&mut self, rotation: Vec3) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		self.rotation = rotation;
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
 		self.update_buffer()
 	}
 
-	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
+	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		cb.bind_descriptor_set(0, self.descriptor_set.as_ref().ok_or("transform not loaded")?.clone())?;
 		Ok(())
@@ -90,7 +90,7 @@ impl Transform
 }
 impl DeferGpuResourceLoading for Transform
 {
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, self.rotation.x, self.rotation.y, self.rotation.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
@@ -120,13 +120,13 @@ pub trait UniqueComponent
 /// Trait for components which need `RenderContext` to finish loading their GPU resources after being deserialized.
 pub trait DeferGpuResourceLoading
 {
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>;
+	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Trait for drawable components.
 pub trait Draw
 {
-	fn draw<L>(&self, command_buffer: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>;
+	fn draw<L>(&self, command_buffer: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 

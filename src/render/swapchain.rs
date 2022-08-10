@@ -27,7 +27,7 @@ pub struct Swapchain
 impl Swapchain
 {
 	pub fn new(vk_dev: Arc<vulkano::device::Device>, window_surface: Arc<Surface<Window>>) 
-		-> Result<Self, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		// query surface capabilities
 		let surf_caps = vk_dev.physical_device().surface_capabilities(
@@ -83,7 +83,7 @@ impl Swapchain
 
 	/// Get the next swapchain image.
 	/// Returns the corresponding framebuffer, and a bool indicating if the image dimensions changed.
-	pub fn get_next_image(&mut self) -> Result<(Arc<vulkano::render_pass::Framebuffer>, bool), Box<dyn std::error::Error>>
+	pub fn get_next_image(&mut self) -> Result<(Arc<vulkano::render_pass::Framebuffer>, bool), Box<dyn std::error::Error + Send + Sync>>
 	{
 		// Recreate the swapchain if needed.
 		let dimensions_changed = match self.need_new_swapchain {
@@ -138,7 +138,7 @@ impl Swapchain
 	pub fn submit_commands(
 		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Box<dyn GpuFuture + Send + Sync>
 	)
-		-> Result<(), Box<dyn std::error::Error>>
+		-> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
 		let mut joined_future = match self.fence_signal_future.take() {
@@ -172,12 +172,17 @@ impl Swapchain
 	{
 		self.swapchain.image_extent()
 	}
+
+	pub fn get_current_framebuffer(&self) -> Arc<Framebuffer>
+	{
+		self.framebuffers[self.cur_image_num].clone()
+	}
 }
 
 fn create_framebuffers(
 	images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>, 
 	render_pass: Arc<vulkano::render_pass::RenderPass>
-) -> Result<Vec::<Arc<Framebuffer>>, Box<dyn std::error::Error>>
+) -> Result<Vec::<Arc<Framebuffer>>, Box<dyn std::error::Error + Send + Sync>>
 {
 	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(images.len());
 	for img in images {

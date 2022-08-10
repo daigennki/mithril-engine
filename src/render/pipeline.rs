@@ -41,7 +41,7 @@ impl Pipeline
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		width: u32, height: u32,
-	) -> Result<Self, Box<dyn std::error::Error>>
+	) -> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		let vk_dev = render_pass.device().clone();
 
@@ -89,7 +89,7 @@ impl Pipeline
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>, width: u32, height: u32)
-		-> Result<Self, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 
@@ -121,7 +121,7 @@ impl Pipeline
 		)
 	}
 
-	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>>
+	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		self.pipeline = build_pipeline_common(
 			self.pipeline.device().clone(), 
@@ -150,7 +150,7 @@ impl Pipeline
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
 	pub fn new_descriptor_set(&self, set_number: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
-		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error>>
+		-> Result<Arc<PersistentDescriptorSet>, Box<dyn std::error::Error + Send + Sync>>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
 		let set_layout = pipeline_ref.layout().set_layouts().get(set_number)
@@ -195,7 +195,7 @@ enum PrimitiveTopologyDef {
     PatchList,
 }
 
-fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<dyn std::error::Error>>
+fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<dyn std::error::Error + Send + Sync>>
 {
 	Ok(match filter_str {
 		"Nearest" => vulkano::sampler::Filter::Nearest,
@@ -205,7 +205,7 @@ fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, Box<
 }
 
 fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) 
-	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error>>
+	-> Result<Arc<vulkano::shader::ShaderModule>, Box<dyn std::error::Error + Send + Sync>>
 {
 	let spv_data = std::fs::read(path)?;
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
@@ -213,7 +213,7 @@ fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path)
 
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
 fn load_spirv_vertex(device: Arc<vulkano::device::Device>, path: &Path)
-	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), Box<dyn std::error::Error>>
+	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), Box<dyn std::error::Error + Send + Sync>>
 {
 	let spv_data = std::fs::read(path)?;
 	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
@@ -287,7 +287,7 @@ fn build_pipeline_common(
 	subpass: Subpass,
 	samplers: &Vec<(usize, u32, Arc<Sampler>)>,
 	color_blend_state: Option<ColorBlendState>
-) -> Result<Arc<GraphicsPipeline>, Box<dyn std::error::Error>>
+) -> Result<Arc<GraphicsPipeline>, Box<dyn std::error::Error + Send + Sync>>
 {
 	let viewport = Viewport{ 
 		origin: [ 0.0, 0.0 ],

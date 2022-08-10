@@ -26,7 +26,7 @@ impl Mesh
 {
 	// TODO: set material
 	/*pub fn new(render_ctx: &mut RenderContext, verts_pos: Vec<Vec3>, verts_uv: Vec<Vec2>, indices: Vec<u32>, color: Vec4)
-		-> Result<Mesh, Box<dyn std::error::Error>>
+		-> Result<Mesh, Box<dyn std::error::Error + Send + Sync>>
 	{
 		let mat_buf = render_ctx.new_buffer_from_data(color, BufferUsage::uniform_buffer())?;
 		let mat_set = render_ctx.new_descriptor_set("World", 2, [
@@ -56,7 +56,7 @@ impl From<MeshData> for Mesh
 }
 impl DeferGpuResourceLoading for Mesh
 {
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error>>
+	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		if let Some(data) = self.data_to_load.take() {
 			let mat_buf = render_ctx.new_buffer_from_data(data.color, BufferUsage::uniform_buffer())?;
@@ -73,7 +73,7 @@ impl DeferGpuResourceLoading for Mesh
 }
 impl Draw for Mesh
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		cb.bind_descriptor_set(2, self.mat_set.as_ref().ok_or("mesh not loaded")?.clone())?;
 		cb.bind_vertex_buffers(0, (

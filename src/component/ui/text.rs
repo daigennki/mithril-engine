@@ -22,7 +22,8 @@ pub struct Text
 }
 impl Text
 {
-	pub fn new(render_ctx: &mut RenderContext, text_str: &str, size: f32) -> Result<Self, Box<dyn std::error::Error>>
+	pub fn new(render_ctx: &mut RenderContext, text_str: &str, size: f32) 
+		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{
 		if text_str.is_empty() {
 			return Ok(Text{ quad: None, cur_str: text_str.to_string() })
@@ -92,7 +93,7 @@ impl Text
 }
 impl Draw for Text
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error>>
+	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 	{
 		self.quad.as_ref().map_or(Ok(()), |q| q.draw(cb))
 		/*match self.quad.as_ref() {

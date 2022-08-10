@@ -14,7 +14,7 @@ pub struct Canvas
 impl Canvas
 {
 	pub fn new(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) 
-		-> Result<Self, Box<dyn std::error::Error>>
+		-> Result<Self, Box<dyn std::error::Error + Send + Sync>>
 	{	
 		Ok(Canvas{ 
 			base_dimensions: [ canvas_width, canvas_height ], 
