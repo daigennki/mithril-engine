@@ -119,10 +119,7 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
-	world.run(|mut component: UniqueViewMut<Camera>| -> Result<(), GenericEngineError> {
-		component.finish_loading(render_ctx)?;
-		Ok(())
-	})?;
+	world.run(|mut camera: UniqueViewMut<Camera>| camera.finish_loading(render_ctx))?;
 	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), GenericEngineError> {
 		for component in (&mut components).iter() {
 			component.finish_loading(render_ctx)?;
@@ -228,7 +225,7 @@ fn draw_ui(
 	trm.add_cb(command_buffer.build()?);
 	Ok(())
 }
-fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>) 
+fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>)
 	-> Result<(), GenericEngineError>
 {
 	render_ctx.next_swapchain_image()?;
@@ -239,7 +236,7 @@ fn submit_primary_render(
 	mut trm: UniqueViewMut<ThreadedRenderingManager>
 )
 	-> Result<(), GenericEngineError>
-{	
+{
 	let cur_fb = render_ctx.get_current_framebuffer();
 	let mut primary_cb = render_ctx.new_primary_command_buffer()?;
 	let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_fb);

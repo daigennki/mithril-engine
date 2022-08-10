@@ -10,8 +10,8 @@ use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture };
-use vulkano::swapchain::{ Surface, AcquireError, SwapchainAcquireFuture };
-use vulkano::image::{ ImageAccess, attachment::AttachmentImage, view::{ ImageViewCreateInfo, ImageView } };
+use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError };
+use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
 
 use crate::GenericEngineError;
 
@@ -21,45 +21,30 @@ pub struct Swapchain
 	swapchain_rp: Arc<RenderPass>,
 	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
-	acquire_future: Option<SwapchainAcquireFuture<Window>>,
-	fence_signal_future: Option<Box<dyn GpuFuture + Send + Sync>>,
 	need_new_swapchain: bool,
-	create_info: vulkano::swapchain::SwapchainCreateInfo
+	image_acquired: bool,
+
+	// The future to wait for before the next submission.
+	// Includes image acquisition, as well as the previous frame's fence signal. 
+	wait_before_submit: Option<Box<dyn GpuFuture + Send + Sync>>,
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<vulkano::device::Device>, window_surface: Arc<Surface<Window>>) 
-		-> Result<Self, GenericEngineError>
+	pub fn new(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>) -> Result<Self, GenericEngineError>
 	{
-		// query surface capabilities
-		let surf_caps = vk_dev.physical_device().surface_capabilities(
-			&window_surface, vulkano::swapchain::SurfaceInfo::default()
-		)?;
-
-		let swapchain_create_info = vulkano::swapchain::SwapchainCreateInfo {
-			min_image_count: surf_caps.min_image_count,
-			image_format: Some(Format::B8G8R8A8_SRGB),
-			image_usage: vulkano::image::ImageUsage::color_attachment(),
-			..vulkano::swapchain::SwapchainCreateInfo::default()
-		};
-		// TODO: sharing mode using `&queue`?
-		let (swapchain, swapchain_images) = vulkano::swapchain::Swapchain::new(
-			vk_dev.clone(), window_surface.clone(), swapchain_create_info.clone()
-		)?;
-
-		// create render pass
+		let (swapchain, swapchain_images) = create_swapchain(vk_dev.clone(), surface)?;
 		let swapchain_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
 			attachments: {
 				color: {
-					load: Clear,
+					load: Clear,	// this could be DontCare once we have a skybox set up
 					store: Store,
 					format: swapchain.image_format(),
 					samples: 1,
 				},
 				depth: {
 					load: Clear,
-					store: Store,
-					format: Format::D32_SFLOAT,		// 24-bit depth formats appear to be unsupported on AMD GPUs.
+					store: Store,	// order-independent transparency might need this to be `Store`
+					format: Format::D16_UNORM,	// 24-bit depth formats are unsupported on a significant number of GPUs
 					samples: 1,
 				}
 			}, 
@@ -69,95 +54,76 @@ impl Swapchain
 			}
 		)?;
 
-		let framebuffers = create_framebuffers(swapchain_images, swapchain_rp.clone())?;
-
 		Ok(Swapchain{
 			swapchain: swapchain,
-			swapchain_rp: swapchain_rp,
-			framebuffers: framebuffers,
+			swapchain_rp: swapchain_rp.clone(),
+			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
 			cur_image_num: 0,
-			acquire_future: None,
-			fence_signal_future: None,
 			need_new_swapchain: false,
-			create_info: swapchain_create_info
+			image_acquired: false,
+			wait_before_submit: None,
 		})
 	}
 
 	/// Get the next swapchain image.
 	/// Returns the corresponding framebuffer, and a bool indicating if the image dimensions changed.
-	pub fn get_next_image(&mut self) -> Result<(Arc<vulkano::render_pass::Framebuffer>, bool), GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<(Arc<Framebuffer>, bool), GenericEngineError>
 	{
 		// Recreate the swapchain if needed.
-		let dimensions_changed = match self.need_new_swapchain {
-			true => {
-				let prev_dimensions = self.swapchain.image_extent();
-				let (new_swapchain, new_images) = self.swapchain.recreate(self.create_info.clone())?;
-				self.swapchain = new_swapchain;
-				self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
-				self.swapchain.image_extent() != prev_dimensions
-			}
-			false => false
+		let dimensions_changed = if self.need_new_swapchain {
+			let prev_dimensions = self.swapchain.image_extent();
+			let (new_swapchain, new_images) = self.swapchain.recreate(self.swapchain.create_info())?;
+			self.swapchain = new_swapchain;
+			self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
+			self.need_new_swapchain = false;
+			self.swapchain.image_extent() != prev_dimensions
+		} else {
+			false
 		};
-		self.need_new_swapchain = false;
 		
-		self.fence_signal_future.as_mut().map(|p| p.cleanup_finished());
+		self.wait_before_submit.as_mut().map(|f| f.cleanup_finished());	// clean up resources from finished submissions
 
-		let (image_num, suboptimal, acquire_future) =
-			match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
-				Ok(r) => r,
-				Err(AcquireError::OutOfDate) => {
-					log::debug!("Swapchain out of date, recreating...");
-					self.need_new_swapchain = true;
-					return self.get_next_image();	// recreate the swapchain then try again
-				}
-				Err(e) => return Err(Box::new(e))
-			};
-
-		if suboptimal {
-			log::debug!("Swapchain is suboptimal, recreating it in next frame...");
-			self.need_new_swapchain = true;
-		}
-
-		self.cur_image_num = image_num;
-		self.acquire_future = Some(acquire_future);
+		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
+			Ok((image_num, false, acquire_future)) => {
+				self.cur_image_num = image_num;
+				self.wait_before_submit = Some(
+					self.wait_before_submit.take()
+						.unwrap_or_else(|| Box::new(vulkano::sync::now(self.swapchain.device().clone())))
+						.join(acquire_future)
+						.boxed_send_sync()
+				);
+			},
+			Ok((_, true, _)) |	// if suboptimal
+			Err(AcquireError::OutOfDate) => {
+				log::info!("Swapchain out of date or suboptimal, recreating...");
+				self.need_new_swapchain = true;
+				return self.get_next_image();	// recreate the swapchain, then try again
+			}
+			Err(e) => return Err(Box::new(e)),
+		};
 		
+		self.image_acquired = true;
 		Ok((self.framebuffers[self.cur_image_num].clone(), dimensions_changed))
 	}
-
-	/*pub fn get_current_image(&self) -> Arc<vulkano::render_pass::Framebuffer>
-	{
-		self.framebuffers[self.cur_image_num].clone()
-	}
-
-	pub fn wait_for_fence(&self) -> Result<(), FlushError>
-	{
-		match self.fence_signal_future.as_ref() {
-			Some(f) => f.wait(None),
-			None => Ok(())
-		}
-	}*/
 
 	pub fn submit_commands(
 		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Box<dyn GpuFuture + Send + Sync>
 	)
 		-> Result<(), GenericEngineError>
 	{
-		let acquire_future = self.acquire_future.take().ok_or(ImageNotAcquired)?;
-		let mut joined_future = match self.fence_signal_future.take() {
-			Some(f) => f.join(acquire_future).boxed_send_sync(),
-			None => acquire_future.boxed_send_sync()
-		};
+		if !self.image_acquired {
+			return Err(Box::new(ImageNotAcquired))
+		}
+		self.image_acquired = false;
 
-		// join the joined futures from images and buffers being uploaded
-		joined_future = joined_future.join(futures).boxed_send_sync();
-
-		let future_result = joined_future
+		let future_result = self.wait_before_submit.take().ok_or("`wait_before_submit` was None")?
+			.join(futures)	// join the joined futures from images and buffers being uploaded
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
 			.then_signal_fence_and_flush();
 
 		match future_result {
-			Ok(future) => self.fence_signal_future = Some(future.boxed_send_sync()),
+			Ok(future) => self.wait_before_submit = Some(future.boxed_send_sync()),
 			Err(FlushError::OutOfDate) => self.need_new_swapchain = true,
 			Err(e) => return Err(Box::new(e))
 		}
@@ -165,7 +131,7 @@ impl Swapchain
 		Ok(())
 	}
 
-	pub fn render_pass(&self) -> Arc<vulkano::render_pass::RenderPass> 
+	pub fn render_pass(&self) -> Arc<RenderPass>
 	{
 		self.swapchain_rp.clone()
 	}
@@ -181,25 +147,33 @@ impl Swapchain
 	}
 }
 
-fn create_framebuffers(
-	images: Vec<Arc<vulkano::image::swapchain::SwapchainImage<Window>>>, 
-	render_pass: Arc<vulkano::render_pass::RenderPass>
-) -> Result<Vec::<Arc<Framebuffer>>, GenericEngineError>
+fn create_swapchain(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>)
+	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>), GenericEngineError>
 {
+	let surface_formats = vk_dev.physical_device().surface_formats(&surface, SurfaceInfo::default())?;
+	log::info!("Available surface format and color space combinations:");
+	surface_formats.iter().for_each(|f| log::info!("{:?}", f));
+
+	let surface_caps = vk_dev.physical_device().surface_capabilities(&surface, SurfaceInfo::default())?;
+	let create_info = SwapchainCreateInfo{
+		min_image_count: surface_caps.min_image_count,
+		image_format: Some(Format::B8G8R8A8_SRGB),
+		image_usage: ImageUsage::color_attachment(),
+		..Default::default()
+	};
+
+	Ok(vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?)
+}
+
+fn create_framebuffers(images: Vec<Arc<SwapchainImage<Window>>>, render_pass: Arc<RenderPass>)
+	-> Result<Vec::<Arc<Framebuffer>>, GenericEngineError>
+{
+	let depth_format = render_pass.attachments().last().unwrap().format.unwrap();
 	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(images.len());
 	for img in images {
-		let view_create_info = ImageViewCreateInfo::from_image(&img);
-		let view = ImageView::new(img.clone(), view_create_info)?;
-
-		let img_dim = img.dimensions();
-		let depth_image = AttachmentImage::new(
-			img.device().clone(),
-			[ img_dim.width(), img_dim.height() ],
-			Format::D32_SFLOAT
-		)?;
-		let depth_view_create_info = ImageViewCreateInfo::from_image(&depth_image);
-		let depth_view = ImageView::new(depth_image, depth_view_create_info)?; 
-
+		let view = ImageView::new_default(img.clone())?;
+		let depth_image = AttachmentImage::new(img.device().clone(), img.dimensions().width_height(), depth_format)?;
+		let depth_view = ImageView::new_default(depth_image)?;
 		let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
 			attachments: vec![ view, depth_view ],
 			..Default::default()
@@ -218,3 +192,4 @@ impl std::fmt::Display for ImageNotAcquired {
         write!(f, "An attempt was made to submit a primary command buffer when no image was acquired!")
     }
 }
+
