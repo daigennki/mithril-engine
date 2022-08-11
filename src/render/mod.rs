@@ -34,7 +34,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	dev_queue: Arc<vulkano::device::Queue>,	// this also owns the logical device
 
-	upload_futures: Box<dyn vulkano::sync::GpuFuture + Send + Sync>,
+	upload_futures: Option<Box<dyn vulkano::sync::GpuFuture + Send + Sync>>,
 	upload_futures_count: usize,
 
 	// User-accessible material pipelines; these will have their viewports resized
@@ -73,7 +73,7 @@ impl RenderContext
 		Ok(RenderContext{
 			swapchain: swapchain,
 			dev_queue: dev_queue.clone(),
-			upload_futures: vulkano::sync::now(dev_queue.device().clone()).boxed_send_sync(),
+			upload_futures: None,
 			upload_futures_count: 0,
 			material_pipelines: material_pipelines
 		})
@@ -82,11 +82,13 @@ impl RenderContext
 	fn join_future<F>(&mut self, next_future: F)
 		where F: vulkano::sync::GpuFuture + 'static + Send + Sync
 	{
-		let taken_futures = std::mem::replace(
-			&mut self.upload_futures, 
-			vulkano::sync::now(self.dev_queue.device().clone()).boxed_send_sync()
+		self.upload_futures = Some(
+			if let Some(f) = self.upload_futures.take() {
+				Box::new(f.join(next_future))
+			} else {
+				Box::new(next_future)
+			}
 		);
-		self.upload_futures = taken_futures.join(next_future).boxed_send_sync();
 		self.upload_futures_count += 1;
 	}
 
@@ -206,14 +208,11 @@ impl RenderContext
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
 		// consume the futures to join them upon submission
-		let submit_futures = std::mem::replace(
-			&mut self.upload_futures, vulkano::sync::now(self.dev_queue.device().clone()).boxed_send_sync()
-		);
 		if self.upload_futures_count > 0 {
 			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
 		}
 		self.upload_futures_count = 0;
-		self.swapchain.submit_commands(built_cb, self.dev_queue.clone(), submit_futures)
+		self.swapchain.submit_commands(built_cb, self.dev_queue.clone(), self.upload_futures.take())
 	}
 
 	pub fn get_pipeline(&mut self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
@@ -387,3 +386,4 @@ fn vulkan_setup(game_name: &str)
 
 	Ok(queues.next().ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?)
 }
+

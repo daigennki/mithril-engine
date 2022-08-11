@@ -22,7 +22,6 @@ pub struct Swapchain
 	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
 	need_new_swapchain: bool,
-	image_acquired: bool,
 
 	// The future to wait for before the next submission.
 	// Includes image acquisition, as well as the previous frame's fence signal. 
@@ -60,13 +59,14 @@ impl Swapchain
 			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
 			cur_image_num: 0,
 			need_new_swapchain: false,
-			image_acquired: false,
-			wait_before_submit: None,
+			wait_before_submit: Some(Box::new(vulkano::sync::now(vk_dev))),
 		})
 	}
 
 	/// Get the next swapchain image.
 	/// Returns the corresponding framebuffer, and a bool indicating if the image dimensions changed.
+	/// Subsequent command buffer commands will fail with `vulkano::sync::AccessError::AlreadyInUse`
+	/// if this isn't run after every swapchain command submission.
 	pub fn get_next_image(&mut self) -> Result<(Arc<Framebuffer>, bool), GenericEngineError>
 	{
 		// Recreate the swapchain if needed.
@@ -88,7 +88,7 @@ impl Swapchain
 				self.cur_image_num = image_num;
 				self.wait_before_submit = Some(
 					self.wait_before_submit.take()
-						.unwrap_or_else(|| Box::new(vulkano::sync::now(self.swapchain.device().clone())))
+						.ok_or("`wait_before_submit` was None")?
 						.join(acquire_future)
 						.boxed_send_sync()
 				);
@@ -102,28 +102,27 @@ impl Swapchain
 			Err(e) => return Err(Box::new(e)),
 		};
 		
-		self.image_acquired = true;
 		Ok((self.framebuffers[self.cur_image_num].clone(), dimensions_changed))
 	}
 
+	/// Submit a primary command buffer's commands.
 	pub fn submit_commands(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Box<dyn GpuFuture + Send + Sync>
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Option<Box<dyn GpuFuture + Send + Sync>>
 	)
 		-> Result<(), GenericEngineError>
 	{
-		if !self.image_acquired {
-			return Err(Box::new(ImageNotAcquired))
+		let mut joined_futures = self.wait_before_submit.take().ok_or("`wait_before_submit` was None")?;
+		if let Some(f) = futures {
+			// join the joined futures from images and buffers being uploaded
+			joined_futures = Box::new(joined_futures.join(f));
 		}
-		self.image_acquired = false;
-
-		let future_result = self.wait_before_submit.take().ok_or("`wait_before_submit` was None")?
-			.join(futures)	// join the joined futures from images and buffers being uploaded
+		let future_result = joined_futures
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
 			.then_signal_fence_and_flush();
 
 		match future_result {
-			Ok(future) => self.wait_before_submit = Some(future.boxed_send_sync()),
+			Ok(future) => self.wait_before_submit = Some(Box::new(future)),
 			Err(FlushError::OutOfDate) => self.need_new_swapchain = true,
 			Err(e) => return Err(Box::new(e))
 		}

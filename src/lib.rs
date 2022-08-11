@@ -245,7 +245,7 @@ fn submit_primary_render(
 		Some(vulkano::format::ClearValue::Depth(1.0))
 	];
 
-	primary_cb.begin_render_pass(rp_begin_info, vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
+	primary_cb.begin_render_pass(rp_begin_info.clone(), vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
 	primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
 	primary_cb.end_render_pass()?;
 
