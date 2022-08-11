@@ -53,7 +53,8 @@ impl RenderContext
 
 		// create window
 		let window_surface = WindowBuilder::new()
-			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
+			.with_min_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
+			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))	// TODO: load this from config
 			.with_title(game_name)
 			.with_resizable(false)
 			.build_vk_surface(&event_loop, dev_queue.device().instance().clone())?;

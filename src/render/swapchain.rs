@@ -21,7 +21,6 @@ pub struct Swapchain
 	swapchain_rp: Arc<RenderPass>,
 	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
-	need_new_swapchain: bool,
 
 	// The future to wait for before the next submission.
 	// Includes image acquisition, as well as the previous frame's fence signal. 
@@ -58,9 +57,26 @@ impl Swapchain
 			swapchain_rp: swapchain_rp.clone(),
 			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
 			cur_image_num: 0,
-			need_new_swapchain: false,
-			wait_before_submit: Some(Box::new(vulkano::sync::now(vk_dev))),
+			wait_before_submit: None,
 		})
+	}
+
+	/// Recreate the swapchain to fit the window's requirements (e.g., window size changed).
+	/// Returns `Ok(true)` if the image extent has changed.
+	fn fit_window(&mut self) -> Result<bool, GenericEngineError>
+	{
+		let prev_dimensions = self.swapchain.image_extent();
+		let mut create_info = self.swapchain.create_info();
+		create_info.image_extent = self.swapchain.surface().window().inner_size().into();
+		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
+		self.swapchain = new_swapchain;
+		self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
+		
+		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
+		if dimensions_changed {
+			log::info!("Swapchain resized: {:?} -> {:?}", prev_dimensions, self.swapchain.image_extent());
+		}
+		Ok(dimensions_changed)
 	}
 
 	/// Get the next swapchain image.
@@ -69,18 +85,6 @@ impl Swapchain
 	/// if this isn't run after every swapchain command submission.
 	pub fn get_next_image(&mut self) -> Result<(Arc<Framebuffer>, bool), GenericEngineError>
 	{
-		// Recreate the swapchain if needed.
-		let dimensions_changed = if self.need_new_swapchain {
-			let prev_dimensions = self.swapchain.image_extent();
-			let (new_swapchain, new_images) = self.swapchain.recreate(self.swapchain.create_info())?;
-			self.swapchain = new_swapchain;
-			self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
-			self.need_new_swapchain = false;
-			self.swapchain.image_extent() != prev_dimensions
-		} else {
-			false
-		};
-		
 		self.wait_before_submit.as_mut().map(|f| f.cleanup_finished());	// clean up resources from finished submissions
 
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
@@ -88,21 +92,21 @@ impl Swapchain
 				self.cur_image_num = image_num;
 				self.wait_before_submit = Some(
 					self.wait_before_submit.take()
-						.ok_or("`wait_before_submit` was None")?
+						.unwrap_or_else(|| Box::new(vulkano::sync::now(self.swapchain.device().clone())))
 						.join(acquire_future)
 						.boxed_send_sync()
 				);
+				Ok((self.framebuffers[self.cur_image_num].clone(), false))
 			},
 			Ok((_, true, _)) |	// if suboptimal
 			Err(AcquireError::OutOfDate) => {
 				log::info!("Swapchain out of date or suboptimal, recreating...");
-				self.need_new_swapchain = true;
-				return self.get_next_image();	// recreate the swapchain, then try again
+				let dimensions_changed = self.fit_window()?;	// recreate the swapchain...
+				let (fb, dim_changed_again) = self.get_next_image()?;	// ...then try again
+				Ok((fb, (dimensions_changed || dim_changed_again)))
 			}
-			Err(e) => return Err(Box::new(e)),
-		};
-		
-		Ok((self.framebuffers[self.cur_image_num].clone(), dimensions_changed))
+			Err(e) => Err(Box::new(e)),
+		}
 	}
 
 	/// Submit a primary command buffer's commands.
@@ -111,7 +115,8 @@ impl Swapchain
 	)
 		-> Result<(), GenericEngineError>
 	{
-		let mut joined_futures = self.wait_before_submit.take().ok_or("`wait_before_submit` was None")?;
+		let mut joined_futures = self.wait_before_submit.take()
+			.ok_or("`wait_before_submit` was `None`; did you forget to call `get_next_image`?")?;
 		if let Some(f) = futures {
 			// join the joined futures from images and buffers being uploaded
 			joined_futures = Box::new(joined_futures.join(f));
@@ -123,7 +128,7 @@ impl Swapchain
 
 		match future_result {
 			Ok(future) => self.wait_before_submit = Some(Box::new(future)),
-			Err(FlushError::OutOfDate) => self.need_new_swapchain = true,
+			Err(FlushError::OutOfDate) => (),	// let `get_next_image` detect the error next frame
 			Err(e) => return Err(Box::new(e))
 		}
 
