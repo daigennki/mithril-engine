@@ -45,7 +45,6 @@ impl GameContext
 		// let args: Vec<String> = std::env::args().collect();
 
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
-
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		// add some UI entities for testing
@@ -55,18 +54,8 @@ impl GameContext
 		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
 		world.add_unique(render_ctx);
-		world.add_unique(ThreadedRenderingManager::new());
-
-		Workload::new("Render loop")
-			.with_try_system(prepare_primary_render)
-			.with_try_system(draw_3d)
-			.with_try_system(draw_ui)
-			.with_try_system(submit_primary_render)
-			.after_all(prepare_primary_render)
-			.before_all(submit_primary_render)
-			.add_to_world(&world)?;
-		//world.set_default_workload("Render loop")?;
-
+		world.add_unique(ThreadedRenderingManager::new(2));
+		
 		Ok(GameContext { 
 			//pref_path: pref_path,
 			world: world
@@ -76,14 +65,9 @@ impl GameContext
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::RedrawEventsCleared => self.draw_in_event_loop(),
-			_ => Ok(())
+			Event::MainEventsCleared => self.world.run_default()?,
+			_ => ()
 		}
-	}
-
-	fn draw_in_event_loop(&mut self) -> Result<(), GenericEngineError>
-	{
-		self.world.run_workload("Render loop")?;
 		Ok(())
 	}
 }
@@ -117,6 +101,17 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	let world_data: WorldData = serde_yaml::from_str(&yaml_string)?;
 	let world: World = world_data.into();
 
+	// This will become the default workload, as the docs say:
+	// > The default workload will automatically be set to the first workload added.
+	Workload::new("Render loop")
+		.with_try_system(prepare_primary_render)
+		.with_try_system(draw_3d)
+		.with_try_system(draw_ui)
+		.with_try_system(submit_primary_render)
+		.after_all(prepare_primary_render)
+		.before_all(submit_primary_render)
+		.add_to_world(&world)?;
+
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
 	world.run(|mut camera: UniqueViewMut<Camera>| camera.finish_loading(render_ctx))?;
@@ -139,13 +134,17 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 #[derive(shipyard::Unique)]
 struct ThreadedRenderingManager
 {
-	built_command_buffers: Vec<SecondaryAutoCommandBuffer>
+	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
+	default_capacity: usize
 }
 impl ThreadedRenderingManager
 {
-	pub fn new() -> Self
+	pub fn new(default_capacity: usize) -> Self
 	{
-		ThreadedRenderingManager{ built_command_buffers: Vec::new() }
+		ThreadedRenderingManager{
+			built_command_buffers: Vec::with_capacity(default_capacity),
+			default_capacity: default_capacity
+		}
 	}
 
 	/// Add a secondary command buffer that has been built.
@@ -157,7 +156,7 @@ impl ThreadedRenderingManager
 	/// Take all of the secondary command buffers that have been built.
 	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
 	{
-		std::mem::take(&mut self.built_command_buffers)
+		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
 	}
 }
 
