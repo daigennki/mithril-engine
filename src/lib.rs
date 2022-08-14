@@ -45,6 +45,9 @@ impl GameContext
 		// let args: Vec<String> = std::env::args().collect();
 
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
+		render_ctx.load_material_pipeline("UI.yaml")?;
+		render_ctx.load_material_pipeline("World.yaml")?;
+
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		// add some UI entities for testing

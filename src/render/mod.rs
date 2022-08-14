@@ -46,8 +46,7 @@ pub struct RenderContext
 }
 impl RenderContext
 {
-	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) 
-		-> Result<Self, GenericEngineError>
+	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
 		let dev_queue = vulkan_setup(game_name)?;
 
@@ -59,35 +58,37 @@ impl RenderContext
 			.with_resizable(false)
 			.build_vk_surface(&event_loop, dev_queue.device().instance().clone())?;
 
-		// create swapchain
-		let swapchain = swapchain::Swapchain::new(dev_queue.device().clone(), window_surface)?;
-		let dim = swapchain.dimensions();
-
-		let material_pipelines = HashMap::from_iter([
-			// UI pipeline
-			("UI".into(), pipeline::Pipeline::new_from_yaml("ui.yaml", swapchain.render_pass(), dim[0], dim[1])?),
-
-			// 3D pipeline
-			("World".into(), pipeline::Pipeline::new_from_yaml("world.yaml", swapchain.render_pass(), dim[0], dim[1])?)
-		]);
-
 		Ok(RenderContext{
-			swapchain: swapchain,
+			swapchain: swapchain::Swapchain::new(dev_queue.device().clone(), window_surface)?,
 			dev_queue: dev_queue.clone(),
 			upload_futures: None,
 			upload_futures_count: 0,
-			material_pipelines: material_pipelines
+			material_pipelines: HashMap::new()
 		})
+	}
+
+	/// Load a material shader pipeline into memory.
+	/// The definition file name must be in the format "[name].yaml" and stored in the "shaders" folder.
+	pub fn load_material_pipeline(&mut self, definition_file: &str) -> Result<(), GenericEngineError>
+	{
+		let name = definition_file.split_once('.')
+			.ok_or(format!("Invalid material pipeline definition file name '{}'", definition_file))?
+			.0.to_string();
+		let dim = self.swapchain.dimensions();
+		self.material_pipelines.insert(
+			name, 
+			pipeline::Pipeline::new_from_yaml(definition_file, self.swapchain.render_pass(), dim[0], dim[1])?
+		);
+		Ok(())
 	}
 	
 	fn join_future<F>(&mut self, next_future: F)
 		where F: vulkano::sync::GpuFuture + 'static + Send + Sync
 	{
 		self.upload_futures = Some(
-			if let Some(f) = self.upload_futures.take() {
-				Box::new(f.join(next_future))
-			} else {
-				Box::new(next_future)
+			match self.upload_futures.take() {
+				Some(f) => Box::new(f.join(next_future)),
+				None => Box::new(next_future)
 			}
 		);
 		self.upload_futures_count += 1;
