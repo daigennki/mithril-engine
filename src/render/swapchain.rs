@@ -85,16 +85,17 @@ impl Swapchain
 	/// if this isn't run after every swapchain command submission.
 	pub fn get_next_image(&mut self) -> Result<(Arc<Framebuffer>, bool), GenericEngineError>
 	{
-		self.wait_before_submit.as_mut().map(|f| f.cleanup_finished());	// clean up resources from finished submissions
+		// clean up resources from finished submissions
+		self.wait_before_submit.as_mut().map(GpuFuture::cleanup_finished);
 
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 			Ok((image_num, false, acquire_future)) => {
 				self.cur_image_num = image_num;
 				self.wait_before_submit = Some(
-					self.wait_before_submit.take()
-						.unwrap_or_else(|| Box::new(vulkano::sync::now(self.swapchain.device().clone())))
-						.join(acquire_future)
-						.boxed_send_sync()
+					match self.wait_before_submit.take() {
+						Some(f) => Box::new(f.join(acquire_future)),
+						None => Box::new(acquire_future)
+					}
 				);
 				Ok((self.framebuffers[self.cur_image_num].clone(), false))
 			},
@@ -104,8 +105,8 @@ impl Swapchain
 				let dimensions_changed = self.fit_window()?;	// recreate the swapchain...
 				let (fb, dim_changed_again) = self.get_next_image()?;	// ...then try again
 				Ok((fb, (dimensions_changed || dim_changed_again)))
-			}
-			Err(e) => Err(Box::new(e)),
+			},
+			Err(e) => Err(Box::new(e))
 		}
 	}
 
@@ -115,12 +116,12 @@ impl Swapchain
 	)
 		-> Result<(), GenericEngineError>
 	{
-		let mut joined_futures = self.wait_before_submit.take()
-			.ok_or("`wait_before_submit` was `None`; did you forget to call `get_next_image`?")?;
+		let mut joined_futures = self.wait_before_submit.take().ok_or(NoSubmitFuturesError)?;
 		if let Some(f) = futures {
 			// join the joined futures from images and buffers being uploaded
 			joined_futures = Box::new(joined_futures.join(f));
 		}
+
 		let future_result = joined_futures
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
@@ -173,27 +174,22 @@ fn create_framebuffers(images: Vec<Arc<SwapchainImage<Window>>>, render_pass: Ar
 	-> Result<Vec::<Arc<Framebuffer>>, GenericEngineError>
 {
 	let depth_format = render_pass.attachments().last().unwrap().format.unwrap();
-	let mut framebuffers = Vec::<Arc<Framebuffer>>::with_capacity(images.len());
-	for img in images {
-		let view = ImageView::new_default(img.clone())?;
+	images.iter().map(|img| {
 		let depth_image = AttachmentImage::new(img.device().clone(), img.dimensions().width_height(), depth_format)?;
-		let depth_view = ImageView::new_default(depth_image)?;
 		let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
-			attachments: vec![ view, depth_view ],
+			attachments: vec![ ImageView::new_default(img.clone())?, ImageView::new_default(depth_image)? ],
 			..Default::default()
 		};
-		framebuffers.push(Framebuffer::new(render_pass.clone(), fb_create_info)?);
-	}
-	
-	Ok(framebuffers)
+		Ok(Framebuffer::new(render_pass.clone(), fb_create_info)?)
+	}).collect()
 }
 
 #[derive(Debug)]
-struct ImageNotAcquired;
-impl std::error::Error for ImageNotAcquired {}
-impl std::fmt::Display for ImageNotAcquired {
+struct NoSubmitFuturesError;
+impl std::error::Error for NoSubmitFuturesError {}
+impl std::fmt::Display for NoSubmitFuturesError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "An attempt was made to submit a primary command buffer when no image was acquired!")
+        write!(f, "`wait_before_submit` was `None`; did you forget to call `get_next_image`?")
     }
 }
 
