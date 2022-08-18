@@ -1,0 +1,9 @@
+vertex_shader: basic_3d.vert.spv
+fragment_shader: pbr.frag.spv
+primitive_topology: TriangleList 
+samplers:
+- set: 2
+  binding: 0
+  mag_filter: Linear
+  min_filter: Linear
+

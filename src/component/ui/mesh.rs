@@ -7,6 +7,7 @@ use std::sync::Arc;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use glam::*;
 use crate::render::texture::Texture;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
@@ -59,7 +60,7 @@ impl Mesh
 }
 impl Draw for Mesh
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
+	fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		cb.bind_descriptor_set(1, self.descriptor_set.clone())?;
 		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));

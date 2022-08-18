@@ -63,7 +63,7 @@ impl DeferGpuResourceLoading for Camera
 		let dim = render_ctx.swapchain_dimensions();
 		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
 		let projview_buf = render_ctx.new_cpu_buffer_from_data(projview, BufferUsage::uniform_buffer())?;
-		self.descriptor_set = Some(render_ctx.new_descriptor_set("World", 1, [
+		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 1, [
 			WriteDescriptorSet::buffer(0, projview_buf.clone())
 		])?);
 		self.projview_buf = Some(projview_buf);
@@ -76,7 +76,7 @@ fn calculate_projview(pos: Vec3, target: Vec3, width: u32, height: u32) -> Mat4
 	// Create a camera facing `target` from `pos` with 1 radians vertical FOV.
 	let aspect_ratio = width as f32 / height as f32;
 	let proj = Mat4::perspective_lh(1.0, aspect_ratio, 0.01, 1000.0);
-	let view = Mat4::look_at_lh(pos, target, Vec3::Z);
+	let view = Mat4::look_at_lh(pos, target, Vec3::NEG_Z);
 	proj * view
 }
 

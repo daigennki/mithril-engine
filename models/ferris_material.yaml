@@ -1,0 +1,5 @@
+!PBR
+base_color: "NewAlbedoBakeSmooth_512x.png"
+roughness: "NewRoughnessBake.dds"
+specular: "NewSpecularBake.dds"
+

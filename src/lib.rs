@@ -4,7 +4,8 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod render;
-pub mod component;
+mod component;
+mod material;
 
 use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
@@ -46,7 +47,7 @@ impl GameContext
 
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 		render_ctx.load_material_pipeline("UI.yaml")?;
-		render_ctx.load_material_pipeline("World.yaml")?;
+		render_ctx.load_material_pipeline("PBR.yaml")?;
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
@@ -176,7 +177,7 @@ fn draw_3d(
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	let cur_fb = render_ctx.get_current_framebuffer();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-	command_buffer.bind_pipeline(render_ctx.get_pipeline("World")?);
+	command_buffer.bind_pipeline(render_ctx.get_pipeline("PBR")?);
 	camera.bind(&mut command_buffer)?;
 	for (eid, transform) in transforms.iter().with_id() {
 		transform.bind_descriptor_set(&mut command_buffer)?;

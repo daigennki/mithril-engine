@@ -7,7 +7,8 @@ use std::sync::Arc;
 use vulkano::command_buffer::{ 
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo,
 	CommandBufferUsage, SubpassContents, DrawError, RenderPassError, CheckPipelineError, BuildError, ExecuteCommandsError,
-	CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassType, CommandBufferInheritanceRenderPassInfo
+	CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassType, CommandBufferInheritanceRenderPassInfo,
+	DrawIndexedError
 };
 use vulkano::device::Queue;
 use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
@@ -130,6 +131,15 @@ impl<L> CommandBuffer<L>
 		-> Result<(), DrawError>
 	{
 		self.cb.draw(vertex_count, instance_count, first_vertex, first_instance)?;
+		Ok(())
+	}
+
+	pub fn draw_indexed(
+		&mut self, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: i32, first_instance: u32
+	)
+		-> Result<(), DrawIndexedError>
+	{
+		self.cb.draw_indexed(index_count, instance_count, first_index, vertex_offset, first_instance)?;
 		Ok(())
 	}
 }

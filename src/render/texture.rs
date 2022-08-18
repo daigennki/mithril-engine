@@ -24,6 +24,7 @@ impl Texture
 		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
+		log::info!("Loading texture file '{}'...", path.display());
 		let file_ext = path.extension().ok_or("Could not determine texture file extension!")?.to_str();
 		let (vk_fmt, dim, mip, img_raw) = match file_ext {
 			Some("dds") => load_dds(path)?,

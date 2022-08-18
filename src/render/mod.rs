@@ -362,6 +362,9 @@ fn vulkan_setup(game_name: &str)
 	let vkinst = create_vulkan_instance(game_name)?;
 	let (physical_device, queue_family) = get_physical_device(&vkinst)?;
 
+	log::info!("Dumping physical device properties:");
+	log::info!("{:#?}", physical_device.properties());
+
 	// Select features and extensions.
 	// The ones chosen here are practically universally supported by any device with Vulkan support.
 	let dev_features = vulkano::device::Features{

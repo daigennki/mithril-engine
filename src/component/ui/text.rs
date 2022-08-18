@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 use vulkano::format::Format;
 use vulkano::image::{ ImageDimensions, MipmapsCount };
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use image::{ DynamicImage, Rgba };
 use rusttype::{ point, Font, Scale };
 use glam::*;
@@ -94,7 +95,7 @@ impl Text
 }
 impl Draw for Text
 {
-	fn draw<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
+	fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		self.quad.as_ref().map_or(Ok(()), |q| q.draw(cb))
 		/*match self.quad.as_ref() {
