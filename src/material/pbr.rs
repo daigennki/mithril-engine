@@ -4,14 +4,13 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use glam::*;
 use std::path::{ PathBuf, Path };
 use serde::Deserialize;
 use vulkano::format::Format;
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 use vulkano::descriptor_set::{ PersistentDescriptorSet, WriteDescriptorSet };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use super::{ Material, ColorInput, SingleChannelInput };
+use super::{ Material, /*ColorInput, SingleChannelInput*/ };
 use crate::GenericEngineError;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 

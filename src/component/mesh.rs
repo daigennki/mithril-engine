@@ -8,11 +8,7 @@ use std::path::{ Path, PathBuf };
 use glam::*;
 use gltf::accessor::DataType;
 use serde::Deserialize;
-use vulkano::buffer::{ 
-	ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice, 
-	immutable::ImmutableBufferCreationError 
-};
-use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
+use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
@@ -38,7 +34,7 @@ impl DeferGpuResourceLoading for Mesh
 		let model_path_cd_rel = Path::new("./models/").join(&self.model_path);
 
 		log::info!("Loading glTF file '{}'...", model_path_cd_rel.display());
-		let (doc, mut data_buffers, _) = gltf::import(&model_path_cd_rel)?;
+		let (doc, data_buffers, _) = gltf::import(&model_path_cd_rel)?;
 		
 		// Load each glTF binary buffer into an `ImmutableBuffer`, from which buffer slices will be created.
 		// This reduces memory fragmentation and transfers between CPU and GPU.
@@ -83,7 +79,7 @@ enum IndexBufferVariant
 }
 struct SubMesh
 {
-	vertex_buffers: Vec<Arc<dyn BufferAccess>>,
+	vertex_buffers: Vec<Arc<BufferSlice<[f32], ImmutableBuffer<[u8]>>>>,
 	index_buf: IndexBufferVariant,
 	vert_count: u32,
 	material: PBR 	// Box<dyn Material> doesn't compile for some reason, so we use this for now
@@ -95,24 +91,18 @@ impl SubMesh
 	)
 		-> Result<Self, GenericEngineError>
 	{
-		let positions = prim
-			.get(&gltf::Semantic::Positions)
-			.ok_or("no positions in glTF primitive")?;
-		let tex_coords = prim
-			.get(&gltf::Semantic::TexCoords(0))
-			.ok_or("no texture coordinates in glTF primitive")?;
-		let indices = prim
-			.indices()
-			.ok_or("no indices in glTF primitive")?;
-		let vert_count = indices.count();
-		
+		let positions = prim.get(&gltf::Semantic::Positions).ok_or("no positions in glTF primitive")?;
+		let tex_coords = prim.get(&gltf::Semantic::TexCoords(0)).ok_or("no texture coordinates in glTF primitive")?;
 		let vertex_buffers = vec![
-			get_buf_slice_from_accessor::<f32>(&positions, gpu_buffers)? as Arc<dyn BufferAccess>,	// positions
-			get_buf_slice_from_accessor::<f32>(&tex_coords, gpu_buffers)? as Arc<dyn BufferAccess>	// texture coordinates
+			get_buf_slice::<f32>(&positions, gpu_buffers)?,
+			get_buf_slice::<f32>(&tex_coords, gpu_buffers)?
 		];
+
+		let indices = prim.indices().ok_or("no indices in glTF primitive")?;
+		let vert_count = indices.count();
 		let index_buf = match indices.data_type() {
-			DataType::U16 => Ok(IndexBufferVariant::U16(get_buf_slice_from_accessor::<u16>(&indices, gpu_buffers)?)),
-			DataType::U32 => Ok(IndexBufferVariant::U32(get_buf_slice_from_accessor::<u32>(&indices, gpu_buffers)?)),
+			DataType::U16 => Ok(IndexBufferVariant::U16(get_buf_slice::<u16>(&indices, gpu_buffers)?)),
+			DataType::U32 => Ok(IndexBufferVariant::U32(get_buf_slice::<u32>(&indices, gpu_buffers)?)),
 			_ => Err(format!("expected u16 or u32 index buffer, got '{:?}'", indices.data_type()))
 		}?;
 		
@@ -145,18 +135,10 @@ impl SubMesh
 	}
 }
 
-fn get_buf_slice_from_accessor<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+fn get_buf_slice<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
 	-> Result<Arc<BufferSlice<[T], ImmutableBuffer<[u8]>>>, GenericEngineError>
 	where [T]: BufferContents
 {
-	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
-
-	let start = view.offset() as u64;
-	let end = start + view.length() as u64;
-	let buf_u8 = gpu_buffers[view.buffer().index()]
-		.slice(start..end)
-		.ok_or(format!("slice between {} and {} bytes into vertex/index buffer is out of range", start, end))?;
-
 	if std::any::TypeId::of::<T>() != match accessor.data_type() {
 		DataType::I8 => std::any::TypeId::of::<i8>(),
 		DataType::U8 => std::any::TypeId::of::<u8>(),
@@ -165,8 +147,19 @@ fn get_buf_slice_from_accessor<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<A
 		DataType::U32 => std::any::TypeId::of::<u32>(),
 		DataType::F32 => std::any::TypeId::of::<f32>(),
 	} {
-		return Err(format!("expected glTF data type '{:?}', got `{:?}`", std::any::TypeId::of::<T>(), accessor.data_type()).into())
+		return Err(format!(
+			"expected '{:?}', but given glTF primitive has `{:?}`", 
+			std::any::TypeId::of::<T>(), 
+			accessor.data_type()
+		).into())
 	}
+
+	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
+	let start = view.offset() as u64;
+	let end = start + view.length() as u64;
+	let buf_u8 = gpu_buffers[view.buffer().index()]
+		.slice(start..end)
+		.ok_or(format!("slice between {} and {} bytes into vertex/index buffer is out of range", start, end))?;
 
 	Ok(unsafe { buf_u8.reinterpret::<[T]>() })
 }

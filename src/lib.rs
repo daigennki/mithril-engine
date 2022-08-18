@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 mod render;
-mod component;
+pub mod component;
 mod material;
 
 use std::path::{ Path, PathBuf };
