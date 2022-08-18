@@ -119,7 +119,7 @@ impl<L> CommandBuffer<L>
 		self.cb.bind_vertex_buffers(first_binding, vertex_buffers);
 	}
 
-	pub fn bind_index_buffers<Ib, I>(&mut self, index_buffer: Arc<Ib>)
+	pub fn bind_index_buffer<Ib, I>(&mut self, index_buffer: Arc<Ib>)
 		where 
 			Ib: TypedBufferAccess<Content = [I]> + 'static,
 			I: Index + 'static
