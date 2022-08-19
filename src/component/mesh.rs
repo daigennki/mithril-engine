@@ -15,7 +15,6 @@ use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
 use crate::GenericEngineError;
 use crate::material::Material;
-use crate::material::pbr::PBR;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 pub struct Mesh
@@ -25,7 +24,7 @@ pub struct Mesh
 	#[serde(skip)]
 	gpu_buffers: Vec<Arc<ImmutableBuffer<[u8]>>>,
 	#[serde(skip)]
-	materials: Vec<PBR>,	// Box<dyn Material> doesn't compile for some reason, so we use this for now
+	materials: Vec<Box<dyn Material>>,
 
 	model_path: PathBuf
 }
@@ -59,20 +58,22 @@ impl DeferGpuResourceLoading for Mesh
 				.with_extension("yaml");
 
 			log::info!("Loading material file '{}'...", mat_path.display());
-			let mat_yaml_string = String::from_utf8(std::fs::read(mat_path)?)?;
-			let mut deserialized_mat: PBR = serde_yaml::from_str(&mat_yaml_string)?;
-			deserialized_mat.update_descriptor_set(render_ctx)?;
+			let mat_yaml_string = String::from_utf8(std::fs::read(&mat_path)?)?;
+			let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_str(&mat_yaml_string)?;
+			deserialized_mat.update_descriptor_set(&mat_path, render_ctx)?;
 			self.materials.push(deserialized_mat);
 		}
 
 		for node in doc.nodes() {
 			if let Some(mesh) = node.mesh() {
 				for prim in mesh.primitives() {
-					let submesh = SubMesh::from_gltf_primitive(prim, &model_path_cd_rel, &self.gpu_buffers, render_ctx)?;
+					let submesh = SubMesh::from_gltf_primitive(prim, &self.gpu_buffers)?;
+
 					// make sure that the material index isn't out of bounds, so we don't have to do error checking before draw
 					if submesh.material_index() >= self.materials.len() {
 						return Err(format!("Material index {} for submesh is out of bounds!", submesh.material_index()).into())
 					}
+
 					self.submeshes.push(submesh);
 				}
 			}
@@ -108,9 +109,7 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(
-		prim: gltf::Primitive, model_path: &Path, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>, render_ctx: &mut RenderContext
-	)
+	pub fn from_gltf_primitive(prim: gltf::Primitive, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
 		-> Result<Self, GenericEngineError>
 	{
 		let positions = prim.get(&gltf::Semantic::Positions).ok_or("no positions in glTF primitive")?;
