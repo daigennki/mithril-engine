@@ -40,10 +40,16 @@ impl Material for PBR
 		let base_color_tex = match &self.base_color {
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				// The input is in f32 format though, so we need to convert it to u8 first.
+				// We convert it to sRGB first though, since there's no f32 format for sRGB.
+				let linear_color = [
+					srgb_to_linear(color.x),
+					srgb_to_linear(color.y),
+					srgb_to_linear(color.z),
+					color.w
+				];
 				render_ctx.new_texture_from_iter(
-					(*color * u8::MAX as f32).round().to_array().iter().map(|f| *f as u8), 
-					Format::R8G8B8A8_SRGB, 
+					linear_color, 
+					Format::R32G32B32A32_SFLOAT, 
 					ImageDimensions::Dim2d{ width: 1, height: 1, array_layers: 1 },
 					MipmapsCount::One
 				)?
@@ -64,6 +70,16 @@ impl Material for PBR
 	{
 		cb.bind_descriptor_set(2, self.descriptor_set.as_ref().ok_or("material descriptor set not loaded")?.clone())?;
 		Ok(())
+	}
+}
+
+/// Convert non-linear sRGB color into linear sRGB.
+fn srgb_to_linear(c: f32) -> f32
+{
+	if c <= 0.04045 {
+		c / 12.92
+	} else {
+		((c + 0.055) / 1.055).powf(2.4)
 	}
 }
 
