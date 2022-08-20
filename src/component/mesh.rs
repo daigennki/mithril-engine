@@ -10,7 +10,7 @@ use std::sync::Arc;
 use glam::*;
 use gltf::accessor::DataType;
 use serde::Deserialize;
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice };
+use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice, immutable::ImmutableBufferCreationError };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
@@ -35,49 +35,31 @@ impl DeferGpuResourceLoading for Mesh
 	{
 		// model path relative to current directory
 		let model_path_cd_rel = Path::new("./models/").join(&self.model_path);
+		let parent_folder = model_path_cd_rel.parent().unwrap();
 
 		log::info!("Loading glTF file '{}'...", model_path_cd_rel.display());
 		let (doc, data_buffers, _) = gltf::import(&model_path_cd_rel)?;
 		
 		// Load each glTF binary buffer into an `ImmutableBuffer`, from which buffer slices will be created.
 		// This reduces memory fragmentation and transfers between CPU and GPU.
-		// It might also be loading some unnecessary data into the GPU though...
 		let gpu_buf_usage = BufferUsage{
 			vertex_buffer: true,
 			index_buffer: true,
 			..BufferUsage::none()
 		};
-		self.gpu_buffers.reserve(data_buffers.len());
-		for data_buffer in data_buffers {
-			self.gpu_buffers.push(render_ctx.new_buffer_from_iter(data_buffer.0, gpu_buf_usage)?);
-		}
+		self.gpu_buffers = data_buffers.iter()
+			.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
+			.collect::<Result<_, ImmutableBufferCreationError>>()?;
 
-		self.materials.reserve(doc.materials().len());
-		for mat in doc.materials() {
-			let mat_path = model_path_cd_rel.parent().unwrap()
-				.join(mat.name().ok_or("glTF mesh material has no name")?)
-				.with_extension("yaml");
+		self.materials = doc.materials()
+			.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
+			.collect::<Result<_, GenericEngineError>>()?;
 
-			log::info!("Loading material file '{}'...", mat_path.display());
-			let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
-			deserialized_mat.update_descriptor_set(&mat_path, render_ctx)?;
-			self.materials.push(deserialized_mat);
-		}
-
-		for node in doc.nodes() {
-			if let Some(mesh) = node.mesh() {
-				for prim in mesh.primitives() {
-					let submesh = SubMesh::from_gltf_primitive(prim, &self.gpu_buffers)?;
-
-					// make sure that the material index isn't out of bounds, so we don't have to do error checking before draw
-					if submesh.material_index() >= self.materials.len() {
-						return Err(format!("Material index {} for submesh is out of bounds!", submesh.material_index()).into())
-					}
-
-					self.submeshes.push(submesh);
-				}
-			}
-		}
+		self.submeshes = doc.nodes()
+			.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
+			.flatten()
+			.map(|prim| SubMesh::from_gltf_primitive(&prim, self.materials.len(), &self.gpu_buffers))
+			.collect::<Result<_, GenericEngineError>>()?;
 
 		Ok(())
 	}
@@ -95,6 +77,18 @@ impl Draw for Mesh
 	}
 }
 
+fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext)
+	-> Result<Box<dyn Material>, GenericEngineError>
+{
+	let material_name = mat.name().ok_or("glTF mesh material has no name")?;
+	let mat_path = search_folder.join(material_name).with_extension("yaml");
+
+	log::info!("Loading material file '{}'...", mat_path.display());
+	let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
+	deserialized_mat.update_descriptor_set(&mat_path, render_ctx)?;
+	Ok(deserialized_mat)
+}
+
 enum IndexBufferVariant
 {
 	U16(Arc<BufferSlice<[u16], ImmutableBuffer<[u8]>>>),
@@ -109,7 +103,7 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(prim: gltf::Primitive, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+	pub fn from_gltf_primitive(prim: &gltf::Primitive, material_count: usize, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
 		-> Result<Self, GenericEngineError>
 	{
 		let positions = prim.get(&gltf::Semantic::Positions).ok_or("no positions in glTF primitive")?;
@@ -126,12 +120,18 @@ impl SubMesh
 			DataType::U32 => Ok(IndexBufferVariant::U32(get_buf_slice::<u32>(&indices, gpu_buffers)?)),
 			_ => Err(format!("expected u16 or u32 index buffer, got '{:?}'", indices.data_type()))
 		}?;
+
+		// make sure that the material index isn't out of bounds, so we don't have to do error checking before draw
+		let material_index = prim.material().index().unwrap_or(0);
+		if material_index >= material_count {
+			return Err(format!("Material index {} for submesh is out of bounds!", material_index).into())
+		}
 		
 		Ok(SubMesh{
 			vertex_buffers: vertex_buffers,
 			index_buf: index_buf,
 			vert_count: vert_count.try_into()?,
-			mat_index: prim.material().index().unwrap_or(0)
+			mat_index: material_index
 		})
 	}
 
