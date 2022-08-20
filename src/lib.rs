@@ -7,6 +7,7 @@ mod render;
 pub mod component;
 mod material;
 
+use std::fs::File;
 use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
@@ -101,8 +102,7 @@ impl Into<World> for WorldData
 }
 fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, GenericEngineError>
 {
-	let yaml_string = String::from_utf8(std::fs::read(Path::new("maps").join(file))?)?;
-	let world_data: WorldData = serde_yaml::from_str(&yaml_string)?;
+	let world_data: WorldData = serde_yaml::from_reader(File::open(Path::new("maps").join(file))?)?;
 	let world: World = world_data.into();
 
 	// This will become the default workload, as the docs say:

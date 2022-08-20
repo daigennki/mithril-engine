@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use std::path::Path;
+use std::fs::File;
 use vulkano::shader::ShaderModule;
 use vulkano::render_pass::{ RenderPass, Subpass };
 use vulkano::pipeline::{ GraphicsPipeline, PipelineLayout };
@@ -16,7 +17,7 @@ use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::format::Format;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::sampler::Sampler;
+use vulkano::sampler::{ SamplerCreateInfo, Sampler, Filter };
 use vulkano::descriptor_set::{ 
 	layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet,
 };
@@ -96,14 +97,13 @@ impl Pipeline
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 
-		let yaml_string = String::from_utf8(std::fs::read(Path::new("shaders").join(yaml_filename))?)?;
+		let yaml_reader = File::open(Path::new("shaders").join(yaml_filename))?;
+		let deserialized: PipelineConfig = serde_yaml::from_reader(yaml_reader)?;
 
-		let deserialized: PipelineConfig = serde_yaml::from_str(&yaml_string)?;
-
-		let mut generated_samplers: Vec<(usize, u32, Arc<Sampler>)> = vec![];
+		let mut generated_samplers = Vec::<(usize, u32, Arc<Sampler>)>::new();
 		if let Some(sampler_configs) = deserialized.samplers {
 			for sampler_config in sampler_configs {
-				let mut sampler_create_info = vulkano::sampler::SamplerCreateInfo::default();
+				let mut sampler_create_info = SamplerCreateInfo::default();
 				if let Some(f) = sampler_config.mag_filter {
 					sampler_create_info.mag_filter = filter_str_to_enum(&f)?;
 				}
@@ -198,11 +198,11 @@ enum PrimitiveTopologyDef {
     PatchList,
 }
 
-fn filter_str_to_enum(filter_str: &str) -> Result<vulkano::sampler::Filter, GenericEngineError>
+fn filter_str_to_enum(filter_str: &str) -> Result<Filter, GenericEngineError>
 {
 	Ok(match filter_str {
-		"Nearest" => vulkano::sampler::Filter::Nearest,
-		"Linear" => vulkano::sampler::Filter::Linear,
+		"Nearest" => Filter::Nearest,
+		"Linear" => Filter::Linear,
 		_ => return Err("Invalid sampler filter".into())
 	})
 }

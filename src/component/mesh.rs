@@ -4,8 +4,9 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::any::TypeId;
-use std::sync::Arc;
+use std::fs::File;
 use std::path::{ Path, PathBuf };
+use std::sync::Arc;
 use glam::*;
 use gltf::accessor::DataType;
 use serde::Deserialize;
@@ -58,8 +59,7 @@ impl DeferGpuResourceLoading for Mesh
 				.with_extension("yaml");
 
 			log::info!("Loading material file '{}'...", mat_path.display());
-			let mat_yaml_string = String::from_utf8(std::fs::read(&mat_path)?)?;
-			let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_str(&mat_yaml_string)?;
+			let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
 			deserialized_mat.update_descriptor_set(&mat_path, render_ctx)?;
 			self.materials.push(deserialized_mat);
 		}
