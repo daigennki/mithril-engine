@@ -7,10 +7,12 @@ mod swapchain;
 pub mod pipeline;
 pub mod texture;
 pub mod command_buffer;
+pub mod model;
 
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::path::{ Path, PathBuf };
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 use vulkano::device::{ Queue, physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily } };
@@ -26,6 +28,7 @@ use vulkano::sync::{ GpuFuture };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
 use command_buffer::CommandBuffer;
+use model::Model;
 use crate::GenericEngineError;
 
 #[derive(shipyard::Unique)]
@@ -37,9 +40,11 @@ pub struct RenderContext
 	upload_futures: Option<Box<dyn vulkano::sync::GpuFuture + Send + Sync>>,
 	upload_futures_count: usize,
 
+	// Loaded 3D models, with the key being the path relative to the current working directory.
+	models: HashMap<PathBuf, Arc<Model>>,
+
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
-	// TODO: give ownership of these to "Material" objects?
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
 	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
@@ -63,6 +68,7 @@ impl RenderContext
 			dev_queue: dev_queue.clone(),
 			upload_futures: None,
 			upload_futures_count: 0,
+			models: HashMap::new(),
 			material_pipelines: HashMap::new()
 		})
 	}
@@ -80,6 +86,23 @@ impl RenderContext
 			pipeline::Pipeline::new_from_yaml(definition_file, self.swapchain.render_pass(), dim[0], dim[1])?
 		);
 		Ok(())
+	}
+
+	/// Get a 3D model from `path`, relative to the current working directory. 
+	/// This attempts loading if it hasn't been loaded into memory yet.
+	pub fn get_model(&mut self, path: &Path) -> Result<Arc<Model>, GenericEngineError>
+	{
+		Ok(match self.models.get(path) {
+			Some(model) => {
+				log::info!("Reusing loaded model '{}'", path.display());
+				model.clone()
+			},
+			None => {
+				let new_model = Arc::new(Model::new(self, path)?);
+				self.models.insert(path.to_path_buf(), new_model.clone());
+				new_model
+			}
+		})
 	}
 	
 	fn join_future<F>(&mut self, next_future: F)
