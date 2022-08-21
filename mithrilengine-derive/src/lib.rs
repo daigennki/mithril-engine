@@ -36,3 +36,26 @@ pub fn derive_unique_component(input: TokenStream) -> TokenStream
 	output.into()
 }
 
+#[proc_macro_derive(Material)]
+pub fn derive_material(input: TokenStream) -> TokenStream
+{
+	let DeriveInput { ident, .. } = parse_macro_input!(input);
+	let output = quote! {
+		#[typetag::deserialize]
+		impl Material for #ident
+		{
+			fn pipeline_name(&self) -> &'static str
+			{
+				stringify!(#ident)
+			}
+
+			fn bind_descriptor_set(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+			{
+				cb.bind_descriptor_set(2, self.descriptor_set.as_ref().ok_or("material descriptor set not loaded")?.clone())?;
+				Ok(())
+			}
+		}
+	};
+	output.into()
+}
+

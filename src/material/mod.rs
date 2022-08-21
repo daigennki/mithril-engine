@@ -13,15 +13,25 @@ use vulkano::image::{ ImageDimensions, MipmapsCount };
 use serde::Deserialize;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer, texture::Texture };
 use crate::GenericEngineError;
+use mithrilengine_derive::Material;
 
+/// Trait which allows materials to defer loading using `RenderContext` to after deserialization.
+/// This allows each `Material` implementor to define the loading function differently.
+pub trait DeferMaterialLoading
+{
+	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
+}
+
+/// A material used by meshes to define shader parameters.
+/// Derive from this using `#[derive(Material)]`, then also define a loading function by implementing `DeferMaterialLoading`
+/// manually.
 #[typetag::deserialize]
-pub trait Material: Send + Sync
+pub trait Material: Send + Sync + DeferMaterialLoading
 {
 	fn pipeline_name(&self) -> &'static str;
 
-	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
-
-	fn bind_descriptor_set(&self, command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>;
+	fn bind_descriptor_set(&self, command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>) 
+		-> Result<(), GenericEngineError>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
