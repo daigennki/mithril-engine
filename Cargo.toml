@@ -13,7 +13,7 @@ opt-level = 1   # needed to stop stack overflow in Windows debug build; see http
 shaderc = "0.8"
 
 [dependencies]
-component-derive = { version = "0.1.0", path = "component-derive" }
+mithrilengine-derive = { version = "0.1.0", path = "mithrilengine-derive" }
 winit = "0.26"
 rusttype = "0.9"
 image = { version = "0.24", features = ["png"] }

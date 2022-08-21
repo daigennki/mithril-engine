@@ -15,8 +15,7 @@ use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use serde::Deserialize;
-use component_derive::EntityComponent;
-use component_derive::UniqueComponent;
+use mithrilengine_derive::{ EntityComponent, UniqueComponent };
 use crate::GenericEngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
