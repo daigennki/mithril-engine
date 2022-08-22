@@ -38,5 +38,10 @@ impl DeferMaterialLoading for PBR
 
 		Ok(())
 	}
+
+	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>
+	{
+		self.descriptor_set.as_ref()
+	}
 }
 

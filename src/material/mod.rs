@@ -6,8 +6,10 @@
 pub mod pbr;
 
 use std::path::{ Path, PathBuf };
+use std::sync::Arc;
 use glam::*;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::format::Format;
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 use serde::Deserialize;
@@ -19,12 +21,15 @@ use mithrilengine_derive::Material;
 /// This allows each `Material` implementor to define the loading function differently.
 pub trait DeferMaterialLoading
 {
+	/// Finish loading the material's descriptor set.
 	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
+
+	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>;
 }
 
 /// A material used by meshes to define shader parameters.
-/// Derive from this using `#[derive(Material)]`, then also define a loading function by implementing `DeferMaterialLoading`
-/// manually.
+/// Derive from this using `#[derive(Material)]`, then also define a loading function and descriptor set getter by implementing
+/// `DeferMaterialLoading` manually.
 #[typetag::deserialize]
 pub trait Material: Send + Sync + DeferMaterialLoading
 {

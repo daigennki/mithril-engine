@@ -51,7 +51,7 @@ pub fn derive_material(input: TokenStream) -> TokenStream
 
 			fn bind_descriptor_set(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 			{
-				cb.bind_descriptor_set(2, self.descriptor_set.as_ref().ok_or("material descriptor set not loaded")?.clone())?;
+				cb.bind_descriptor_set(2, self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone())?;
 				Ok(())
 			}
 		}
