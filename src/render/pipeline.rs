@@ -100,8 +100,9 @@ impl Pipeline
 		let yaml_reader = File::open(Path::new("shaders").join(yaml_filename))?;
 		let deserialized: PipelineConfig = serde_yaml::from_reader(yaml_reader)?;
 
-		let mut generated_samplers = Vec::<(usize, u32, Arc<Sampler>)>::new();
+		let mut generated_samplers = Vec::new();
 		if let Some(sampler_configs) = deserialized.samplers {
+            generated_samplers.reserve(sampler_configs.len());
 			for sampler_config in sampler_configs {
 				let mut sampler_create_info = SamplerCreateInfo::default();
 				if let Some(f) = sampler_config.mag_filter {

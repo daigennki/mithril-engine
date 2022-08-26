@@ -338,9 +338,9 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]
-	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".to_string()];
+	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
 	#[cfg(not(debug_assertions))]
-	let vk_layers: Vec<String> = vec![];
+	let vk_layers = Vec::new();
 
 	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
 	inst_create_info.application_name = Some(game_name.to_string());
@@ -372,7 +372,7 @@ fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>)
 	// get queue family that supports graphics
 	print_queue_families(physical_device.queue_families());
 	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
-			.ok_or("No graphics queue family found!")?;
+		.ok_or("No graphics queue family found!")?;
 
 	Ok((physical_device, q_fam))
 }

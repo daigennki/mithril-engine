@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use glam::*;
 use gltf::accessor::DataType;
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice, immutable::ImmutableBufferCreationError };
+use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::GenericEngineError;
@@ -36,19 +36,19 @@ impl Model
 			index_buffer: true,
 			..BufferUsage::none()
 		};
-		let gpu_buffers: Vec<Arc<ImmutableBuffer<[u8]>>> = data_buffers.iter()
+		let gpu_buffers = data_buffers.iter()
 			.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
-			.collect::<Result<_, ImmutableBufferCreationError>>()?;
+			.collect::<Result<_, _>>()?;
 
-		let materials: Vec<Box<dyn Material>> = doc.materials()
+		let materials = doc.materials()
 			.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
-			.collect::<Result<_, GenericEngineError>>()?;
+			.collect::<Result<Vec<_>, _>>()?;
 
-		let submeshes: Vec<SubMesh> = doc.nodes()
+		let submeshes = doc.nodes()
 			.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
 			.flatten()
 			.map(|prim| SubMesh::from_gltf_primitive(&prim, materials.len(), &gpu_buffers))
-			.collect::<Result<_, GenericEngineError>>()?;
+			.collect::<Result<_, _>>()?;
 
 		Ok(Model{
 			submeshes: submeshes,
@@ -99,20 +99,21 @@ impl SubMesh
 		let positions = prim.get(&gltf::Semantic::Positions).ok_or("no positions in glTF primitive")?;
 		let tex_coords = prim.get(&gltf::Semantic::TexCoords(0)).ok_or("no texture coordinates in glTF primitive")?;
 		let vertex_buffers = vec![
-			get_buf_slice::<f32>(&positions, gpu_buffers)?,
-			get_buf_slice::<f32>(&tex_coords, gpu_buffers)?
+			get_buf_slice(&positions, gpu_buffers)?,
+			get_buf_slice(&tex_coords, gpu_buffers)?
 		];
 
 		let indices = prim.indices().ok_or("no indices in glTF primitive")?;
 		let vert_count = indices.count();
 		let index_buf = match indices.data_type() {
-			DataType::U16 => Ok(IndexBufferVariant::U16(get_buf_slice::<u16>(&indices, gpu_buffers)?)),
-			DataType::U32 => Ok(IndexBufferVariant::U32(get_buf_slice::<u32>(&indices, gpu_buffers)?)),
-			_ => Err(format!("expected u16 or u32 index buffer, got '{:?}'", indices.data_type()))
-		}?;
+			DataType::U16 => IndexBufferVariant::U16(get_buf_slice(&indices, gpu_buffers)?),
+			DataType::U32 => IndexBufferVariant::U32(get_buf_slice(&indices, gpu_buffers)?),
+			_ => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", indices.data_type()).into())
+		};
 
-		// make sure that the material index isn't out of bounds, so we don't have to do error checking before draw
 		let material_index = prim.material().index().unwrap_or(0);
+
+        // make sure that the material index isn't out of bounds, so we don't have to do error checking before draw
 		if material_index >= material_count {
 			return Err(format!("Material index {} for submesh is out of bounds!", material_index).into())
 		}
