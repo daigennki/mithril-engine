@@ -22,11 +22,6 @@ use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
 use component::{ DeferGpuResourceLoading, Draw };
 
-#[cfg(debug_assertions)]
-use LevelFilter::Debug as EngineLogLevel;
-#[cfg(not(debug_assertions))]
-use LevelFilter::Info as EngineLogLevel;
-
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
 struct GameContext
@@ -305,9 +300,10 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 		})	
 		.set_time_format_rfc3339()
 		.build();
-
-	let term_logger = TermLogger::new(EngineLogLevel, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
-	let write_logger = WriteLogger::new(EngineLogLevel, logger_config, log_file);
+	
+	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
+	let term_logger = TermLogger::new(LevelFilter::Debug, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
+	let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
     CombinedLogger::init(vec![ term_logger, write_logger ])?;
 
 	Ok(data_path)
