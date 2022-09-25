@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 use glam::*;
 use gltf::accessor::DataType;
+use gltf::Semantic;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
@@ -18,8 +19,8 @@ use crate::material::Material;
 /// 3D model
 pub struct Model
 {
-	submeshes: Vec<SubMesh>,
 	materials: Vec<Box<dyn Material>>,
+	submeshes: Vec<SubMesh>,
 }
 impl Model 
 {
@@ -40,26 +41,23 @@ impl Model
 			.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
 			.collect::<Result<_, _>>()?;
 
-		let materials = doc.materials()
-			.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
-			.collect::<Result<Vec<_>, _>>()?;
-
-		let submeshes = doc.nodes()
-			.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-			.flatten()
-			.map(|prim| SubMesh::from_gltf_primitive(&prim, materials.len(), &gpu_buffers))
-			.collect::<Result<_, _>>()?;
-
 		Ok(Model{
-			submeshes: submeshes,
-			materials: materials
+			materials: doc.materials()
+				.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
+				.collect::<Result<_, _>>()?,
+
+			submeshes: doc.nodes()
+				.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
+				.flatten()
+				.map(|prim| SubMesh::from_gltf_primitive(&prim, &gpu_buffers))
+				.collect::<Result<_, _>>()?
 		})
 	}
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		for submesh in &self.submeshes {
-			// it's okay that we use a panic function here, since we already checked the material indices earlier
+			// it's okay that we use a panic function here, since the glTF loader validates the index for us 
 			self.materials[submesh.material_index()].bind_descriptor_set(cb)?;
 			submesh.draw(cb)?;
 		}
@@ -84,6 +82,26 @@ enum IndexBufferVariant
 	U16(Arc<BufferSlice<[u16], ImmutableBuffer<[u8]>>>),
 	U32(Arc<BufferSlice<[u32], ImmutableBuffer<[u8]>>>)
 }
+impl IndexBufferVariant
+{
+	pub fn from_accessor(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+		-> Result<Self, GenericEngineError>
+	{
+		Ok(match accessor.data_type() {
+			DataType::U16 => IndexBufferVariant::U16(get_buf_slice(&accessor, gpu_buffers)?),
+			DataType::U32 => IndexBufferVariant::U32(get_buf_slice(&accessor, gpu_buffers)?),
+			other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into())
+		})
+	}
+	pub fn bind(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>)
+	{
+		match self {
+			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
+			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
+		};
+	}
+}
+
 struct SubMesh
 {
 	vertex_buffers: Vec<Arc<BufferSlice<[f32], ImmutableBuffer<[u8]>>>>,
@@ -93,46 +111,28 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(prim: &gltf::Primitive, material_count: usize, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+	pub fn from_gltf_primitive(prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
 		-> Result<Self, GenericEngineError>
 	{
-		let positions = prim.get(&gltf::Semantic::Positions).ok_or("no positions in glTF primitive")?;
-		let tex_coords = prim.get(&gltf::Semantic::TexCoords(0)).ok_or("no texture coordinates in glTF primitive")?;
-		let vertex_buffers = vec![
-			get_buf_slice(&positions, gpu_buffers)?,
-			get_buf_slice(&tex_coords, gpu_buffers)?
-		];
-
+		let positions = prim.get(&Semantic::Positions).ok_or("no positions in glTF primitive")?;
+		let tex_coords = prim.get(&Semantic::TexCoords(0)).ok_or("no texture coordinates in glTF primitive")?;
 		let indices = prim.indices().ok_or("no indices in glTF primitive")?;
-		let vert_count = indices.count();
-		let index_buf = match indices.data_type() {
-			DataType::U16 => IndexBufferVariant::U16(get_buf_slice(&indices, gpu_buffers)?),
-			DataType::U32 => IndexBufferVariant::U32(get_buf_slice(&indices, gpu_buffers)?),
-			_ => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", indices.data_type()).into())
-		};
-
-		let material_index = prim.material().index().unwrap_or(0);
-
-        // make sure that the material index isn't out of bounds, so we don't have to do error checking before draw
-		if material_index >= material_count {
-			return Err(format!("Material index {} for submesh is out of bounds!", material_index).into())
-		}
 		
 		Ok(SubMesh{
-			vertex_buffers: vertex_buffers,
-			index_buf: index_buf,
-			vert_count: vert_count.try_into()?,
-			mat_index: material_index
+			vertex_buffers: vec![
+				get_buf_slice(&positions, gpu_buffers)?,
+				get_buf_slice(&tex_coords, gpu_buffers)?
+			],
+			index_buf: IndexBufferVariant::from_accessor(&indices, gpu_buffers)?,
+			vert_count: indices.count().try_into()?,
+			mat_index: prim.material().index().unwrap_or(0)
 		})
 	}
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
-		match &self.index_buf {
-			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
-			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
-		}
+		self.index_buf.bind(cb);
 		cb.draw_indexed(self.vert_count, 1, 0, 0, 0)?;
 		Ok(())
 	}
@@ -143,18 +143,22 @@ impl SubMesh
 	}
 }
 
-fn get_buf_slice<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
-	-> Result<Arc<BufferSlice<[T], ImmutableBuffer<[u8]>>>, GenericEngineError>
-	where [T]: BufferContents
+fn data_type_to_id(value: DataType) -> TypeId
 {
-	if TypeId::of::<T>() != match accessor.data_type() {
+	match value {
 		DataType::I8 => TypeId::of::<i8>(),
 		DataType::U8 => TypeId::of::<u8>(),
 		DataType::I16 => TypeId::of::<i16>(),
 		DataType::U16 => TypeId::of::<u16>(),
 		DataType::U32 => TypeId::of::<u32>(),
 		DataType::F32 => TypeId::of::<f32>(),
-	} {
+	}
+}
+fn get_buf_slice<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+	-> Result<Arc<BufferSlice<[T], ImmutableBuffer<[u8]>>>, GenericEngineError>
+	where [T]: BufferContents
+{
+	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
 		return Err(format!(
 			"expected '{:?}', but given glTF primitive has `{:?}`", 
 			TypeId::of::<T>(), 
@@ -163,14 +167,18 @@ fn get_buf_slice<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBu
 	}
 
 	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
+	if view.stride().is_some() {
+		return Err("unexpected interleaved data in glTF file".into())
+	}
 	let start = view.offset() as u64;
 	let end = start + view.length() as u64;
-	let buf_u8 = gpu_buffers[view.buffer().index()]
-		.slice(start..end)
-		.ok_or(format!("slice between {} and {} bytes into vertex/index buffer is out of range", start, end))?;
+	let buf_i = view.buffer().index();
+	// The offset and length should've been validated by the glTF loader, 
+	// hence why we use functions that may panic here.
+	let buf_u8 = gpu_buffers[buf_i].slice(start..end).expect("buffer slice out of range");
 
-	// This should be a valid conversion as long as the glTF offsets and lengths are valid.
-	// Maybe we should check alignment though, just in case?
+	// This is a valid conversion as long as the glTF offsets and lengths are 
+	// valid, which they should be since the glTF loader validates it for us.
 	Ok(unsafe { buf_u8.reinterpret::<[T]>() })
 }
 
