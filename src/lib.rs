@@ -17,6 +17,9 @@ use shipyard::iter::{ IntoIter, IntoWithId };
 
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 
+use egui_winit_vulkano::egui;
+use egui::{ScrollArea, TextEdit, TextStyle};
+
 use component::ui;
 use component::ui::{ canvas::Canvas };
 use component::camera::Camera;
@@ -27,7 +30,9 @@ type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 struct GameContext
 {
 	//pref_path: String,
-	world: World
+	world: World,
+
+	egui_gui: egui_winit_vulkano::Gui
 }
 impl GameContext
 {
@@ -47,25 +52,95 @@ impl GameContext
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
+		// set up egui
+		let subpass = vulkano::render_pass::Subpass::from(
+			render_ctx.get_current_framebuffer().render_pass().clone(), 1
+		).unwrap();
+		let gui = egui_winit_vulkano::Gui::new_with_subpass(render_ctx.get_surface(), None, render_ctx.get_queue(), subpass);
+
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
-		world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
-		world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
+		//world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
+		//world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
 		world.add_unique(render_ctx);
 		world.add_unique(ThreadedRenderingManager::new(2));
-		
+
 		Ok(GameContext { 
 			//pref_path: pref_path,
-			world: world
+			world: world,
+			egui_gui: gui
 		})
 	}
 
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::MainEventsCleared => self.world.run_default()?,
+			Event::WindowEvent{ event: we, .. } => { self.egui_gui.update(we); },
+			Event::MainEventsCleared => {
+				self.world.run_default()?;
+
+				self.egui_gui.immediate_ui(|gui| {
+					let ctx = gui.context();
+					// Fill egui UI layout here
+					
+					let mut some_text = "Hello world!\nThis is an example of multi-line text displayed using egui.".to_owned();
+					egui::CentralPanel::default()
+						.frame(egui::containers::Frame {
+							fill: egui::Color32::TRANSPARENT,
+							..Default::default()
+						})
+						.show(&ctx, |ui| {
+						
+						ui.vertical_centered(|ui| {
+							ui.add(egui::widgets::Label::new("Hi there!"));	
+						});
+						ui.separator();
+						ui.columns(2, |columns| {
+							ScrollArea::vertical().id_source("source").show(
+								&mut columns[0],
+								|ui| {
+									ui.add(
+										TextEdit::multiline(&mut some_text).font(TextStyle::Monospace),
+									);
+								},
+							);
+						});
+					});
+				});
+
+				self.world.run(| 
+					mut render_ctx: UniqueViewMut<render::RenderContext>, 
+					mut trm: UniqueViewMut<ThreadedRenderingManager> 
+				| -> Result<(), GenericEngineError>
+				{
+					let cur_fb = render_ctx.get_current_framebuffer();
+					let mut primary_cb = render_ctx.new_primary_command_buffer()?;
+					let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_fb);
+					rp_begin_info.clear_values = vec![
+						Some(vulkano::format::ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
+						Some(vulkano::format::ClearValue::Depth(1.0))
+					];
+
+					primary_cb.begin_render_pass(rp_begin_info.clone(), vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
+					primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
+
+					primary_cb.next_subpass(vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
+					// we need to wait here to prevent GpuLocked in `draw_on_subpass_image`.
+					// we've already done most of the CPU work, so this shouldn't have a *significant* impact on performance.
+					// TODO: we should still disable egui release builds, since we still want to keep things as tight
+					// together as possible.
+					render_ctx.wait_for_fence()?;
+					primary_cb.execute_secondary(self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions()))?;
+
+					primary_cb.end_render_pass()?;
+
+					render_ctx.submit_commands(primary_cb.build()?)?;
+
+					Ok(())
+				})?;
+			},
 			_ => ()
 		}
 		Ok(())
@@ -106,9 +181,7 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 		.with_try_system(prepare_primary_render)
 		.with_try_system(draw_3d)
 		.with_try_system(draw_ui)
-		.with_try_system(submit_primary_render)
 		.after_all(prepare_primary_render)
-		.before_all(submit_primary_render)
 		.add_to_world(&world)?;
 
 	// finish loading GPU resources for components
@@ -229,28 +302,7 @@ fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>)
 	render_ctx.next_swapchain_image()?;
 	Ok(())
 }
-fn submit_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, 
-	mut trm: UniqueViewMut<ThreadedRenderingManager>
-)
-	-> Result<(), GenericEngineError>
-{
-	let cur_fb = render_ctx.get_current_framebuffer();
-	let mut primary_cb = render_ctx.new_primary_command_buffer()?;
-	let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_fb);
-	rp_begin_info.clear_values = vec![
-		Some(vulkano::format::ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
-		Some(vulkano::format::ClearValue::Depth(1.0))
-	];
 
-	primary_cb.begin_render_pass(rp_begin_info.clone(), vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
-	primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
-	primary_cb.end_render_pass()?;
-
-	render_ctx.submit_commands(primary_cb.build()?)?;
-
-	Ok(())
-}
 
 /// Run the game. This should go in your `main.rs`.
 /// `org_name` and `game_name` will be used for the data directory.
@@ -304,7 +356,7 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
 	let term_logger = TermLogger::new(LevelFilter::Debug, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
 	let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
-    CombinedLogger::init(vec![ term_logger, write_logger ])?;
+	CombinedLogger::init(vec![ term_logger, write_logger ])?;
 
 	Ok(data_path)
 }

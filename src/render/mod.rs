@@ -24,7 +24,7 @@ use vulkano::buffer::{
 };
 use vulkano::render_pass::Framebuffer;
 use vulkano::memory::DeviceMemoryAllocationError;
-use vulkano::sync::{ GpuFuture };
+use vulkano::sync::{ GpuFuture, FlushError };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 
 use command_buffer::CommandBuffer;
@@ -35,9 +35,9 @@ use crate::GenericEngineError;
 pub struct RenderContext
 {
 	swapchain: swapchain::Swapchain,
-	dev_queue: Arc<vulkano::device::Queue>,	// this also owns the logical device
+	dev_queue: Arc<Queue>,	// this also owns the logical device
 
-	upload_futures: Option<Box<dyn vulkano::sync::GpuFuture + Send + Sync>>,
+	upload_futures: Option<Box<dyn GpuFuture + Send + Sync>>,
 	upload_futures_count: usize,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
@@ -105,7 +105,7 @@ impl RenderContext
 		})
 	}
 	
-	fn join_future<F>(&mut self, next_future: F)
+	pub fn join_future<F>(&mut self, next_future: F)
 		where F: vulkano::sync::GpuFuture + 'static + Send + Sync
 	{
 		self.upload_futures = Some(
@@ -240,6 +240,11 @@ impl RenderContext
 		self.swapchain.submit_commands(built_cb, self.dev_queue.clone(), self.upload_futures.take())
 	}
 
+	pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	{
+		self.swapchain.wait_for_fence()
+	}
+
 	pub fn get_pipeline(&mut self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
@@ -260,6 +265,15 @@ impl RenderContext
 	{
 		self.swapchain.wait_for_fence()
 	}*/
+
+	pub fn get_queue(&self) -> Arc<Queue>
+	{
+		self.dev_queue.clone()
+	}
+	pub fn get_surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
+	{
+		self.swapchain.get_surface()
+	}
 }
 
 #[derive(Debug)]

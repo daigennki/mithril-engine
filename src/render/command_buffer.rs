@@ -64,6 +64,12 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 		self.cb.end_render_pass()?;
 		Ok(())
 	}
+
+	pub fn next_subpass(&mut self, contents: SubpassContents) -> Result<(), RenderPassError>
+	{
+		self.cb.next_subpass(contents)?;
+		Ok(())
+	}
 }
 impl CommandBuffer<SecondaryAutoCommandBuffer>
 {

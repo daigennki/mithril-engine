@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use winit::window::Window;
 use vulkano::device::{ Queue, DeviceOwned };
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, CommandBufferExecFuture };
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
-use vulkano::sync::{ FlushError, GpuFuture };
-use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError };
+use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture,  };
+use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError, PresentFuture };
 use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
 
 use crate::GenericEngineError;
@@ -23,15 +23,17 @@ pub struct Swapchain
 	cur_image_num: usize,
 
 	// The future to wait for before the next submission.
-	// Includes image acquisition, as well as the previous frame's fence signal. 
+	// Includes image acquisition, as well as the previous frame's fence signal.
 	wait_before_submit: Option<Box<dyn GpuFuture + Send + Sync>>,
+	fence_signal_future: Option<FenceSignalFuture<PresentFuture<CommandBufferExecFuture<Box<dyn GpuFuture + Send + Sync>, PrimaryAutoCommandBuffer>, winit::window::Window>>>
 }
 impl Swapchain
 {
 	pub fn new(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>) -> Result<Self, GenericEngineError>
 	{
 		let (swapchain, swapchain_images) = create_swapchain(vk_dev.clone(), surface)?;
-		let swapchain_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
+		let swapchain_rp = vulkano::ordered_passes_renderpass!(
+			vk_dev.clone(),
 			attachments: {
 				color: {
 					load: Clear,	// this could be DontCare once we have a skybox set up
@@ -46,10 +48,18 @@ impl Swapchain
 					samples: 1,
 				}
 			}, 
-			pass: {
-				color: [color],
-				depth_stencil: {depth}
-			}
+			passes: [
+				{
+					color: [color],
+					depth_stencil: {depth},
+					input: []
+				},
+				{
+					color: [color],
+					depth_stencil: {},
+					input: []
+				}
+			]
 		)?;
 
 		Ok(Swapchain{
@@ -58,6 +68,7 @@ impl Swapchain
 			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
 			cur_image_num: 0,
 			wait_before_submit: None,
+			fence_signal_future: None
 		})
 	}
 
@@ -87,6 +98,7 @@ impl Swapchain
 	{
 		// clean up resources from finished submissions
 		self.wait_before_submit.as_mut().map(GpuFuture::cleanup_finished);
+		self.fence_signal_future.as_mut().map(GpuFuture::cleanup_finished);
 
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 			Ok((image_num, false, acquire_future)) => {
@@ -116,9 +128,12 @@ impl Swapchain
 	)
 		-> Result<(), GenericEngineError>
 	{
-		let mut joined_futures = self.wait_before_submit.take().ok_or(NoSubmitFuturesError)?;
+		let mut joined_futures = self.wait_before_submit.take().ok_or(NoSubmitFuturesError)?.boxed_send_sync();
 		if let Some(f) = futures {
 			// join the joined futures from images and buffers being uploaded
+			joined_futures = Box::new(joined_futures.join(f));
+		}
+		if let Some(f) = self.fence_signal_future.take() {
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
@@ -128,12 +143,17 @@ impl Swapchain
 			.then_signal_fence_and_flush();
 
 		match future_result {
-			Ok(future) => self.wait_before_submit = Some(Box::new(future)),
+			Ok(future) => self.fence_signal_future = Some(future),
 			Err(FlushError::OutOfDate) => (),	// let `get_next_image` detect the error next frame
 			Err(e) => return Err(Box::new(e))
 		}
 
 		Ok(())
+	}
+
+	pub fn wait_for_fence(&self) -> Result<(), FlushError>
+	{
+		self.fence_signal_future.as_ref().map(|f| f.wait(None)).unwrap_or(Ok(()))
 	}
 
 	pub fn render_pass(&self) -> Arc<RenderPass>
@@ -149,6 +169,11 @@ impl Swapchain
 	pub fn get_current_framebuffer(&self) -> Arc<Framebuffer>
 	{
 		self.framebuffers[self.cur_image_num].clone()
+	}
+
+	pub fn get_surface(&self) -> Arc<Surface<Window>>
+	{
+		self.swapchain.surface().clone()
 	}
 }
 
