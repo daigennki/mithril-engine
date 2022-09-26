@@ -32,7 +32,10 @@ struct GameContext
 	//pref_path: String,
 	world: World,
 
-	egui_gui: egui_winit_vulkano::Gui
+	egui_gui: egui_winit_vulkano::Gui,
+
+	test_value: f32,
+	test_text: String
 }
 impl GameContext
 {
@@ -70,7 +73,9 @@ impl GameContext
 		Ok(GameContext { 
 			//pref_path: pref_path,
 			world: world,
-			egui_gui: gui
+			egui_gui: gui,
+			test_value: 0.0,
+			test_text: "Hello world!\nThis is an example of multi-line text displayed using egui.".into()
 		})
 	}
 
@@ -84,30 +89,30 @@ impl GameContext
 				self.egui_gui.immediate_ui(|gui| {
 					let ctx = gui.context();
 					// Fill egui UI layout here
-					
-					let mut some_text = "Hello world!\nThis is an example of multi-line text displayed using egui.".to_owned();
+
 					egui::CentralPanel::default()
 						.frame(egui::containers::Frame {
 							fill: egui::Color32::TRANSPARENT,
 							..Default::default()
 						})
 						.show(&ctx, |ui| {
-						
-						ui.vertical_centered(|ui| {
-							ui.add(egui::widgets::Label::new("Hi there!"));	
+							ui.vertical_centered(|ui| {
+								ui.add(egui::widgets::Label::new("Hi there!"));	
+							});
+							ui.separator();
+							ui.columns(2, |columns| {
+								ScrollArea::vertical().id_source("source").show(
+									&mut columns[0],
+									|ui| {
+										ui.add(
+											TextEdit::multiline(&mut self.test_text).font(TextStyle::Monospace),
+										);
+										ui.add(egui::Button::new("Click me"));
+										ui.add(egui::Slider::new(&mut self.test_value, 0.0..=100.0));
+									},
+								);
+							});
 						});
-						ui.separator();
-						ui.columns(2, |columns| {
-							ScrollArea::vertical().id_source("source").show(
-								&mut columns[0],
-								|ui| {
-									ui.add(
-										TextEdit::multiline(&mut some_text).font(TextStyle::Monospace),
-									);
-								},
-							);
-						});
-					});
 				});
 
 				self.world.run(| 
