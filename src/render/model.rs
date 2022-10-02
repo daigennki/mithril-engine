@@ -14,7 +14,7 @@ use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAcces
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::GenericEngineError;
-use crate::material::Material;
+use crate::material::{ Material, DeferMaterialLoading };
 
 /// 3D model
 pub struct Model
@@ -26,32 +26,54 @@ impl Model
 {
 	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> Result<Self, GenericEngineError>
 	{
-		log::info!("Loading glTF file '{}'...", path.display());
 		let parent_folder = path.parent().unwrap();
-		let (doc, data_buffers, _) = gltf::import(&path)?;
-		
-		// Load each glTF binary buffer into an `ImmutableBuffer`, from which buffer slices will be created.
-		// This reduces memory fragmentation and transfers between CPU and GPU.
-		let gpu_buf_usage = BufferUsage{
-			vertex_buffer: true,
-			index_buffer: true,
-			..BufferUsage::none()
-		};
-		let gpu_buffers = data_buffers.iter()
-			.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
-			.collect::<Result<_, _>>()?;
 
-		Ok(Model{
-			materials: doc.materials()
-				.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
-				.collect::<Result<_, _>>()?,
+		// determine model file type
+		match path.extension().and_then(|e| e.to_str()) {
+			Some("glb") | Some("gltf") => {
+				log::info!("Loading glTF file '{}'...", path.display());
+				let (doc, data_buffers, _) = gltf::import(&path)?;
+				
+				// Load each glTF binary buffer into an `ImmutableBuffer`, from which buffer slices will be created.
+				// This reduces memory fragmentation and transfers between CPU and GPU.
+				let gpu_buf_usage = BufferUsage{
+					vertex_buffer: true,
+					index_buffer: true,
+					..BufferUsage::none()
+				};
+				let gpu_buffers = data_buffers.iter()
+					.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
+					.collect::<Result<_, _>>()?;
 
-			submeshes: doc.nodes()
-				.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-				.flatten()
-				.map(|prim| SubMesh::from_gltf_primitive(&prim, &gpu_buffers))
-				.collect::<Result<_, _>>()?
-		})
+				Ok(Model{
+					materials: doc.materials()
+						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
+						.collect::<Result<_, _>>()?,
+
+					submeshes: doc.nodes()
+						.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
+						.flatten()
+						.map(|prim| SubMesh::from_gltf_primitive(&prim, &gpu_buffers))
+						.collect::<Result<_, _>>()?
+				})
+			},
+			Some("obj") => {
+				log::info!("Loading OBJ file '{}'...", path.display());
+				let (obj_models, obj_materials_result) = tobj::load_obj(&path, &tobj::GPU_LOAD_OPTIONS)?;
+				let obj_materials = obj_materials_result?;
+				
+				Ok(Model{
+					materials: obj_materials.iter()
+						.map(|obj_mat| load_obj_mtl(&obj_mat, parent_folder, render_ctx))
+						.collect::<Result<_, _>>()?,
+
+					submeshes: obj_models.iter()
+						.map(|obj_model| SubMesh::from_obj_mesh(render_ctx, &obj_model.mesh))
+						.collect::<Result<_, _>>()?
+				})
+			},
+			_ => Err(format!("couldn't determine model file type of {}", path.display()).into())
+		}
 	}
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
@@ -63,6 +85,21 @@ impl Model
 		}
 		Ok(())
 	}
+}
+
+fn load_obj_mtl(obj_mat: &tobj::Material, search_folder: &Path, render_ctx: &mut RenderContext)
+	-> Result<Box<dyn Material>, GenericEngineError>
+{
+	let base_color = if obj_mat.diffuse_texture.is_empty() {
+		crate::material::ColorInput::Color((Vec3::from(obj_mat.diffuse), obj_mat.dissolve).into())
+	} else {
+		crate::material::ColorInput::Texture(obj_mat.diffuse_texture.clone().into())
+	};
+	
+	let mut loaded_mat = crate::material::pbr::PBR::new(base_color);
+	loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
+
+	Ok(Box::new(loaded_mat))
 }
 
 fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext)
@@ -80,7 +117,8 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &m
 enum IndexBufferVariant
 {
 	U16(Arc<BufferSlice<[u16], ImmutableBuffer<[u8]>>>),
-	U32(Arc<BufferSlice<[u32], ImmutableBuffer<[u8]>>>)
+	U32(Arc<BufferSlice<[u32], ImmutableBuffer<[u8]>>>),
+	ObjU32(Arc<ImmutableBuffer<[u32]>>)
 }
 impl IndexBufferVariant
 {
@@ -93,24 +131,54 @@ impl IndexBufferVariant
 			other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into())
 		})
 	}
+	pub fn from_obj_u32_vec(render_ctx: &mut RenderContext, indices: Vec<u32>)
+		-> Result<Self, GenericEngineError>
+	{
+		Ok(Self::ObjU32(render_ctx.new_buffer_from_iter(indices, BufferUsage::index_buffer())?))
+	}
 	pub fn bind(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>)
 	{
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
 			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
+			IndexBufferVariant::ObjU32(buf) => cb.bind_index_buffer(buf.clone())
 		};
 	}
 }
 
 struct SubMesh
 {
-	vertex_buffers: Vec<Arc<BufferSlice<[f32], ImmutableBuffer<[u8]>>>>,
+	vertex_buffers: Vec<Arc<dyn BufferAccess>>,
 	index_buf: IndexBufferVariant,
 	vert_count: u32,
 	mat_index: usize
 }
 impl SubMesh
 {
+	pub fn from_obj_mesh(render_ctx: &mut RenderContext, mesh: &tobj::Mesh)
+		-> Result<Self, GenericEngineError>
+	{
+		if mesh.positions.is_empty() {
+			return Err("no positions in OBJ mesh".into())
+		}
+		if mesh.texcoords.is_empty() {
+			return Err("no texture coordinates in OBJ mesh".into())
+		}
+		if mesh.indices.is_empty() {
+			return Err("no indices in OBJ mesh".into())
+		}
+
+		Ok(SubMesh{
+			vertex_buffers: vec![
+				render_ctx.new_buffer_from_iter(mesh.positions.clone(), BufferUsage::vertex_buffer())?,
+				render_ctx.new_buffer_from_iter(mesh.texcoords.clone(), BufferUsage::vertex_buffer())?
+			],
+			index_buf: IndexBufferVariant::from_obj_u32_vec(render_ctx, mesh.indices.clone())?,
+			vert_count: mesh.indices.len().try_into()?,
+			mat_index: mesh.material_id.unwrap_or(0)
+		})
+	}
+
 	pub fn from_gltf_primitive(prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
 		-> Result<Self, GenericEngineError>
 	{
@@ -120,8 +188,8 @@ impl SubMesh
 		
 		Ok(SubMesh{
 			vertex_buffers: vec![
-				get_buf_slice(&positions, gpu_buffers)?,
-				get_buf_slice(&tex_coords, gpu_buffers)?
+				get_buf_slice::<f32>(&positions, gpu_buffers)?,
+				get_buf_slice::<f32>(&tex_coords, gpu_buffers)?
 			],
 			index_buf: IndexBufferVariant::from_accessor(&indices, gpu_buffers)?,
 			vert_count: indices.count().try_into()?,

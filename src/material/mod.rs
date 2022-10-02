@@ -42,7 +42,7 @@ pub trait Material: Send + Sync + DeferMaterialLoading
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum ColorInput
+pub enum ColorInput
 {
 	Color(Vec4),
 	Texture(PathBuf)

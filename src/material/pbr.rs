@@ -23,6 +23,13 @@ pub struct PBR
 	#[serde(skip)]
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
 }
+impl PBR
+{
+	pub fn new(base_color: ColorInput) -> Self
+	{
+		PBR { base_color: base_color, descriptor_set: None }
+	}
+}
 impl DeferMaterialLoading for PBR
 {
 	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
