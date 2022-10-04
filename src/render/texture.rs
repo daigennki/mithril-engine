@@ -5,10 +5,18 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use std::path::Path;
-use vulkano::image::{ ImmutableImage, ImageDimensions, MipmapsCount, view::ImageView };
+use vulkano::image::{ 
+	ImageLayout, ImageUsage, ImageCreateFlags, ImmutableImage, ImageDimensions, MipmapsCount, 
+	view::ImageView, view::ImageViewType, immutable::ImmutableImageCreationError
+};
 use vulkano::format::{ Format };
-use vulkano::command_buffer::{ CommandBufferExecFuture, PrimaryAutoCommandBuffer };
+use vulkano::command_buffer::{ 
+	AutoCommandBufferBuilder, CopyBufferToImageInfo, CommandBufferUsage, CommandBufferExecFuture, PrimaryAutoCommandBuffer, 
+	PrimaryCommandBuffer
+};
 use vulkano::sync::NowFuture;
+use vulkano::device::{ Queue, DeviceOwned };
+use vulkano::buffer::{ BufferUsage, CpuAccessibleBuffer };
 use ddsfile::DxgiFormat;
 
 use crate::GenericEngineError;
@@ -67,6 +75,163 @@ impl Texture
 	{
 		self.dimensions
 	}
+}
+
+pub struct CubemapTexture
+{
+	view: Arc<ImageView<ImmutableImage>>,
+	dimensions: ImageDimensions
+}
+impl CubemapTexture
+{
+	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
+	pub fn new(queue: Arc<vulkano::device::Queue>, faces: [&Path; 6]) 
+		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
+	{
+		// TODO: animated textures using APNG or multi-layer DDS
+
+		let mut combined_data = Vec::<u8>::new();
+		let mut cube_fmt = None;
+		let mut cube_dim = None;
+
+		for face in faces {
+			log::info!("Loading texture file '{}'...", face.display());
+
+			let file_ext = face.extension().ok_or("Could not determine texture file extension!")?.to_str();
+			let (vk_fmt, dim, mip, img_raw) = match file_ext {
+				Some("dds") => load_dds(face)?,
+				_ => load_other_format(face)?
+			};
+
+			// TODO: ignore other mipmap levels, if there are any
+			if let MipmapsCount::Specific(count) = mip {
+				return Err(format!("expected texture file with only one mipmap level, got {} mipmap levels", count).into()) 
+			}
+
+			if let Some(f) = cube_fmt.as_ref() {
+				if *f != vk_fmt {
+					return Err("not all faces of a cubemap have the same format!".into());
+				}
+			} else {
+				cube_fmt = Some(vk_fmt);
+			}
+
+			if let Some(d) = cube_dim.as_ref() {
+				if *d != dim {
+					return Err("not all faces of a cubemap have the same dimensions!".into());
+				}
+			} else {
+				cube_dim = Some(dim);
+			}
+
+			combined_data.extend(img_raw);
+		}
+
+		if let ImageDimensions::Dim2d{ array_layers, .. } = cube_dim.as_mut().unwrap() {
+			*array_layers = 6;
+		}
+				
+		Self::new_from_iter(queue, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), MipmapsCount::One)
+	}
+	pub fn new_from_iter<Px, I>(
+		queue: Arc<vulkano::device::Queue>, 
+		iter: I, 
+		vk_fmt: Format, 
+		dimensions: ImageDimensions,
+		mip: MipmapsCount
+	) 
+		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
+	where
+		[Px]: vulkano::buffer::BufferContents,
+		I: IntoIterator<Item = Px>,
+		I::IntoIter: ExactSizeIterator,
+	{
+
+
+		let (vk_img, upload_future) = create_cubemap_image(iter, dimensions, mip, vk_fmt, queue)?;
+		let mut view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
+		view_create_info.view_type = ImageViewType::Cube;
+		
+		Ok((
+			CubemapTexture{
+				view: ImageView::new(vk_img, view_create_info)?,
+				dimensions: dimensions
+			},
+			upload_future
+		))
+	}
+
+	pub fn view(&self) -> Arc<ImageView<ImmutableImage>>
+	{
+		self.view.clone()
+	}
+
+	pub fn dimensions(&self) -> ImageDimensions
+	{
+		self.dimensions
+	}
+}
+
+// code copied from source code of ImmutableImage::from_iter and ImmutableImage::from_buffer in vulkano/image/immutable.rs,
+// excluding mipmap generation code since we don't use that with cubemaps.
+// we have to do this to use the cube_compatible flag.
+fn create_cubemap_image<Px, I>(iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, queue: Arc<Queue>)
+	-> Result<
+		(
+            Arc<ImmutableImage>,
+            CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>,
+        ),
+        ImmutableImageCreationError
+	>
+	where
+		[Px]: vulkano::buffer::BufferContents,
+		I: IntoIterator<Item = Px>,
+		I::IntoIter: ExactSizeIterator
+{
+	let source = CpuAccessibleBuffer::from_iter(
+		queue.device().clone(),
+		BufferUsage::transfer_src(),
+		false,
+		iter,
+	)?;
+
+	let usage = ImageUsage {
+		transfer_dst: true,
+		transfer_src: false,
+		sampled: true,
+		..ImageUsage::none()
+	};
+	let mut flags = ImageCreateFlags::none();
+	flags.cube_compatible = true;	// NOTE: here's the different part!
+	let layout = ImageLayout::ShaderReadOnlyOptimal;
+
+	let (image, initializer) = ImmutableImage::uninitialized(
+		source.device().clone(),
+		dimensions,
+		format,
+		mip_levels,
+		usage,
+		flags,
+		layout,
+		source.device().active_queue_families(),
+	)?;
+
+	let mut cbb = AutoCommandBufferBuilder::primary(
+		source.device().clone(),
+		queue.family(),
+		CommandBufferUsage::MultipleSubmit,
+	)?;
+	cbb.copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(source, initializer))
+		.unwrap();
+
+	let cb = cbb.build().unwrap();
+
+	let future = match cb.execute(queue) {
+		Ok(f) => f,
+		Err(e) => unreachable!("{:?}", e),
+	};
+
+	Ok((image, future))
 }
 
 fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>

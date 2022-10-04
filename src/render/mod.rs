@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod texture;
 pub mod command_buffer;
 pub mod model;
+pub mod skybox;
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -117,9 +118,17 @@ impl RenderContext
 		self.upload_futures_count += 1;
 	}
 
-	pub fn new_texture(&mut self, path: &std::path::Path) -> Result<texture::Texture, GenericEngineError>
+	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
 	{
 		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
+		self.join_future(upload_future);
+		Ok(tex)
+	}
+	
+	pub fn new_cubemap_texture(&mut self, faces: [&Path; 6])
+		-> Result<texture::CubemapTexture, GenericEngineError>
+	{
+		let (tex, upload_future) = texture::CubemapTexture::new(self.dev_queue.clone(), faces)?;
 		self.join_future(upload_future);
 		Ok(tex)
 	}

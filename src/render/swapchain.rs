@@ -36,25 +36,25 @@ impl Swapchain
 			vk_dev.clone(),
 			attachments: {
 				color: {
-					load: Clear,	// this could be DontCare once we have a skybox set up
+					load: DontCare,	// this is DontCare since drawing the skybox effectively clears the image for us
 					store: Store,
 					format: swapchain.image_format(),
 					samples: 1,
 				},
 				depth: {
-					load: Clear,
+					load: DontCare,	// this too is DontCare since the skybox clears it with 1.0
 					store: Store,	// order-independent transparency might need this to be `Store`
-					format: Format::D16_UNORM,	// 24-bit depth formats are unsupported on a significant number of GPUs
+					format: Format::D16_UNORM,	// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
 					samples: 1,
 				}
 			}, 
 			passes: [
-				{
+				{	// general rendering subpass
 					color: [color],
 					depth_stencil: {depth},
 					input: []
 				},
-				{
+				{	// egui subpass
 					color: [color],
 					depth_stencil: {},
 					input: []

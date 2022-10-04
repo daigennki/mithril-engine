@@ -1,9 +1,8 @@
-cbuffer renderParams : register(b0)
+cbuffer renderParams : register(b0, space1)
 {
-	float4x4 proj;	// projection matrix
-    float4x4 view;	// view matrix
-    float4x4 invProjView;
-    float3 camera_pos;
+	float4x4 projview;
+	float4x4 proj;
+	float4x4 view;
 };
 struct VS_OUTPUT
 {

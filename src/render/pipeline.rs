@@ -8,13 +8,13 @@ use std::path::Path;
 use std::fs::File;
 use vulkano::shader::ShaderModule;
 use vulkano::render_pass::{ RenderPass, Subpass };
-use vulkano::pipeline::{ GraphicsPipeline, PipelineLayout };
+use vulkano::pipeline::{ GraphicsPipeline, PipelineLayout, StateMode };
 use vulkano::pipeline::graphics::viewport::*;
 use vulkano::pipeline::graphics::vertex_input::{ VertexInputState, VertexInputRate, VertexInputBindingDescription };
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
 use vulkano::pipeline::graphics::input_assembly::{ InputAssemblyState, PrimitiveTopology };
 use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend };
-use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
+use vulkano::pipeline::graphics::depth_stencil::{ DepthStencilState, DepthState, CompareOp };
 use vulkano::format::Format;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::sampler::{ SamplerCreateInfo, Sampler, Filter };
@@ -45,6 +45,7 @@ impl Pipeline
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		width: u32, height: u32,
+		depth_op: CompareOp
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = render_pass.device().clone();
@@ -60,8 +61,22 @@ impl Pipeline
 		}).transpose()?;
 
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
-		let input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
+		let mut input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
+		if primitive_topology == PrimitiveTopology::TriangleStrip {
+			// Enable primitive restart if a triangle strip is being drawn.
+			input_assembly_state = input_assembly_state.primitive_restart_enable();
+		}
 		let color_blend_state = color_blend_state_from_subpass(&subpass);
+
+		let depth_stencil_state = DepthStencilState {
+			depth: Some(DepthState {
+				enable_dynamic: false,
+				write_enable: StateMode::Fixed(true),
+				compare_op: StateMode::Fixed(depth_op)
+			}),
+			depth_bounds: None,
+			stencil: None
+		};
 
 		let pipeline_built = build_pipeline_common(
 			vk_dev.clone(), input_assembly_state, 
@@ -70,7 +85,8 @@ impl Pipeline
 			vs.clone(), fs.clone(), 
 			subpass.clone(),
 			&samplers,
-			color_blend_state
+			color_blend_state,
+			Some(depth_stencil_state)
 		)?;
 
 		log::debug!("Built pipeline with descriptors:");
@@ -121,7 +137,7 @@ impl Pipeline
 			deserialized.primitive_topology, 
 			deserialized.vertex_shader, 
 			deserialized.fragment_shader, 
-			generated_samplers, render_pass, width, height
+			generated_samplers, render_pass, width, height, CompareOp::Less
 		)
 	}
 
@@ -134,7 +150,8 @@ impl Pipeline
 			self.vs.clone(), self.fs.clone(), 
 			self.subpass.clone(),
 			&self.samplers,
-			self.pipeline.color_blend_state().cloned()
+			self.pipeline.color_blend_state().cloned(),
+			self.pipeline.depth_stencil_state().cloned()
 		)?;
 
 		Ok(())
@@ -290,7 +307,8 @@ fn build_pipeline_common(
 	fs: Option<Arc<ShaderModule>>,
 	subpass: Subpass,
 	samplers: &Vec<(usize, u32, Arc<Sampler>)>,
-	color_blend_state: Option<ColorBlendState>
+	color_blend_state: Option<ColorBlendState>,
+	depth_stencil_state: Option<DepthStencilState>
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let viewport = Viewport{ 
@@ -303,12 +321,14 @@ fn build_pipeline_common(
 	let mut pipeline_builder = GraphicsPipeline::start()
 		.input_assembly_state(input_assembly_state)
 		.vertex_input_state(vertex_input_state)
-		.depth_stencil_state(DepthStencilState::simple_depth_test())
 		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
 		.render_pass(subpass);
 	
 	if let Some(c) = color_blend_state {
 		pipeline_builder = pipeline_builder.color_blend_state(c);
+	}
+	if let Some(d) = depth_stencil_state {
+		pipeline_builder = pipeline_builder.depth_stencil_state(d);
 	}
 	
 	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;

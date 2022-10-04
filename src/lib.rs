@@ -12,7 +12,7 @@ use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use serde::Deserialize;
-use shipyard::{ World, View, ViewMut, Get, UniqueViewMut, Workload, WorkloadModificator };
+use shipyard::{ World, View, ViewMut, Get, UniqueView, UniqueViewMut, Workload, WorkloadModificator };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -67,6 +67,7 @@ impl GameContext
 		//world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		//world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
+		world.add_unique(render::skybox::Skybox::new(&mut render_ctx)?);
 		world.add_unique(render_ctx);
 		world.add_unique(ThreadedRenderingManager::new(2));
 
@@ -240,16 +241,21 @@ impl ThreadedRenderingManager
 fn draw_3d(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	mut trm: UniqueViewMut<ThreadedRenderingManager>,
+	skybox: UniqueView<render::skybox::Skybox>,
 
 	camera: UniqueViewMut<Camera>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
+	let cur_fb = render_ctx.get_current_framebuffer();
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;	
+		
+	// Draw the skybox. This will effectively clear the framebuffer.
+	skybox.draw(&mut command_buffer, &camera)?;
+	
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	let cur_fb = render_ctx.get_current_framebuffer();
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 	command_buffer.bind_pipeline(render_ctx.get_pipeline("PBR")?);
 	camera.bind(&mut command_buffer)?;
 	for (eid, transform) in transforms.iter().with_id() {
@@ -305,6 +311,7 @@ fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>)
 	-> Result<(), GenericEngineError>
 {
 	render_ctx.next_swapchain_image()?;
+
 	Ok(())
 }
 
