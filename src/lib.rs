@@ -16,6 +16,7 @@ use shipyard::{ World, View, ViewMut, Get, UniqueView, UniqueViewMut, Workload, 
 use shipyard::iter::{ IntoIter, IntoWithId };
 
 use vulkano::command_buffer::{ SecondaryAutoCommandBuffer, SubpassContents };
+use vulkano::pipeline::graphics::viewport::Viewport;
 
 use egui_winit_vulkano::egui;
 use egui::{ScrollArea, TextEdit, TextStyle};
@@ -249,7 +250,8 @@ fn draw_3d(
 ) -> Result<(), GenericEngineError>
 {
 	let cur_fb = render_ctx.get_current_framebuffer();
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;	
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
+	command_buffer.set_viewport(0, [ render_ctx.get_swapchain_viewport() ]);
 		
 	// Draw the skybox. This will effectively clear the framebuffer.
 	skybox.draw(&mut command_buffer, &camera)?;
@@ -257,6 +259,7 @@ fn draw_3d(
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	command_buffer.bind_pipeline(render_ctx.get_pipeline("PBR")?);
+	
 	camera.bind(&mut command_buffer)?;
 	for (eid, transform) in transforms.iter().with_id() {
 		transform.bind_descriptor_set(&mut command_buffer)?;
@@ -290,6 +293,8 @@ fn draw_ui(
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	let cur_fb = render_ctx.get_current_framebuffer();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
+	command_buffer.set_viewport(0, [ render_ctx.get_swapchain_viewport() ]);
+
 	command_buffer.bind_pipeline(render_ctx.get_pipeline("UI")?);
 	for (eid, t) in ui_transforms.iter().with_id() {
 		t.bind_descriptor_set(&mut command_buffer)?;
@@ -307,16 +312,10 @@ fn draw_ui(
 	trm.add_cb(command_buffer.build()?);
 	Ok(())
 }
-fn prepare_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>,
-	mut skybox: UniqueViewMut<render::skybox::Skybox>
-)
+fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>)
 	-> Result<(), GenericEngineError>
 {
-	let (_, new_viewport_size) = render_ctx.next_swapchain_image()?;
-	if let Some(resized) = new_viewport_size {
-		skybox.resize_viewport(resized[0], resized[1])?;
-	}
+	render_ctx.next_swapchain_image()?;
 
 	Ok(())
 }

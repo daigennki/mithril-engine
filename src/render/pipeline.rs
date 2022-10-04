@@ -9,7 +9,7 @@ use std::fs::File;
 use vulkano::shader::ShaderModule;
 use vulkano::render_pass::{ RenderPass, Subpass };
 use vulkano::pipeline::{ GraphicsPipeline, PipelineLayout, StateMode };
-use vulkano::pipeline::graphics::viewport::*;
+use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::vertex_input::{ VertexInputState, VertexInputRate, VertexInputBindingDescription };
 use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
 use vulkano::pipeline::graphics::input_assembly::{ InputAssemblyState, PrimitiveTopology };
@@ -44,7 +44,6 @@ impl Pipeline
 		fs_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
-		width: u32, height: u32,
 		depth_op: CompareOp
 	) -> Result<Self, GenericEngineError>
 	{
@@ -81,7 +80,6 @@ impl Pipeline
 		let pipeline_built = build_pipeline_common(
 			vk_dev.clone(), input_assembly_state, 
 			vertex_input_state, 
-			width, height,
 			vs.clone(), fs.clone(), 
 			subpass.clone(),
 			&samplers,
@@ -137,24 +135,8 @@ impl Pipeline
 			deserialized.primitive_topology, 
 			deserialized.vertex_shader, 
 			deserialized.fragment_shader, 
-			generated_samplers, render_pass, width, height, CompareOp::Less
+			generated_samplers, render_pass, CompareOp::Less
 		)
-	}
-
-	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), GenericEngineError>
-	{
-		self.pipeline = build_pipeline_common(
-			self.pipeline.device().clone(), 
-			self.pipeline.input_assembly_state().clone(),
-			self.pipeline.vertex_input_state().clone(), width, height,
-			self.vs.clone(), self.fs.clone(), 
-			self.subpass.clone(),
-			&self.samplers,
-			self.pipeline.color_blend_state().cloned(),
-			self.pipeline.depth_stencil_state().cloned()
-		)?;
-
-		Ok(())
 	}
 
 	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) 
@@ -302,7 +284,6 @@ fn build_pipeline_common(
 	vk_dev: Arc<vulkano::device::Device>, 
 	input_assembly_state: InputAssemblyState,
 	vertex_input_state: VertexInputState,
-	width: u32, height: u32,
 	vs: Arc<ShaderModule>,
 	fs: Option<Arc<ShaderModule>>,
 	subpass: Subpass,
@@ -311,17 +292,11 @@ fn build_pipeline_common(
 	depth_stencil_state: Option<DepthStencilState>
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
-	let viewport = Viewport{ 
-		origin: [ 0.0, 0.0 ],
-		dimensions: [ width as f32, height as f32 ],
-		depth_range: (0.0..1.0)
-	};
-	
 	// do some building
 	let mut pipeline_builder = GraphicsPipeline::start()
 		.input_assembly_state(input_assembly_state)
 		.vertex_input_state(vertex_input_state)
-		.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport]))
+		.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
 		.render_pass(subpass);
 	
 	if let Some(c) = color_blend_state {

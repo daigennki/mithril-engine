@@ -27,6 +27,7 @@ use vulkano::render_pass::Framebuffer;
 use vulkano::memory::DeviceMemoryAllocationError;
 use vulkano::sync::{ GpuFuture, FlushError };
 use vulkano::image::{ ImageDimensions, MipmapsCount };
+use vulkano::pipeline::graphics::viewport::Viewport;
 
 use command_buffer::CommandBuffer;
 use model::Model;
@@ -220,27 +221,16 @@ impl RenderContext
 	}
 
 	/// Tell the swapchain to go to the next image.
-	/// The image size may change here, in which case pipelines will be re-created with resized viewports.
+	/// The image size *may* change here.
 	/// This must only be called once per frame, at the beginning of each frame before any render pass.
 	///
-	/// This returns the framebuffer for the image, and an `Option` with the new viewport size if it has been resized.
+	/// This returns the framebuffer for the image.
 	pub fn next_swapchain_image(&mut self) 
-		-> Result<(Arc<vulkano::render_pass::Framebuffer>, Option<[u32; 2]>), GenericEngineError>
+		-> Result<Arc<vulkano::render_pass::Framebuffer>, GenericEngineError>
 	{
-		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
+		let (next_img_fb, _) = self.swapchain.get_next_image()?;
 
-		let new_viewport_size = if resize_viewports {
-			let new_dimensions = self.swapchain.dimensions();
-			log::debug!("Recreating pipelines with new viewport...");
-			for (_, pl) in &mut self.material_pipelines {
-				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
-			}
-			Some(new_dimensions)
-		} else {
-			None
-		};
-
-		Ok((next_img_fb, new_viewport_size))
+		Ok(next_img_fb)
 	}
 
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
@@ -268,16 +258,16 @@ impl RenderContext
 		self.swapchain.dimensions()
 	}
 
+	pub fn get_swapchain_viewport(&self) -> Viewport
+	{
+		self.swapchain.get_viewport()
+	}
+
 	/// Get the current swapchain framebuffer.
 	pub fn get_current_framebuffer(&self) -> Arc<Framebuffer>
 	{
 		self.swapchain.get_current_framebuffer()
 	}
-
-	/*pub fn wait_for_fence(&self) -> Result<(), FlushError>
-	{
-		self.swapchain.wait_for_fence()
-	}*/
 
 	pub fn get_queue(&self) -> Arc<Queue>
 	{

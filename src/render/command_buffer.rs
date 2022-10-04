@@ -12,6 +12,7 @@ use vulkano::command_buffer::{
 };
 use vulkano::device::Queue;
 use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
+use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::pipeline::graphics::vertex_input::VertexBuffersCollection;
 use vulkano::pipeline::graphics::input_assembly::Index;
 use vulkano::descriptor_set::DescriptorSetsCollection;
@@ -147,6 +148,12 @@ impl<L> CommandBuffer<L>
 	{
 		self.cb.draw_indexed(index_count, instance_count, first_index, vertex_offset, first_instance)?;
 		Ok(())
+	}
+
+	pub fn set_viewport<I>(&mut self, first_viewport: u32, viewports: I)
+		where I: IntoIterator<Item = Viewport>
+	{
+		self.cb.set_viewport(first_viewport, viewports);
 	}
 }
 

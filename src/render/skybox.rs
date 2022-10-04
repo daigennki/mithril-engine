@@ -31,7 +31,6 @@ impl Skybox
 		// sky pipeline
 		// TODO: this should be moved out of here so we're not creating it again when the skybox is changed
 		let render_pass = render_ctx.get_current_framebuffer().render_pass().clone();
-		let dim = render_ctx.swapchain_dimensions();
 		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
 		let cubemap_sampler = vulkano::sampler::Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
 		let sky_pipeline = super::pipeline::Pipeline::new(
@@ -39,7 +38,6 @@ impl Skybox
 			"skybox.vert.spv".into(), Some("skybox.frag.spv".into()),
 			vec![ (0, 0, cubemap_sampler) ],
 			render_pass,
-			dim[0], dim[1],
 			CompareOp::Always
 		)?;
 
@@ -76,11 +74,6 @@ impl Skybox
 			cube_ibo: render_ctx.new_buffer_from_iter(indices, BufferUsage::index_buffer())?,
 			descriptor_set: descriptor_set
 		})
-	}
-
-	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), GenericEngineError>
-	{
-		self.sky_pipeline.resize_viewport(width, height)
 	}
 
 	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>, camera: &crate::component::camera::Camera)

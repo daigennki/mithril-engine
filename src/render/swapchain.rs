@@ -12,6 +12,7 @@ use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture,  };
 use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError, PresentFuture };
 use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
+use vulkano::pipeline::graphics::viewport::Viewport;
 
 use crate::GenericEngineError;
 
@@ -174,6 +175,17 @@ impl Swapchain
 	pub fn get_surface(&self) -> Arc<Surface<Window>>
 	{
 		self.swapchain.surface().clone()
+	}
+	
+	/// Get a viewport that fills the entire current swapchain image.
+	pub fn get_viewport(&self) -> Viewport
+	{
+		let dim = self.dimensions();
+		Viewport {
+			origin: [0.0, 0.0], 
+			dimensions: [ dim[0] as f32, dim[1] as f32 ],
+			depth_range: 0.0..1.0 
+		}	
 	}
 }
 
