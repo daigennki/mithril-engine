@@ -61,7 +61,7 @@ impl RenderContext
 			.with_min_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
 			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))	// TODO: load this from config
 			.with_title(game_name)
-			.with_resizable(false)
+			//.with_resizable(false)
 			.build_vk_surface(&event_loop, dev_queue.device().instance().clone())?;
 
 		Ok(RenderContext{
@@ -125,7 +125,7 @@ impl RenderContext
 		Ok(tex)
 	}
 	
-	pub fn new_cubemap_texture(&mut self, faces: [&Path; 6])
+	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6])
 		-> Result<texture::CubemapTexture, GenericEngineError>
 	{
 		let (tex, upload_future) = texture::CubemapTexture::new(self.dev_queue.clone(), faces)?;
@@ -223,20 +223,24 @@ impl RenderContext
 	/// The image size may change here, in which case pipelines will be re-created with resized viewports.
 	/// This must only be called once per frame, at the beginning of each frame before any render pass.
 	///
-	/// This returns the framebuffer for the image.
-	pub fn next_swapchain_image(&mut self) -> Result<Arc<vulkano::render_pass::Framebuffer>, GenericEngineError>
+	/// This returns the framebuffer for the image, and an `Option` with the new viewport size if it has been resized.
+	pub fn next_swapchain_image(&mut self) 
+		-> Result<(Arc<vulkano::render_pass::Framebuffer>, Option<[u32; 2]>), GenericEngineError>
 	{
 		let (next_img_fb, resize_viewports) = self.swapchain.get_next_image()?;
 
-		if resize_viewports {
+		let new_viewport_size = if resize_viewports {
 			let new_dimensions = self.swapchain.dimensions();
 			log::debug!("Recreating pipelines with new viewport...");
 			for (_, pl) in &mut self.material_pipelines {
 				pl.resize_viewport(new_dimensions[0], new_dimensions[1])?;
 			}
-		}
+			Some(new_dimensions)
+		} else {
+			None
+		};
 
-		Ok(next_img_fb)
+		Ok((next_img_fb, new_viewport_size))
 	}
 
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>

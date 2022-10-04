@@ -4,13 +4,12 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use std::path::Path;
 use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
 use vulkano::pipeline::graphics::{ input_assembly::PrimitiveTopology, depth_stencil::CompareOp };
 use vulkano::descriptor_set::{ PersistentDescriptorSet, WriteDescriptorSet };
 use vulkano::sampler::SamplerCreateInfo;
 
-use super::{ RenderContext, command_buffer::CommandBuffer, texture::CubemapTexture };
+use super::{ RenderContext, command_buffer::CommandBuffer };
 use crate::GenericEngineError;
 
 #[derive(shipyard::Unique)]
@@ -23,7 +22,11 @@ pub struct Skybox
 }
 impl Skybox
 {
-	pub fn new(render_ctx: &mut RenderContext) -> Result<Self, GenericEngineError>
+	/// Create a new skybox, using 6 texture files for each face, loaded from paths in the given format `tex_files_format`.
+	/// The format string should have an asterisk in it, for example "sky/Daylight Box_*.png", which will be replaced 
+	/// with the face name.
+	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".	
+	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, GenericEngineError>
 	{
 		// sky pipeline
 		// TODO: this should be moved out of here so we're not creating it again when the skybox is changed
@@ -41,14 +44,9 @@ impl Skybox
 		)?;
 
 		// sky texture cubemap
-		let sky_cubemap = render_ctx.new_cubemap_texture([
-			Path::new("sky/Daylight Box_Right.png"),
-			Path::new("sky/Daylight Box_Left.png"),
-			Path::new("sky/Daylight Box_Top.png"),
-			Path::new("sky/Daylight Box_Bottom.png"),
-			Path::new("sky/Daylight Box_Front.png"),
-			Path::new("sky/Daylight Box_Back.png")
-		])?;
+		let face_names = [ "Right", "Left", "Top", "Bottom", "Front", "Back" ];
+		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
+		let sky_cubemap = render_ctx.new_cubemap_texture(face_paths)?;
 		let descriptor_set = sky_pipeline.new_descriptor_set(0, [
 			WriteDescriptorSet::image_view(1, sky_cubemap.view().clone())
 		])?;
@@ -80,9 +78,13 @@ impl Skybox
 		})
 	}
 
-	// TODO: add a function for resizing viewport
+	pub fn resize_viewport(&mut self, width: u32, height: u32) -> Result<(), GenericEngineError>
+	{
+		self.sky_pipeline.resize_viewport(width, height)
+	}
 
-	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>, camera: &crate::component::camera::Camera) -> Result<(), GenericEngineError>
+	pub fn draw<L>(&self, cb: &mut CommandBuffer<L>, camera: &crate::component::camera::Camera)
+		-> Result<(), GenericEngineError>
 	{
 		cb.bind_pipeline(&self.sky_pipeline);
 		cb.bind_descriptor_set(0, vec![ self.descriptor_set.clone() ])?;

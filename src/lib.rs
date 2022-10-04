@@ -15,7 +15,7 @@ use serde::Deserialize;
 use shipyard::{ World, View, ViewMut, Get, UniqueView, UniqueViewMut, Workload, WorkloadModificator };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{ SecondaryAutoCommandBuffer, SubpassContents };
 
 use egui_winit_vulkano::egui;
 use egui::{ScrollArea, TextEdit, TextStyle};
@@ -67,7 +67,7 @@ impl GameContext
 		//world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
 		//world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
 
-		world.add_unique(render::skybox::Skybox::new(&mut render_ctx)?);
+		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(render_ctx);
 		world.add_unique(ThreadedRenderingManager::new(2));
 
@@ -129,13 +129,13 @@ impl GameContext
 						Some(vulkano::format::ClearValue::Depth(1.0))
 					];
 
-					primary_cb.begin_render_pass(rp_begin_info.clone(), vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
+					primary_cb.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?;
 					primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
 
-					primary_cb.next_subpass(vulkano::command_buffer::SubpassContents::SecondaryCommandBuffers)?;
+					primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
 					// we need to wait here to prevent GpuLocked in `draw_on_subpass_image`.
 					// we've already done most of the CPU work, so this shouldn't have a *significant* impact on performance.
-					// TODO: we should still disable egui release builds, since we still want to keep things as tight
+					// TODO: we should still disable egui in release builds, since we still want to keep things as tight
 					// together as possible.
 					render_ctx.wait_for_fence()?;
 					primary_cb.execute_secondary(self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions()))?;
@@ -307,10 +307,16 @@ fn draw_ui(
 	trm.add_cb(command_buffer.build()?);
 	Ok(())
 }
-fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>)
+fn prepare_primary_render(
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut skybox: UniqueViewMut<render::skybox::Skybox>
+)
 	-> Result<(), GenericEngineError>
 {
-	render_ctx.next_swapchain_image()?;
+	let (_, new_viewport_size) = render_ctx.next_swapchain_image()?;
+	if let Some(resized) = new_viewport_size {
+		skybox.resize_viewport(resized[0], resized[1])?;
+	}
 
 	Ok(())
 }

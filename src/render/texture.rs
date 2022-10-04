@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use std::path::Path;
+use std::path::{ Path, PathBuf };
 use vulkano::image::{ 
 	ImageLayout, ImageUsage, ImageCreateFlags, ImmutableImage, ImageDimensions, MipmapsCount, 
 	view::ImageView, view::ImageViewType, immutable::ImmutableImageCreationError
@@ -85,7 +85,7 @@ pub struct CubemapTexture
 impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
-	pub fn new(queue: Arc<vulkano::device::Queue>, faces: [&Path; 6]) 
+	pub fn new(queue: Arc<vulkano::device::Queue>, faces: [PathBuf; 6]) 
 		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
@@ -99,8 +99,8 @@ impl CubemapTexture
 
 			let file_ext = face.extension().ok_or("Could not determine texture file extension!")?.to_str();
 			let (vk_fmt, dim, mip, img_raw) = match file_ext {
-				Some("dds") => load_dds(face)?,
-				_ => load_other_format(face)?
+				Some("dds") => load_dds(&face)?,
+				_ => load_other_format(&face)?
 			};
 
 			// TODO: ignore other mipmap levels, if there are any
