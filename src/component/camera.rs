@@ -32,7 +32,12 @@ pub struct Camera
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
 
 	position: Vec3,
-	target: Vec3
+	target: Vec3,
+
+	#[serde(skip)]
+	width: u32,
+	#[serde(skip)]
+	height: u32
 }
 impl Camera
 {
@@ -50,11 +55,19 @@ impl Camera
 		})
 	}*/
 
-	pub fn set_pos_and_target(&mut self, render_ctx: &mut RenderContext, pos: Vec3, target: Vec3)
-		-> Result<(), GenericEngineError>
+	pub fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), GenericEngineError>
 	{
-		let dim = render_ctx.swapchain_dimensions();
-		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = calculate_projview(pos, target, dim[0], dim[1]);
+		self.width = width;
+		self.height = height;
+		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = 
+			calculate_projview(self.position, self.target, width, height);
+		Ok(())
+	}
+
+	pub fn set_pos_and_target(&mut self, pos: Vec3, target: Vec3) -> Result<(), GenericEngineError>
+	{
+		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = 
+			calculate_projview(pos, target, self.width, self.height);
 		Ok(())
 	}
 

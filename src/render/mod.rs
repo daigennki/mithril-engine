@@ -220,13 +220,18 @@ impl RenderContext
 	/// The image size *may* change here.
 	/// This must only be called once per frame, at the beginning of each frame before any render pass.
 	///
-	/// This returns the framebuffer for the image.
+	/// This returns the framebuffer for the image, and if the images were resized, the new dimensions.
 	pub fn next_swapchain_image(&mut self) 
-		-> Result<Arc<vulkano::render_pass::Framebuffer>, GenericEngineError>
+		-> Result<(Arc<vulkano::render_pass::Framebuffer>, Option<[u32; 2]>), GenericEngineError>
 	{
-		let (next_img_fb, _) = self.swapchain.get_next_image()?;
+		let (next_img_fb, dimensions_changed) = self.swapchain.get_next_image()?;
+		let new_dim = if dimensions_changed {
+			Some(self.swapchain_dimensions())
+		} else {
+			None
+		};
 
-		Ok(next_img_fb)
+		Ok((next_img_fb, new_dim))
 	}
 
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>

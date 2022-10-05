@@ -311,10 +311,17 @@ fn draw_ui(
 	trm.add_cb(command_buffer.build()?);
 	Ok(())
 }
-fn prepare_primary_render(mut render_ctx: UniqueViewMut<render::RenderContext>)
+fn prepare_primary_render(
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut camera: UniqueViewMut<Camera>
+)
 	-> Result<(), GenericEngineError>
 {
-	render_ctx.next_swapchain_image()?;
+	let (_, new_image_dimensions) = render_ctx.next_swapchain_image()?;
+
+	if let Some(d) = new_image_dimensions {
+		camera.update_window_size(d[0], d[1])?;
+	}
 
 	Ok(())
 }
