@@ -77,16 +77,12 @@ impl RenderContext
 
 	/// Load a material shader pipeline into memory.
 	/// The definition file name must be in the format "[name].yaml" and stored in the "shaders" folder.
-	pub fn load_material_pipeline(&mut self, definition_file: &str) -> Result<(), GenericEngineError>
+	pub fn load_material_pipeline(&mut self, filename: &str) -> Result<(), GenericEngineError>
 	{
-		let name = definition_file.split_once('.')
-			.ok_or(format!("Invalid material pipeline definition file name '{}'", definition_file))?
+		let name = filename.split_once('.')
+			.ok_or(format!("Invalid material pipeline definition file name '{}'", filename))?
 			.0.to_string();
-		let dim = self.swapchain.dimensions();
-		self.material_pipelines.insert(
-			name, 
-			pipeline::Pipeline::new_from_yaml(definition_file, self.swapchain.render_pass(), dim[0], dim[1])?
-		);
+		self.material_pipelines.insert(name, pipeline::Pipeline::new_from_yaml(filename, self.swapchain.render_pass())?);
 		Ok(())
 	}
 

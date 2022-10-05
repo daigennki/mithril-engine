@@ -16,7 +16,6 @@ use shipyard::{ World, View, ViewMut, Get, UniqueView, UniqueViewMut, Workload, 
 use shipyard::iter::{ IntoIter, IntoWithId };
 
 use vulkano::command_buffer::{ SecondaryAutoCommandBuffer, SubpassContents };
-use vulkano::pipeline::graphics::viewport::Viewport;
 
 use egui_winit_vulkano::egui;
 use egui::{ScrollArea, TextEdit, TextStyle};

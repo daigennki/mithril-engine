@@ -30,18 +30,13 @@ use crate::GenericEngineError;
 
 pub struct Pipeline
 {
-	vs: Arc<ShaderModule>,
-	fs: Option<Arc<ShaderModule>>,
-	samplers: Vec<(usize, u32, Arc<Sampler>)>,
-	pipeline: Arc<GraphicsPipeline>,
-	subpass: Subpass
+	pipeline: Arc<GraphicsPipeline>
 }
 impl Pipeline
 {
 	pub fn new( 
 		primitive_topology: PrimitiveTopology,	
-		vs_filename: String,
-		fs_filename: Option<String>,
+		vs_filename: String, fs_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
 		render_pass: Arc<RenderPass>, 
 		depth_op: CompareOp
@@ -65,26 +60,23 @@ impl Pipeline
 			// Enable primitive restart if a triangle strip is being drawn.
 			input_assembly_state = input_assembly_state.primitive_restart_enable();
 		}
-		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
 		let depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
 				enable_dynamic: false,
 				write_enable: StateMode::Fixed(true),
-				compare_op: StateMode::Fixed(depth_op)
+				compare_op: StateMode::Fixed(depth_op),
 			}),
-			depth_bounds: None,
-			stencil: None
+			..Default::default()
 		};
 
 		let pipeline_built = build_pipeline_common(
-			vk_dev.clone(), input_assembly_state, 
-			vertex_input_state, 
+			vk_dev.clone(), input_assembly_state, vertex_input_state, 
 			vs.clone(), fs.clone(), 
 			subpass.clone(),
 			&samplers,
-			color_blend_state,
-			Some(depth_stencil_state)
+			color_blend_state_from_subpass(&subpass),
+			depth_stencil_state
 		)?;
 
 		log::debug!("Built pipeline with descriptors:");
@@ -96,17 +88,11 @@ impl Pipeline
 			);
 		}
 			
-		Ok(Pipeline{
-			vs: vs,
-			fs: fs,
-			samplers: samplers,
-			pipeline: pipeline_built,
-			subpass: subpass,
-		})
+		Ok(Pipeline{ pipeline: pipeline_built })
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
-	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>, width: u32, height: u32)
+	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>)
 		-> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
@@ -289,26 +275,23 @@ fn build_pipeline_common(
 	subpass: Subpass,
 	samplers: &Vec<(usize, u32, Arc<Sampler>)>,
 	color_blend_state: Option<ColorBlendState>,
-	depth_stencil_state: Option<DepthStencilState>
+	depth_stencil_state: DepthStencilState
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
+	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
+
 	// do some building
 	let mut pipeline_builder = GraphicsPipeline::start()
 		.input_assembly_state(input_assembly_state)
 		.vertex_input_state(vertex_input_state)
+		.vertex_shader(vs_entry, ())
 		.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-		.render_pass(subpass);
+		.render_pass(subpass)
+		.depth_stencil_state(depth_stencil_state);
 	
 	if let Some(c) = color_blend_state {
 		pipeline_builder = pipeline_builder.color_blend_state(c);
 	}
-	if let Some(d) = depth_stencil_state {
-		pipeline_builder = pipeline_builder.depth_stencil_state(d);
-	}
-	
-	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
-	pipeline_builder = pipeline_builder.vertex_shader(vs_entry, ());
-
 	if let Some(fs_exists) = fs.as_ref() {
 		let fs_entry = fs_exists.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 		pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
