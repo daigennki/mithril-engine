@@ -6,11 +6,11 @@
 use std::sync::Arc;
 use winit::window::Window;
 use vulkano::device::{ Queue, DeviceOwned };
-use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, CommandBufferExecFuture };
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture,  };
-use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError, PresentFuture };
+use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError };
 use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
 use vulkano::pipeline::graphics::viewport::Viewport;
 
@@ -26,7 +26,7 @@ pub struct Swapchain
 	// The future to wait for before the next submission.
 	// Includes image acquisition, as well as the previous frame's fence signal.
 	wait_before_submit: Option<Box<dyn GpuFuture + Send + Sync>>,
-	fence_signal_future: Option<FenceSignalFuture<PresentFuture<CommandBufferExecFuture<Box<dyn GpuFuture + Send + Sync>, PrimaryAutoCommandBuffer>, winit::window::Window>>>
+	fence_signal_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
 }
 impl Swapchain
 {
@@ -141,6 +141,7 @@ impl Swapchain
 		let future_result = joined_futures
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
+			.boxed_send_sync()
 			.then_signal_fence_and_flush();
 
 		match future_result {
@@ -154,7 +155,7 @@ impl Swapchain
 
 	pub fn wait_for_fence(&self) -> Result<(), FlushError>
 	{
-		self.fence_signal_future.as_ref().map(|f| f.wait(None)).unwrap_or(Ok(()))
+		self.fence_signal_future.as_ref().map_or(Ok(()), |f| f.wait(None))
 	}
 
 	pub fn render_pass(&self) -> Arc<RenderPass>
