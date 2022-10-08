@@ -9,8 +9,8 @@ use vulkano::device::{ Queue, DeviceOwned };
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
-use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture,  };
-use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, AcquireError };
+use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture };
+use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, SwapchainAcquireFuture, AcquireError };
 use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
 use vulkano::pipeline::graphics::viewport::Viewport;
 
@@ -23,9 +23,8 @@ pub struct Swapchain
 	framebuffers: Vec<Arc<Framebuffer>>,
 	cur_image_num: usize,
 
-	// The future to wait for before the next submission.
-	// Includes image acquisition, as well as the previous frame's fence signal.
-	wait_before_submit: Option<Box<dyn GpuFuture + Send + Sync>>,
+	// The futures to wait for before the next submission.
+	acquire_future: Option<SwapchainAcquireFuture<Window>>,
 	fence_signal_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
 }
 impl Swapchain
@@ -68,7 +67,7 @@ impl Swapchain
 			swapchain_rp: swapchain_rp.clone(),
 			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
 			cur_image_num: 0,
-			wait_before_submit: None,
+			acquire_future: None,
 			fence_signal_future: None
 		})
 	}
@@ -98,18 +97,18 @@ impl Swapchain
 	pub fn get_next_image(&mut self) -> Result<(Arc<Framebuffer>, bool), GenericEngineError>
 	{
 		// clean up resources from finished submissions
-		self.wait_before_submit.as_mut().map(GpuFuture::cleanup_finished);
-		self.fence_signal_future.as_mut().map(GpuFuture::cleanup_finished);
+		if let Some(f) = self.fence_signal_future.as_mut() {
+			f.cleanup_finished();
+		}
+
+		if self.acquire_future.is_some() {
+			panic!("`get_next_image` called when image has already been acquired without being submitted!");
+		}
 
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 			Ok((image_num, false, acquire_future)) => {
 				self.cur_image_num = image_num;
-				self.wait_before_submit = Some(
-					match self.wait_before_submit.take() {
-						Some(f) => Box::new(f.join(acquire_future)),
-						None => Box::new(acquire_future)
-					}
-				);
+				self.acquire_future = Some(acquire_future);
 				Ok((self.framebuffers[self.cur_image_num].clone(), false))
 			},
 			Ok((_, true, _)) |	// if suboptimal
@@ -127,7 +126,10 @@ impl Swapchain
 	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>)
 		-> Result<(), GenericEngineError>
 	{
-		let mut joined_futures = self.wait_before_submit.take().ok_or(NoSubmitFuturesError)?.boxed_send_sync();
+		let mut joined_futures = self.acquire_future.take()
+			.expect("Command buffer submitted without acquiring an image!")
+			.boxed_send_sync();
+
 		if let Some(f) = self.fence_signal_future.take() {
 			joined_futures = Box::new(joined_futures.join(f));
 		}
@@ -214,14 +216,5 @@ fn create_framebuffers(images: Vec<Arc<SwapchainImage<Window>>>, render_pass: Ar
 		};
 		Ok(Framebuffer::new(render_pass.clone(), fb_create_info)?)
 	}).collect()
-}
-
-#[derive(Debug)]
-struct NoSubmitFuturesError;
-impl std::error::Error for NoSubmitFuturesError {}
-impl std::fmt::Display for NoSubmitFuturesError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "`wait_before_submit` was `None`; did you forget to call `get_next_image`?")
-    }
 }
 
