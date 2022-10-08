@@ -32,12 +32,10 @@ impl PBR
 }
 impl DeferMaterialLoading for PBR
 {
-	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
+	fn update_descriptor_set(&mut self, parent_folder: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
-		let tex_path_prefix = path_to_this.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-
 		// TODO: roughness and specular textures
-		let base_color_tex = self.base_color.into_texture(&tex_path_prefix, render_ctx)?;
+		let base_color_tex = self.base_color.into_texture(parent_folder, render_ctx)?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set(self.pipeline_name(), 2, [
 			WriteDescriptorSet::image_view(1, base_color_tex.view())

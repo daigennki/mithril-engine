@@ -110,7 +110,7 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &m
 
 	log::info!("Loading material file '{}'...", mat_path.display());
 	let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
-	deserialized_mat.update_descriptor_set(&mat_path, render_ctx)?;
+	deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
 	Ok(deserialized_mat)
 }
 
