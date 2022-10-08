@@ -16,6 +16,7 @@ use crate::render::model::Model;
 pub struct Mesh
 {
 	model_path: PathBuf,
+	use_embedded_materials: Option<bool>,
 	#[serde(skip)]
 	model_data: Option<Arc<Model>>
 }
@@ -25,7 +26,7 @@ impl DeferGpuResourceLoading for Mesh
 	{
 		// model path relative to current directory
 		let model_path_cd_rel = Path::new("./models/").join(&self.model_path);
-		self.model_data = Some(render_ctx.get_model(&model_path_cd_rel)?);
+		self.model_data = Some(render_ctx.get_model(&model_path_cd_rel, self.use_embedded_materials.unwrap_or(false))?);
 		Ok(())
 	}
 }

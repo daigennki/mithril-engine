@@ -24,7 +24,8 @@ pub struct Model
 }
 impl Model 
 {
-	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, path: &Path, use_embedded_materials: bool) 
+		-> Result<Self, GenericEngineError>
 	{
 		let parent_folder = path.parent().unwrap();
 
@@ -47,7 +48,7 @@ impl Model
 
 				Ok(Model{
 					materials: doc.materials()
-						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
+						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx, use_embedded_materials))
 						.collect::<Result<_, _>>()?,
 
 					submeshes: doc.nodes()
@@ -102,16 +103,23 @@ fn load_obj_mtl(obj_mat: &tobj::Material, search_folder: &Path, render_ctx: &mut
 	Ok(Box::new(loaded_mat))
 }
 
-fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext)
+fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext, use_embedded: bool)
 	-> Result<Box<dyn Material>, GenericEngineError>
 {
 	let material_name = mat.name().ok_or("glTF mesh material has no name")?;
 	let mat_path = search_folder.join(material_name).with_extension("yaml");
 
-	log::info!("Loading material file '{}'...", mat_path.display());
-	let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
-	deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
-	Ok(deserialized_mat)
+	if use_embedded {
+		let base_color = crate::material::ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor()));
+		let mut loaded_mat = crate::material::pbr::PBR::new(base_color);
+		loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
+		Ok(Box::new(loaded_mat))
+	} else {
+		log::info!("Loading material file '{}'...", mat_path.display());
+		let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
+		deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
+		Ok(deserialized_mat)
+	}
 }
 
 enum IndexBufferVariant
