@@ -124,16 +124,10 @@ impl Swapchain
 	}
 
 	/// Submit a primary command buffer's commands.
-	pub fn submit_commands(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, futures: Option<Box<dyn GpuFuture + Send + Sync>>
-	)
+	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>)
 		-> Result<(), GenericEngineError>
 	{
 		let mut joined_futures = self.wait_before_submit.take().ok_or(NoSubmitFuturesError)?.boxed_send_sync();
-		if let Some(f) = futures {
-			// join the joined futures from images and buffers being uploaded
-			joined_futures = Box::new(joined_futures.join(f));
-		}
 		if let Some(f) = self.fence_signal_future.take() {
 			joined_futures = Box::new(joined_futures.join(f));
 		}

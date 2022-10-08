@@ -8,7 +8,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo,
 	CommandBufferUsage, SubpassContents, DrawError, RenderPassError, CheckPipelineError, BuildError, ExecuteCommandsError,
 	CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassType, CommandBufferInheritanceRenderPassInfo,
-	DrawIndexedError
+	DrawIndexedError, CopyBufferToImageInfo, CopyBufferInfo, CopyError
 };
 use vulkano::device::Queue;
 use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
@@ -74,17 +74,15 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 }
 impl CommandBuffer<SecondaryAutoCommandBuffer>
 {
-	pub fn new(queue: Arc<Queue>, framebuffer: Arc<Framebuffer>) -> Result<Self, GenericEngineError>
+	pub fn new(queue: Arc<Queue>, framebuffer: Option<Arc<Framebuffer>>) -> Result<Self, GenericEngineError>
 	{
-		let render_pass = framebuffer.render_pass().clone();
-		let subpass = render_pass.first_subpass();
 		let inheritance = CommandBufferInheritanceInfo{
-			render_pass: Some(
+			render_pass: framebuffer.and_then(|fb| Some(
 				CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo{
-					subpass: subpass,
-					framebuffer: Some(framebuffer)
+					subpass: fb.render_pass().clone().first_subpass(),
+					framebuffer: Some(fb)
 				})
-			),
+			)),
 			..Default::default()
 		};
 		let new_cb = AutoCommandBufferBuilder::secondary(
@@ -154,6 +152,20 @@ impl<L> CommandBuffer<L>
 		where I: IntoIterator<Item = Viewport>
 	{
 		self.cb.set_viewport(first_viewport, viewports);
+	}
+
+	pub fn copy_buffer_to_image(&mut self, copy_buffer_to_image_info: CopyBufferToImageInfo)
+		-> Result<(), CopyError>
+	{
+		self.cb.copy_buffer_to_image(copy_buffer_to_image_info)?;
+		Ok(())
+	}
+
+	pub fn copy_buffer(&mut self, copy_buffer_info: CopyBufferInfo)
+		-> Result<(), CopyError>
+	{
+		self.cb.copy_buffer(copy_buffer_info)?;
+		Ok(())
 	}
 }
 

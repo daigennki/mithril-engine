@@ -6,15 +6,11 @@
 use std::sync::Arc;
 use std::path::{ Path, PathBuf };
 use vulkano::image::{ 
-	ImageLayout, ImageUsage, ImageCreateFlags, ImmutableImage, ImageDimensions, MipmapsCount, 
-	view::ImageView, view::ImageViewType, immutable::ImmutableImageCreationError
+	ImageLayout, ImageUsage, ImageCreateFlags, ImmutableImage, ImageDimensions, MipmapsCount,
+	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType
 };
 use vulkano::format::{ Format };
-use vulkano::command_buffer::{ 
-	AutoCommandBufferBuilder, CopyBufferToImageInfo, CommandBufferUsage, CommandBufferExecFuture, PrimaryAutoCommandBuffer, 
-	PrimaryCommandBuffer
-};
-use vulkano::sync::NowFuture;
+use vulkano::command_buffer::CopyBufferToImageInfo;
 use vulkano::device::{ Queue, DeviceOwned };
 use vulkano::buffer::{ BufferUsage, CpuAccessibleBuffer };
 use ddsfile::DxgiFormat;
@@ -29,7 +25,7 @@ pub struct Texture
 impl Texture
 {
 	pub fn new(queue: Arc<vulkano::device::Queue>, path: &Path) 
-		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
+		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
 		log::info!("Loading texture file '{}'...", path.display());
@@ -49,20 +45,35 @@ impl Texture
 		dimensions: ImageDimensions,
 		mip: MipmapsCount
 	) 
-		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
+		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let (vk_img, upload_future) = ImmutableImage::from_iter(iter, dimensions, mip, vk_fmt, queue)?;
-		let view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
+		// TODO: consider other uses, such as framebuffer attachments
+		let dst_img_usage = ImageUsage {
+			transfer_dst: true,
+			sampled: true,
+			..ImageUsage::none()
+		};
+		
+		let staging_buf = CpuAccessibleBuffer::from_iter(queue.device().clone(), BufferUsage::transfer_src(), false, iter)?;
+		let (dst_img, initializer) = ImmutableImage::uninitialized(
+			queue.device().clone(), dimensions, vk_fmt, mip, dst_img_usage, 
+			ImageCreateFlags::none(), ImageLayout::ShaderReadOnlyOptimal, [ queue.family() ]
+		)?;
+
+		let view = ImageView::new(dst_img.clone(), ImageViewCreateInfo::from_image(&dst_img))?;
+
+		// TODO: also copy mipmaps
+
 		Ok((
 			Texture{
-				view: ImageView::new(vk_img, view_create_info)?,
+				view: view,
 				dimensions: dimensions
-			},
-			upload_future
+			}, 
+			CopyBufferToImageInfo::buffer_image(staging_buf, initializer)
 		))
 	}
 
@@ -86,7 +97,7 @@ impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
 	pub fn new(queue: Arc<vulkano::device::Queue>, faces: [PathBuf; 6]) 
-		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
+		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
 
@@ -140,25 +151,20 @@ impl CubemapTexture
 		dimensions: ImageDimensions,
 		mip: MipmapsCount
 	) 
-		-> Result<(Self, CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>), GenericEngineError>
+		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-
-
-		let (vk_img, upload_future) = create_cubemap_image(iter, dimensions, mip, vk_fmt, queue)?;
+		let (vk_img, staging_info) = create_cubemap_image(iter, dimensions, mip, vk_fmt, queue)?;
 		let mut view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
 		view_create_info.view_type = ImageViewType::Cube;
 		
-		Ok((
-			CubemapTexture{
-				view: ImageView::new(vk_img, view_create_info)?,
-				dimensions: dimensions
-			},
-			upload_future
-		))
+		Ok((CubemapTexture{
+			view: ImageView::new(vk_img, view_create_info)?,
+			dimensions: dimensions
+		}, staging_info))
 	}
 
 	pub fn view(&self) -> Arc<ImageView<ImmutableImage>>
@@ -172,17 +178,13 @@ impl CubemapTexture
 	}
 }
 
-// code copied from source code of ImmutableImage::from_iter and ImmutableImage::from_buffer in vulkano/image/immutable.rs,
+// some code copied from source code of ImmutableImage::from_iter and ImmutableImage::from_buffer in vulkano/image/immutable.rs,
 // excluding mipmap generation code since we don't use that with cubemaps.
 // we have to do this to use the cube_compatible flag.
-fn create_cubemap_image<Px, I>(iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, queue: Arc<Queue>)
-	-> Result<
-		(
-            Arc<ImmutableImage>,
-            CommandBufferExecFuture<NowFuture, PrimaryAutoCommandBuffer>,
-        ),
-        ImmutableImageCreationError
-	>
+fn create_cubemap_image<Px, I>(
+	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, queue: Arc<Queue>
+)
+	-> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
@@ -197,7 +199,6 @@ fn create_cubemap_image<Px, I>(iter: I, dimensions: ImageDimensions, mip_levels:
 
 	let usage = ImageUsage {
 		transfer_dst: true,
-		transfer_src: false,
 		sampled: true,
 		..ImageUsage::none()
 	};
@@ -216,22 +217,7 @@ fn create_cubemap_image<Px, I>(iter: I, dimensions: ImageDimensions, mip_levels:
 		source.device().active_queue_families(),
 	)?;
 
-	let mut cbb = AutoCommandBufferBuilder::primary(
-		source.device().clone(),
-		queue.family(),
-		CommandBufferUsage::MultipleSubmit,
-	)?;
-	cbb.copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(source, initializer))
-		.unwrap();
-
-	let cb = cbb.build().unwrap();
-
-	let future = match cb.execute(queue) {
-		Ok(f) => f,
-		Err(e) => unreachable!("{:?}", e),
-	};
-
-	Ok((image, future))
+	Ok((image, CopyBufferToImageInfo::buffer_image(source, initializer)))
 }
 
 fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>

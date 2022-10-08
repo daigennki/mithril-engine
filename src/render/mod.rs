@@ -11,21 +11,21 @@ pub mod model;
 pub mod skybox;
 
 use std::sync::Arc;
-use std::collections::HashMap;
+use std::collections::{ LinkedList, HashMap };
 use std::fmt::Debug;
 use std::path::{ Path, PathBuf };
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 use vulkano::device::{ Queue, physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily } };
-use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer };
+use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, CopyBufferInfo, CopyBufferToImageInfo };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::format::Format;
 use vulkano::buffer::{ 
-	ImmutableBuffer, BufferUsage, cpu_access::CpuAccessibleBuffer, immutable::ImmutableBufferCreationError
+	ImmutableBuffer, BufferUsage, cpu_access::CpuAccessibleBuffer, TypedBufferAccess
 };
 use vulkano::render_pass::Framebuffer;
 use vulkano::memory::DeviceMemoryAllocationError;
-use vulkano::sync::{ GpuFuture, FlushError };
+use vulkano::sync::FlushError;
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 use vulkano::pipeline::graphics::viewport::Viewport;
 
@@ -39,8 +39,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	dev_queue: Arc<Queue>,	// this also owns the logical device
 
-	upload_futures: Option<Box<dyn GpuFuture + Send + Sync>>,
-	upload_futures_count: usize,
+	staging_work_queue: LinkedList<StagingWork>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: HashMap<PathBuf, Arc<Model>>,
@@ -68,8 +67,7 @@ impl RenderContext
 		Ok(RenderContext{
 			swapchain: swapchain::Swapchain::new(dev_queue.device().clone(), window_surface)?,
 			dev_queue: dev_queue.clone(),
-			upload_futures: None,
-			upload_futures_count: 0,
+			staging_work_queue: LinkedList::new(),
 			models: HashMap::new(),
 			material_pipelines: HashMap::new()
 		})
@@ -102,31 +100,19 @@ impl RenderContext
 			}
 		})
 	}
-	
-	pub fn join_future<F>(&mut self, next_future: F)
-		where F: vulkano::sync::GpuFuture + 'static + Send + Sync
-	{
-		self.upload_futures = Some(
-			match self.upload_futures.take() {
-				Some(f) => Box::new(f.join(next_future)),
-				None => Box::new(next_future)
-			}
-		);
-		self.upload_futures_count += 1;
-	}
 
 	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
 	{
-		let (tex, upload_future) = texture::Texture::new(self.dev_queue.clone(), path)?;
-		self.join_future(upload_future);
+		let (tex, staging_work) = texture::Texture::new(self.dev_queue.clone(), path)?;
+		self.staging_work_queue.push_back(staging_work.into());
 		Ok(tex)
 	}
 	
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6])
 		-> Result<texture::CubemapTexture, GenericEngineError>
 	{
-		let (tex, upload_future) = texture::CubemapTexture::new(self.dev_queue.clone(), faces)?;
-		self.join_future(upload_future);
+		let (tex, staging_work) = texture::CubemapTexture::new(self.dev_queue.clone(), faces)?;
+		self.staging_work_queue.push_back(staging_work.into());
 		Ok(tex)
 	}
 
@@ -142,37 +128,41 @@ impl RenderContext
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator
 	{
-		let (tex, upload_future) = texture::Texture::new_from_iter(
+		let (tex, staging_work) = texture::Texture::new_from_iter(
 			self.dev_queue.clone(), 
 			iter,
 			vk_fmt, 
 			dimensions, 
-			mip
+			mip,
 		)?;
-		self.join_future(upload_future);
+		self.staging_work_queue.push_back(staging_work.into());
 		Ok(tex)
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer_from_iter<I,T>(&mut self, data: I, usage: BufferUsage) 
-		-> Result<Arc<ImmutableBuffer<[T]>>, ImmutableBufferCreationError>
+	pub fn new_buffer_from_iter<I,T>(&mut self, data: I, mut usage: BufferUsage) 
+		-> Result<Arc<ImmutableBuffer<[T]>>, GenericEngineError>
 		where
 			I: IntoIterator<Item = T>,
 			I::IntoIter: ExactSizeIterator,
 			[T]: vulkano::buffer::BufferContents, 
 	{
-		let (buf, upload_future) = ImmutableBuffer::from_iter(data, usage, self.dev_queue.clone())?;
-		self.join_future(upload_future);
+		let staging_buf = CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), BufferUsage::transfer_src(), false, data)?;
+		usage.transfer_dst = true;
+		let (buf, initializer) = unsafe { ImmutableBuffer::uninitialized_array(self.dev_queue.device().clone(), staging_buf.len(), usage) }?;
+		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, initializer).into());
 		Ok(buf)
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer_from_data<T>(&mut self, data: T, usage: BufferUsage) 
-		-> Result<Arc<ImmutableBuffer<T>>, ImmutableBufferCreationError>
+	pub fn new_buffer_from_data<T>(&mut self, data: T, mut usage: BufferUsage) 
+		-> Result<Arc<ImmutableBuffer<T>>, GenericEngineError>
 		where T: vulkano::buffer::BufferContents, 
 	{
-		let (buf, upload_future) = ImmutableBuffer::from_data(data, usage, self.dev_queue.clone())?;
-		self.join_future(upload_future);
+		let staging_buf = CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), BufferUsage::transfer_src(), false, data)?;
+		usage.transfer_dst = true;
+		let (buf, initializer) = unsafe { ImmutableBuffer::uninitialized(self.dev_queue.device().clone(), usage) }?;
+		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, initializer).into());
 		Ok(buf)
 	}
 
@@ -213,7 +203,7 @@ impl RenderContext
 	pub fn new_secondary_command_buffer(&mut self, framebuffer: Arc<vulkano::render_pass::Framebuffer>) 
 		-> Result<CommandBuffer<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), framebuffer)
+		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), Some(framebuffer))
 	}
 
 	/// Tell the swapchain to go to the next image.
@@ -234,14 +224,28 @@ impl RenderContext
 		Ok((next_img_fb, new_dim))
 	}
 
+	/// Build and take the command buffer for staging buffers and images.
+	/// This will return `None` if there is nothing queued for staging.
+	pub fn take_staging_command_buffer(&mut self) -> Result<Option<SecondaryAutoCommandBuffer>, GenericEngineError>
+	{
+		if self.staging_work_queue.is_empty() {
+			return Ok(None)
+		}
+		let mut staging_cb = CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), None)?;
+		let work_count = self.staging_work_queue.len();
+		log::debug!("Building a staging command buffer with {} copies", work_count);
+		for work in std::mem::take(&mut self.staging_work_queue) {
+			match work {
+				StagingWork::CopyBuffer(info) => staging_cb.copy_buffer(info)?,
+				StagingWork::CopyBufferToImage(info) => staging_cb.copy_buffer_to_image(info)?
+			}
+		}
+		Ok(Some(staging_cb.build()?))
+	}
+
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
-		// consume the futures to join them upon submission
-		if self.upload_futures_count > 0 {
-			log::debug!("Joining a future of {} futures.", self.upload_futures_count);
-		}
-		self.upload_futures_count = 0;
-		self.swapchain.submit_commands(built_cb, self.dev_queue.clone(), self.upload_futures.take())
+		self.swapchain.submit_commands(built_cb, self.dev_queue.clone())
 	}
 
 	pub fn wait_for_fence(&self) -> Result<(), FlushError>
@@ -287,6 +291,26 @@ impl std::fmt::Display for PipelineNotLoaded {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "the specified pipeline is not loaded")
     }
+}
+
+enum StagingWork
+{
+	CopyBuffer(CopyBufferInfo),
+	CopyBufferToImage(CopyBufferToImageInfo)
+}
+impl From<CopyBufferInfo> for StagingWork
+{
+	fn from(info: CopyBufferInfo) -> StagingWork
+	{
+		Self::CopyBuffer(info)
+	}
+}
+impl From<CopyBufferToImageInfo> for StagingWork
+{
+	fn from(info: CopyBufferToImageInfo) -> StagingWork
+	{
+		Self::CopyBufferToImage(info)
+	}
 }
 
 fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)

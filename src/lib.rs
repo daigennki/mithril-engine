@@ -12,13 +12,12 @@ use std::path::{ Path, PathBuf };
 use winit::event::{ Event, WindowEvent };
 use simplelog::*;
 use serde::Deserialize;
-use shipyard::{ World, View, ViewMut, Get, UniqueView, UniqueViewMut, Workload, WorkloadModificator };
+use shipyard::{ World, View, ViewMut, Get, EntitiesView, UniqueView, UniqueViewMut, Workload, WorkloadModificator, EntityId };
 use shipyard::iter::{ IntoIter, IntoWithId };
 
-use vulkano::command_buffer::{ SecondaryAutoCommandBuffer, SubpassContents };
+use vulkano::command_buffer::{ RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents };
 
 use egui_winit_vulkano::egui;
-use egui::{ScrollArea, TextEdit, TextStyle};
 
 use component::ui;
 use component::ui::{ canvas::Canvas };
@@ -33,9 +32,7 @@ struct GameContext
 	world: World,
 
 	egui_gui: egui_winit_vulkano::Gui,
-
-	test_value: f32,
-	test_text: String
+	selected_ent: EntityId
 }
 impl GameContext
 {
@@ -75,8 +72,7 @@ impl GameContext
 			//pref_path: pref_path,
 			world: world,
 			egui_gui: gui,
-			test_value: 0.0,
-			test_text: "Hello world!\nThis is an example of multi-line text displayed using egui.".into()
+			selected_ent: Default::default()
 		})
 	}
 
@@ -85,51 +81,56 @@ impl GameContext
 		match event {
 			Event::WindowEvent{ event: we, .. } => { self.egui_gui.update(we); },
 			Event::MainEventsCleared => {
+				// main rendering (build the secondary command buffers)
 				self.world.run_default()?;
 
+				// set debug UI layout
 				self.egui_gui.immediate_ui(|gui| {
 					let ctx = gui.context();
-					// Fill egui UI layout here
+					let outermost_frame = egui::containers::Frame::none()
+						.inner_margin(egui::style::Margin::same(4.0))
+						.fill(egui::Color32::TRANSPARENT);
 
 					egui::CentralPanel::default()
-						.frame(egui::containers::Frame {
-							fill: egui::Color32::TRANSPARENT,
-							..Default::default()
-						})
+						.frame(outermost_frame)
 						.show(&ctx, |ui| {
-							ui.vertical_centered(|ui| {
-								ui.add(egui::widgets::Label::new("Hi there!"));	
+							ui.columns(5, |columns| {
+								let ui = &mut columns[0];
 							});
-							ui.separator();
-							ui.columns(2, |columns| {
-								ScrollArea::vertical().id_source("source").show(
-									&mut columns[0],
-									|ui| {
-										ui.add(
-											TextEdit::multiline(&mut self.test_text).font(TextStyle::Monospace),
-										);
-										ui.add(egui::Button::new("Click me"));
-										ui.add(egui::Slider::new(&mut self.test_value, 0.0..=100.0));
-									},
-								);
-							});
+							
+							// the object list window
+							egui::Window::new("Object list")
+								.show(&ctx, |obj_window| {
+									if let Some(s) = generate_egui_entity_list(&self.world, obj_window, self.selected_ent) {
+										self.selected_ent = s;
+									}
+								});
+							
+							// the material properties window
+							egui::Window::new("Material properties")
+								.show(&ctx, |mat_window| {
+									material_properties_window_layout(&self.world, mat_window);
+								});
 						});
 				});
-
+				
+				// finalize the rendering for this frame by executing the secondary command buffers
 				self.world.run(| 
 					mut render_ctx: UniqueViewMut<render::RenderContext>, 
 					mut trm: UniqueViewMut<ThreadedRenderingManager> 
 				| -> Result<(), GenericEngineError>
 				{
-					let cur_fb = render_ctx.get_current_framebuffer();
 					let mut primary_cb = render_ctx.new_primary_command_buffer()?;
-					let mut rp_begin_info = vulkano::command_buffer::RenderPassBeginInfo::framebuffer(cur_fb);
-					rp_begin_info.clear_values = vec![
-						Some(vulkano::format::ClearValue::Float([0.5, 0.9, 1.0, 1.0])),
-						Some(vulkano::format::ClearValue::Depth(1.0))
-					];
 
-					primary_cb.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?;
+					// execute the copies from staging buffers to the actual images and buffers
+					if let Some(staging_cb) = render_ctx.take_staging_command_buffer()? {
+						primary_cb.execute_secondary(staging_cb)?;
+					}
+					
+					let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer());
+					rp_begin_info.clear_values = vec![ None, None ];
+					primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
+
 					primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
 
 					primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
@@ -141,7 +142,6 @@ impl GameContext
 					primary_cb.execute_secondary(self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions()))?;
 
 					primary_cb.end_render_pass()?;
-
 					render_ctx.submit_commands(primary_cb.build()?)?;
 
 					Ok(())
@@ -151,6 +151,30 @@ impl GameContext
 		}
 		Ok(())
 	}
+}
+
+/// Generate the entity list for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
+fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui, selected: EntityId) -> Option<EntityId>
+{
+	let mut newly_selected = None;
+	world.run(|mut ents: EntitiesView| {
+		egui::ScrollArea::vertical()
+			.show(obj_window, |obj_scroll| {
+				for ent in ents.iter() {
+					if obj_scroll.selectable_label(ent == selected, format!("Entity {}", ent.index())).clicked() {
+						newly_selected = Some(ent);
+					}
+				}
+			});
+	});
+	newly_selected
+}
+
+fn material_properties_window_layout(world: &shipyard::World, material_window: &mut egui::Ui)
+{
+	world.run(|transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>| {
+		
+	});
 }
 
 #[derive(Deserialize)]
