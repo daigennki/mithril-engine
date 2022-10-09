@@ -77,6 +77,11 @@ impl Model
 		}
 	}
 
+	pub fn get_materials(&mut self) -> &mut Vec<Box<dyn Material>>
+	{
+		&mut self.materials
+	}
+
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		for submesh in &self.submeshes {

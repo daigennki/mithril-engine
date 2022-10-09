@@ -11,6 +11,7 @@ use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
 use crate::GenericEngineError;
 use crate::render::model::Model;
+use crate::material::Material;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 pub struct Mesh
@@ -19,6 +20,18 @@ pub struct Mesh
 	use_embedded_materials: Option<bool>,
 	#[serde(skip)]
 	model_data: Option<Arc<Model>>
+}
+impl Mesh
+{
+	pub fn get_materials(&mut self) -> Option<&mut Vec<Box<dyn Material>>>
+	{
+		Arc::<Model>::get_mut(self.model_data.as_mut().unwrap()).map(|m| m.get_materials())
+	}
+
+	pub fn using_embedded_materials(&self) -> bool
+	{
+		self.use_embedded_materials.unwrap_or(false)
+	}
 }
 impl DeferGpuResourceLoading for Mesh
 {

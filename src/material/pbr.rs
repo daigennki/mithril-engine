@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use std::path::Path;
+use glam::*;
 use serde::Deserialize;
 use vulkano::descriptor_set::{ PersistentDescriptorSet, WriteDescriptorSet };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -47,6 +48,19 @@ impl DeferMaterialLoading for PBR
 	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>
 	{
 		self.descriptor_set.as_ref()
+	}
+
+	fn get_base_color(&self) -> Vec4
+	{
+		match &self.base_color {
+			ColorInput::Color(c) => *c,
+			ColorInput::Texture(t) => Vec4::new(1.0, 1.0, 1.0, 1.0)
+		}
+	}
+	fn set_base_color(&mut self, color: Vec4, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
+	{
+		self.base_color = ColorInput::Color(color);
+		self.update_descriptor_set(Path::new("./"), render_ctx)
 	}
 }
 

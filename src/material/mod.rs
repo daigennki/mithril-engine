@@ -25,6 +25,9 @@ pub trait DeferMaterialLoading
 	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
 
 	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>;
+
+	fn get_base_color(&self) -> Vec4;
+	fn set_base_color(&mut self, color: Vec4, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
 }
 
 /// A material used by meshes to define shader parameters.

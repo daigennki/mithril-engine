@@ -85,6 +85,8 @@ impl GameContext
 				self.world.run_default()?;
 
 				// set debug UI layout
+				let mut mat_result = None;
+				//let mut tr_result = None;
 				self.egui_gui.immediate_ui(|gui| {
 					let ctx = gui.context();
 					let outermost_frame = egui::containers::Frame::none()
@@ -109,10 +111,25 @@ impl GameContext
 							// the material properties window
 							egui::Window::new("Material properties")
 								.show(&ctx, |mat_window| {
-									material_properties_window_layout(&self.world, mat_window);
+									mat_result = Some(material_properties_window_layout(&self.world, mat_window,
+									self.selected_ent));
 								});
+
+							// transform properties window
+							/* egui::Window::new("Transform properties")
+								.show(&ctx, |mat_window| {
+									tr_result = Some(transform_properties_window_layout(&self.world, mat_window,
+									self.selected_ent));
+								});*/
+
 						});
 				});
+				if let Some(mr) = mat_result {
+					mr?;
+				}
+				/*if let Some(tr) = tr_result {
+					tr?;
+				}*/
 				
 				// finalize the rendering for this frame by executing the secondary command buffers
 				self.world.run(| 
@@ -170,11 +187,61 @@ fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui,
 	newly_selected
 }
 
-fn material_properties_window_layout(world: &shipyard::World, material_window: &mut egui::Ui)
+fn material_properties_window_layout(
+	world: &shipyard::World, mat_wnd: &mut egui::Ui, selected_ent: EntityId,
+) -> Result<(), GenericEngineError>
 {
-	world.run(|transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>| {
-		
-	});
+	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, 
+		transforms: View<component::Transform>, 
+		mut meshes: ViewMut<component::mesh::Mesh>|
+	{
+		for (eid, mesh) in (&mut meshes).iter().with_id() {
+			if eid == selected_ent {
+				if let Some(mut materials) = mesh.get_materials() {
+					let mut mat = &mut materials[0];
+					let mut color = mat.get_base_color();
+					mat_wnd.label("R");
+					mat_wnd.add(egui::Slider::new(&mut color.x, 0.0..=1.0));
+					mat_wnd.label("G");
+					mat_wnd.add(egui::Slider::new(&mut color.y, 0.0..=1.0));
+					mat_wnd.label("B");
+					mat_wnd.add(egui::Slider::new(&mut color.z, 0.0..=1.0));
+					mat_wnd.label("A");
+					mat_wnd.add(egui::Slider::new(&mut color.w, 0.0..=1.0));
+					mat.set_base_color(color, &mut render_ctx)?;
+				}
+				break;
+			}
+		}
+		Ok(())
+	})
+}
+
+fn transform_properties_window_layout(
+	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId,
+) -> Result<(), GenericEngineError>
+{
+	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, 
+		mut transforms: ViewMut<component::Transform>|
+	{
+		for (eid, transform) in (&mut transforms).iter().with_id() {
+			if eid == selected_ent {
+				if !transform.is_this_static() {
+					let mut pos = transform.position();
+					wnd.label("X");
+					wnd.add(egui::Slider::new(&mut pos.x, -10.0..=10.0));
+					wnd.label("Y");
+					wnd.add(egui::Slider::new(&mut pos.y, -10.0..=10.0));
+					wnd.label("Z");
+					wnd.add(egui::Slider::new(&mut pos.z, -10.0..=10.0));
+					transform.set_pos(pos)?;
+				}
+
+				break;
+			}
+		}
+		Ok(())
+	})
 }
 
 #[derive(Deserialize)]

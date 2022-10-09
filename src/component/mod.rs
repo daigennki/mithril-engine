@@ -31,6 +31,7 @@ pub struct Transform
 	position: Vec3,
 	scale: Vec3,
 	rotation: Vec3,
+	is_static: Option<bool>,
 
 	#[serde(skip)]
 	rot_quat: Quat
@@ -63,6 +64,23 @@ impl Transform
 		let rot_rad = rotation * std::f32::consts::PI / 180.0;
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		self.update_buffer()
+	}
+
+	pub fn is_this_static(&self) -> bool
+	{
+		self.is_static.unwrap_or(false)
+	}
+	pub fn position(&self) -> Vec3
+	{
+		self.position
+	}
+	pub fn scale(&self) -> Vec3
+	{
+		self.scale
+	}
+	pub fn rotation(&self) -> Vec3
+	{
+		self.rotation
 	}
 
 	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
