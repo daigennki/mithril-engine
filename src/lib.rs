@@ -85,8 +85,12 @@ impl GameContext
 				self.world.run_default()?;
 
 				// set debug UI layout
+				self.world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>| {
+					render_ctx.wait_for_fence()
+				})?;
+				
 				let mut mat_result = None;
-				//let mut tr_result = None;
+				let mut tr_result = None;
 				self.egui_gui.immediate_ui(|gui| {
 					let ctx = gui.context();
 					let outermost_frame = egui::containers::Frame::none()
@@ -116,20 +120,20 @@ impl GameContext
 								});
 
 							// transform properties window
-							/* egui::Window::new("Transform properties")
+							egui::Window::new("Transform properties")
 								.show(&ctx, |mat_window| {
 									tr_result = Some(transform_properties_window_layout(&self.world, mat_window,
 									self.selected_ent));
-								});*/
+								});
 
 						});
 				});
 				if let Some(mr) = mat_result {
 					mr?;
 				}
-				/*if let Some(tr) = tr_result {
+				if let Some(tr) = tr_result {
 					tr?;
-				}*/
+				}
 				
 				// finalize the rendering for this frame by executing the secondary command buffers
 				self.world.run(| 
@@ -137,6 +141,8 @@ impl GameContext
 					mut trm: UniqueViewMut<ThreadedRenderingManager> 
 				| -> Result<(), GenericEngineError>
 				{
+					let egui_cb = self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+
 					let mut primary_cb = render_ctx.new_primary_command_buffer()?;
 
 					// execute the copies from staging buffers to the actual images and buffers
@@ -147,18 +153,11 @@ impl GameContext
 					let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer());
 					rp_begin_info.clear_values = vec![ None, None ];
 					primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
-
 					primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
-
 					primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
-					// we need to wait here to prevent GpuLocked in `draw_on_subpass_image`.
-					// we've already done most of the CPU work, so this shouldn't have a *significant* impact on performance.
-					// TODO: we should still disable egui in release builds, since we still want to keep things as tight
-					// together as possible.
-					render_ctx.wait_for_fence()?;
-					primary_cb.execute_secondary(self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions()))?;
-
+					primary_cb.execute_secondary(egui_cb)?;
 					primary_cb.end_render_pass()?;
+
 					render_ctx.submit_commands(primary_cb.build()?)?;
 
 					Ok(())
@@ -199,16 +198,9 @@ fn material_properties_window_layout(
 			if eid == selected_ent {
 				if let Some(mut materials) = mesh.get_materials() {
 					let mut mat = &mut materials[0];
-					let mut color = mat.get_base_color();
-					mat_wnd.label("R");
-					mat_wnd.add(egui::Slider::new(&mut color.x, 0.0..=1.0));
-					mat_wnd.label("G");
-					mat_wnd.add(egui::Slider::new(&mut color.y, 0.0..=1.0));
-					mat_wnd.label("B");
-					mat_wnd.add(egui::Slider::new(&mut color.z, 0.0..=1.0));
-					mat_wnd.label("A");
-					mat_wnd.add(egui::Slider::new(&mut color.w, 0.0..=1.0));
-					mat.set_base_color(color, &mut render_ctx)?;
+					let mut color = mat.get_base_color().to_array();
+					mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
+					mat.set_base_color(color.into(), &mut render_ctx)?;
 				}
 				break;
 			}
@@ -229,11 +221,11 @@ fn transform_properties_window_layout(
 				if !transform.is_this_static() {
 					let mut pos = transform.position();
 					wnd.label("X");
-					wnd.add(egui::Slider::new(&mut pos.x, -10.0..=10.0));
+					wnd.add(egui::DragValue::new(&mut pos.x).speed(0.1));
 					wnd.label("Y");
-					wnd.add(egui::Slider::new(&mut pos.y, -10.0..=10.0));
+					wnd.add(egui::DragValue::new(&mut pos.y).speed(0.1));
 					wnd.label("Z");
-					wnd.add(egui::Slider::new(&mut pos.z, -10.0..=10.0));
+					wnd.add(egui::DragValue::new(&mut pos.z).speed(0.1));
 					transform.set_pos(pos)?;
 				}
 

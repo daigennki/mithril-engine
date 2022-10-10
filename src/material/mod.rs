@@ -57,15 +57,8 @@ impl ColorInput
 		match self {
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				// We convert it to sRGB first though, since there's no f32 format for sRGB.
-				let linear_color = [
-					srgb_to_linear(color.x),
-					srgb_to_linear(color.y),
-					srgb_to_linear(color.z),
-					color.w
-				];
 				render_ctx.new_texture_from_iter(
-					linear_color, 
+					color.to_array(), 
 					Format::R32G32B32A32_SFLOAT, 
 					ImageDimensions::Dim2d{ width: 1, height: 1, array_layers: 1 },
 					MipmapsCount::One

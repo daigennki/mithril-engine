@@ -114,6 +114,8 @@ impl Swapchain
 			Ok((_, true, _)) |	// if suboptimal
 			Err(AcquireError::OutOfDate) => {
 				log::info!("Swapchain out of date or suboptimal, recreating...");
+				// wait for any running work to finish so we don't get GpuLocked error
+				self.wait_for_fence()?;
 				let dimensions_changed = self.fit_window()?;	// recreate the swapchain...
 				let (fb, dim_changed_again) = self.get_next_image()?;	// ...then try again
 				Ok((fb, (dimensions_changed || dim_changed_again)))
