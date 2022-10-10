@@ -9,8 +9,9 @@ mod material;
 
 use std::fs::File;
 use std::path::{ Path, PathBuf };
-use winit::event::{ Event, WindowEvent };
+use winit::event::{ Event, WindowEvent, DeviceEvent, ElementState, MouseButton };
 use simplelog::*;
+use glam::*;
 use serde::Deserialize;
 use shipyard::{ World, View, ViewMut, Get, EntitiesView, UniqueView, UniqueViewMut, Workload, WorkloadModificator, EntityId };
 use shipyard::iter::{ IntoIter, IntoWithId };
@@ -32,7 +33,9 @@ struct GameContext
 	world: World,
 
 	egui_gui: egui_winit_vulkano::Gui,
-	selected_ent: EntityId
+	selected_ent: EntityId,
+	right_mouse_button_pressed: bool,
+	camera_rotation: Vec3
 }
 impl GameContext
 {
@@ -72,14 +75,56 @@ impl GameContext
 			//pref_path: pref_path,
 			world: world,
 			egui_gui: gui,
-			selected_ent: Default::default()
+			selected_ent: Default::default(),
+			right_mouse_button_pressed: false,
+			camera_rotation: Vec3::ZERO
 		})
 	}
 
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::WindowEvent{ event: we, .. } => { self.egui_gui.update(we); },
+			Event::WindowEvent{ event: we, .. } => { 
+				self.egui_gui.update(we); 
+				match we {
+					WindowEvent::MouseInput{ button: b, state: s, .. } => {
+						if *b == MouseButton::Right {
+							match s {
+								ElementState::Pressed => self.right_mouse_button_pressed = true,
+								ElementState::Released => self.right_mouse_button_pressed = false
+							}
+							log::debug!("MouseButton::Right");
+						}
+					},
+					_ => ()
+				}
+			},
+			Event::DeviceEvent{ event: de, .. } => match de {
+				DeviceEvent::MouseMotion{ delta: delta } => {
+					/*if self.right_mouse_button_pressed {
+						self.camera_rotation.z += delta.0 as f32;
+						self.camera_rotation.x += delta.1 as f32;
+						if self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
+							self.camera_rotation.z = self.camera_rotation.z % 360.0;
+						}
+						if self.camera_rotation.y > 80.0 {
+							self.camera_rotation.y = 80.0;
+						} else if self.camera_rotation.y < -80.0 {
+							self.camera_rotation.y = -80.0;
+						}
+						let rot_quat = Quat::from_euler(
+							EulerRot::XYZ, self.camera_rotation.x, self.camera_rotation.y, self.camera_rotation.z
+						);
+						let rotated = rot_quat.mul_vec3(Vec3::new(-8.0, 0.0, 0.0));
+						println!("{}", rotated);
+						self.world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>| {
+							render_ctx.wait_for_fence()?;
+							camera.set_pos_and_target(rotated, Vec3::new(-5.0, -2.0, 3.0))
+						})?
+					}*/
+				},
+				_ => ()
+			},
 			Event::MainEventsCleared => {
 				// main rendering (build the secondary command buffers)
 				self.world.run_default()?;
@@ -199,6 +244,7 @@ fn material_properties_window_layout(
 				if let Some(mut materials) = mesh.get_materials() {
 					let mut mat = &mut materials[0];
 					let mut color = mat.get_base_color().to_array();
+					mat_wnd.label("Base Color");
 					mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
 					mat.set_base_color(color.into(), &mut render_ctx)?;
 				}
@@ -220,12 +266,14 @@ fn transform_properties_window_layout(
 			if eid == selected_ent {
 				if !transform.is_this_static() {
 					let mut pos = transform.position();
-					wnd.label("X");
-					wnd.add(egui::DragValue::new(&mut pos.x).speed(0.1));
-					wnd.label("Y");
-					wnd.add(egui::DragValue::new(&mut pos.y).speed(0.1));
-					wnd.label("Z");
-					wnd.add(egui::DragValue::new(&mut pos.z).speed(0.1));
+					wnd.columns(3, |cols| {
+						cols[0].label("X");
+						cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
+						cols[1].label("Y");
+						cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
+						cols[2].label("Z");
+						cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
+					});	
 					transform.set_pos(pos)?;
 				}
 

@@ -66,6 +66,8 @@ impl Camera
 
 	pub fn set_pos_and_target(&mut self, pos: Vec3, target: Vec3) -> Result<(), GenericEngineError>
 	{
+		self.position = pos;
+		self.target = target;
 		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = 
 			calculate_projview(pos, target, self.width, self.height);
 		Ok(())
