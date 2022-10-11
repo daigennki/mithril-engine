@@ -29,7 +29,7 @@ glam = { version = "0.21", features = ["bytemuck", "serde"] }
 # mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 msgbox = "0.7"
 # chrono = "0.4"
-log = { version = "0.4", features = ["max_level_info", "release_max_level_info"] }
+log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 simplelog = "0.12"
 shipyard = "0.6"
 bytemuck = "1.9"

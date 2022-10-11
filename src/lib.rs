@@ -85,25 +85,27 @@ impl GameContext
 	{
 		match event {
 			Event::WindowEvent{ event: we, .. } => { 
-				self.egui_gui.update(we); 
-				match we {
-					WindowEvent::MouseInput{ button, state, .. } => {
-						if *button == MouseButton::Right {
-							match state {
-								ElementState::Pressed => self.right_mouse_button_pressed = true,
-								ElementState::Released => self.right_mouse_button_pressed = false
+				self.egui_gui.update(we);
+				{
+					match we {
+						WindowEvent::MouseInput{ button, state, .. } => {
+							if *button == MouseButton::Right {
+								self.right_mouse_button_pressed = match state {
+									ElementState::Pressed => true,
+									ElementState::Released => false
+								};
+								log::debug!("MouseButton::Right: {}", self.right_mouse_button_pressed);
 							}
-							log::debug!("MouseButton::Right");
-						}
-					},
-					_ => ()
+						},
+						_ => ()
+					}
 				}
 			},
 			Event::DeviceEvent{ event: de, .. } => match de {
 				DeviceEvent::MouseMotion{ delta } => {
-					/*if self.right_mouse_button_pressed {
-						self.camera_rotation.z += delta.0 as f32;
-						self.camera_rotation.x += delta.1 as f32;
+					if self.right_mouse_button_pressed {
+						self.camera_rotation.z += (0.01 * delta.0) as f32;
+						self.camera_rotation.x += (-0.01 * delta.1) as f32;
 						if self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
 							self.camera_rotation.z = self.camera_rotation.z % 360.0;
 						}
@@ -112,28 +114,21 @@ impl GameContext
 						} else if self.camera_rotation.y < -80.0 {
 							self.camera_rotation.y = -80.0;
 						}
-						let rot_quat = Quat::from_euler(
-							EulerRot::XYZ, self.camera_rotation.x, self.camera_rotation.y, self.camera_rotation.z
-						);
+						let rot_rad = self.camera_rotation * std::f32::consts::PI / 180.0;
+						let rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 						let rotated = rot_quat.mul_vec3(Vec3::new(-8.0, 0.0, 0.0));
-						println!("{}", rotated);
 						self.world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>| {
-							render_ctx.wait_for_fence()?;
-							camera.set_pos_and_target(rotated, Vec3::new(-5.0, -2.0, 3.0))
+							camera.set_pos_and_target(rotated, Vec3::new(-5.0, -2.0, 3.0), &mut render_ctx)
 						})?
-					}*/
+					}
 				},
 				_ => ()
 			},
 			Event::MainEventsCleared => {
 				// main rendering (build the secondary command buffers)
 				self.world.run_default()?;
-
-				// set debug UI layout
-				self.world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>| {
-					render_ctx.wait_for_fence()
-				})?;
 				
+				// set debug UI layout
 				let mut mat_result = None;
 				let mut tr_result = None;
 				self.egui_gui.immediate_ui(|gui| {
@@ -186,8 +181,6 @@ impl GameContext
 					mut trm: UniqueViewMut<ThreadedRenderingManager> 
 				| -> Result<(), GenericEngineError>
 				{
-					let egui_cb = self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-
 					let mut primary_cb = render_ctx.new_primary_command_buffer()?;
 
 					// execute the copies from staging buffers to the actual images and buffers
@@ -198,9 +191,14 @@ impl GameContext
 					let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer());
 					rp_begin_info.clear_values = vec![ None, None ];
 					primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
+
 					primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
+
 					primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
-					primary_cb.execute_secondary(egui_cb)?;
+					// wait for resources used by previous frame processing to become availble for egui to use
+					render_ctx.wait_for_fence()?;
+					primary_cb.execute_secondary(self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions()))?;
+
 					primary_cb.end_render_pass()?;
 
 					render_ctx.submit_commands(primary_cb.build()?)?;

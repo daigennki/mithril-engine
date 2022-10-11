@@ -93,6 +93,8 @@ impl DeferGpuResourceLoading for Camera
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		let dim = render_ctx.swapchain_dimensions();
+		self.width = dim[0];
+		self.height = dim[1];
 		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
 		let (staging_buf, projview_buf) = 
 			render_ctx.new_cpu_buffer_from_data(projview, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;

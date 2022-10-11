@@ -251,7 +251,6 @@ impl RenderContext
 		}
 		let mut staging_cb = CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), None)?;
 		let work_count = self.staging_work_queue.len();
-		log::debug!("Building a staging command buffer with {} copies", work_count);
 		for work in std::mem::take(&mut self.staging_work_queue) {
 			match work {
 				StagingWork::CopyBuffer(info) => staging_cb.copy_buffer(info)?,
