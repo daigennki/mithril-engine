@@ -47,7 +47,11 @@ pub trait Material: Send + Sync + DeferMaterialLoading
 #[serde(untagged)]
 pub enum ColorInput
 {
+	/// Single color value. This is in linear color space (*not* gamma corrected) for consistency with Blender's RGB color
+	/// picker (https://docs.blender.org/manual/en/latest/interface/controls/templates/color_picker.html).
 	Color(Vec4),
+
+	/// A texture image file.
 	Texture(PathBuf)
 }
 impl ColorInput
@@ -93,16 +97,6 @@ impl SingleChannelInput
 			},
 			SingleChannelInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path))
 		}
-	}
-}
-
-/// Convert non-linear sRGB color into linear sRGB.
-fn srgb_to_linear(c: f32) -> f32
-{
-	if c <= 0.04045 {
-		c / 12.92
-	} else {
-		((c + 0.055) / 1.055).powf(2.4)
 	}
 }
 

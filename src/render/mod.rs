@@ -363,7 +363,7 @@ fn print_queue_families<'a>(queue_families: &[QueueFamilyProperties])
 {
 	log::info!("Available physical device queue families:");
 	for (id, qf) in queue_families.iter().enumerate() {
-		log::info!("{}: {:?}, {} queue(s)", id, qf.queue_flags, qf.queue_count);
+		log::info!("{}: {} queue(s), {:?}", id, qf.queue_count, qf.queue_flags);
 	}
 }
 

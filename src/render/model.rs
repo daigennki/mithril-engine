@@ -14,7 +14,7 @@ use vulkano::buffer::{ DeviceLocalBuffer, BufferUsage, BufferContents, BufferAcc
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::GenericEngineError;
-use crate::material::{ Material, DeferMaterialLoading };
+use crate::material::{ Material, DeferMaterialLoading, ColorInput, pbr::PBR };
 
 /// 3D model
 pub struct Model
@@ -97,12 +97,12 @@ fn load_obj_mtl(obj_mat: &tobj::Material, search_folder: &Path, render_ctx: &mut
 	-> Result<Box<dyn Material>, GenericEngineError>
 {
 	let base_color = if obj_mat.diffuse_texture.is_empty() {
-		crate::material::ColorInput::Color((Vec3::from(obj_mat.diffuse), obj_mat.dissolve).into())
+		ColorInput::Color((Vec3::from(obj_mat.diffuse), obj_mat.dissolve).into())
 	} else {
-		crate::material::ColorInput::Texture(obj_mat.diffuse_texture.clone().into())
+		ColorInput::Texture(obj_mat.diffuse_texture.clone().into())
 	};
 	
-	let mut loaded_mat = crate::material::pbr::PBR::new(base_color);
+	let mut loaded_mat = PBR::new(base_color);
 	loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
 
 	Ok(Box::new(loaded_mat))
@@ -115,8 +115,8 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &m
 	let mat_path = search_folder.join(material_name).with_extension("yaml");
 
 	if use_embedded {
-		let base_color = crate::material::ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor()));
-		let mut loaded_mat = crate::material::pbr::PBR::new(base_color);
+		let base_color = ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor()));
+		let mut loaded_mat = PBR::new(base_color);
 		loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
 		Ok(Box::new(loaded_mat))
 	} else {

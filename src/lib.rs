@@ -87,9 +87,9 @@ impl GameContext
 			Event::WindowEvent{ event: we, .. } => { 
 				self.egui_gui.update(we); 
 				match we {
-					WindowEvent::MouseInput{ button: b, state: s, .. } => {
-						if *b == MouseButton::Right {
-							match s {
+					WindowEvent::MouseInput{ button, state, .. } => {
+						if *button == MouseButton::Right {
+							match state {
 								ElementState::Pressed => self.right_mouse_button_pressed = true,
 								ElementState::Released => self.right_mouse_button_pressed = false
 							}
@@ -100,7 +100,7 @@ impl GameContext
 				}
 			},
 			Event::DeviceEvent{ event: de, .. } => match de {
-				DeviceEvent::MouseMotion{ delta: delta } => {
+				DeviceEvent::MouseMotion{ delta } => {
 					/*if self.right_mouse_button_pressed {
 						self.camera_rotation.z += delta.0 as f32;
 						self.camera_rotation.x += delta.1 as f32;

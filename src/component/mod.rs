@@ -9,7 +9,7 @@ pub mod camera;
 
 use std::sync::Arc;
 use glam::*;
-use vulkano::buffer::{ /*ImmutableBuffer,*/ BufferUsage, cpu_access::CpuAccessibleBuffer };
+use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -22,7 +22,7 @@ use crate::GenericEngineError;
 pub struct Transform
 {
 	// TODO: parent-child relationship
-	// TODO: maybe we should use immutable buffers but only for static objects...
+	// TODO: maybe we should use DeviceLocalBuffer but only for static objects...
 	#[serde(skip)]
 	buf: Option<Arc<CpuAccessibleBuffer<Mat4>>>,
 	#[serde(skip)]
