@@ -82,7 +82,7 @@ impl Pipeline
 		log::debug!("Built pipeline with descriptors:");
 		for ((set, binding), req) in pipeline_built.descriptor_requirements() {
 			log::debug!(
-				"set {}, binding {}: {}x {}", 
+				"set {}, binding {}: {:?}x {}", 
 				set, binding, req.descriptor_count, 
 				&print_descriptor_types(&req.descriptor_types)
 			);
@@ -156,7 +156,7 @@ struct PipelineSamplerConfig {
 	min_filter: Option<String>,
 	mag_filter: Option<String>
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct PipelineConfig {
 	vertex_shader: String,
 	fragment_shader: Option<String>,
@@ -168,7 +168,7 @@ struct PipelineConfig {
 }
 
 // copy of `vulkano::pipeline::graphics::input_assembly::PrimitiveTopology` so we can more directly (de)serialize it
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 #[serde(remote = "PrimitiveTopology")]
 enum PrimitiveTopologyDef {
     PointList,

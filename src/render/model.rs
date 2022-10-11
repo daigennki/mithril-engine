@@ -10,7 +10,7 @@ use std::sync::Arc;
 use glam::*;
 use gltf::accessor::DataType;
 use gltf::Semantic;
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice };
+use vulkano::buffer::{ DeviceLocalBuffer, BufferUsage, BufferContents, BufferAccess, BufferSlice };
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::GenericEngineError;
@@ -35,12 +35,12 @@ impl Model
 				log::info!("Loading glTF file '{}'...", path.display());
 				let (doc, data_buffers, _) = gltf::import(&path)?;
 				
-				// Load each glTF binary buffer into an `ImmutableBuffer`, from which buffer slices will be created.
+				// Load each glTF binary buffer into a `DeviceLocalBuffer`, from which buffer slices will be created.
 				// This reduces memory fragmentation and transfers between CPU and GPU.
 				let gpu_buf_usage = BufferUsage{
 					vertex_buffer: true,
 					index_buffer: true,
-					..BufferUsage::none()
+					..BufferUsage::empty()
 				};
 				let gpu_buffers = data_buffers.iter()
 					.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
@@ -129,13 +129,13 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path, render_ctx: &m
 
 enum IndexBufferVariant
 {
-	U16(Arc<BufferSlice<[u16], ImmutableBuffer<[u8]>>>),
-	U32(Arc<BufferSlice<[u32], ImmutableBuffer<[u8]>>>),
-	ObjU32(Arc<ImmutableBuffer<[u32]>>)
+	U16(Arc<BufferSlice<[u16], DeviceLocalBuffer<[u8]>>>),
+	U32(Arc<BufferSlice<[u32], DeviceLocalBuffer<[u8]>>>),
+	ObjU32(Arc<DeviceLocalBuffer<[u32]>>)
 }
 impl IndexBufferVariant
 {
-	pub fn from_accessor(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+	pub fn from_accessor(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>)
 		-> Result<Self, GenericEngineError>
 	{
 		Ok(match accessor.data_type() {
@@ -147,7 +147,7 @@ impl IndexBufferVariant
 	pub fn from_obj_u32_vec(render_ctx: &mut RenderContext, indices: Vec<u32>)
 		-> Result<Self, GenericEngineError>
 	{
-		Ok(Self::ObjU32(render_ctx.new_buffer_from_iter(indices, BufferUsage::index_buffer())?))
+		Ok(Self::ObjU32(render_ctx.new_buffer_from_iter(indices, BufferUsage{ index_buffer: true, ..BufferUsage::empty() })?))
 	}
 	pub fn bind(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>)
 	{
@@ -181,10 +181,11 @@ impl SubMesh
 			return Err("no indices in OBJ mesh".into())
 		}
 
+		let vert_buf_usage = BufferUsage{ vertex_buffer: true, ..BufferUsage::empty() };
 		Ok(SubMesh{
 			vertex_buffers: vec![
-				render_ctx.new_buffer_from_iter(mesh.positions.clone(), BufferUsage::vertex_buffer())?,
-				render_ctx.new_buffer_from_iter(mesh.texcoords.clone(), BufferUsage::vertex_buffer())?
+				render_ctx.new_buffer_from_iter(mesh.positions.clone(), vert_buf_usage)?,
+				render_ctx.new_buffer_from_iter(mesh.texcoords.clone(), vert_buf_usage)?
 			],
 			index_buf: IndexBufferVariant::from_obj_u32_vec(render_ctx, mesh.indices.clone())?,
 			vert_count: mesh.indices.len().try_into()?,
@@ -192,7 +193,7 @@ impl SubMesh
 		})
 	}
 
-	pub fn from_gltf_primitive(prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
+	pub fn from_gltf_primitive(prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>)
 		-> Result<Self, GenericEngineError>
 	{
 		let positions = prim.get(&Semantic::Positions).ok_or("no positions in glTF primitive")?;
@@ -235,8 +236,8 @@ fn data_type_to_id(value: DataType) -> TypeId
 		DataType::F32 => TypeId::of::<f32>(),
 	}
 }
-fn get_buf_slice<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<ImmutableBuffer<[u8]>>>)
-	-> Result<Arc<BufferSlice<[T], ImmutableBuffer<[u8]>>>, GenericEngineError>
+fn get_buf_slice<T>(accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>)
+	-> Result<Arc<BufferSlice<[T], DeviceLocalBuffer<[u8]>>>, GenericEngineError>
 	where [T]: BufferContents
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {

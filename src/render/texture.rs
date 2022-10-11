@@ -55,13 +55,14 @@ impl Texture
 		let dst_img_usage = ImageUsage {
 			transfer_dst: true,
 			sampled: true,
-			..ImageUsage::none()
+			..ImageUsage::empty()
 		};
 		
-		let staging_buf = CpuAccessibleBuffer::from_iter(queue.device().clone(), BufferUsage::transfer_src(), false, iter)?;
+		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
+		let staging_buf = CpuAccessibleBuffer::from_iter(queue.device().clone(), staging_usage, false, iter)?;
 		let (dst_img, initializer) = ImmutableImage::uninitialized(
 			queue.device().clone(), dimensions, vk_fmt, mip, dst_img_usage, 
-			ImageCreateFlags::none(), ImageLayout::ShaderReadOnlyOptimal, [ queue.family() ]
+			ImageCreateFlags::empty(), ImageLayout::ShaderReadOnlyOptimal, [ queue.queue_family_index() ]
 		)?;
 
 		let view = ImageView::new(dst_img.clone(), ImageViewCreateInfo::from_image(&dst_img))?;
@@ -178,9 +179,6 @@ impl CubemapTexture
 	}
 }
 
-// some code copied from source code of ImmutableImage::from_iter and ImmutableImage::from_buffer in vulkano/image/immutable.rs,
-// excluding mipmap generation code since we don't use that with cubemaps.
-// we have to do this to use the cube_compatible flag.
 fn create_cubemap_image<Px, I>(
 	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, queue: Arc<Queue>
 )
@@ -192,7 +190,7 @@ fn create_cubemap_image<Px, I>(
 {
 	let source = CpuAccessibleBuffer::from_iter(
 		queue.device().clone(),
-		BufferUsage::transfer_src(),
+		BufferUsage{ transfer_src: true, ..BufferUsage::empty() },
 		false,
 		iter,
 	)?;
@@ -200,10 +198,13 @@ fn create_cubemap_image<Px, I>(
 	let usage = ImageUsage {
 		transfer_dst: true,
 		sampled: true,
-		..ImageUsage::none()
+		..ImageUsage::empty()
 	};
-	let mut flags = ImageCreateFlags::none();
-	flags.cube_compatible = true;	// NOTE: here's the different part!
+	let flags = ImageCreateFlags{
+		cube_compatible: true,
+		..ImageCreateFlags::empty()
+	};
+	
 	let layout = ImageLayout::ShaderReadOnlyOptimal;
 
 	let (image, initializer) = ImmutableImage::uninitialized(
@@ -214,7 +215,7 @@ fn create_cubemap_image<Px, I>(
 		usage,
 		flags,
 		layout,
-		source.device().active_queue_families(),
+		 [ queue.queue_family_index() ]
 	)?;
 
 	Ok((image, CopyBufferToImageInfo::buffer_image(source, initializer)))

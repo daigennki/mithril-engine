@@ -10,7 +10,7 @@ use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture };
-use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, SwapchainAcquireFuture, AcquireError };
+use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, SwapchainAcquireFuture, AcquireError, PresentInfo };
 use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
 use vulkano::pipeline::graphics::viewport::Viewport;
 
@@ -136,9 +136,11 @@ impl Swapchain
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
+		let mut present_info = PresentInfo::swapchain(self.swapchain.clone());
+		present_info.index = self.cur_image_num;
 		let future_result = joined_futures
 			.then_execute(queue.clone(), cb)?
-			.then_swapchain_present(queue, self.swapchain.clone(), self.cur_image_num)
+			.then_swapchain_present(queue, present_info)
 			.boxed_send_sync()
 			.then_signal_fence_and_flush();
 
@@ -199,7 +201,7 @@ fn create_swapchain(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<W
 	let create_info = SwapchainCreateInfo{
 		min_image_count: surface_caps.min_image_count,
 		image_format: Some(Format::B8G8R8A8_SRGB),
-		image_usage: ImageUsage::color_attachment(),
+		image_usage: ImageUsage{ color_attachment: true, ..ImageUsage::empty() },
 		..Default::default()
 	};
 

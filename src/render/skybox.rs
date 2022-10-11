@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
+use vulkano::buffer::{ DeviceLocalBuffer, BufferUsage };
 use vulkano::pipeline::graphics::{ input_assembly::PrimitiveTopology, depth_stencil::CompareOp };
 use vulkano::descriptor_set::{ PersistentDescriptorSet, WriteDescriptorSet };
 use vulkano::sampler::SamplerCreateInfo;
@@ -16,8 +16,8 @@ use crate::GenericEngineError;
 pub struct Skybox
 {
 	sky_pipeline: super::pipeline::Pipeline,
-	cube_vbo: Arc<ImmutableBuffer<[f32]>>,
-	cube_ibo: Arc<ImmutableBuffer<[u16]>>,
+	cube_vbo: Arc<DeviceLocalBuffer<[f32]>>,
+	cube_ibo: Arc<DeviceLocalBuffer<[u16]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>
 }
 impl Skybox
@@ -70,8 +70,8 @@ impl Skybox
 
 		Ok(Skybox {
 			sky_pipeline: sky_pipeline,
-			cube_vbo: render_ctx.new_buffer_from_iter(position, BufferUsage::vertex_buffer())?,
-			cube_ibo: render_ctx.new_buffer_from_iter(indices, BufferUsage::index_buffer())?,
+			cube_vbo: render_ctx.new_buffer_from_iter(position, BufferUsage{ vertex_buffer: true, ..BufferUsage::empty() })?,
+			cube_ibo: render_ctx.new_buffer_from_iter(indices, BufferUsage{ index_buffer: true, ..BufferUsage::empty() })?,
 			descriptor_set: descriptor_set
 		})
 	}
