@@ -274,7 +274,7 @@ fn transform_properties_window_layout(
 						cols[2].label("Z");
 						cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
 					});	
-					transform.set_pos(pos)?;
+					transform.set_pos(pos, &mut render_ctx)?;
 				}
 
 				break;
@@ -451,7 +451,7 @@ fn prepare_primary_render(
 	let (_, new_image_dimensions) = render_ctx.next_swapchain_image()?;
 
 	if let Some(d) = new_image_dimensions {
-		camera.update_window_size(d[0], d[1])?;
+		camera.update_window_size(d[0], d[1], &mut render_ctx)?;
 	}
 
 	Ok(())

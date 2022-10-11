@@ -9,7 +9,7 @@ pub mod camera;
 
 use std::sync::Arc;
 use glam::*;
-use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
+use vulkano::buffer::{ BufferUsage, CpuBufferPool, DeviceLocalBuffer };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -22,9 +22,10 @@ use crate::GenericEngineError;
 pub struct Transform
 {
 	// TODO: parent-child relationship
-	// TODO: maybe we should use DeviceLocalBuffer but only for static objects...
 	#[serde(skip)]
-	buf: Option<Arc<CpuAccessibleBuffer<Mat4>>>,
+	staging_buf: Option<CpuBufferPool<Mat4>>,
+	#[serde(skip)]
+	buf: Option<Arc<DeviceLocalBuffer<Mat4>>>,
 	#[serde(skip)]
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
 
@@ -38,32 +39,33 @@ pub struct Transform
 }
 impl Transform
 {
-	fn update_buffer(&mut self) -> Result<(), GenericEngineError>
+	fn update_buffer(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
-		*self.buf.as_ref().ok_or("transform not loaded")?.write()? = 
-			Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
+		let staged = self.staging_buf.as_ref().ok_or("transform not loaded")?
+			.from_data(Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position))?;
+		render_ctx.copy_buffer(staged, self.buf.as_ref().ok_or("transform not loaded")?.clone());
 		Ok(())
 	}
 
-	pub fn set_pos(&mut self, position: Vec3) -> Result<(), GenericEngineError>
+	pub fn set_pos(&mut self, position: Vec3, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		self.position = position;
-		self.update_buffer()
+		self.update_buffer(render_ctx)
 	}
 	
-	pub fn set_scale(&mut self, scale: Vec3) -> Result<(), GenericEngineError>
+	pub fn set_scale(&mut self, scale: Vec3, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		self.scale = scale;
-		self.update_buffer()
+		self.update_buffer(render_ctx)
 	}
 
 	/// Set the rotation of this object, in terms of X, Y, and Z axis rotations.
-	pub fn set_rotation(&mut self, rotation: Vec3) -> Result<(), GenericEngineError>
+	pub fn set_rotation(&mut self, rotation: Vec3, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		self.rotation = rotation;
 		let rot_rad = rotation * std::f32::consts::PI / 180.0;
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
-		self.update_buffer()
+		self.update_buffer(render_ctx)
 	}
 
 	pub fn is_this_static(&self) -> bool
@@ -96,11 +98,13 @@ impl DeferGpuResourceLoading for Transform
 		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-		let buf = render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
+
+		let (staging_buf, buf) = render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [
 			WriteDescriptorSet::buffer(0, buf.clone())
 		])?);
+		self.staging_buf = Some(staging_buf);
 		self.buf = Some(buf);
 
 		Ok(())

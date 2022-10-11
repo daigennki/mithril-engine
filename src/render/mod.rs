@@ -21,7 +21,7 @@ use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuf
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::format::Format;
 use vulkano::buffer::{ 
-	DeviceLocalBuffer, BufferUsage, cpu_access::CpuAccessibleBuffer, TypedBufferAccess
+	DeviceLocalBuffer, BufferUsage, CpuBufferPool, CpuAccessibleBuffer, TypedBufferAccess, BufferAccess
 };
 use vulkano::render_pass::Framebuffer;
 use vulkano::memory::DeviceMemoryError;
@@ -171,7 +171,7 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
+	/*/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
 	pub fn new_cpu_buffer_from_iter<I, T>(&self, data: I, usage: BufferUsage)
 		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryError>
 		where
@@ -180,14 +180,27 @@ impl RenderContext
 			[T]: vulkano::buffer::BufferContents
 	{
 		CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), usage, false, data)
+	}*/
+
+	/// Create a new pair of CPU-accessible buffer pool and device-local buffer, which will be initialized with `data` for `usage`.
+	/// The CPU-accessible buffer pool is used for staging, from which data will be copied to the device-local buffer.
+	pub fn new_cpu_buffer_from_data<T>(&mut self, data: T, mut usage: BufferUsage)
+		-> Result<(CpuBufferPool<T>, Arc<DeviceLocalBuffer<T>>), DeviceMemoryError>
+		where 
+			[T]: vulkano::buffer::BufferContents,
+			T: Send + Sync + bytemuck::Pod
+	{
+		let cpu_buf = CpuBufferPool::upload(self.dev_queue.device().clone());
+		usage.transfer_dst = true;
+		let gpu_buf = DeviceLocalBuffer::new(self.dev_queue.device().clone(), usage, [ self.dev_queue.queue_family_index() ])?;
+		self.staging_work_queue.push_back(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into());
+		Ok((cpu_buf, gpu_buf))
 	}
 
-	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
-	pub fn new_cpu_buffer_from_data<T>(&self, data: T, usage: BufferUsage)
-		-> Result<Arc<CpuAccessibleBuffer<T>>, DeviceMemoryError>
-		where T: vulkano::buffer::BufferContents
+	/// Queue a buffer copy which will be executed before the next image submission.
+	pub fn copy_buffer(&mut self, src: Arc<dyn BufferAccess>, dst: Arc<dyn BufferAccess>)
 	{
-		CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), usage, false, data)
+		self.staging_work_queue.push_back(CopyBufferInfo::buffers(src, dst).into())
 	}
 
 	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)

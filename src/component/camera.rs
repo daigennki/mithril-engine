@@ -8,7 +8,7 @@ use glam::*;
 use bytemuck::{ Pod, Zeroable };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::buffer::{ BufferUsage, cpu_access::CpuAccessibleBuffer };
+use vulkano::buffer::{ BufferUsage, CpuBufferPool, DeviceLocalBuffer };
 use serde::Deserialize;
 use crate::render::{ RenderContext, command_buffer::CommandBuffer };
 use crate::component::{ UniqueComponent, DeferGpuResourceLoading };
@@ -27,7 +27,9 @@ struct CameraData
 pub struct Camera
 {
 	#[serde(skip)]
-	projview_buf: Option<Arc<CpuAccessibleBuffer<CameraData>>>,
+	staging_buf: Option<CpuBufferPool<CameraData>>,
+	#[serde(skip)]
+	projview_buf: Option<Arc<DeviceLocalBuffer<CameraData>>>,
 	#[serde(skip)]
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
 
@@ -55,21 +57,26 @@ impl Camera
 		})
 	}*/
 
-	pub fn update_window_size(&mut self, width: u32, height: u32) -> Result<(), GenericEngineError>
+	pub fn update_window_size(&mut self, width: u32, height: u32, render_ctx: &mut RenderContext)
+		-> Result<(), GenericEngineError>
 	{
 		self.width = width;
 		self.height = height;
-		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = 
-			calculate_projview(self.position, self.target, width, height);
+		let staged = self.staging_buf.as_ref().ok_or("camera not loaded")?
+			.from_data(calculate_projview(self.position, self.target, width, height))?;
+		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
+
 		Ok(())
 	}
 
-	pub fn set_pos_and_target(&mut self, pos: Vec3, target: Vec3) -> Result<(), GenericEngineError>
+	pub fn set_pos_and_target(&mut self, pos: Vec3, target: Vec3, render_ctx: &mut RenderContext) 
+		-> Result<(), GenericEngineError>
 	{
 		self.position = pos;
 		self.target = target;
-		*self.projview_buf.as_ref().ok_or("camera not loaded")?.write()? = 
-			calculate_projview(pos, target, self.width, self.height);
+		let staged = self.staging_buf.as_ref().ok_or("camera not loaded")?
+			.from_data(calculate_projview(self.position, self.target, self.width, self.height))?;
+		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
 		Ok(())
 	}
 
@@ -87,10 +94,13 @@ impl DeferGpuResourceLoading for Camera
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
-		let projview_buf = render_ctx.new_cpu_buffer_from_data(projview, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
+		let (staging_buf, projview_buf) = 
+			render_ctx.new_cpu_buffer_from_data(projview, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
+
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 1, [
 			WriteDescriptorSet::buffer(0, projview_buf.clone())
 		])?);
+		self.staging_buf = Some(staging_buf);
 		self.projview_buf = Some(projview_buf);
 		Ok(())
 	}
