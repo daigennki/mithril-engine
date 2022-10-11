@@ -14,12 +14,12 @@ shaderc = "0.8"
 
 [dependencies]
 mithrilengine-derive = { version = "0.1.0", path = "mithrilengine-derive" }
-winit = "0.26"
+winit = "0.27"
 rusttype = "0.9"
 image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
-vulkano = "0.30"
-vulkano-win = "0.30"
+vulkano = "0.31"
+vulkano-win = "0.31"
 spirv-reflect = "0.2"
 # physx = "0.12"
 # ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
@@ -39,5 +39,5 @@ serde_yaml = "0.9"
 typetag = "0.2"
 gltf = { version = "1.0", features = ["extras", "names", "utils", "import"] }
 tobj = "3.2.3"
-egui_winit_vulkano = "0.19"
+egui_winit_vulkano = "0.20"
 

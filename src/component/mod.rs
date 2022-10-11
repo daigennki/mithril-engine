@@ -96,7 +96,7 @@ impl DeferGpuResourceLoading for Transform
 		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-		let buf = render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage::uniform_buffer())?;
+		let buf = render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [
 			WriteDescriptorSet::buffer(0, buf.clone())

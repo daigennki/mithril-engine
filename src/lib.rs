@@ -59,7 +59,7 @@ impl GameContext
 		let subpass = vulkano::render_pass::Subpass::from(
 			render_ctx.get_current_framebuffer().render_pass().clone(), 1
 		).unwrap();
-		let gui = egui_winit_vulkano::Gui::new_with_subpass(render_ctx.get_surface(), None, render_ctx.get_queue(), subpass);
+		let gui = egui_winit_vulkano::Gui::new_with_subpass(event_loop, render_ctx.get_surface(), None, render_ctx.get_queue(), subpass);
 
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();

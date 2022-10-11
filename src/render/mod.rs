@@ -16,15 +16,15 @@ use std::fmt::Debug;
 use std::path::{ Path, PathBuf };
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
-use vulkano::device::{ Queue, physical::{ PhysicalDeviceType, PhysicalDevice, QueueFamily } };
+use vulkano::device::{ Queue, QueueFamilyProperties, physical::{ PhysicalDeviceType, PhysicalDevice } };
 use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, CopyBufferInfo, CopyBufferToImageInfo };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::format::Format;
 use vulkano::buffer::{ 
-	ImmutableBuffer, BufferUsage, cpu_access::CpuAccessibleBuffer, TypedBufferAccess
+	DeviceLocalBuffer, BufferUsage, cpu_access::CpuAccessibleBuffer, TypedBufferAccess
 };
 use vulkano::render_pass::Framebuffer;
-use vulkano::memory::DeviceMemoryAllocationError;
+use vulkano::memory::DeviceMemoryError;
 use vulkano::sync::FlushError;
 use vulkano::image::{ ImageDimensions, MipmapsCount };
 use vulkano::pipeline::graphics::viewport::Viewport;
@@ -142,34 +142,38 @@ impl RenderContext
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer_from_iter<I,T>(&mut self, data: I, mut usage: BufferUsage) 
-		-> Result<Arc<ImmutableBuffer<[T]>>, GenericEngineError>
+		-> Result<Arc<DeviceLocalBuffer<[T]>>, GenericEngineError>
 		where
 			I: IntoIterator<Item = T>,
 			I::IntoIter: ExactSizeIterator,
 			[T]: vulkano::buffer::BufferContents, 
 	{
-		let staging_buf = CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), BufferUsage::transfer_src(), false, data)?;
+		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
+		let staging_buf = CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), staging_usage, false, data)?;
 		usage.transfer_dst = true;
-		let (buf, initializer) = unsafe { ImmutableBuffer::uninitialized_array(self.dev_queue.device().clone(), staging_buf.len(), usage) }?;
-		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, initializer).into());
+		let qfi = [ self.dev_queue.queue_family_index() ];
+		let buf = DeviceLocalBuffer::array(self.dev_queue.device().clone(), staging_buf.len(), usage, qfi)?;
+		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		Ok(buf)
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer_from_data<T>(&mut self, data: T, mut usage: BufferUsage) 
-		-> Result<Arc<ImmutableBuffer<T>>, GenericEngineError>
+		-> Result<Arc<DeviceLocalBuffer<T>>, GenericEngineError>
 		where T: vulkano::buffer::BufferContents, 
 	{
-		let staging_buf = CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), BufferUsage::transfer_src(), false, data)?;
+		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
+		let staging_buf = CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), staging_usage, false, data)?;
 		usage.transfer_dst = true;
-		let (buf, initializer) = unsafe { ImmutableBuffer::uninitialized(self.dev_queue.device().clone(), usage) }?;
-		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, initializer).into());
+		let qfi = [ self.dev_queue.queue_family_index() ];
+		let buf = DeviceLocalBuffer::new(self.dev_queue.device().clone(), usage, qfi)?;
+		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		Ok(buf)
 	}
 
 	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
 	pub fn new_cpu_buffer_from_iter<I, T>(&self, data: I, usage: BufferUsage)
-		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryAllocationError>
+		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryError>
 		where
 			I: IntoIterator<Item = T>,
 			I::IntoIter: ExactSizeIterator,
@@ -180,7 +184,7 @@ impl RenderContext
 
 	/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
 	pub fn new_cpu_buffer_from_data<T>(&self, data: T, usage: BufferUsage)
-		-> Result<Arc<CpuAccessibleBuffer<T>>, DeviceMemoryAllocationError>
+		-> Result<Arc<CpuAccessibleBuffer<T>>, DeviceMemoryError>
 		where T: vulkano::buffer::BufferContents
 	{
 		CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), usage, false, data)
@@ -338,13 +342,14 @@ fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
 	version & 0xfff, 0)
 }
 fn print_physical_devices(vkinst: &Arc<vulkano::instance::Instance>)
+	-> Result<(), vulkano::VulkanError>
 {
 	log::info!("Available Vulkan physical devices:");
-	for pd in PhysicalDevice::enumerate(vkinst) {
+	for (i, pd) in vkinst.enumerate_physical_devices()?.enumerate() {
 		let driver_ver = decode_driver_version(pd.properties().driver_version, pd.properties().vendor_id);
 		
 		log::info!("{}: {} ({:?}), driver '{}' version {}.{}.{}.{} (Vulkan {})", 
-			pd.index(), 
+			i, 
 			pd.properties().device_name, 
 			pd.properties().device_type,
 			pd.properties().driver_name.clone().unwrap_or("unknown driver".into()), 
@@ -352,32 +357,23 @@ fn print_physical_devices(vkinst: &Arc<vulkano::instance::Instance>)
 			pd.properties().api_version
 		);
 	}
+	Ok(())
 }
-fn print_queue_families<'a>(queue_families: impl ExactSizeIterator<Item = QueueFamily<'a>>)
+fn print_queue_families<'a>(queue_families: &[QueueFamilyProperties])
 {
 	log::info!("Available physical device queue families:");
-	for qf in queue_families {
-		let qf_type = if qf.supports_graphics() {
-			"graphics"
-		} else if qf.supports_compute() {
-			"compute"
-		} else {
-			"unknown"
-		};
-		let explicit_transfer = if qf.explicitly_supports_transfers() {
-			"explicit"
-		} else {
-			"implicit"
-		};
-		log::info!("{}: {}, {} transfer support, {} queue(s)", qf.id(), qf_type, explicit_transfer, qf.queues_count());
+	for (id, qf) in queue_families.iter().enumerate() {
+		log::info!("{}: {:?}, {} queue(s)", id, qf.queue_flags, qf.queue_count);
 	}
 }
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
 {
+	let lib = vulkano::library::VulkanLibrary::new()?;
+
 	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
 	// implementations like MoltenVK. for now, we can go without it.
-	let vk_ext = vulkano_win::required_extensions();
+	let vk_ext = vulkano_win::required_extensions(&lib);
 	
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]
@@ -393,28 +389,30 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	inst_create_info.enabled_layers = vk_layers;
 	inst_create_info.max_api_version = Some(vulkano::Version::V1_2);
 	
-	Ok(vulkano::instance::Instance::new(inst_create_info)?)
+	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
 }
 
 /// Get the most appropriate GPU, along with a graphics queue family.
-fn get_physical_device<'a>(vkinst: &'a Arc<vulkano::instance::Instance>) 
-	-> Result<(PhysicalDevice<'a>, QueueFamily<'a>), GenericEngineError>
+fn get_physical_device(vkinst: Arc<vulkano::instance::Instance>) 
+	-> Result<(Arc<PhysicalDevice>, usize), GenericEngineError>
 {	
-	print_physical_devices(&vkinst);
+	print_physical_devices(&vkinst)?;
+	let dgpu = vkinst.enumerate_physical_devices()?
+		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
+	let igpu = vkinst.enumerate_physical_devices()?
+		.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
 
-	let physical_device = PhysicalDevice::enumerate(&vkinst)
-		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu)	// Look for a discrete GPU.
-		.or_else(|| {
-			// If there is no discrete GPU, try to look for an integrated GPU instead.
-			PhysicalDevice::enumerate(&vkinst)
-				.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu)	
-		}).ok_or("No GPUs were found!")?;
+	// Try to use a discrete GPU. If there is no discrete GPU, use an integrated GPU instead.
+	let physical_device = dgpu.or(igpu).ok_or("No GPUs were found!")?;
 
 	log::info!("Using physical device: {}", physical_device.properties().device_name);
 
 	// get queue family that supports graphics
-	print_queue_families(physical_device.queue_families());
-	let q_fam = physical_device.queue_families().find(|q| q.supports_graphics())
+	print_queue_families(physical_device.queue_family_properties());
+	let (q_fam, _) = physical_device.queue_family_properties()
+		.iter()
+		.enumerate()
+		.find(|(_, q)| q.queue_flags.graphics)
 		.ok_or("No graphics queue family found!")?;
 
 	Ok((physical_device, q_fam))
@@ -426,7 +424,7 @@ fn vulkan_setup(game_name: &str)
 	-> Result<Arc<Queue>, GenericEngineError>
 {
 	let vkinst = create_vulkan_instance(game_name)?;
-	let (physical_device, queue_family) = get_physical_device(&vkinst)?;
+	let (physical_device, queue_family) = get_physical_device(vkinst.clone())?;
 
 	// Select features and extensions.
 	// The ones chosen here are practically universally supported by any device with Vulkan support.
@@ -436,17 +434,17 @@ fn vulkan_setup(game_name: &str)
 		sampler_anisotropy: true,
 		texture_compression_bc: true,	// change this to ASTC or ETC2 if we want to support mobile platforms
 		geometry_shader: true,
-		..vulkano::device::Features::none()
+		..vulkano::device::Features::empty()
 	};
 	let dev_extensions = vulkano::device::DeviceExtensions{
 		khr_swapchain: true,
-		..vulkano::device::DeviceExtensions::none()
+		..vulkano::device::DeviceExtensions::empty()
 	};
 	
 	let dev_create_info = vulkano::device::DeviceCreateInfo{
 		enabled_extensions: dev_extensions,
 		enabled_features: dev_features,
-		queue_create_infos: vec![ vulkano::device::QueueCreateInfo::family(queue_family) ],
+		queue_create_infos: vec![ vulkano::device::QueueCreateInfo{ queue_family_index: queue_family.try_into()?, ..Default::default() } ],
 		..Default::default()
 	};
 

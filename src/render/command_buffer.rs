@@ -6,9 +6,9 @@
 use std::sync::Arc;
 use vulkano::command_buffer::{ 
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo,
-	CommandBufferUsage, SubpassContents, DrawError, RenderPassError, CheckPipelineError, BuildError, ExecuteCommandsError,
+	CommandBufferUsage, SubpassContents, PipelineExecutionError, RenderPassError, BuildError, ExecuteCommandsError,
 	CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassType, CommandBufferInheritanceRenderPassInfo,
-	DrawIndexedError, CopyBufferToImageInfo, CopyBufferInfo, CopyError
+	CopyBufferToImageInfo, CopyBufferInfo, CopyError
 };
 use vulkano::device::Queue;
 use vulkano::pipeline::{ Pipeline, PipelineBindPoint };
@@ -32,7 +32,7 @@ impl CommandBuffer<PrimaryAutoCommandBuffer>
 	pub fn new(queue: Arc<Queue>) -> Result<Self, GenericEngineError>
 	{
 		Ok(CommandBuffer{ 
-			cb: AutoCommandBufferBuilder::primary(queue.device().clone(), queue.family(), CommandBufferUsage::OneTimeSubmit)?
+			cb: AutoCommandBufferBuilder::primary(queue.device().clone(), queue.queue_family_index(), CommandBufferUsage::OneTimeSubmit)?
 		})
 	}
 
@@ -86,7 +86,7 @@ impl CommandBuffer<SecondaryAutoCommandBuffer>
 			..Default::default()
 		};
 		let new_cb = AutoCommandBufferBuilder::secondary(
-			queue.device().clone(), queue.family(), CommandBufferUsage::OneTimeSubmit, inheritance
+			queue.device().clone(), queue.queue_family_index(), CommandBufferUsage::OneTimeSubmit, inheritance
 		)?;
 
 		Ok(CommandBuffer{ cb: new_cb })
@@ -106,12 +106,12 @@ impl<L> CommandBuffer<L>
 
 	/// Bind the given descriptor sets to the currently bound pipeline.
 	/// This will fail if there is no pipeline currently bound.
-	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) -> Result<(), CheckPipelineError>
+	pub fn bind_descriptor_set<S>(&mut self, first_set: u32, descriptor_sets: S) -> Result<(), PipelineExecutionError>
 		where S: DescriptorSetsCollection
 	{
 		let pipeline_layout = self.cb.state()
 			.pipeline_graphics()
-			.ok_or(CheckPipelineError::PipelineNotBound)?
+			.ok_or(PipelineExecutionError::PipelineNotBound)?
 			.layout()
 			.clone();
 		self.cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
@@ -133,7 +133,7 @@ impl<L> CommandBuffer<L>
 	}
 
 	pub fn draw(&mut self, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32)
-		-> Result<(), DrawError>
+		-> Result<(), PipelineExecutionError>
 	{
 		self.cb.draw(vertex_count, instance_count, first_vertex, first_instance)?;
 		Ok(())
@@ -142,7 +142,7 @@ impl<L> CommandBuffer<L>
 	pub fn draw_indexed(
 		&mut self, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: i32, first_instance: u32
 	)
-		-> Result<(), DrawIndexedError>
+		-> Result<(), PipelineExecutionError>
 	{
 		self.cb.draw_indexed(index_count, instance_count, first_index, vertex_offset, first_instance)?;
 		Ok(())

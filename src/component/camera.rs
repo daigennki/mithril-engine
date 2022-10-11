@@ -87,7 +87,7 @@ impl DeferGpuResourceLoading for Camera
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
-		let projview_buf = render_ctx.new_cpu_buffer_from_data(projview, BufferUsage::uniform_buffer())?;
+		let projview_buf = render_ctx.new_cpu_buffer_from_data(projview, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 1, [
 			WriteDescriptorSet::buffer(0, projview_buf.clone())
 		])?);

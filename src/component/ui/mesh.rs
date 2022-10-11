@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::buffer::{ ImmutableBuffer, BufferUsage };
+use vulkano::buffer::{ DeviceLocalBuffer, BufferUsage };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -18,8 +18,8 @@ use crate::GenericEngineError;
 #[derive(shipyard::Component)]
 pub struct Mesh
 {
-	pos_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
-	uv_vert_buf: Arc<ImmutableBuffer<[Vec2]>>,
+	pos_vert_buf: Arc<DeviceLocalBuffer<[Vec2]>>,
+	uv_vert_buf: Arc<DeviceLocalBuffer<[Vec2]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 }
 impl Mesh
@@ -49,12 +49,13 @@ impl Mesh
 			Vec2::new(1.0, 1.0)
 		];
 
+		let vbo_usage = BufferUsage{ vertex_buffer: true, ..BufferUsage::empty() };
 		Ok(Mesh{
 			descriptor_set: render_ctx.new_descriptor_set(
 				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
 			)?,
-			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, BufferUsage::vertex_buffer())?,
-			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, BufferUsage::vertex_buffer())?,
+			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, vbo_usage)?,
+			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, vbo_usage)?,
 		})
 	}
 }
