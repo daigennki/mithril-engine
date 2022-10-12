@@ -183,11 +183,6 @@ impl GameContext
 				{
 					let mut primary_cb = render_ctx.new_primary_command_buffer()?;
 
-					// execute the copies from staging buffers to the actual images and buffers
-					if let Some(staging_cb) = render_ctx.take_staging_command_buffer()? {
-						primary_cb.execute_secondary(staging_cb)?;
-					}
-					
 					let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer());
 					rp_begin_info.clear_values = vec![ None, None ];
 					primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;

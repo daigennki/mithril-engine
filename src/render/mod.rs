@@ -16,7 +16,7 @@ use std::fmt::Debug;
 use std::path::{ Path, PathBuf };
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
-use vulkano::device::{ Queue, QueueFamilyProperties, physical::{ PhysicalDeviceType, PhysicalDevice } };
+use vulkano::device::{ Queue, QueueFamilyProperties, QueueCreateInfo, physical::{ PhysicalDeviceType, PhysicalDevice } };
 use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, CopyBufferInfo, CopyBufferToImageInfo };
 use vulkano::descriptor_set::{ WriteDescriptorSet, PersistentDescriptorSet };
 use vulkano::format::Format;
@@ -37,9 +37,10 @@ use crate::GenericEngineError;
 pub struct RenderContext
 {
 	swapchain: swapchain::Swapchain,
-	dev_queue: Arc<Queue>,	// this also owns the logical device
+	graphics_queue: Arc<Queue>,	// this also owns the logical device
+	transfer_queue: Option<Arc<Queue>>,	// if there is a dedicated transfer queue, use it for transfers
 
-	staging_work_queue: LinkedList<StagingWork>,
+	staging_work: LinkedList<StagingWork>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: HashMap<PathBuf, Arc<Model>>,
@@ -54,7 +55,7 @@ impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
-		let dev_queue = vulkan_setup(game_name)?;
+		let (graphics_queue, transfer_queue) = vulkan_setup(game_name)?;
 
 		// create window
 		let window_surface = WindowBuilder::new()
@@ -62,12 +63,13 @@ impl RenderContext
 			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720))	// TODO: load this from config
 			.with_title(game_name)
 			//.with_resizable(false)
-			.build_vk_surface(&event_loop, dev_queue.device().instance().clone())?;
+			.build_vk_surface(&event_loop, graphics_queue.device().instance().clone())?;
 
 		Ok(RenderContext{
-			swapchain: swapchain::Swapchain::new(dev_queue.device().clone(), window_surface)?,
-			dev_queue: dev_queue.clone(),
-			staging_work_queue: LinkedList::new(),
+			swapchain: swapchain::Swapchain::new(graphics_queue.device().clone(), window_surface)?,
+			graphics_queue: graphics_queue,
+			transfer_queue: transfer_queue,
+			staging_work: LinkedList::new(),
 			models: HashMap::new(),
 			material_pipelines: HashMap::new()
 		})
@@ -104,16 +106,16 @@ impl RenderContext
 
 	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::Texture::new(self.dev_queue.clone(), path)?;
-		self.staging_work_queue.push_back(staging_work.into());
+		let (tex, staging_work) = texture::Texture::new(self.graphics_queue.device().clone(), path)?;
+		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
 	
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6])
 		-> Result<texture::CubemapTexture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::CubemapTexture::new(self.dev_queue.clone(), faces)?;
-		self.staging_work_queue.push_back(staging_work.into());
+		let (tex, staging_work) = texture::CubemapTexture::new(self.graphics_queue.device().clone(), faces)?;
+		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
 
@@ -130,13 +132,13 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator
 	{
 		let (tex, staging_work) = texture::Texture::new_from_iter(
-			self.dev_queue.clone(), 
+			self.graphics_queue.device().clone(),
 			iter,
 			vk_fmt, 
 			dimensions, 
 			mip,
 		)?;
-		self.staging_work_queue.push_back(staging_work.into());
+		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
 
@@ -149,11 +151,10 @@ impl RenderContext
 			[T]: vulkano::buffer::BufferContents, 
 	{
 		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
-		let staging_buf = CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), staging_usage, false, data)?;
+		let staging_buf = CpuAccessibleBuffer::from_iter(self.graphics_queue.device().clone(), staging_usage, false, data)?;
 		usage.transfer_dst = true;
-		let qfi = [ self.dev_queue.queue_family_index() ];
-		let buf = DeviceLocalBuffer::array(self.dev_queue.device().clone(), staging_buf.len(), usage, qfi)?;
-		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
+		let buf = DeviceLocalBuffer::array(self.graphics_queue.device().clone(), staging_buf.len(), usage, self.get_queue_families())?;
+		self.staging_work.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		Ok(buf)
 	}
 
@@ -163,11 +164,10 @@ impl RenderContext
 		where T: vulkano::buffer::BufferContents, 
 	{
 		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
-		let staging_buf = CpuAccessibleBuffer::from_data(self.dev_queue.device().clone(), staging_usage, false, data)?;
+		let staging_buf = CpuAccessibleBuffer::from_data(self.graphics_queue.device().clone(), staging_usage, false, data)?;
 		usage.transfer_dst = true;
-		let qfi = [ self.dev_queue.queue_family_index() ];
-		let buf = DeviceLocalBuffer::new(self.dev_queue.device().clone(), usage, qfi)?;
-		self.staging_work_queue.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
+		let buf = DeviceLocalBuffer::new(self.graphics_queue.device().clone(), usage, self.get_queue_families())?;
+		self.staging_work.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		Ok(buf)
 	}
 
@@ -179,7 +179,7 @@ impl RenderContext
 			I::IntoIter: ExactSizeIterator,
 			[T]: vulkano::buffer::BufferContents
 	{
-		CpuAccessibleBuffer::from_iter(self.dev_queue.device().clone(), usage, false, data)
+		CpuAccessibleBuffer::from_iter(self.graphics_queue.device().clone(), usage, false, data)
 	}*/
 
 	/// Create a new pair of CPU-accessible buffer pool and device-local buffer, which will be initialized with `data` for `usage`.
@@ -190,17 +190,22 @@ impl RenderContext
 			[T]: vulkano::buffer::BufferContents,
 			T: Send + Sync + bytemuck::Pod
 	{
-		let cpu_buf = CpuBufferPool::upload(self.dev_queue.device().clone());
+		let cpu_buf = CpuBufferPool::upload(self.graphics_queue.device().clone());
 		usage.transfer_dst = true;
-		let gpu_buf = DeviceLocalBuffer::new(self.dev_queue.device().clone(), usage, [ self.dev_queue.queue_family_index() ])?;
-		self.staging_work_queue.push_back(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into());
+		let gpu_buf = DeviceLocalBuffer::new(self.graphics_queue.device().clone(), usage, self.get_queue_families())?;
+		self.staging_work.push_back(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into());
 		Ok((cpu_buf, gpu_buf))
+	}
+
+	fn get_queue_families(&self) -> Vec<u32>
+	{
+		self.graphics_queue.device().active_queue_family_indices().into()
 	}
 
 	/// Queue a buffer copy which will be executed before the next image submission.
 	pub fn copy_buffer(&mut self, src: Arc<dyn BufferAccess>, dst: Arc<dyn BufferAccess>)
 	{
-		self.staging_work_queue.push_back(CopyBufferInfo::buffers(src, dst).into())
+		self.staging_work.push_back(CopyBufferInfo::buffers(src, dst).into())
 	}
 
 	pub fn new_descriptor_set(&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
@@ -213,7 +218,7 @@ impl RenderContext
 	pub fn new_primary_command_buffer(&mut self) 
 		-> Result<CommandBuffer<PrimaryAutoCommandBuffer>, GenericEngineError>
 	{
-		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.dev_queue.clone())
+		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.graphics_queue.clone())
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
@@ -221,7 +226,7 @@ impl RenderContext
 	pub fn new_secondary_command_buffer(&mut self, framebuffer: Arc<vulkano::render_pass::Framebuffer>) 
 		-> Result<CommandBuffer<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), Some(framebuffer))
+		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.graphics_queue.clone(), Some(framebuffer))
 	}
 
 	/// Tell the swapchain to go to the next image.
@@ -242,27 +247,26 @@ impl RenderContext
 		Ok((next_img_fb, new_dim))
 	}
 
-	/// Build and take the command buffer for staging buffers and images.
-	/// This will return `None` if there is nothing queued for staging.
-	pub fn take_staging_command_buffer(&mut self) -> Result<Option<SecondaryAutoCommandBuffer>, GenericEngineError>
-	{
-		if self.staging_work_queue.is_empty() {
-			return Ok(None)
-		}
-		let mut staging_cb = CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.dev_queue.clone(), None)?;
-		let work_count = self.staging_work_queue.len();
-		for work in std::mem::take(&mut self.staging_work_queue) {
-			match work {
-				StagingWork::CopyBuffer(info) => staging_cb.copy_buffer(info)?,
-				StagingWork::CopyBufferToImage(info) => staging_cb.copy_buffer_to_image(info)?
-			}
-		}
-		Ok(Some(staging_cb.build()?))
-	}
-
 	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
-		self.swapchain.submit_commands(built_cb, self.dev_queue.clone())
+		// Build and take the command buffer for staging buffers and images, if anything needs to be copied.
+		// TODO: we might be able to build this command buffer in a separate thread, popping work out of 
+		// the `LinkedList` as soon as possible.
+		let staging_cb = if self.staging_work.is_empty() {
+			None
+		} else {
+			let cb_queue = self.transfer_queue.as_ref().cloned().unwrap_or_else(|| self.graphics_queue.clone());
+			let mut staging_cb = CommandBuffer::<PrimaryAutoCommandBuffer>::new(cb_queue)?;
+			while let Some(work) = self.staging_work.pop_front() {
+				match work {
+					StagingWork::CopyBuffer(info) => staging_cb.copy_buffer(info)?,
+					StagingWork::CopyBufferToImage(info) => staging_cb.copy_buffer_to_image(info)?
+				}
+			}
+			Some(staging_cb.build()?)
+		};
+
+		self.swapchain.submit_commands(built_cb, self.graphics_queue.clone(), staging_cb, self.transfer_queue.as_ref().cloned())
 	}
 
 	pub fn wait_for_fence(&self) -> Result<(), FlushError>
@@ -293,7 +297,7 @@ impl RenderContext
 
 	pub fn get_queue(&self) -> Arc<Queue>
 	{
-		self.dev_queue.clone()
+		self.graphics_queue.clone()
 	}
 	pub fn get_surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
 	{
@@ -404,9 +408,9 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
 }
 
-/// Get the most appropriate GPU, along with a graphics queue family.
+/// Get the most appropriate GPU, along with a pair of graphics queue family and transfer queue family.
 fn get_physical_device(vkinst: Arc<vulkano::instance::Instance>) 
-	-> Result<(Arc<PhysicalDevice>, usize), GenericEngineError>
+	-> Result<(Arc<PhysicalDevice>, Vec<usize>), GenericEngineError>
 {	
 	print_physical_devices(&vkinst)?;
 	let dgpu = vkinst.enumerate_physical_devices()?
@@ -421,22 +425,35 @@ fn get_physical_device(vkinst: Arc<vulkano::instance::Instance>)
 
 	// get queue family that supports graphics
 	print_queue_families(physical_device.queue_family_properties());
-	let (q_fam, _) = physical_device.queue_family_properties()
+	let (graphics_qf, _) = physical_device.queue_family_properties()
 		.iter()
 		.enumerate()
 		.find(|(_, q)| q.queue_flags.graphics)
 		.ok_or("No graphics queue family found!")?;
+	// TODO: Enable the transfer queue again after the next vulkano release.
+	// As of vulkano 0.31, vulkano has a bug where the number of queue families 
+	// used by buffers and images isn't given to `ash`.
+	/*let transfer_qf = None;physical_device.queue_family_properties()
+		.iter()
+		.enumerate()
+		.find(|(_, q)| !q.queue_flags.graphics && q.queue_flags.transfer);
+	
+	let queue_families = match transfer_qf {
+		Some((tqf, _)) => vec![ graphics_qf, tqf ],
+		None => vec![ graphics_qf ]
+	};*/
+	let queue_families = vec![ graphics_qf ];
 
-	Ok((physical_device, q_fam))
+	Ok((physical_device, queue_families))
 }
 
 /// Set up the Vulkan instance, physical device, logical device, and queue.
-/// The `Queue` this returns will own all of them.
+/// Returns a graphics queue (which owns the device), and an optional transfer queue.
 fn vulkan_setup(game_name: &str) 
-	-> Result<Arc<Queue>, GenericEngineError>
+	-> Result<(Arc<Queue>, Option<Arc<Queue>>), GenericEngineError>
 {
 	let vkinst = create_vulkan_instance(game_name)?;
-	let (physical_device, queue_family) = get_physical_device(vkinst.clone())?;
+	let (physical_device, queue_families) = get_physical_device(vkinst.clone())?;
 
 	// Select features and extensions.
 	// The ones chosen here are practically universally supported by any device with Vulkan support.
@@ -453,15 +470,19 @@ fn vulkan_setup(game_name: &str)
 		..vulkano::device::DeviceExtensions::empty()
 	};
 	
+	let queue_create_infos: Vec<_> = queue_families.iter()
+		.map(|qf| QueueCreateInfo{ queue_family_index: (*qf).try_into().unwrap(), ..Default::default() })
+		.collect();
 	let dev_create_info = vulkano::device::DeviceCreateInfo{
 		enabled_extensions: dev_extensions,
 		enabled_features: dev_features,
-		queue_create_infos: vec![ vulkano::device::QueueCreateInfo{ queue_family_index: queue_family.try_into()?, ..Default::default() } ],
+		queue_create_infos: queue_create_infos,
 		..Default::default()
 	};
 
-	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
-
-	Ok(queues.next().ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?)
+	let (device, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
+	let graphics_queue = queues.nth(0).ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?;
+	let transfer_queue = queues.nth(1);
+	Ok((graphics_queue, transfer_queue))
 }
 

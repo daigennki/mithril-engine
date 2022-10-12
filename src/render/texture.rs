@@ -11,7 +11,6 @@ use vulkano::image::{
 };
 use vulkano::format::{ Format };
 use vulkano::command_buffer::CopyBufferToImageInfo;
-use vulkano::device::{ Queue, DeviceOwned };
 use vulkano::buffer::{ BufferUsage, CpuAccessibleBuffer };
 use ddsfile::DxgiFormat;
 
@@ -24,7 +23,7 @@ pub struct Texture
 }
 impl Texture
 {
-	pub fn new(queue: Arc<vulkano::device::Queue>, path: &Path) 
+	pub fn new(device: Arc<vulkano::device::Device>, path: &Path)
 		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
@@ -35,11 +34,11 @@ impl Texture
 			_ => load_other_format(path)?
 		};
 
-		Self::new_from_iter(queue, img_raw, vk_fmt, dim, mip)
+		Self::new_from_iter(device, img_raw, vk_fmt, dim, mip)
 	}
 
 	pub fn new_from_iter<Px, I>(
-		queue: Arc<vulkano::device::Queue>, 
+		device: Arc<vulkano::device::Device>,
 		iter: I, 
 		vk_fmt: Format, 
 		dimensions: ImageDimensions,
@@ -59,10 +58,11 @@ impl Texture
 		};
 		
 		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
-		let staging_buf = CpuAccessibleBuffer::from_iter(queue.device().clone(), staging_usage, false, iter)?;
+		let staging_buf = CpuAccessibleBuffer::from_iter(device.clone(), staging_usage, false, iter)?;
+		let queue_families: Vec<_> = device.active_queue_family_indices().into();
 		let (dst_img, initializer) = ImmutableImage::uninitialized(
-			queue.device().clone(), dimensions, vk_fmt, mip, dst_img_usage, 
-			ImageCreateFlags::empty(), ImageLayout::ShaderReadOnlyOptimal, [ queue.queue_family_index() ]
+			device.clone(), dimensions, vk_fmt, mip, dst_img_usage, 
+			ImageCreateFlags::empty(), ImageLayout::ShaderReadOnlyOptimal, queue_families
 		)?;
 
 		let view = ImageView::new(dst_img.clone(), ImageViewCreateInfo::from_image(&dst_img))?;
@@ -97,7 +97,7 @@ pub struct CubemapTexture
 impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
-	pub fn new(queue: Arc<vulkano::device::Queue>, faces: [PathBuf; 6]) 
+	pub fn new(device: Arc<vulkano::device::Device>, faces: [PathBuf; 6]) 
 		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
@@ -143,10 +143,10 @@ impl CubemapTexture
 			*array_layers = 6;
 		}
 				
-		Self::new_from_iter(queue, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), MipmapsCount::One)
+		Self::new_from_iter(device, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), MipmapsCount::One)
 	}
 	pub fn new_from_iter<Px, I>(
-		queue: Arc<vulkano::device::Queue>, 
+		device: Arc<vulkano::device::Device>,
 		iter: I, 
 		vk_fmt: Format, 
 		dimensions: ImageDimensions,
@@ -158,7 +158,7 @@ impl CubemapTexture
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let (vk_img, staging_info) = create_cubemap_image(iter, dimensions, mip, vk_fmt, queue)?;
+		let (vk_img, staging_info) = create_cubemap_image(iter, dimensions, mip, vk_fmt, device)?;
 		let mut view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
 		view_create_info.view_type = ImageViewType::Cube;
 		
@@ -180,7 +180,8 @@ impl CubemapTexture
 }
 
 fn create_cubemap_image<Px, I>(
-	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, queue: Arc<Queue>
+	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, 
+	device: Arc<vulkano::device::Device>
 )
 	-> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
 	where
@@ -188,12 +189,7 @@ fn create_cubemap_image<Px, I>(
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator
 {
-	let source = CpuAccessibleBuffer::from_iter(
-		queue.device().clone(),
-		BufferUsage{ transfer_src: true, ..BufferUsage::empty() },
-		false,
-		iter,
-	)?;
+	let src = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage{ transfer_src: true, ..BufferUsage::empty() }, false, iter)?;
 
 	let usage = ImageUsage {
 		transfer_dst: true,
@@ -205,20 +201,19 @@ fn create_cubemap_image<Px, I>(
 		..ImageCreateFlags::empty()
 	};
 	
-	let layout = ImageLayout::ShaderReadOnlyOptimal;
-
+	let queue_families: Vec<_> = device.active_queue_family_indices().into();
 	let (image, initializer) = ImmutableImage::uninitialized(
-		source.device().clone(),
+		device.clone(),
 		dimensions,
 		format,
 		mip_levels,
 		usage,
 		flags,
-		layout,
-		 [ queue.queue_family_index() ]
+		ImageLayout::ShaderReadOnlyOptimal,
+		queue_families
 	)?;
 
-	Ok((image, CopyBufferToImageInfo::buffer_image(source, initializer)))
+	Ok((image, CopyBufferToImageInfo::buffer_image(src, initializer)))
 }
 
 fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use winit::window::Window;
 use vulkano::device::{ Queue, DeviceOwned };
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, PrimaryCommandBuffer };
 use vulkano::format::Format;
 use vulkano::render_pass::{ RenderPass, Framebuffer };
 use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture };
@@ -125,7 +125,11 @@ impl Swapchain
 	}
 
 	/// Submit a primary command buffer's commands.
-	pub fn submit_commands(&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>)
+	pub fn submit_commands(
+		&mut self, 
+		cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, 
+		transfers: Option<PrimaryAutoCommandBuffer>, transfer_queue: Option<Arc<Queue>>
+	)
 		-> Result<(), GenericEngineError>
 	{
 		let mut joined_futures = self.acquire_future.take()
@@ -138,12 +142,27 @@ impl Swapchain
 
 		let mut present_info = PresentInfo::swapchain(self.swapchain.clone());
 		present_info.index = self.cur_image_num;
-		let future_result = joined_futures
-			.then_execute(queue.clone(), cb)?
-			.then_swapchain_present(queue, present_info)
-			.boxed_send_sync()
-			.then_signal_fence_and_flush();
 
+		let future_result = match transfers {
+			Some(t) => {
+				let transfer_semaphore = t.execute(transfer_queue.unwrap_or_else(|| queue.clone()))?
+					.then_signal_semaphore_and_flush()?;
+				joined_futures
+					.join(transfer_semaphore)
+					.then_execute(queue.clone(), cb)?
+					.then_swapchain_present(queue, present_info)
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()
+			},
+			None => {
+				joined_futures
+					.then_execute(queue.clone(), cb)?
+					.then_swapchain_present(queue, present_info)
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()
+			}
+		};
+		
 		match future_result {
 			Ok(future) => self.fence_signal_future = Some(future),
 			Err(FlushError::OutOfDate) => (),	// let `get_next_image` detect the error next frame
