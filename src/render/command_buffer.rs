@@ -81,11 +81,11 @@ impl CommandBuffer<SecondaryAutoCommandBuffer>
 	pub fn new(queue: Arc<Queue>, framebuffer: Option<Arc<Framebuffer>>) -> Result<Self, GenericEngineError>
 	{
 		let inheritance = CommandBufferInheritanceInfo {
-			render_pass: framebuffer.and_then(|fb| {
-				Some(CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
+			render_pass: framebuffer.map(|fb| {
+				CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
 					subpass: fb.render_pass().clone().first_subpass(),
 					framebuffer: Some(fb),
-				}))
+				})
 			}),
 			..Default::default()
 		};

@@ -505,7 +505,7 @@ fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>), Gen
 		..Default::default()
 	};
 
-	let (device, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
+	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
 	let graphics_queue = queues
 		.nth(0)
 		.ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?;

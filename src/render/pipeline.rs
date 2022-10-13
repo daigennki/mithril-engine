@@ -103,23 +103,22 @@ impl Pipeline
 
 		let yaml_reader = File::open(Path::new("shaders").join(yaml_filename))?;
 		let deserialized: PipelineConfig = serde_yaml::from_reader(yaml_reader)?;
-
-		let mut generated_samplers = Vec::new();
-		if let Some(sampler_configs) = deserialized.samplers {
-			generated_samplers.reserve(sampler_configs.len());
-			for sampler_config in sampler_configs {
+		let generated_samplers = deserialized
+			.samplers
+			.iter()
+			.map(|sampler_config| {
 				let mut sampler_create_info = SamplerCreateInfo::default();
-				if let Some(f) = sampler_config.mag_filter {
+				if let Some(f) = &sampler_config.mag_filter {
 					sampler_create_info.mag_filter = filter_str_to_enum(&f)?;
 				}
-				if let Some(f) = sampler_config.min_filter {
+				if let Some(f) = &sampler_config.min_filter {
 					sampler_create_info.min_filter = filter_str_to_enum(&f)?;
 				}
 
 				let new_sampler = Sampler::new(render_pass.device().clone(), sampler_create_info)?;
-				generated_samplers.push((sampler_config.set, sampler_config.binding, new_sampler));
-			}
-		}
+				Ok((sampler_config.set, sampler_config.binding, new_sampler))
+			})
+			.collect::<Result<_, GenericEngineError>>()?;
 
 		Pipeline::new(
 			deserialized.primitive_topology,
@@ -176,7 +175,8 @@ struct PipelineConfig
 	#[serde(with = "PrimitiveTopologyDef")]
 	primitive_topology: PrimitiveTopology,
 
-	samplers: Option<Vec<PipelineSamplerConfig>>,
+	#[serde(default)]
+	samplers: Vec<PipelineSamplerConfig>,
 }
 
 // copy of `vulkano::pipeline::graphics::input_assembly::PrimitiveTopology` so we can more directly (de)serialize it
@@ -206,40 +206,32 @@ fn filter_str_to_enum(filter_str: &str) -> Result<Filter, GenericEngineError>
 	})
 }
 
-fn load_spirv(
-	device: Arc<vulkano::device::Device>, path: &Path,
-) -> Result<Arc<vulkano::shader::ShaderModule>, GenericEngineError>
+fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) -> Result<Arc<ShaderModule>, GenericEngineError>
 {
 	let spv_data = std::fs::read(path)?;
-	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
+	Ok(unsafe { ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
 fn load_spirv_vertex(
 	device: Arc<vulkano::device::Device>, path: &Path,
-) -> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), GenericEngineError>
+) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
 {
 	let spv_data = std::fs::read(path)?;
-	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
-	let input_variables = shader_module.enumerate_input_variables(Some("main"))?;
+	let vertex_input_state = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?
+		.enumerate_input_variables(Some("main"))?
+		.iter()
+		.try_fold(VertexInputState::new(), |acc, input_var| -> Result<_, UnsupportedVertexInputFormat> {
+			let binding = input_var.location;
+			let format = reflect_format_to_vulkano_format(input_var.format)?;
+			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
+			let new_acc = acc
+				.binding(binding, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
+				.attribute(binding, VertexInputAttributeDescription { binding, format, offset: 0 });
+			Ok(new_acc)
+		})?;
 
-	let mut i: u32 = 0;
-	let mut vertex_input_state = VertexInputState::new();
-	for input_var in &input_variables {
-		let vertex_format = reflect_format_to_vulkano_format(input_var.format)?;
-		let stride = vertex_format
-			.components()
-			.iter()
-			.fold(0, |acc, c| acc + (*c as u32))
-			/ 8;
-
-		vertex_input_state = vertex_input_state
-			.binding(i, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
-			.attribute(i, VertexInputAttributeDescription { binding: i, format: vertex_format, offset: 0 });
-		i += 1;
-	}
-
-	Ok((unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?, vertex_input_state))
+	Ok((unsafe { ShaderModule::from_bytes(device, &spv_data) }?, vertex_input_state))
 }
 
 #[derive(Debug)]

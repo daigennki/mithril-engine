@@ -9,7 +9,7 @@ use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::pipeline::graphics::viewport::Viewport;
-use vulkano::render_pass::{Framebuffer, RenderPass};
+use vulkano::render_pass::{FramebufferCreateInfo, Framebuffer, RenderPass};
 use vulkano::swapchain::{AcquireError, PresentInfo, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo};
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
 use winit::window::Window;
@@ -242,7 +242,7 @@ fn create_framebuffers(
 		.iter()
 		.map(|img| {
 			let depth_image = AttachmentImage::new(img.device().clone(), img.dimensions().width_height(), depth_format)?;
-			let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
+			let fb_create_info = FramebufferCreateInfo {
 				attachments: vec![
 					ImageView::new_default(img.clone())?,
 					ImageView::new_default(depth_image)?,

@@ -148,11 +148,7 @@ impl GameContext
 
 					egui::CentralPanel::default()
 						.frame(outermost_frame)
-						.show(&ctx, |ui| {
-							ui.columns(5, |columns| {
-								let ui = &mut columns[0];
-							});
-
+						.show(&ctx, |_ui| {
 							// the object list window
 							egui::Window::new("Object list").show(&ctx, |obj_window| {
 								if let Some(s) = generate_egui_entity_list(&self.world, obj_window, self.selected_ent) {
@@ -219,7 +215,7 @@ impl GameContext
 fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui, selected: EntityId) -> Option<EntityId>
 {
 	let mut newly_selected = None;
-	world.run(|mut ents: EntitiesView| {
+	world.run(|ents: EntitiesView| {
 		egui::ScrollArea::vertical().show(obj_window, |obj_scroll| {
 			for ent in ents.iter() {
 				if obj_scroll
@@ -240,12 +236,11 @@ fn material_properties_window_layout(
 {
 	world.run(
 		|mut render_ctx: UniqueViewMut<render::RenderContext>,
-		 transforms: View<component::Transform>,
 		 mut meshes: ViewMut<component::mesh::Mesh>| {
 			for (eid, mesh) in (&mut meshes).iter().with_id() {
 				if eid == selected_ent {
-					if let Some(mut materials) = mesh.get_materials() {
-						let mut mat = &mut materials[0];
+					if let Some(materials) = mesh.get_materials() {
+						let mat = &mut materials[0];
 						let mut color = mat.get_base_color().to_array();
 						mat_wnd.label("Base Color");
 						mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
