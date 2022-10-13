@@ -3,23 +3,23 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use glam::*;
 use crate::GenericEngineError;
+use glam::*;
 
 #[derive(shipyard::Unique)]
 pub struct Canvas
 {
 	base_dimensions: [u32; 2],
-	projection: Mat4
+	projection: Mat4,
 }
 impl Canvas
 {
-	pub fn new(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) 
+	pub fn new(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32)
 		-> Result<Self, GenericEngineError>
-	{	
-		Ok(Canvas{ 
-			base_dimensions: [ canvas_width, canvas_height ], 
-			projection: calculate_projection(canvas_width, canvas_height, screen_width, screen_height) 
+	{
+		Ok(Canvas {
+			base_dimensions: [canvas_width, canvas_height],
+			projection: calculate_projection(canvas_width, canvas_height, screen_width, screen_height),
 		})
 	}
 
@@ -56,4 +56,3 @@ fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32
 	let half_height = adj_canvas_h as f32 / 2.0;
 	Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0)
 }
-

@@ -13,14 +13,15 @@ fn main()
 	options.set_source_language(shaderc::SourceLanguage::HLSL);
 	options.set_include_callback(shader_src_include_callback);
 
-	let shader_paths = std::fs::read_dir("./src/shaders").unwrap()
+	let shader_paths = std::fs::read_dir("./src/shaders")
+		.unwrap()
 		.map(|d| d.unwrap().path())
 		.filter(|p| p.extension().unwrap_or(std::ffi::OsStr::new("")) == "hlsl");
 
 	for shader_path in shader_paths {
 		match detect_shader_stage(&shader_path) {
 			Some(shader_stage) => compile_shader(&shader_path, shader_stage, &compiler, &options),
-			None => println!("could not detect shader stage for shader '{}', skipping...", shader_path.to_str().unwrap())
+			None => println!("could not detect shader stage for shader '{}', skipping...", shader_path.to_str().unwrap()),
 		}
 	}
 
@@ -34,9 +35,11 @@ fn compile_shader(path: &Path, stage: shaderc::ShaderKind, compiler: &shaderc::C
 {
 	let shader_src = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
 	let shader_file_name = path.file_name().unwrap().to_str().unwrap();
-	
-	let compile_result = compiler.compile_into_spirv(&shader_src, stage, shader_file_name, "main", Some(&options)).unwrap();
-	
+
+	let compile_result = compiler
+		.compile_into_spirv(&shader_src, stage, shader_file_name, "main", Some(&options))
+		.unwrap();
+
 	let spv_file_name = format!("{}.spv", path.file_stem().unwrap().to_str().unwrap());
 	let output_path = Path::new("./shaders/").join(spv_file_name);
 	//let output_path = Path::new(&std::env::var("OUT_DIR").unwrap()).join(spv_file_name);
@@ -44,17 +47,20 @@ fn compile_shader(path: &Path, stage: shaderc::ShaderKind, compiler: &shaderc::C
 	println!("wrote {}", output_path.to_str().unwrap());
 }
 
-fn shader_src_include_callback(src_req: &str, _include_type: shaderc::IncludeType, src_containing: &str, _include_depth: usize)
-	-> shaderc::IncludeCallbackResult
+fn shader_src_include_callback(
+	src_req: &str, _include_type: shaderc::IncludeType, src_containing: &str, _include_depth: usize,
+) -> shaderc::IncludeCallbackResult
 {
 	let src_req_path = Path::new("./src/shaders/").join(src_req);
-	let content = String::from_utf8(std::fs::read(&src_req_path)
-		.expect(&format!("failed to read shader source '{}' included from '{}'", src_req, src_containing))
-	).unwrap();
+	let content = String::from_utf8(
+		std::fs::read(&src_req_path)
+			.expect(&format!("failed to read shader source '{}' included from '{}'", src_req, src_containing)),
+	)
+	.unwrap();
 
-	Ok(shaderc::ResolvedInclude{
+	Ok(shaderc::ResolvedInclude {
 		resolved_name: src_req_path.to_str().unwrap().to_string(),
-		content: content
+		content,
 	})
 }
 
@@ -69,4 +75,3 @@ fn detect_shader_stage(path: &Path) -> Option<shaderc::ShaderKind>
 		None
 	}
 }
-
