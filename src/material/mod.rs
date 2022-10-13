@@ -5,17 +5,17 @@
 ----------------------------------------------------------------------------- */
 pub mod pbr;
 
-use crate::render::{command_buffer::CommandBuffer, texture::Texture, RenderContext};
-use crate::GenericEngineError;
-use glam::*;
-use mithrilengine_derive::Material;
-use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::{ Path, PathBuf };
 use std::sync::Arc;
+use glam::*;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::format::Format;
-use vulkano::image::{ImageDimensions, MipmapsCount};
+use vulkano::image::{ ImageDimensions, MipmapsCount };
+use serde::Deserialize;
+use crate::render::{ RenderContext, command_buffer::CommandBuffer, texture::Texture };
+use crate::GenericEngineError;
+use mithrilengine_derive::Material;
 
 /// Trait which allows materials to defer loading using `RenderContext` to after deserialization.
 /// This allows each `Material` implementor to define the loading function differently.
@@ -38,10 +38,8 @@ pub trait Material: Send + Sync + DeferMaterialLoading
 {
 	fn pipeline_name(&self) -> &'static str;
 
-	fn bind_descriptor_set(
-		&self,
-		command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>;
+	fn bind_descriptor_set(&self, command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>) 
+		-> Result<(), GenericEngineError>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
@@ -54,7 +52,7 @@ pub enum ColorInput
 	Color(Vec4),
 
 	/// A texture image file.
-	Texture(PathBuf),
+	Texture(PathBuf)
 }
 impl ColorInput
 {
@@ -64,13 +62,13 @@ impl ColorInput
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
 				render_ctx.new_texture_from_iter(
-					color.to_array(),
-					Format::R32G32B32A32_SFLOAT,
-					ImageDimensions::Dim2d { width: 1, height: 1, array_layers: 1 },
-					MipmapsCount::One,
+					color.to_array(), 
+					Format::R32G32B32A32_SFLOAT, 
+					ImageDimensions::Dim2d{ width: 1, height: 1, array_layers: 1 },
+					MipmapsCount::One
 				)
-			}
-			ColorInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
+			},
+			ColorInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path))
 		}
 	}
 }
@@ -81,7 +79,7 @@ impl ColorInput
 enum SingleChannelInput
 {
 	Value(f32),
-	Texture(PathBuf),
+	Texture(PathBuf)
 }
 impl SingleChannelInput
 {
@@ -91,13 +89,14 @@ impl SingleChannelInput
 			SingleChannelInput::Value(value) => {
 				// If the input is a single value, make a 1x1 greyscale texture with just the value.
 				render_ctx.new_texture_from_iter(
-					[*value],
-					Format::R32_SFLOAT,
-					ImageDimensions::Dim2d { width: 1, height: 1, array_layers: 1 },
-					MipmapsCount::One,
+					[*value], 
+					Format::R32_SFLOAT, 
+					ImageDimensions::Dim2d{ width: 1, height: 1, array_layers: 1 },
+					MipmapsCount::One
 				)
-			}
-			SingleChannelInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
+			},
+			SingleChannelInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path))
 		}
 	}
 }
+

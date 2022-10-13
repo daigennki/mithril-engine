@@ -3,15 +3,15 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::component::{DeferGpuResourceLoading, Draw, EntityComponent};
-use crate::material::Material;
-use crate::render::model::Model;
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
-use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::{ Path, PathBuf };
 use std::sync::Arc;
+use serde::Deserialize;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use crate::render::{ RenderContext, command_buffer::CommandBuffer };
+use crate::component::{ EntityComponent, DeferGpuResourceLoading, Draw };
+use crate::GenericEngineError;
+use crate::render::model::Model;
+use crate::material::Material;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 pub struct Mesh
@@ -19,7 +19,7 @@ pub struct Mesh
 	model_path: PathBuf,
 	use_embedded_materials: Option<bool>,
 	#[serde(skip)]
-	model_data: Option<Arc<Model>>,
+	model_data: Option<Arc<Model>>
 }
 impl Mesh
 {
@@ -54,3 +54,4 @@ impl Draw for Mesh
 		Ok(())
 	}
 }
+

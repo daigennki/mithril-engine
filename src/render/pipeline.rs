@@ -3,41 +3,43 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use serde::{Deserialize, Serialize};
-use spirv_reflect::types::image::ReflectFormat;
-use std::fs::File;
-use std::path::Path;
 use std::sync::Arc;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::{layout::DescriptorType, PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
-use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
-use vulkano::pipeline::graphics::depth_stencil::{CompareOp, DepthState, DepthStencilState};
-use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
-use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
-use vulkano::pipeline::graphics::vertex_input::{VertexInputBindingDescription, VertexInputRate, VertexInputState};
-use vulkano::pipeline::graphics::viewport::ViewportState;
-use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
-use vulkano::render_pass::{RenderPass, Subpass};
-use vulkano::sampler::{Filter, Sampler, SamplerCreateInfo};
+use std::path::Path;
+use std::fs::File;
 use vulkano::shader::ShaderModule;
+use vulkano::render_pass::{ RenderPass, Subpass };
+use vulkano::pipeline::{ GraphicsPipeline, PipelineLayout, StateMode };
+use vulkano::pipeline::graphics::viewport::ViewportState;
+use vulkano::pipeline::graphics::vertex_input::{ VertexInputState, VertexInputRate, VertexInputBindingDescription };
+use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
+use vulkano::pipeline::graphics::input_assembly::{ InputAssemblyState, PrimitiveTopology };
+use vulkano::pipeline::graphics::color_blend::{ ColorBlendState, AttachmentBlend };
+use vulkano::pipeline::graphics::depth_stencil::{ DepthStencilState, DepthState, CompareOp };
+use vulkano::format::Format;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::sampler::{ SamplerCreateInfo, Sampler, Filter };
+use vulkano::descriptor_set::{ 
+	layout::DescriptorType, WriteDescriptorSet, PersistentDescriptorSet,
+};
+use vulkano::device::DeviceOwned;
+use spirv_reflect::types::image::ReflectFormat;
+use serde::{Serialize, Deserialize};
 
 use crate::GenericEngineError;
 
+
 pub struct Pipeline
 {
-	pipeline: Arc<GraphicsPipeline>,
+	pipeline: Arc<GraphicsPipeline>
 }
 impl Pipeline
 {
-	pub fn new(
-		primitive_topology: PrimitiveTopology,
-		vs_filename: String,
-		fs_filename: Option<String>,
-		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
-		render_pass: Arc<RenderPass>,
-		depth_op: CompareOp,
+	pub fn new( 
+		primitive_topology: PrimitiveTopology,	
+		vs_filename: String, fs_filename: Option<String>,
+		samplers: Vec<(usize, u32, Arc<Sampler>)>,	// set: usize, binding: u32, sampler: Arc<Sampler>
+		render_pass: Arc<RenderPass>, 
+		depth_op: CompareOp
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = render_pass.device().clone();
@@ -47,12 +49,10 @@ impl Pipeline
 		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
 		// load fragment shader (optional)
-		let fs = fs_filename
-			.map(|f| {
-				log::info!("Loading fragment shader {}...", f);
-				load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))
-			})
-			.transpose()?;
+		let fs = fs_filename.map(|f| {
+			log::info!("Loading fragment shader {}...", f);
+			load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))
+		}).transpose()?;
 
 		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
 		let mut input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
@@ -71,33 +71,29 @@ impl Pipeline
 		};
 
 		let pipeline_built = build_pipeline_common(
-			vk_dev.clone(),
-			input_assembly_state,
-			vertex_input_state,
-			vs.clone(),
-			fs.clone(),
+			vk_dev.clone(), input_assembly_state, vertex_input_state, 
+			vs.clone(), fs.clone(), 
 			subpass.clone(),
 			&samplers,
 			color_blend_state_from_subpass(&subpass),
-			depth_stencil_state,
+			depth_stencil_state
 		)?;
 
 		log::debug!("Built pipeline with descriptors:");
 		for ((set, binding), req) in pipeline_built.descriptor_requirements() {
 			log::debug!(
-				"set {}, binding {}: {:?}x {}",
-				set,
-				binding,
-				req.descriptor_count,
+				"set {}, binding {}: {:?}x {}", 
+				set, binding, req.descriptor_count, 
 				&print_descriptor_types(&req.descriptor_types)
 			);
 		}
-
-		Ok(Pipeline { pipeline: pipeline_built })
+			
+		Ok(Pipeline{ pipeline: pipeline_built })
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
-	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>) -> Result<Self, GenericEngineError>
+	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>)
+		-> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 
@@ -106,7 +102,7 @@ impl Pipeline
 
 		let mut generated_samplers = Vec::new();
 		if let Some(sampler_configs) = deserialized.samplers {
-			generated_samplers.reserve(sampler_configs.len());
+            generated_samplers.reserve(sampler_configs.len());
 			for sampler_config in sampler_configs {
 				let mut sampler_create_info = SamplerCreateInfo::default();
 				if let Some(f) = sampler_config.mag_filter {
@@ -122,16 +118,14 @@ impl Pipeline
 		}
 
 		Pipeline::new(
-			deserialized.primitive_topology,
-			deserialized.vertex_shader,
-			deserialized.fragment_shader,
-			generated_samplers,
-			render_pass,
-			CompareOp::Less,
+			deserialized.primitive_topology, 
+			deserialized.vertex_shader, 
+			deserialized.fragment_shader, 
+			generated_samplers, render_pass, CompareOp::Less
 		)
 	}
 
-	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>)
+	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) 
 	{
 		command_buffer.bind_pipeline_graphics(self.pipeline.clone());
 	}
@@ -144,17 +138,11 @@ impl Pipeline
 
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
-	pub fn new_descriptor_set(
-		&self,
-		set_number: usize,
-		writes: impl IntoIterator<Item = WriteDescriptorSet>,
-	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
+	pub fn new_descriptor_set(&self, set_number: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>)
+		-> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
-		let set_layout = pipeline_ref
-			.layout()
-			.set_layouts()
-			.get(set_number)
+		let set_layout = pipeline_ref.layout().set_layouts().get(set_number)
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
 		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
@@ -162,41 +150,38 @@ impl Pipeline
 }
 
 #[derive(Serialize, Deserialize)]
-struct PipelineSamplerConfig
-{
+struct PipelineSamplerConfig {
 	set: usize,
 	binding: u32,
 	min_filter: Option<String>,
-	mag_filter: Option<String>,
+	mag_filter: Option<String>
 }
 #[derive(Deserialize)]
-struct PipelineConfig
-{
+struct PipelineConfig {
 	vertex_shader: String,
 	fragment_shader: Option<String>,
 
 	#[serde(with = "PrimitiveTopologyDef")]
 	primitive_topology: PrimitiveTopology,
 
-	samplers: Option<Vec<PipelineSamplerConfig>>,
+	samplers: Option<Vec<PipelineSamplerConfig>>
 }
 
 // copy of `vulkano::pipeline::graphics::input_assembly::PrimitiveTopology` so we can more directly (de)serialize it
 #[derive(Deserialize)]
 #[serde(remote = "PrimitiveTopology")]
-enum PrimitiveTopologyDef
-{
-	PointList,
-	LineList,
-	LineStrip,
-	TriangleList,
-	TriangleStrip,
-	TriangleFan,
-	LineListWithAdjacency,
-	LineStripWithAdjacency,
-	TriangleListWithAdjacency,
-	TriangleStripWithAdjacency,
-	PatchList,
+enum PrimitiveTopologyDef {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+    TriangleFan,
+    LineListWithAdjacency,
+    LineStripWithAdjacency,
+    TriangleListWithAdjacency,
+    TriangleStripWithAdjacency,
+    PatchList,
 }
 
 fn filter_str_to_enum(filter_str: &str) -> Result<Filter, GenericEngineError>
@@ -204,24 +189,20 @@ fn filter_str_to_enum(filter_str: &str) -> Result<Filter, GenericEngineError>
 	Ok(match filter_str {
 		"Nearest" => Filter::Nearest,
 		"Linear" => Filter::Linear,
-		_ => return Err("Invalid sampler filter".into()),
+		_ => return Err("Invalid sampler filter".into())
 	})
 }
 
-fn load_spirv(
-	device: Arc<vulkano::device::Device>,
-	path: &Path,
-) -> Result<Arc<vulkano::shader::ShaderModule>, GenericEngineError>
+fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) 
+	-> Result<Arc<vulkano::shader::ShaderModule>, GenericEngineError>
 {
 	let spv_data = std::fs::read(path)?;
 	Ok(unsafe { vulkano::shader::ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
-fn load_spirv_vertex(
-	device: Arc<vulkano::device::Device>,
-	path: &Path,
-) -> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), GenericEngineError>
+fn load_spirv_vertex(device: Arc<vulkano::device::Device>, path: &Path)
+	-> Result<(Arc<vulkano::shader::ShaderModule>, VertexInputState), GenericEngineError>
 {
 	let spv_data = std::fs::read(path)?;
 	let shader_module = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?;
@@ -231,15 +212,11 @@ fn load_spirv_vertex(
 	let mut vertex_input_state = VertexInputState::new();
 	for input_var in &input_variables {
 		let vertex_format = reflect_format_to_vulkano_format(input_var.format)?;
-		let stride = vertex_format
-			.components()
-			.iter()
-			.fold(0, |acc, c| acc + (*c as u32))
-			/ 8;
+		let stride = vertex_format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
 
 		vertex_input_state = vertex_input_state
-			.binding(i, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
-			.attribute(i, VertexInputAttributeDescription { binding: i, format: vertex_format, offset: 0 });
+			.binding(i, VertexInputBindingDescription{ stride: stride, input_rate: VertexInputRate::Vertex })
+			.attribute(i, VertexInputAttributeDescription{ binding: i, format: vertex_format, offset: 0 });
 		i += 1;
 	}
 
@@ -249,16 +226,13 @@ fn load_spirv_vertex(
 #[derive(Debug)]
 pub struct UnsupportedVertexInputFormat;
 impl std::error::Error for UnsupportedVertexInputFormat {}
-impl std::fmt::Display for UnsupportedVertexInputFormat
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
-	{
-		write!(f, "unsupported vertex input format")
-	}
+impl std::fmt::Display for UnsupportedVertexInputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "unsupported vertex input format")
+    }
 }
-fn reflect_format_to_vulkano_format(
-	reflect_format: spirv_reflect::types::image::ReflectFormat,
-) -> Result<Format, UnsupportedVertexInputFormat>
+fn reflect_format_to_vulkano_format(reflect_format: spirv_reflect::types::image::ReflectFormat) 
+	-> Result<Format, UnsupportedVertexInputFormat>
 {
 	Ok(match reflect_format {
 		ReflectFormat::R32_UINT => Format::R32_UINT,
@@ -273,7 +247,7 @@ fn reflect_format_to_vulkano_format(
 		ReflectFormat::R32G32B32A32_UINT => Format::R32G32B32A32_UINT,
 		ReflectFormat::R32G32B32A32_SINT => Format::R32G32B32A32_SINT,
 		ReflectFormat::R32G32B32A32_SFLOAT => Format::R32G32B32A32_SFLOAT,
-		_ => return Err(UnsupportedVertexInputFormat),
+		_ => return Err(UnsupportedVertexInputFormat)
 	})
 }
 
@@ -293,7 +267,7 @@ fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
 }
 
 fn build_pipeline_common(
-	vk_dev: Arc<vulkano::device::Device>,
+	vk_dev: Arc<vulkano::device::Device>, 
 	input_assembly_state: InputAssemblyState,
 	vertex_input_state: VertexInputState,
 	vs: Arc<ShaderModule>,
@@ -301,12 +275,10 @@ fn build_pipeline_common(
 	subpass: Subpass,
 	samplers: &Vec<(usize, u32, Arc<Sampler>)>,
 	color_blend_state: Option<ColorBlendState>,
-	depth_stencil_state: DepthStencilState,
+	depth_stencil_state: DepthStencilState
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
-	let vs_entry = vs
-		.entry_point("main")
-		.ok_or("No valid 'main' entry point in SPIR-V module!")?;
+	let vs_entry = vs.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 
 	// do some building
 	let mut pipeline_builder = GraphicsPipeline::start()
@@ -316,14 +288,12 @@ fn build_pipeline_common(
 		.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
 		.render_pass(subpass)
 		.depth_stencil_state(depth_stencil_state);
-
+	
 	if let Some(c) = color_blend_state {
 		pipeline_builder = pipeline_builder.color_blend_state(c);
 	}
 	if let Some(fs_exists) = fs.as_ref() {
-		let fs_entry = fs_exists
-			.entry_point("main")
-			.ok_or("No valid 'main' entry point in SPIR-V module!")?;
+		let fs_entry = fs_exists.entry_point("main").ok_or("No valid 'main' entry point in SPIR-V module!")?;
 		pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
 	}
 
@@ -332,10 +302,10 @@ fn build_pipeline_common(
 		for (set_i, binding_i, sampler) in samplers {
 			match sets.get_mut(*set_i) {
 				Some(s) => match s.bindings.get_mut(binding_i) {
-					Some(b) => b.immutable_samplers = vec![sampler.clone()],
-					None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i),
+					Some(b) => b.immutable_samplers = vec![ sampler.clone() ],
+					None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i)
 				},
-				None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i),
+				None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i)
 			}
 		}
 	})?;
@@ -365,8 +335,9 @@ fn print_descriptor_types(types: &Vec<DescriptorType>) -> String
 			DescriptorType::UniformBufferDynamic => "Dynamic uniform buffer",
 			DescriptorType::StorageBufferDynamic => "Dynamic storage buffer",
 			DescriptorType::InputAttachment => "Input attachment",
-			_ => "(unknown)",
+			_ => "(unknown)"
 		}
 	}
 	out_str
 }
+
