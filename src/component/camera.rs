@@ -3,16 +3,16 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use std::sync::Arc;
+use crate::component::{DeferGpuResourceLoading, UniqueComponent};
+use crate::render::{command_buffer::CommandBuffer, RenderContext};
+use crate::GenericEngineError;
+use bytemuck::{Pod, Zeroable};
 use glam::*;
-use bytemuck::{ Pod, Zeroable };
+use serde::Deserialize;
+use std::sync::Arc;
+use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::buffer::{ BufferUsage, CpuBufferPool, DeviceLocalBuffer };
-use serde::Deserialize;
-use crate::render::{ RenderContext, command_buffer::CommandBuffer };
-use crate::component::{ UniqueComponent, DeferGpuResourceLoading };
-use crate::GenericEngineError;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -20,7 +20,7 @@ struct CameraData
 {
 	projview: Mat4,
 	proj: Mat4,
-	view: Mat4
+	view: Mat4,
 }
 
 #[derive(shipyard::Unique, Deserialize, UniqueComponent)]
@@ -39,7 +39,7 @@ pub struct Camera
 	#[serde(skip)]
 	width: u32,
 	#[serde(skip)]
-	height: u32
+	height: u32,
 }
 impl Camera
 {
@@ -57,24 +57,38 @@ impl Camera
 		})
 	}*/
 
-	pub fn update_window_size(&mut self, width: u32, height: u32, render_ctx: &mut RenderContext)
-		-> Result<(), GenericEngineError>
+	pub fn update_window_size(
+		&mut self,
+		width: u32,
+		height: u32,
+		render_ctx: &mut RenderContext,
+	) -> Result<(), GenericEngineError>
 	{
 		self.width = width;
 		self.height = height;
-		let staged = self.staging_buf.as_ref().ok_or("camera not loaded")?
+		let staged = self
+			.staging_buf
+			.as_ref()
+			.ok_or("camera not loaded")?
 			.from_data(calculate_projview(self.position, self.target, width, height))?;
 		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
 
 		Ok(())
 	}
 
-	pub fn set_pos_and_target(&mut self, pos: Vec3, target: Vec3, render_ctx: &mut RenderContext) 
-		-> Result<(), GenericEngineError>
+	pub fn set_pos_and_target(
+		&mut self,
+		pos: Vec3,
+		target: Vec3,
+		render_ctx: &mut RenderContext,
+	) -> Result<(), GenericEngineError>
 	{
 		self.position = pos;
 		self.target = target;
-		let staged = self.staging_buf.as_ref().ok_or("camera not loaded")?
+		let staged = self
+			.staging_buf
+			.as_ref()
+			.ok_or("camera not loaded")?
 			.from_data(calculate_projview(self.position, self.target, self.width, self.height))?;
 		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
 		Ok(())
@@ -96,12 +110,13 @@ impl DeferGpuResourceLoading for Camera
 		self.width = dim[0];
 		self.height = dim[1];
 		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
-		let (staging_buf, projview_buf) = 
-			render_ctx.new_cpu_buffer_from_data(projview, BufferUsage{ uniform_buffer: true, ..BufferUsage::empty() })?;
+		let (staging_buf, projview_buf) =
+			render_ctx.new_cpu_buffer_from_data(projview, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
 
-		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 1, [
-			WriteDescriptorSet::buffer(0, projview_buf.clone())
-		])?);
+		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 1, [WriteDescriptorSet::buffer(
+			0,
+			projview_buf.clone(),
+		)])?);
 		self.staging_buf = Some(staging_buf);
 		self.projview_buf = Some(projview_buf);
 		Ok(())
@@ -117,10 +132,5 @@ fn calculate_projview(pos: Vec3, target: Vec3, width: u32, height: u32) -> Camer
 	let proj = Mat4::perspective_lh(1.0, aspect_ratio, 0.01, 1000.0);
 	let view = Mat4::look_at_lh(pos, target, Vec3::NEG_Z);
 
-	CameraData{ 
-		projview: proj * view, 
-		proj: proj,
-		view: view 
-	}
+	CameraData { projview: proj * view, proj, view }
 }
-

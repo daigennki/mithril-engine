@@ -3,16 +3,16 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
+use crate::component::Draw;
+use crate::render::texture::Texture;
+use crate::render::{command_buffer::CommandBuffer, RenderContext};
+use crate::GenericEngineError;
+use glam::*;
 use std::sync::Arc;
-use vulkano::buffer::{ DeviceLocalBuffer, BufferUsage };
+use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use glam::*;
-use crate::render::texture::Texture;
-use crate::render::{ RenderContext, command_buffer::CommandBuffer };
-use crate::component::Draw;
-use crate::GenericEngineError;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 #[derive(shipyard::Component)]
@@ -32,28 +32,30 @@ impl Mesh
 		Self::new_from_corners(render_ctx, -half_dimensions, half_dimensions, tex)
 	}
 
-	pub fn new_from_corners(render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Texture)
-		-> Result<Self, GenericEngineError>
+	pub fn new_from_corners(
+		render_ctx: &mut RenderContext,
+		top_left: Vec2,
+		bottom_right: Vec2,
+		tex: Texture,
+	) -> Result<Self, GenericEngineError>
 	{
 		// vertex data
 		let pos_verts = [
 			top_left,
 			Vec2::new(bottom_right.x, top_left.y),
 			Vec2::new(top_left.x, bottom_right.y),
-			bottom_right
+			bottom_right,
 		];
 		let uv_verts = [
 			Vec2::new(0.0, 0.0),
 			Vec2::new(1.0, 0.0),
 			Vec2::new(0.0, 1.0),
-			Vec2::new(1.0, 1.0)
+			Vec2::new(1.0, 1.0),
 		];
 
-		let vbo_usage = BufferUsage{ vertex_buffer: true, ..BufferUsage::empty() };
-		Ok(Mesh{
-			descriptor_set: render_ctx.new_descriptor_set(
-				"UI", 1, [ WriteDescriptorSet::image_view(0, tex.view()) ]
-			)?,
+		let vbo_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
+		Ok(Mesh {
+			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?,
 			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, vbo_usage)?,
 			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, vbo_usage)?,
 		})

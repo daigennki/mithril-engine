@@ -3,35 +3,37 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use std::sync::Arc;
-use std::path::{ Path, PathBuf };
-use vulkano::image::{ 
-	ImageLayout, ImageUsage, ImageCreateFlags, ImmutableImage, ImageDimensions, MipmapsCount,
-	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType
-};
-use vulkano::format::{ Format };
-use vulkano::command_buffer::CopyBufferToImageInfo;
-use vulkano::buffer::{ BufferUsage, CpuAccessibleBuffer };
 use ddsfile::DxgiFormat;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+use vulkano::command_buffer::CopyBufferToImageInfo;
+use vulkano::format::Format;
+use vulkano::image::{
+	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, ImageCreateFlags, ImageDimensions, ImageLayout,
+	ImageUsage, ImmutableImage, MipmapsCount,
+};
 
 use crate::GenericEngineError;
 
 pub struct Texture
 {
 	view: Arc<ImageView<ImmutableImage>>,
-	dimensions: ImageDimensions
+	dimensions: ImageDimensions,
 }
 impl Texture
 {
-	pub fn new(device: Arc<vulkano::device::Device>, path: &Path)
-		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+	pub fn new(device: Arc<vulkano::device::Device>, path: &Path) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
 		log::info!("Loading texture file '{}'...", path.display());
-		let file_ext = path.extension().ok_or("Could not determine texture file extension!")?.to_str();
+		let file_ext = path
+			.extension()
+			.ok_or("Could not determine texture file extension!")?
+			.to_str();
 		let (vk_fmt, dim, mip, img_raw) = match file_ext {
 			Some("dds") => load_dds(path)?,
-			_ => load_other_format(path)?
+			_ => load_other_format(path)?,
 		};
 
 		Self::new_from_iter(device, img_raw, vk_fmt, dim, mip)
@@ -39,12 +41,11 @@ impl Texture
 
 	pub fn new_from_iter<Px, I>(
 		device: Arc<vulkano::device::Device>,
-		iter: I, 
-		vk_fmt: Format, 
+		iter: I,
+		vk_fmt: Format,
 		dimensions: ImageDimensions,
-		mip: MipmapsCount
-	) 
-		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+		mip: MipmapsCount,
+	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
@@ -56,26 +57,26 @@ impl Texture
 			sampled: true,
 			..ImageUsage::empty()
 		};
-		
-		let staging_usage = BufferUsage{ transfer_src: true, ..BufferUsage::empty() };
+
+		let staging_usage = BufferUsage { transfer_src: true, ..BufferUsage::empty() };
 		let staging_buf = CpuAccessibleBuffer::from_iter(device.clone(), staging_usage, false, iter)?;
 		let queue_families: Vec<_> = device.active_queue_family_indices().into();
 		let (dst_img, initializer) = ImmutableImage::uninitialized(
-			device.clone(), dimensions, vk_fmt, mip, dst_img_usage, 
-			ImageCreateFlags::empty(), ImageLayout::ShaderReadOnlyOptimal, queue_families
+			device.clone(),
+			dimensions,
+			vk_fmt,
+			mip,
+			dst_img_usage,
+			ImageCreateFlags::empty(),
+			ImageLayout::ShaderReadOnlyOptimal,
+			queue_families,
 		)?;
 
 		let view = ImageView::new(dst_img.clone(), ImageViewCreateInfo::from_image(&dst_img))?;
 
 		// TODO: also copy mipmaps
 
-		Ok((
-			Texture{
-				view: view,
-				dimensions: dimensions
-			}, 
-			CopyBufferToImageInfo::buffer_image(staging_buf, initializer)
-		))
+		Ok((Texture { view, dimensions }, CopyBufferToImageInfo::buffer_image(staging_buf, initializer)))
 	}
 
 	pub fn view(&self) -> Arc<ImageView<ImmutableImage>>
@@ -92,13 +93,15 @@ impl Texture
 pub struct CubemapTexture
 {
 	view: Arc<ImageView<ImmutableImage>>,
-	dimensions: ImageDimensions
+	dimensions: ImageDimensions,
 }
 impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
-	pub fn new(device: Arc<vulkano::device::Device>, faces: [PathBuf; 6]) 
-		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+	pub fn new(
+		device: Arc<vulkano::device::Device>,
+		faces: [PathBuf; 6],
+	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
 
@@ -109,15 +112,18 @@ impl CubemapTexture
 		for face in faces {
 			log::info!("Loading texture file '{}'...", face.display());
 
-			let file_ext = face.extension().ok_or("Could not determine texture file extension!")?.to_str();
+			let file_ext = face
+				.extension()
+				.ok_or("Could not determine texture file extension!")?
+				.to_str();
 			let (vk_fmt, dim, mip, img_raw) = match file_ext {
 				Some("dds") => load_dds(&face)?,
-				_ => load_other_format(&face)?
+				_ => load_other_format(&face)?,
 			};
 
 			// TODO: ignore other mipmap levels, if there are any
 			if let MipmapsCount::Specific(count) = mip {
-				return Err(format!("expected texture file with only one mipmap level, got {} mipmap levels", count).into()) 
+				return Err(format!("expected texture file with only one mipmap level, got {} mipmap levels", count).into());
 			}
 
 			if let Some(f) = cube_fmt.as_ref() {
@@ -139,20 +145,19 @@ impl CubemapTexture
 			combined_data.extend(img_raw);
 		}
 
-		if let ImageDimensions::Dim2d{ array_layers, .. } = cube_dim.as_mut().unwrap() {
+		if let ImageDimensions::Dim2d { array_layers, .. } = cube_dim.as_mut().unwrap() {
 			*array_layers = 6;
 		}
-				
+
 		Self::new_from_iter(device, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), MipmapsCount::One)
 	}
 	pub fn new_from_iter<Px, I>(
 		device: Arc<vulkano::device::Device>,
-		iter: I, 
-		vk_fmt: Format, 
+		iter: I,
+		vk_fmt: Format,
 		dimensions: ImageDimensions,
-		mip: MipmapsCount
-	) 
-		-> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+		mip: MipmapsCount,
+	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
@@ -161,11 +166,14 @@ impl CubemapTexture
 		let (vk_img, staging_info) = create_cubemap_image(iter, dimensions, mip, vk_fmt, device)?;
 		let mut view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
 		view_create_info.view_type = ImageViewType::Cube;
-		
-		Ok((CubemapTexture{
-			view: ImageView::new(vk_img, view_create_info)?,
-			dimensions: dimensions
-		}, staging_info))
+
+		Ok((
+			CubemapTexture {
+				view: ImageView::new(vk_img, view_create_info)?,
+				dimensions,
+			},
+			staging_info,
+		))
 	}
 
 	pub fn view(&self) -> Arc<ImageView<ImmutableImage>>
@@ -180,27 +188,34 @@ impl CubemapTexture
 }
 
 fn create_cubemap_image<Px, I>(
-	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, 
-	device: Arc<vulkano::device::Device>
-)
-	-> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
-	where
-		[Px]: vulkano::buffer::BufferContents,
-		I: IntoIterator<Item = Px>,
-		I::IntoIter: ExactSizeIterator
+	iter: I,
+	dimensions: ImageDimensions,
+	mip_levels: MipmapsCount,
+	format: Format,
+	device: Arc<vulkano::device::Device>,
+) -> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
+where
+	[Px]: vulkano::buffer::BufferContents,
+	I: IntoIterator<Item = Px>,
+	I::IntoIter: ExactSizeIterator,
 {
-	let src = CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage{ transfer_src: true, ..BufferUsage::empty() }, false, iter)?;
+	let src = CpuAccessibleBuffer::from_iter(
+		device.clone(),
+		BufferUsage { transfer_src: true, ..BufferUsage::empty() },
+		false,
+		iter,
+	)?;
 
 	let usage = ImageUsage {
 		transfer_dst: true,
 		sampled: true,
 		..ImageUsage::empty()
 	};
-	let flags = ImageCreateFlags{
+	let flags = ImageCreateFlags {
 		cube_compatible: true,
 		..ImageCreateFlags::empty()
 	};
-	
+
 	let queue_families: Vec<_> = device.active_queue_family_indices().into();
 	let (image, initializer) = ImmutableImage::uninitialized(
 		device.clone(),
@@ -210,7 +225,7 @@ fn create_cubemap_image<Px, I>(
 		usage,
 		flags,
 		ImageLayout::ShaderReadOnlyOptimal,
-		queue_families
+		queue_families,
 	)?;
 
 	Ok((image, CopyBufferToImageInfo::buffer_image(src, initializer)))
@@ -218,28 +233,35 @@ fn create_cubemap_image<Px, I>(
 
 fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
 {
-	let dds_file = std::fs::File::open(path)
-		.or_else(|e| Err(format!("Could not open '{}': {}", path.display(), e)))?;
+	let dds_file = std::fs::File::open(path).or_else(|e| Err(format!("Could not open '{}': {}", path.display(), e)))?;
 
 	let dds = ddsfile::Dds::read(dds_file)?;
-	let dds_format = dds.get_dxgi_format()
+	let dds_format = dds
+		.get_dxgi_format()
 		.ok_or("Could not determine DDS image format! Make sure it's in DXGI format.")?;
 
 	let vk_fmt = dxgi_to_vulkan_format(dds_format)?;
-	let dim = ImageDimensions::Dim2d{ width: dds.get_width(), height: dds.get_height(), array_layers: 1 };
+	let dim = ImageDimensions::Dim2d {
+		width: dds.get_width(),
+		height: dds.get_height(),
+		array_layers: 1,
+	};
 	let mip = MipmapsCount::Specific(dds.get_num_mipmap_levels());
 	let img_raw = dds.data;
 
 	Ok((vk_fmt, dim, mip, img_raw))
 }
 
-fn load_other_format(path: &Path) 
-	-> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
+fn load_other_format(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
 {
 	let img = image::io::Reader::open(path)?.decode()?;
 
-	let vk_fmt = Format::R8G8B8A8_SRGB;	// TODO: other formats such as greyscale
-	let dim = ImageDimensions::Dim2d{ width: img.width(), height: img.height(), array_layers: 1 };
+	let vk_fmt = Format::R8G8B8A8_SRGB; // TODO: other formats such as greyscale
+	let dim = ImageDimensions::Dim2d {
+		width: img.width(),
+		height: img.height(),
+		array_layers: 1,
+	};
 	let mip = MipmapsCount::One;
 	let img_raw = img.into_rgba8().into_raw();
 
@@ -254,7 +276,6 @@ fn dxgi_to_vulkan_format(dxgi_format: DxgiFormat) -> Result<Format, GenericEngin
 		DxgiFormat::BC3_UNorm_sRGB => Format::BC3_SRGB_BLOCK,
 		DxgiFormat::BC4_UNorm => Format::BC4_UNORM_BLOCK,
 		DxgiFormat::BC5_UNorm => Format::BC5_UNORM_BLOCK,
-		_ => return Err("Unsupported DDS format!".into())
+		_ => return Err("Unsupported DDS format!".into()),
 	})
 }
-

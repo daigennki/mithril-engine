@@ -4,15 +4,15 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use winit::window::Window;
-use vulkano::device::{ Queue, DeviceOwned };
-use vulkano::command_buffer::{ PrimaryAutoCommandBuffer, PrimaryCommandBuffer };
+use vulkano::command_buffer::{PrimaryAutoCommandBuffer, PrimaryCommandBuffer};
+use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::render_pass::{ RenderPass, Framebuffer };
-use vulkano::sync::{ FlushError, GpuFuture, FenceSignalFuture };
-use vulkano::swapchain::{ SwapchainCreateInfo, SurfaceInfo, Surface, SwapchainAcquireFuture, AcquireError, PresentInfo };
-use vulkano::image::{ SwapchainImage, ImageAccess, ImageUsage, attachment::AttachmentImage, view::ImageView };
+use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::pipeline::graphics::viewport::Viewport;
+use vulkano::render_pass::{Framebuffer, RenderPass};
+use vulkano::swapchain::{AcquireError, PresentInfo, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo};
+use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
+use winit::window::Window;
 
 use crate::GenericEngineError;
 
@@ -25,7 +25,7 @@ pub struct Swapchain
 
 	// The futures to wait for before the next submission.
 	acquire_future: Option<SwapchainAcquireFuture<Window>>,
-	fence_signal_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
+	fence_signal_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 }
 impl Swapchain
 {
@@ -47,7 +47,7 @@ impl Swapchain
 					format: Format::D16_UNORM,	// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
 					samples: 1,
 				}
-			}, 
+			},
 			passes: [
 				{	// general rendering subpass
 					color: [color],
@@ -62,13 +62,13 @@ impl Swapchain
 			]
 		)?;
 
-		Ok(Swapchain{
-			swapchain: swapchain,
+		Ok(Swapchain {
+			swapchain,
 			swapchain_rp: swapchain_rp.clone(),
 			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
 			cur_image_num: 0,
 			acquire_future: None,
-			fence_signal_future: None
+			fence_signal_future: None,
 		})
 	}
 
@@ -82,7 +82,7 @@ impl Swapchain
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
 		self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
-		
+
 		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
 		if dimensions_changed {
 			log::info!("Swapchain resized: {:?} -> {:?}", prev_dimensions, self.swapchain.image_extent());
@@ -126,13 +126,16 @@ impl Swapchain
 
 	/// Submit a primary command buffer's commands.
 	pub fn submit_commands(
-		&mut self, 
-		cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, 
-		transfers: Option<PrimaryAutoCommandBuffer>, transfer_queue: Option<Arc<Queue>>
-	)
-		-> Result<(), GenericEngineError>
+		&mut self,
+		cb: PrimaryAutoCommandBuffer,
+		queue: Arc<Queue>,
+		transfers: Option<PrimaryAutoCommandBuffer>,
+		transfer_queue: Option<Arc<Queue>>,
+	) -> Result<(), GenericEngineError>
 	{
-		let mut joined_futures = self.acquire_future.take()
+		let mut joined_futures = self
+			.acquire_future
+			.take()
 			.expect("Command buffer submitted without acquiring an image!")
 			.boxed_send_sync();
 
@@ -145,7 +148,8 @@ impl Swapchain
 
 		let future_result = match transfers {
 			Some(t) => {
-				let transfer_semaphore = t.execute(transfer_queue.unwrap_or_else(|| queue.clone()))?
+				let transfer_semaphore = t
+					.execute(transfer_queue.unwrap_or_else(|| queue.clone()))?
 					.then_signal_semaphore_and_flush()?;
 				joined_futures
 					.join(transfer_semaphore)
@@ -153,20 +157,18 @@ impl Swapchain
 					.then_swapchain_present(queue, present_info)
 					.boxed_send_sync()
 					.then_signal_fence_and_flush()
-			},
-			None => {
-				joined_futures
-					.then_execute(queue.clone(), cb)?
-					.then_swapchain_present(queue, present_info)
-					.boxed_send_sync()
-					.then_signal_fence_and_flush()
 			}
+			None => joined_futures
+				.then_execute(queue.clone(), cb)?
+				.then_swapchain_present(queue, present_info)
+				.boxed_send_sync()
+				.then_signal_fence_and_flush(),
 		};
-		
+
 		match future_result {
 			Ok(future) => self.fence_signal_future = Some(future),
-			Err(FlushError::OutOfDate) => (),	// let `get_next_image` detect the error next frame
-			Err(e) => return Err(Box::new(e))
+			Err(FlushError::OutOfDate) => (), // let `get_next_image` detect the error next frame
+			Err(e) => return Err(Box::new(e)),
 		}
 
 		Ok(())
@@ -174,7 +176,9 @@ impl Swapchain
 
 	pub fn wait_for_fence(&self) -> Result<(), FlushError>
 	{
-		self.fence_signal_future.as_ref().map_or(Ok(()), |f| f.wait(None))
+		self.fence_signal_future
+			.as_ref()
+			.map_or(Ok(()), |f| f.wait(None))
 	}
 
 	pub fn render_pass(&self) -> Arc<RenderPass>
@@ -196,48 +200,61 @@ impl Swapchain
 	{
 		self.swapchain.surface().clone()
 	}
-	
+
 	/// Get a viewport that fills the entire current swapchain image.
 	pub fn get_viewport(&self) -> Viewport
 	{
 		let dim = self.dimensions();
 		Viewport {
-			origin: [0.0, 0.0], 
-			dimensions: [ dim[0] as f32, dim[1] as f32 ],
-			depth_range: 0.0..1.0 
-		}	
+			origin: [0.0, 0.0],
+			dimensions: [dim[0] as f32, dim[1] as f32],
+			depth_range: 0.0..1.0,
+		}
 	}
 }
 
-fn create_swapchain(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>)
-	-> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>), GenericEngineError>
+fn create_swapchain(
+	vk_dev: Arc<vulkano::device::Device>,
+	surface: Arc<Surface<Window>>,
+) -> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>), GenericEngineError>
 {
-	let surface_formats = vk_dev.physical_device().surface_formats(&surface, SurfaceInfo::default())?;
+	let surface_formats = vk_dev
+		.physical_device()
+		.surface_formats(&surface, SurfaceInfo::default())?;
 	log::info!("Available surface format and color space combinations:");
 	surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
-	let surface_caps = vk_dev.physical_device().surface_capabilities(&surface, SurfaceInfo::default())?;
-	let create_info = SwapchainCreateInfo{
+	let surface_caps = vk_dev
+		.physical_device()
+		.surface_capabilities(&surface, SurfaceInfo::default())?;
+	let create_info = SwapchainCreateInfo {
 		min_image_count: surface_caps.min_image_count,
 		image_format: Some(Format::B8G8R8A8_SRGB),
-		image_usage: ImageUsage{ color_attachment: true, ..ImageUsage::empty() },
+		image_usage: ImageUsage { color_attachment: true, ..ImageUsage::empty() },
 		..Default::default()
 	};
 
 	Ok(vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?)
 }
 
-fn create_framebuffers(images: Vec<Arc<SwapchainImage<Window>>>, render_pass: Arc<RenderPass>)
-	-> Result<Vec::<Arc<Framebuffer>>, GenericEngineError>
+fn create_framebuffers(
+	images: Vec<Arc<SwapchainImage<Window>>>,
+	render_pass: Arc<RenderPass>,
+) -> Result<Vec<Arc<Framebuffer>>, GenericEngineError>
 {
 	let depth_format = render_pass.attachments().last().unwrap().format.unwrap();
-	images.iter().map(|img| {
-		let depth_image = AttachmentImage::new(img.device().clone(), img.dimensions().width_height(), depth_format)?;
-		let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
-			attachments: vec![ ImageView::new_default(img.clone())?, ImageView::new_default(depth_image)? ],
-			..Default::default()
-		};
-		Ok(Framebuffer::new(render_pass.clone(), fb_create_info)?)
-	}).collect()
+	images
+		.iter()
+		.map(|img| {
+			let depth_image = AttachmentImage::new(img.device().clone(), img.dimensions().width_height(), depth_format)?;
+			let fb_create_info = vulkano::render_pass::FramebufferCreateInfo {
+				attachments: vec![
+					ImageView::new_default(img.clone())?,
+					ImageView::new_default(depth_image)?,
+				],
+				..Default::default()
+			};
+			Ok(Framebuffer::new(render_pass.clone(), fb_create_info)?)
+		})
+		.collect()
 }
-
