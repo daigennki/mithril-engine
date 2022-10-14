@@ -54,11 +54,11 @@ impl Skybox
 		// sky cube
 		#[rustfmt::skip]
 		let indices: [u16; 20] = [
-			1, 0, 3, 2,				// +Y quad	(+X between +Y and -Y)
-			5, 4, 7, 6,				// -Y quad
-			1, 0, u16::MAX,		// finish -X
-			7, 1, 5, 3, u16::MAX,	// -Z quad
-			0, 6, 2, 4				// +Z quad
+			0, 1, 2, 3,				// +Y quad	(+X between +Y and -Y)
+			4, 5, 6, 7,				// -Y quad
+			0, 1, u16::MAX,		// finish -X
+			1, 7, 3, 5, u16::MAX,	// -Z quad
+			0, 2, 6, 4				// +Z quad
 		];
 		#[rustfmt::skip]
 		let position: [f32; 24] = [
