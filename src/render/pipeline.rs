@@ -12,12 +12,14 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::{layout::DescriptorType, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
-use vulkano::pipeline::graphics::depth_stencil::{CompareOp, DepthState, DepthStencilState};
-use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
-use vulkano::pipeline::graphics::vertex_input::VertexInputAttributeDescription;
-use vulkano::pipeline::graphics::vertex_input::{VertexInputBindingDescription, VertexInputRate, VertexInputState};
-use vulkano::pipeline::graphics::viewport::ViewportState;
+use vulkano::pipeline::graphics::{
+	color_blend::{AttachmentBlend, ColorBlendState},
+	depth_stencil::{CompareOp, DepthState, DepthStencilState},
+	input_assembly::{InputAssemblyState, PrimitiveTopology},
+	rasterization::{RasterizationState, CullMode, FrontFace},
+	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
+	viewport::ViewportState
+};
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::sampler::{Filter, Sampler, SamplerCreateInfo};
@@ -290,14 +292,19 @@ fn build_pipeline_common(
 		.entry_point("main")
 		.ok_or("No valid 'main' entry point in SPIR-V module!")?;
 
+	let rasterization_state = RasterizationState::new()
+		.cull_mode(CullMode::Back)
+		.front_face(FrontFace::CounterClockwise);
+
 	// do some building
 	let mut pipeline_builder = GraphicsPipeline::start()
-		.input_assembly_state(input_assembly_state)
-		.vertex_input_state(vertex_input_state)
 		.vertex_shader(vs_entry, ())
+		.vertex_input_state(vertex_input_state)
+		.input_assembly_state(input_assembly_state)
 		.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-		.render_pass(subpass)
-		.depth_stencil_state(depth_stencil_state);
+		.rasterization_state(rasterization_state)
+		.depth_stencil_state(depth_stencil_state)
+		.render_pass(subpass);
 
 	if let Some(c) = color_blend_state {
 		pipeline_builder = pipeline_builder.color_blend_state(c);
