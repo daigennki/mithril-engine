@@ -16,9 +16,9 @@ use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
-	rasterization::{RasterizationState, CullMode, FrontFace},
+	rasterization::{CullMode, FrontFace, RasterizationState},
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
-	viewport::ViewportState
+	viewport::ViewportState,
 };
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
 use vulkano::render_pass::{RenderPass, Subpass};

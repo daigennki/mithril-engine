@@ -58,8 +58,7 @@ impl GameContext
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		// set up egui
-		let subpass =
-			vulkano::render_pass::Subpass::from(render_ctx.get_current_framebuffer().render_pass().clone(), 1).unwrap();
+		let subpass = vulkano::render_pass::Subpass::from(render_ctx.get_swapchain_render_pass(), 1).unwrap();
 		let gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
@@ -88,11 +87,21 @@ impl GameContext
 		})
 	}
 
+	fn run_default_workload(&mut self) -> Result<(), GenericEngineError>
+	{
+		//let start = std::time::Instant::now();
+		self.world.run_default()?;
+		/*let end = std::time::Instant::now();
+		let dur = end - start;
+		println!("default workload took {} ms", dur.as_millis());*/
+		Ok(())
+	}
+
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
 			Event::WindowEvent { event: we, .. } => {
-				self.egui_gui.update(we);
+				//self.egui_gui.update(we);
 				{
 					match we {
 						WindowEvent::MouseInput { button, state, .. } => {
@@ -111,22 +120,24 @@ impl GameContext
 			Event::DeviceEvent { event: de, .. } => match de {
 				DeviceEvent::MouseMotion { delta } => {
 					if self.right_mouse_button_pressed {
-						self.camera_rotation.z += (0.01 * delta.0) as f32;
+						self.camera_rotation.z += (0.05 * delta.0) as f32;
 						self.camera_rotation.x += (-0.01 * delta.1) as f32;
 						if self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
 							self.camera_rotation.z = self.camera_rotation.z % 360.0;
 						}
-						if self.camera_rotation.y > 80.0 {
-							self.camera_rotation.y = 80.0;
-						} else if self.camera_rotation.y < -80.0 {
-							self.camera_rotation.y = -80.0;
+						if self.camera_rotation.x > 80.0 {
+							self.camera_rotation.x = 80.0;
+						} else if self.camera_rotation.x < -80.0 {
+							self.camera_rotation.x = -80.0;
 						}
 						let rot_rad = self.camera_rotation * std::f32::consts::PI / 180.0;
 						let rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
-						let rotated = rot_quat.mul_vec3(Vec3::new(-8.0, 0.0, 0.0));
+						let rotated = rot_quat.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+						let pos = Vec3::new(0.0, 0.0, 3.0);
+						let target = pos + rotated;
 						self.world.run(
 							|mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>| {
-								camera.set_pos_and_target(rotated, Vec3::new(-5.0, -2.0, 3.0), &mut render_ctx)
+								camera.set_pos_and_target(pos, target, &mut render_ctx)
 							},
 						)?
 					}
@@ -135,10 +146,10 @@ impl GameContext
 			},
 			Event::MainEventsCleared => {
 				// main rendering (build the secondary command buffers)
-				self.world.run_default()?;
+				self.run_default_workload()?;
 
 				// set debug UI layout
-				let mut mat_result = None;
+				/*let mut mat_result = None;
 				let mut tr_result = None;
 				self.egui_gui.immediate_ui(|gui| {
 					let ctx = gui.context();
@@ -174,7 +185,7 @@ impl GameContext
 				}
 				if let Some(tr) = tr_result {
 					tr?;
-				}
+				}*/
 
 				// finalize the rendering for this frame by executing the secondary command buffers
 				self.world.run(
@@ -183,7 +194,7 @@ impl GameContext
 					 -> Result<(), GenericEngineError> {
 						let mut primary_cb = render_ctx.new_primary_command_buffer()?;
 
-						let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer());
+						let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer().unwrap());
 						rp_begin_info.clear_values = vec![None, None];
 						primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
 
@@ -191,11 +202,11 @@ impl GameContext
 
 						primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
 						// wait for resources used by previous frame processing to become availble for egui to use
-						render_ctx.wait_for_fence()?;
+						/*render_ctx.wait_for_fence()?;
 						primary_cb.execute_secondary(
 							self.egui_gui
 								.draw_on_subpass_image(render_ctx.swapchain_dimensions()),
-						)?;
+						)?;*/
 
 						primary_cb.end_render_pass()?;
 
@@ -234,24 +245,21 @@ fn material_properties_window_layout(
 	world: &shipyard::World, mat_wnd: &mut egui::Ui, selected_ent: EntityId,
 ) -> Result<(), GenericEngineError>
 {
-	world.run(
-		|mut render_ctx: UniqueViewMut<render::RenderContext>,
-		 mut meshes: ViewMut<component::mesh::Mesh>| {
-			for (eid, mesh) in (&mut meshes).iter().with_id() {
-				if eid == selected_ent {
-					if let Some(materials) = mesh.get_materials() {
-						let mat = &mut materials[0];
-						let mut color = mat.get_base_color().to_array();
-						mat_wnd.label("Base Color");
-						mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
-						mat.set_base_color(color.into(), &mut render_ctx)?;
-					}
-					break;
+	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut meshes: ViewMut<component::mesh::Mesh>| {
+		for (eid, mesh) in (&mut meshes).iter().with_id() {
+			if eid == selected_ent {
+				if let Some(materials) = mesh.get_materials() {
+					let mat = &mut materials[0];
+					let mut color = mat.get_base_color().to_array();
+					mat_wnd.label("Base Color");
+					mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
+					mat.set_base_color(color.into(), &mut render_ctx)?;
 				}
+				break;
 			}
-			Ok(())
-		},
-	)
+		}
+		Ok(())
+	})
 }
 
 fn transform_properties_window_layout(
@@ -372,7 +380,7 @@ fn draw_3d(
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let cur_fb = render_ctx.get_current_framebuffer();
+	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
 
@@ -410,7 +418,7 @@ fn draw_ui(
 
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	let cur_fb = render_ctx.get_current_framebuffer();
+	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
 
@@ -508,11 +516,18 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 
 fn log_error(e: GenericEngineError)
 {
+	let error_string = format!(
+		"Error: {}\nSource: {}",
+		e,
+		e.source()
+			.map(|e| e.to_string())
+			.unwrap_or("(unknown)".to_string())
+	);
 	if log::log_enabled!(log::Level::Error) {
-		log::error!("{}", e);
+		log::error!("{}", error_string);
 	} else {
-		println!("{}", e);
+		println!("{}", error_string);
 	}
-	msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error)
+	msgbox::create("Engine Error", &error_string, msgbox::common::IconType::Error)
 		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
 }

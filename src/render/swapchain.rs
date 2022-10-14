@@ -4,12 +4,12 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::command_buffer::{PrimaryAutoCommandBuffer, PrimaryCommandBuffer};
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::pipeline::graphics::viewport::Viewport;
-use vulkano::render_pass::{FramebufferCreateInfo, Framebuffer, RenderPass};
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano::swapchain::{AcquireError, PresentInfo, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo};
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
 use winit::window::Window;
@@ -19,26 +19,23 @@ use crate::GenericEngineError;
 pub struct Swapchain
 {
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-	swapchain_rp: Arc<RenderPass>,
 	framebuffers: Vec<Arc<Framebuffer>>,
-	cur_image_num: usize,
+	recreate_pending: bool,
 
-	// The futures to wait for before the next submission.
 	acquire_future: Option<SwapchainAcquireFuture<Window>>,
-	fence_signal_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
+	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 }
 impl Swapchain
 {
 	pub fn new(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>) -> Result<Self, GenericEngineError>
 	{
-		let (swapchain, swapchain_images) = create_swapchain(vk_dev.clone(), surface)?;
 		let swapchain_rp = vulkano::ordered_passes_renderpass!(
 			vk_dev.clone(),
 			attachments: {
 				color: {
 					load: DontCare,	// this is DontCare since drawing the skybox effectively clears the image for us
 					store: Store,
-					format: swapchain.image_format(),
+					format: Format::B8G8R8A8_SRGB,
 					samples: 1,
 				},
 				depth: {
@@ -62,13 +59,14 @@ impl Swapchain
 			]
 		)?;
 
+		let (swapchain, framebuffers) = create_swapchain(vk_dev.clone(), surface, swapchain_rp)?;
+
 		Ok(Swapchain {
 			swapchain,
-			swapchain_rp: swapchain_rp.clone(),
-			framebuffers: create_framebuffers(swapchain_images, swapchain_rp)?,
-			cur_image_num: 0,
+			framebuffers,
+			recreate_pending: false,
 			acquire_future: None,
-			fence_signal_future: None,
+			submission_future: None,
 		})
 	}
 
@@ -81,7 +79,7 @@ impl Swapchain
 		create_info.image_extent = self.swapchain.surface().window().inner_size().into();
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
-		self.framebuffers = create_framebuffers(new_images, self.swapchain_rp.clone())?;
+		self.framebuffers = create_framebuffers(new_images, self.render_pass())?;
 
 		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
 		if dimensions_changed {
@@ -97,90 +95,88 @@ impl Swapchain
 	pub fn get_next_image(&mut self) -> Result<(Arc<Framebuffer>, bool), GenericEngineError>
 	{
 		// clean up resources from finished submissions
-		if let Some(f) = self.fence_signal_future.as_mut() {
+		if let Some(f) = self.submission_future.as_mut() {
 			f.cleanup_finished();
 		}
 
+		let dimensions_changed = if self.recreate_pending {
+			self.fit_window()? // recreate the swapchain
+		} else {
+			false
+		};
+
 		if self.acquire_future.is_some() {
-			panic!("`get_next_image` called when image has already been acquired without being submitted!");
+			panic!("`get_next_image` called when an image has already been acquired without being submitted!");
 		}
 
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
-			Ok((image_num, false, acquire_future)) => {
-				self.cur_image_num = image_num;
+			Ok((image_num, suboptimal, acquire_future)) => {
+				if suboptimal {
+					log::warn!("Image is suboptimal, swapchain recreate pending...");
+				}
+				self.recreate_pending = suboptimal;
 				self.acquire_future = Some(acquire_future);
-				Ok((self.framebuffers[self.cur_image_num].clone(), false))
-			},
-			Ok((_, true, _)) |	// if suboptimal
+				Ok((self.framebuffers[image_num].clone(), dimensions_changed))
+			}
 			Err(AcquireError::OutOfDate) => {
-				log::info!("Swapchain out of date or suboptimal, recreating...");
-				// wait for any running work to finish so we don't get GpuLocked error
-				self.wait_for_fence()?;
-				let dimensions_changed = self.fit_window()?;	// recreate the swapchain...
-				let (fb, dim_changed_again) = self.get_next_image()?;	// ...then try again
-				Ok((fb, (dimensions_changed || dim_changed_again)))
-			},
-			Err(e) => Err(Box::new(e))
+				log::warn!("Swapchain out of date, recreating...");
+				self.recreate_pending = true;
+				self.get_next_image()
+			}
+			Err(e) => Err(Box::new(e)),
 		}
 	}
 
 	/// Submit a primary command buffer's commands.
+	/// Optionally, a command buffer `transfers` containing only transfer commands could also be set. It
+	/// will be executed before `cb` on the same queue, or on `transfer_queue` if it is also set.
 	pub fn submit_commands(
 		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, transfers: Option<PrimaryAutoCommandBuffer>,
 		transfer_queue: Option<Arc<Queue>>,
 	) -> Result<(), GenericEngineError>
 	{
-		let mut joined_futures = self
+		let acquire_future = self
 			.acquire_future
 			.take()
-			.expect("Command buffer submitted without acquiring an image!")
-			.boxed_send_sync();
+			.expect("Command buffer submitted without acquiring an image!");
 
-		if let Some(f) = self.fence_signal_future.take() {
-			joined_futures = Box::new(joined_futures.join(f));
-		}
-
-		let mut present_info = PresentInfo::swapchain(self.swapchain.clone());
-		present_info.index = self.cur_image_num;
-
-		let future_result = match transfers {
-			Some(t) => {
-				let transfer_semaphore = t
-					.execute(transfer_queue.unwrap_or_else(|| queue.clone()))?
-					.then_signal_semaphore_and_flush()?;
-				joined_futures
-					.join(transfer_semaphore)
-					.then_execute(queue.clone(), cb)?
-					.then_swapchain_present(queue, present_info)
-					.boxed_send_sync()
-					.then_signal_fence_and_flush()
-			}
-			None => joined_futures
-				.then_execute(queue.clone(), cb)?
-				.then_swapchain_present(queue, present_info)
-				.boxed_send_sync()
-				.then_signal_fence_and_flush(),
+		let present_info = PresentInfo {
+			index: acquire_future.image_id(),
+			..PresentInfo::swapchain(acquire_future.swapchain().clone())
 		};
 
+		let mut joined_futures = acquire_future.boxed_send_sync();
+		if let Some(f) = self.submission_future.take() {
+			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
+			joined_futures = Box::new(joined_futures.join(f));
+		}
+		if let Some(t) = transfers {
+			joined_futures = joined_futures
+				.then_execute(transfer_queue.unwrap_or_else(|| queue.clone()), t)?
+				.boxed_send_sync();
+		}
+
+		let future_result = joined_futures
+			.then_execute(queue.clone(), cb)?
+			.then_swapchain_present(queue, present_info)
+			.boxed_send_sync()
+			.then_signal_fence_and_flush();
+
 		match future_result {
-			Ok(future) => self.fence_signal_future = Some(future),
-			Err(FlushError::OutOfDate) => (), // let `get_next_image` detect the error next frame
+			Ok(future) => self.submission_future = Some(future),
+			Err(FlushError::OutOfDate) => {
+				log::warn!("Swapchain out of date, recreating...");
+				self.recreate_pending = true;
+			}
 			Err(e) => return Err(Box::new(e)),
 		}
 
 		Ok(())
 	}
 
-	pub fn wait_for_fence(&self) -> Result<(), FlushError>
-	{
-		self.fence_signal_future
-			.as_ref()
-			.map_or(Ok(()), |f| f.wait(None))
-	}
-
 	pub fn render_pass(&self) -> Arc<RenderPass>
 	{
-		self.swapchain_rp.clone()
+		self.framebuffers[0].render_pass().clone()
 	}
 
 	pub fn dimensions(&self) -> [u32; 2]
@@ -188,9 +184,15 @@ impl Swapchain
 		self.swapchain.image_extent()
 	}
 
-	pub fn get_current_framebuffer(&self) -> Arc<Framebuffer>
+	/// Get the currently acquired swapchain image framebuffer.
+	/// Returns `None` if no image is currently acquired.
+	pub fn get_current_framebuffer(&self) -> Option<Arc<Framebuffer>>
 	{
-		self.framebuffers[self.cur_image_num].clone()
+		if let Some(f) = self.acquire_future.as_ref() {
+			Some(self.framebuffers[f.image_id()].clone())
+		} else {
+			None
+		}
 	}
 
 	pub fn get_surface(&self) -> Arc<Surface<Window>>
@@ -211,33 +213,36 @@ impl Swapchain
 }
 
 fn create_swapchain(
-	vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>,
-) -> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>), GenericEngineError>
+	vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>, render_pass: Arc<RenderPass>,
+) -> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<Framebuffer>>), GenericEngineError>
 {
-	let surface_formats = vk_dev
-		.physical_device()
-		.surface_formats(&surface, SurfaceInfo::default())?;
+	let pd = vk_dev.physical_device();
+	let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
+	let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
+
 	log::info!("Available surface format and color space combinations:");
 	surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
-	let surface_caps = vk_dev
-		.physical_device()
-		.surface_capabilities(&surface, SurfaceInfo::default())?;
+	let image_format = Some(render_pass.attachments()[0].format.unwrap());
+	let image_usage = ImageUsage { color_attachment: true, ..ImageUsage::empty() };
 	let create_info = SwapchainCreateInfo {
 		min_image_count: surface_caps.min_image_count,
-		image_format: Some(Format::B8G8R8A8_SRGB),
-		image_usage: ImageUsage { color_attachment: true, ..ImageUsage::empty() },
+		image_format,
+		image_usage,
 		..Default::default()
 	};
 
-	Ok(vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?)
+	let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
+	let framebuffers = create_framebuffers(images, render_pass)?;
+
+	Ok((swapchain, framebuffers))
 }
 
 fn create_framebuffers(
 	images: Vec<Arc<SwapchainImage<Window>>>, render_pass: Arc<RenderPass>,
 ) -> Result<Vec<Arc<Framebuffer>>, GenericEngineError>
 {
-	let depth_format = render_pass.attachments().last().unwrap().format.unwrap();
+	let depth_format = render_pass.attachments()[1].format.unwrap();
 	images
 		.iter()
 		.map(|img| {

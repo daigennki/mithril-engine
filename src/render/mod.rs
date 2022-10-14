@@ -25,8 +25,7 @@ use vulkano::format::Format;
 use vulkano::image::{ImageDimensions, MipmapsCount};
 use vulkano::memory::DeviceMemoryError;
 use vulkano::pipeline::graphics::viewport::Viewport;
-use vulkano::render_pass::Framebuffer;
-use vulkano::sync::FlushError;
+use vulkano::render_pass::{Framebuffer, RenderPass};
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 
@@ -286,11 +285,6 @@ impl RenderContext
 			.submit_commands(built_cb, self.graphics_queue.clone(), staging_cb, self.transfer_queue.as_ref().cloned())
 	}
 
-	pub fn wait_for_fence(&self) -> Result<(), FlushError>
-	{
-		self.swapchain.wait_for_fence()
-	}
-
 	pub fn get_pipeline(&mut self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
@@ -307,9 +301,13 @@ impl RenderContext
 	}
 
 	/// Get the current swapchain framebuffer.
-	pub fn get_current_framebuffer(&self) -> Arc<Framebuffer>
+	pub fn get_current_framebuffer(&self) -> Option<Arc<Framebuffer>>
 	{
 		self.swapchain.get_current_framebuffer()
+	}
+	pub fn get_swapchain_render_pass(&self) -> Arc<RenderPass>
+	{
+		self.swapchain.render_pass()
 	}
 
 	pub fn get_queue(&self) -> Arc<Queue>
