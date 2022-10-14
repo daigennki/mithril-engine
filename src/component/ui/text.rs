@@ -19,28 +19,40 @@ use vulkano::image::{ImageDimensions, MipmapsCount};
 #[track(Insertion)]
 pub struct Text
 {
+	font: Font<'static>,
+	size: f32,
 	quad: Option<Mesh>,
-	cur_str: String,
+	text_str: String,
 }
 impl Text
 {
-	pub fn new(render_ctx: &mut RenderContext, text_str: &str, size: f32) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, text_str: String, size: f32) -> Result<Self, GenericEngineError>
 	{
-		if text_str.is_empty() {
-			return Ok(Text { quad: None, cur_str: text_str.to_string() });
-		}
-
 		// TODO: preload fonts
 		let font_data = include_bytes!("../../../examples/ui_menu/resource/mplus-1m-medium.ttf");
 		let font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
 
-		let scale_uniform = Scale::uniform(size);
-		let color = (255, 255, 255);
-		let v_metrics = font.v_metrics(scale_uniform);
+		let mut new_text = Text { font, size, quad: None, text_str: text_str.clone() };
+
+		if text_str.is_empty() {
+			return Ok(new_text);
+		}
+
+		new_text.set_text(text_str, render_ctx)?;
+		Ok(new_text)
+	}
+
+	pub fn set_text(&mut self, text: String, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
+	{
+		self.text_str = text;
+
+		let scale_uniform = Scale::uniform(self.size);
+		let color = (255, 255, 0);
+		let v_metrics = self.font.v_metrics(scale_uniform);
 
 		// lay out the glyphs in a line with 1 pixel padding
-		let glyphs: Vec<_> = font
-			.layout(text_str, scale_uniform, point(1.0, 1.0 + v_metrics.ascent))
+		let glyphs: Vec<_> = self.font
+			.layout(&self.text_str, scale_uniform, point(1.0, 1.0 + v_metrics.ascent))
 			.collect();
 
 		// work out the layout size
@@ -108,26 +120,25 @@ impl Text
 		let mesh_top_left = Vec2::new(img_dim.width() as f32 / -2.0, -v_metrics.ascent - 1.0);
 		let mesh_bottom_right = Vec2::new(img_dim.width() as f32 / 2.0, -v_metrics.descent + 1.0);
 
-		Ok(Text {
-			quad: Some(Mesh::new_from_corners(render_ctx, mesh_top_left, mesh_bottom_right, tex)?),
-			cur_str: text_str.to_string(),
-		})
+		self.quad = Some(Mesh::new_from_corners(render_ctx, mesh_top_left, mesh_bottom_right, tex)?);
+
+		Ok(())
 	}
 
 	/// Obtain the currently displayed string.
 	pub fn cur_str(&self) -> String
 	{
-		self.cur_str.clone()
+		self.text_str.clone()
 	}
 }
 impl Draw for Text
 {
 	fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		self.quad.as_ref().map_or(Ok(()), |q| q.draw(cb))
-		/*match self.quad.as_ref() {
+		match self.quad.as_ref() {
 			Some(q) => q.draw(cb),
 			None => Ok(())
-		}*/
+		}
 	}
 }
+

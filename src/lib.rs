@@ -36,6 +36,8 @@ struct GameContext
 	selected_ent: EntityId,
 	right_mouse_button_pressed: bool,
 	camera_rotation: Vec3,
+
+	fps_ui_ent: EntityId,
 }
 impl GameContext
 {
@@ -70,8 +72,7 @@ impl GameContext
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
-		//world.add_entity(ui::new_image(&mut render_ctx, "test_image.png", [ 0, 0 ].into())?);
-		//world.add_entity(ui::new_text(&mut render_ctx, "Hello World!", 32.0, [ -200, -200 ].into())?);
+		let fps_ui_ent = world.add_entity(ui::new_text(&mut render_ctx, "0 fps".to_string(), 32.0, [ -500, -320 ].into())?);
 
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(render_ctx);
@@ -84,6 +85,7 @@ impl GameContext
 			selected_ent: Default::default(),
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
+			fps_ui_ent
 		})
 	}
 
@@ -187,13 +189,29 @@ impl GameContext
 					tr?;
 				}*/
 
+				self.world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut texts: ViewMut<ui::text::Text>|
+					-> Result<(), GenericEngineError> {
+					let frame_time = render_ctx.get_frame_time();
+					let frame_time_microseconds = frame_time.as_micros().max(1);
+					let fps = 1000000 / frame_time_microseconds;
+					let frame_time_ms = frame_time.as_millis();
+					for (eid,text) in (&mut texts).iter().with_id() {
+						if eid == self.fps_ui_ent {
+							text.set_text(format!("{} fps ({} ms)", fps, frame_time_ms), &mut render_ctx)?;
+							break;
+						}
+					}
+
+					Ok(())
+				})?;
+
 				// finalize the rendering for this frame by executing the secondary command buffers
 				self.world.run(
 					|mut render_ctx: UniqueViewMut<render::RenderContext>,
 					 mut trm: UniqueViewMut<ThreadedRenderingManager>|
 					 -> Result<(), GenericEngineError> {
 						let mut primary_cb = render_ctx.new_primary_command_buffer()?;
-
+		
 						let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer().unwrap());
 						rp_begin_info.clear_values = vec![None, None];
 						primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;

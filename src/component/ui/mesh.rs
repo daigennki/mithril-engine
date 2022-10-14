@@ -39,14 +39,14 @@ impl Mesh
 		// vertex data
 		let pos_verts = [
 			top_left,
-			Vec2::new(bottom_right.x, top_left.y),
 			Vec2::new(top_left.x, bottom_right.y),
+			Vec2::new(bottom_right.x, top_left.y),
 			bottom_right,
 		];
 		let uv_verts = [
 			Vec2::new(0.0, 0.0),
-			Vec2::new(1.0, 0.0),
 			Vec2::new(0.0, 1.0),
+			Vec2::new(1.0, 0.0),
 			Vec2::new(1.0, 1.0),
 		];
 

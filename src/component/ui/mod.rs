@@ -77,11 +77,11 @@ pub fn new_image(render_ctx: &mut RenderContext, path: &str, pos: IVec2)
 
 /// Convenience function: create a tuple of `Transform` and `Text` to display text.
 pub fn new_text(
-	render_ctx: &mut RenderContext, text_str: &str, size: f32, pos: IVec2,
+	render_ctx: &mut RenderContext, text: String, size: f32, pos: IVec2,
 ) -> Result<(Transform, text::Text), GenericEngineError>
 {
 	let text_transform = Transform::new(pos, Vec2::new(1.0, 1.0));
-	let text_mesh = text::Text::new(render_ctx, text_str, size)?;
+	let text_mesh = text::Text::new(render_ctx, text, size)?;
 
 	Ok((text_transform, text_mesh))
 }

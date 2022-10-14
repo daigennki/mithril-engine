@@ -49,6 +49,9 @@ pub struct RenderContext
 	// when the window size changes
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
+	
+	last_frame_presented: std::time::Instant,
+	frame_time: std::time::Duration,
 }
 impl RenderContext
 {
@@ -71,6 +74,8 @@ impl RenderContext
 			staging_work: LinkedList::new(),
 			models: HashMap::new(),
 			material_pipelines: HashMap::new(),
+			last_frame_presented: std::time::Instant::now(),
+			frame_time: std::time::Duration::ZERO,
 		})
 	}
 
@@ -282,7 +287,14 @@ impl RenderContext
 		};
 
 		self.swapchain
-			.submit_commands(built_cb, self.graphics_queue.clone(), staging_cb, self.transfer_queue.as_ref().cloned())
+			.submit_commands(built_cb, self.graphics_queue.clone(), staging_cb, self.transfer_queue.as_ref().cloned())?;
+
+		let now = std::time::Instant::now();
+		let dur = now - self.last_frame_presented;
+		self.last_frame_presented = now;
+		self.frame_time = dur;
+
+		Ok(())
 	}
 
 	pub fn get_pipeline(&mut self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
@@ -317,6 +329,11 @@ impl RenderContext
 	pub fn get_surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
 	{
 		self.swapchain.get_surface()
+	}
+
+	pub fn get_frame_time(&self) -> std::time::Duration
+	{
+		self.frame_time
 	}
 }
 

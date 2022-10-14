@@ -10,7 +10,9 @@ use vulkano::format::Format;
 use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano::swapchain::{AcquireError, PresentInfo, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo};
+use vulkano::swapchain::{
+	AcquireError, PresentInfo, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo
+};
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
 use winit::window::Window;
 
@@ -229,6 +231,7 @@ fn create_swapchain(
 		min_image_count: surface_caps.min_image_count,
 		image_format,
 		image_usage,
+		present_mode: PresentMode::Immediate,
 		..Default::default()
 	};
 
