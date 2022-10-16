@@ -22,6 +22,7 @@ pub struct Model
 	materials: Vec<Box<dyn Material>>,
 	submeshes: Vec<SubMesh>,
 	vertex_buffers: Vec<Arc<DeviceLocalBuffer<[f32]>>>,
+	index_buffer: Arc<DeviceLocalBuffer<[u32]>>
 }
 impl Model
 {
@@ -35,26 +36,17 @@ impl Model
 				log::info!("Loading glTF file '{}'...", path.display());
 				let (doc, data_buffers, _) = gltf::import(&path)?;
 
-				// Load each glTF binary buffer into a `DeviceLocalBuffer`, from which buffer slices will be created.
-				// This reduces memory fragmentation and transfers between CPU and GPU.
-				let gpu_buf_usage = BufferUsage {
-					vertex_buffer: true,
-					index_buffer: true,
-					..BufferUsage::empty()
-				};
-				let gpu_buffers = data_buffers
-					.iter()
-					.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
-					.collect::<Result<_, _>>()?;
 				let primitives = doc
 					.nodes()
 					.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
 					.flatten();
 
-				// Collect all of the vertex data into a single buffer to reduce binds. 
+				// Collect all of the vertex data into a single buffer to reduce the number of binds.
+				let mut first_index: u32 = 0;
 				let mut vertex_offset: i32 = 0;
 				let mut positions = Vec::new();
 				let mut texcoords = Vec::new();
+				let mut indices = Vec::new();
 				let mut submeshes = Vec::new();
 				for prim in primitives {
 					let positions_accessor = prim
@@ -69,13 +61,35 @@ impl Model
 					let texcoords_slice = get_buf_data::<f32>(&texcoords_accessor, &data_buffers)?;
 					texcoords.extend_from_slice(texcoords_slice);
 
-					submeshes.push(SubMesh::from_gltf_primitive(&prim, &gpu_buffers, vertex_offset)?);
+					let indices_accessor = prim
+						.indices()
+						.ok_or("no indices in glTF primitive")?;
+					match indices_accessor.data_type() {
+						DataType::U16 => {
+							// Convert the u16 indices into u32.
+							let indices_slice = get_buf_data::<u16>(&indices_accessor, &data_buffers)?;
+							let indices_u32 = indices_slice.iter().map(|index| *index as u32);
+							indices.extend(indices_u32);
+						}
+						DataType::U32 => {
+							let indices_slice = get_buf_data::<u32>(&indices_accessor, &data_buffers)?;
+							indices.extend_from_slice(indices_slice);
+						}
+						other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
+					}
 
+					submeshes.push(SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?);
+
+					first_index += indices_accessor.count() as u32;
 					vertex_offset += (positions_slice.len() / 3) as i32;
 				}
+
 				let vert_buf_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
 				let vbo_positions = render_ctx.new_buffer_from_iter(positions, vert_buf_usage)?;
 				let vbo_texcoords = render_ctx.new_buffer_from_iter(texcoords, vert_buf_usage)?;
+
+				let index_buf_usage = BufferUsage { index_buffer: true, ..BufferUsage::empty() };
+				let index_buffer = render_ctx.new_buffer_from_iter(indices, index_buf_usage)?;
 
 				Ok(Model {
 					materials: doc
@@ -84,6 +98,7 @@ impl Model
 						.collect::<Result<_, _>>()?,
 					submeshes,
 					vertex_buffers: vec![ vbo_positions, vbo_texcoords ],
+					index_buffer
 				})
 			}
 			/*Some("obj") => {
@@ -115,6 +130,7 @@ impl Model
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
+		cb.bind_index_buffer(self.index_buffer.clone());
 		for submesh in &self.submeshes {
 			// it's okay that we use a panic function here, since the glTF loader validates the index for us
 			self.materials[submesh.material_index()].bind_descriptor_set(cb)?;
@@ -160,7 +176,7 @@ fn load_gltf_material(
 	}
 }
 
-enum IndexBufferVariant
+/*enum IndexBufferVariant
 {
 	U16(Arc<BufferSlice<[u16], DeviceLocalBuffer<[u8]>>>),
 	U32(Arc<BufferSlice<[u32], DeviceLocalBuffer<[u8]>>>),
@@ -190,11 +206,11 @@ impl IndexBufferVariant
 			IndexBufferVariant::ObjU32(buf) => cb.bind_index_buffer(buf.clone())
 		};
 	}
-}
+}*/
 
 struct SubMesh
 {
-	index_buf: IndexBufferVariant,
+	first_index: u32,
 	index_count: u32,
 	vertex_offset: i32,
 	mat_index: usize,
@@ -227,13 +243,13 @@ impl SubMesh
 	}*/
 
 	pub fn from_gltf_primitive(
-		prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>, vertex_offset: i32,
+		prim: &gltf::Primitive, first_index: u32, vertex_offset: i32,
 	) -> Result<Self, GenericEngineError>
 	{
 		let indices = prim.indices().ok_or("no indices in glTF primitive")?;
 
 		Ok(SubMesh {
-			index_buf: IndexBufferVariant::from_accessor(&indices, gpu_buffers)?,
+			first_index,
 			index_count: indices.count().try_into()?,
 			vertex_offset,
 			mat_index: prim.material().index().unwrap_or(0),
@@ -242,8 +258,7 @@ impl SubMesh
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		self.index_buf.bind(cb);
-		cb.draw_indexed(self.index_count, 1, 0, self.vertex_offset, 0)?;
+		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, 0)?;
 		Ok(())
 	}
 
