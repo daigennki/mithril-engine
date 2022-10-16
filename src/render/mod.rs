@@ -49,7 +49,6 @@ pub struct RenderContext
 	// when the window size changes
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
-	
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
 }
@@ -234,7 +233,7 @@ impl RenderContext
 	}
 
 	/// Issue a new primary command buffer builder to begin recording to.
-	pub fn new_primary_command_buffer(&mut self) -> Result<CommandBuffer<PrimaryAutoCommandBuffer>, GenericEngineError>
+	pub fn new_primary_command_buffer(&self) -> Result<CommandBuffer<PrimaryAutoCommandBuffer>, GenericEngineError>
 	{
 		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.graphics_queue.clone())
 	}
@@ -242,7 +241,7 @@ impl RenderContext
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to `framebuffer`.
 	pub fn new_secondary_command_buffer(
-		&mut self, framebuffer: Arc<vulkano::render_pass::Framebuffer>,
+		&self, framebuffer: Arc<vulkano::render_pass::Framebuffer>,
 	) -> Result<CommandBuffer<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.graphics_queue.clone(), Some(framebuffer))
@@ -286,8 +285,12 @@ impl RenderContext
 			Some(staging_cb.build()?)
 		};
 
-		self.swapchain
-			.submit_commands(built_cb, self.graphics_queue.clone(), staging_cb, self.transfer_queue.as_ref().cloned())?;
+		self.swapchain.submit_commands(
+			built_cb,
+			self.graphics_queue.clone(),
+			staging_cb,
+			self.transfer_queue.as_ref().cloned(),
+		)?;
 
 		let now = std::time::Instant::now();
 		let dur = now - self.last_frame_presented;
@@ -297,7 +300,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn get_pipeline(&mut self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
+	pub fn get_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
 	}

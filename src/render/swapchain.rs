@@ -11,7 +11,7 @@ use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, 
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano::swapchain::{
-	AcquireError, PresentInfo, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo
+	AcquireError, PresentInfo, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo,
 };
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
 use winit::window::Window;

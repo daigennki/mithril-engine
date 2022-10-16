@@ -32,7 +32,12 @@ impl Text
 		let font_data = include_bytes!("../../../examples/ui_menu/resource/mplus-1m-medium.ttf");
 		let font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
 
-		let mut new_text = Text { font, size, quad: None, text_str: text_str.clone() };
+		let mut new_text = Text {
+			font,
+			size,
+			quad: None,
+			text_str: text_str.clone(),
+		};
 
 		if text_str.is_empty() {
 			return Ok(new_text);
@@ -51,7 +56,8 @@ impl Text
 		let v_metrics = self.font.v_metrics(scale_uniform);
 
 		// lay out the glyphs in a line with 1 pixel padding
-		let glyphs: Vec<_> = self.font
+		let glyphs: Vec<_> = self
+			.font
 			.layout(&self.text_str, scale_uniform, point(1.0, 1.0 + v_metrics.ascent))
 			.collect();
 
@@ -137,8 +143,7 @@ impl Draw for Text
 	{
 		match self.quad.as_ref() {
 			Some(q) => q.draw(cb),
-			None => Ok(())
+			None => Ok(()),
 		}
 	}
 }
-

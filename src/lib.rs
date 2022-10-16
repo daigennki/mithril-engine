@@ -31,8 +31,8 @@ struct GameContext
 {
 	//pref_path: String,
 	world: World,
+	egui_gui: egui::Gui,
 
-	egui_gui: egui_winit_vulkano::Gui,
 	selected_ent: EntityId,
 	right_mouse_button_pressed: bool,
 	camera_rotation: Vec3,
@@ -61,7 +61,7 @@ impl GameContext
 
 		// set up egui
 		let subpass = vulkano::render_pass::Subpass::from(render_ctx.get_swapchain_render_pass(), 1).unwrap();
-		let gui = egui_winit_vulkano::Gui::new_with_subpass(
+		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
 			None,
@@ -72,54 +72,48 @@ impl GameContext
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
-		let fps_ui_ent = world.add_entity(ui::new_text(&mut render_ctx, "0 fps".to_string(), 32.0, [ -500, -320 ].into())?);
+		let fps_ui_ent = world.add_entity(ui::new_text(&mut render_ctx, "0 fps".to_string(), 32.0, [-500, -320].into())?);
 
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(render_ctx);
 		world.add_unique(ThreadedRenderingManager::new(2));
 
 		Ok(GameContext {
-			//pref_path: pref_path,
+			//pref_path,
 			world,
-			egui_gui: gui,
+			egui_gui,
 			selected_ent: Default::default(),
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
-			fps_ui_ent
+			fps_ui_ent,
 		})
 	}
 
 	fn run_default_workload(&mut self) -> Result<(), GenericEngineError>
 	{
-		//let start = std::time::Instant::now();
 		self.world.run_default()?;
-		/*let end = std::time::Instant::now();
-		let dur = end - start;
-		println!("default workload took {} ms", dur.as_millis());*/
 		Ok(())
 	}
 
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::WindowEvent { event: we, .. } => {
+			Event::WindowEvent { event, .. } => {
 				//self.egui_gui.update(we);
-				{
-					match we {
-						WindowEvent::MouseInput { button, state, .. } => {
-							if *button == MouseButton::Right {
-								self.right_mouse_button_pressed = match state {
-									ElementState::Pressed => true,
-									ElementState::Released => false,
-								};
-								log::debug!("MouseButton::Right: {}", self.right_mouse_button_pressed);
-							}
+				match event {
+					WindowEvent::MouseInput { button, state, .. } => {
+						if *button == MouseButton::Right {
+							self.right_mouse_button_pressed = match state {
+								ElementState::Pressed => true,
+								ElementState::Released => false,
+							};
+							log::debug!("MouseButton::Right: {}", self.right_mouse_button_pressed);
 						}
-						_ => (),
 					}
+					_ => (),
 				}
 			}
-			Event::DeviceEvent { event: de, .. } => match de {
+			Event::DeviceEvent { event, .. } => match event {
 				DeviceEvent::MouseMotion { delta } => {
 					if self.right_mouse_button_pressed {
 						self.camera_rotation.z += (0.05 * delta.0) as f32;
@@ -189,21 +183,20 @@ impl GameContext
 					tr?;
 				}*/
 
-				self.world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut texts: ViewMut<ui::text::Text>|
-					-> Result<(), GenericEngineError> {
-					let frame_time = render_ctx.get_frame_time();
-					let frame_time_microseconds = frame_time.as_micros().max(1);
-					let fps = 1000000 / frame_time_microseconds;
-					let frame_time_ms = frame_time.as_millis();
-					for (eid,text) in (&mut texts).iter().with_id() {
-						if eid == self.fps_ui_ent {
-							text.set_text(format!("{} fps ({} ms)", fps, frame_time_ms), &mut render_ctx)?;
-							break;
-						}
-					}
-
-					Ok(())
-				})?;
+				self.world.run(
+					|mut render_ctx: UniqueViewMut<render::RenderContext>,
+					 mut texts: ViewMut<ui::text::Text>|
+					 -> Result<(), GenericEngineError> {
+						let frame_time = render_ctx.get_frame_time();
+						let frame_time_microseconds = frame_time.as_micros().max(1);
+						let fps = 1000000 / frame_time_microseconds;
+						let frame_time_ms = frame_time.as_millis();
+						(&mut texts)
+							.get(self.fps_ui_ent)?
+							.set_text(format!("{} fps ({} ms)", fps, frame_time_ms), &mut render_ctx)?;
+						Ok(())
+					},
+				)?;
 
 				// finalize the rendering for this frame by executing the secondary command buffers
 				self.world.run(
@@ -211,7 +204,7 @@ impl GameContext
 					 mut trm: UniqueViewMut<ThreadedRenderingManager>|
 					 -> Result<(), GenericEngineError> {
 						let mut primary_cb = render_ctx.new_primary_command_buffer()?;
-		
+
 						let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer().unwrap());
 						rp_begin_info.clear_values = vec![None, None];
 						primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
@@ -240,7 +233,7 @@ impl GameContext
 	}
 }
 
-/// Generate the entity list for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
+/*/// Generate the entity list for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
 fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui, selected: EntityId) -> Option<EntityId>
 {
 	let mut newly_selected = None;
@@ -264,17 +257,12 @@ fn material_properties_window_layout(
 ) -> Result<(), GenericEngineError>
 {
 	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut meshes: ViewMut<component::mesh::Mesh>| {
-		for (eid, mesh) in (&mut meshes).iter().with_id() {
-			if eid == selected_ent {
-				if let Some(materials) = mesh.get_materials() {
-					let mat = &mut materials[0];
-					let mut color = mat.get_base_color().to_array();
-					mat_wnd.label("Base Color");
-					mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
-					mat.set_base_color(color.into(), &mut render_ctx)?;
-				}
-				break;
-			}
+		if let Some(materials) = (&mut meshes).get(selected_ent)?.get_materials() {
+			let mat = &mut materials[0];
+			let mut color = mat.get_base_color().to_array();
+			mat_wnd.label("Base Color");
+			mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
+			mat.set_base_color(color.into(), &mut render_ctx)?;
 		}
 		Ok(())
 	})
@@ -285,27 +273,22 @@ fn transform_properties_window_layout(
 ) -> Result<(), GenericEngineError>
 {
 	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut transforms: ViewMut<component::Transform>| {
-		for (eid, transform) in (&mut transforms).iter().with_id() {
-			if eid == selected_ent {
-				if !transform.is_this_static() {
-					let mut pos = transform.position();
-					wnd.columns(3, |cols| {
-						cols[0].label("X");
-						cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
-						cols[1].label("Y");
-						cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
-						cols[2].label("Z");
-						cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
-					});
-					transform.set_pos(pos, &mut render_ctx)?;
-				}
-
-				break;
-			}
+		let transform = (&mut transforms).get(selected_ent)?;
+		if !transform.is_this_static() {
+			let mut pos = transform.position();
+			wnd.columns(3, |cols| {
+				cols[0].label("X");
+				cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
+				cols[1].label("Y");
+				cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
+				cols[2].label("Z");
+				cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
+			});
+			transform.set_pos(pos, &mut render_ctx)?;
 		}
 		Ok(())
 	})
-}
+}*/
 
 #[derive(Deserialize)]
 struct WorldData
@@ -347,18 +330,19 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
 	world.run(|mut camera: UniqueViewMut<Camera>| camera.finish_loading(render_ctx))?;
-	world.run(|mut components: ViewMut<component::Transform>| -> Result<(), GenericEngineError> {
-		for component in (&mut components).iter() {
-			component.finish_loading(render_ctx)?;
-		}
-		Ok(())
-	})?;
-	world.run(|mut components: ViewMut<component::mesh::Mesh>| -> Result<(), GenericEngineError> {
-		for component in (&mut components).iter() {
-			component.finish_loading(render_ctx)?;
-		}
-		Ok(())
-	})?;
+	world.run(
+		|mut transforms: ViewMut<component::Transform>,
+		 mut meshes: ViewMut<component::mesh::Mesh>|
+		 -> Result<(), GenericEngineError> {
+			for t in (&mut transforms).iter() {
+				t.finish_loading(render_ctx)?;
+			}
+			for m in (&mut meshes).iter() {
+				m.finish_loading(render_ctx)?;
+			}
+			Ok(())
+		},
+	)?;
 
 	Ok(world)
 }
@@ -393,8 +377,8 @@ impl ThreadedRenderingManager
 }
 
 fn draw_3d(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
-	skybox: UniqueView<render::skybox::Skybox>, camera: UniqueViewMut<Camera>, transforms: View<component::Transform>,
+	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
+	skybox: UniqueView<render::skybox::Skybox>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
@@ -423,17 +407,10 @@ fn draw_3d(
 	Ok(())
 }
 fn draw_ui(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
-	canvas: UniqueViewMut<Canvas>, mut ui_transforms: ViewMut<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>,
-	texts: View<ui::text::Text>,
+	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
+	ui_transforms: View<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>, texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
-	// Update the projection matrix on UI `Transform` components,
-	// for entities that have been inserted since last time.
-	for t in ui_transforms.inserted_mut().iter() {
-		t.update_projection(render_ctx.as_mut(), canvas.projection())?;
-	}
-
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
@@ -458,13 +435,20 @@ fn draw_ui(
 	Ok(())
 }
 fn prepare_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>,
+	mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>, canvas: UniqueView<Canvas>,
+	mut ui_transforms: ViewMut<ui::Transform>,
 ) -> Result<(), GenericEngineError>
 {
 	let (_, new_image_dimensions) = render_ctx.next_swapchain_image()?;
 
 	if let Some(d) = new_image_dimensions {
 		camera.update_window_size(d[0], d[1], &mut render_ctx)?;
+	}
+
+	// Update the projection matrix on UI `Transform` components,
+	// for entities that have been inserted since last time.
+	for t in ui_transforms.inserted_mut().iter() {
+		t.update_projection(render_ctx.as_mut(), canvas.projection())?;
 	}
 
 	Ok(())
