@@ -21,6 +21,7 @@ pub struct Model
 {
 	materials: Vec<Box<dyn Material>>,
 	submeshes: Vec<SubMesh>,
+	vertex_buffers: Vec<Arc<DeviceLocalBuffer<[f32]>>>,
 }
 impl Model
 {
@@ -45,22 +46,47 @@ impl Model
 					.iter()
 					.map(|data_buffer| render_ctx.new_buffer_from_iter(data_buffer.0.clone(), gpu_buf_usage))
 					.collect::<Result<_, _>>()?;
+				let primitives = doc
+					.nodes()
+					.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
+					.flatten();
+
+				// Collect all of the vertex data into a single buffer to reduce binds. 
+				let mut vertex_offset: i32 = 0;
+				let mut positions = Vec::new();
+				let mut texcoords = Vec::new();
+				let mut submeshes = Vec::new();
+				for prim in primitives {
+					let positions_accessor = prim
+						.get(&Semantic::Positions)
+						.ok_or("no positions in glTF primitive")?;
+					let positions_slice = get_buf_data::<f32>(&positions_accessor, &data_buffers)?;
+					positions.extend_from_slice(positions_slice);
+
+					let texcoords_accessor = prim
+						.get(&Semantic::TexCoords(0))
+						.ok_or("no texture coordinates in glTF primitive")?;
+					let texcoords_slice = get_buf_data::<f32>(&texcoords_accessor, &data_buffers)?;
+					texcoords.extend_from_slice(texcoords_slice);
+
+					submeshes.push(SubMesh::from_gltf_primitive(&prim, &gpu_buffers, vertex_offset)?);
+
+					vertex_offset += (positions_slice.len() / 3) as i32;
+				}
+				let vert_buf_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
+				let vbo_positions = render_ctx.new_buffer_from_iter(positions, vert_buf_usage)?;
+				let vbo_texcoords = render_ctx.new_buffer_from_iter(texcoords, vert_buf_usage)?;
 
 				Ok(Model {
 					materials: doc
 						.materials()
 						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx, use_embedded_materials))
 						.collect::<Result<_, _>>()?,
-
-					submeshes: doc
-						.nodes()
-						.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-						.flatten()
-						.map(|prim| SubMesh::from_gltf_primitive(&prim, &gpu_buffers))
-						.collect::<Result<_, _>>()?,
+					submeshes,
+					vertex_buffers: vec![ vbo_positions, vbo_texcoords ],
 				})
 			}
-			Some("obj") => {
+			/*Some("obj") => {
 				log::info!("Loading OBJ file '{}'...", path.display());
 				let (obj_models, obj_materials_result) = tobj::load_obj(&path, &tobj::GPU_LOAD_OPTIONS)?;
 				let obj_materials = obj_materials_result?;
@@ -76,7 +102,7 @@ impl Model
 						.map(|obj_model| SubMesh::from_obj_mesh(render_ctx, &obj_model.mesh))
 						.collect::<Result<_, _>>()?,
 				})
-			}
+			}*/
 			_ => Err(format!("couldn't determine model file type of {}", path.display()).into()),
 		}
 	}
@@ -88,6 +114,7 @@ impl Model
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
+		cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
 		for submesh in &self.submeshes {
 			// it's okay that we use a panic function here, since the glTF loader validates the index for us
 			self.materials[submesh.material_index()].bind_descriptor_set(cb)?;
@@ -97,7 +124,7 @@ impl Model
 	}
 }
 
-fn load_obj_mtl(
+/*fn load_obj_mtl(
 	obj_mat: &tobj::Material, search_folder: &Path, render_ctx: &mut RenderContext,
 ) -> Result<Box<dyn Material>, GenericEngineError>
 {
@@ -111,7 +138,7 @@ fn load_obj_mtl(
 	loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
 
 	Ok(Box::new(loaded_mat))
-}
+}*/
 
 fn load_gltf_material(
 	mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext, use_embedded: bool,
@@ -160,21 +187,21 @@ impl IndexBufferVariant
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
 			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
-			IndexBufferVariant::ObjU32(buf) => cb.bind_index_buffer(buf.clone()),
+			IndexBufferVariant::ObjU32(buf) => cb.bind_index_buffer(buf.clone())
 		};
 	}
 }
 
 struct SubMesh
 {
-	vertex_buffers: Vec<Arc<dyn BufferAccess>>,
 	index_buf: IndexBufferVariant,
-	vert_count: u32,
+	index_count: u32,
+	vertex_offset: i32,
 	mat_index: usize,
 }
 impl SubMesh
 {
-	pub fn from_obj_mesh(render_ctx: &mut RenderContext, mesh: &tobj::Mesh) -> Result<Self, GenericEngineError>
+	/*pub fn from_obj_mesh(render_ctx: &mut RenderContext, mesh: &tobj::Mesh) -> Result<Self, GenericEngineError>
 	{
 		if mesh.positions.is_empty() {
 			return Err("no positions in OBJ mesh".into());
@@ -194,38 +221,29 @@ impl SubMesh
 			],
 			index_buf: IndexBufferVariant::from_obj_u32_vec(render_ctx, mesh.indices.clone())?,
 			vert_count: mesh.indices.len().try_into()?,
+			first_vert_index: 0,
 			mat_index: mesh.material_id.unwrap_or(0),
 		})
-	}
+	}*/
 
 	pub fn from_gltf_primitive(
-		prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>,
+		prim: &gltf::Primitive, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>, vertex_offset: i32,
 	) -> Result<Self, GenericEngineError>
 	{
-		let positions = prim
-			.get(&Semantic::Positions)
-			.ok_or("no positions in glTF primitive")?;
-		let tex_coords = prim
-			.get(&Semantic::TexCoords(0))
-			.ok_or("no texture coordinates in glTF primitive")?;
 		let indices = prim.indices().ok_or("no indices in glTF primitive")?;
 
 		Ok(SubMesh {
-			vertex_buffers: vec![
-				get_buf_slice::<f32>(&positions, gpu_buffers)?,
-				get_buf_slice::<f32>(&tex_coords, gpu_buffers)?,
-			],
 			index_buf: IndexBufferVariant::from_accessor(&indices, gpu_buffers)?,
-			vert_count: indices.count().try_into()?,
+			index_count: indices.count().try_into()?,
+			vertex_offset,
 			mat_index: prim.material().index().unwrap_or(0),
 		})
 	}
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
 		self.index_buf.bind(cb);
-		cb.draw_indexed(self.vert_count, 1, 0, 0, 0)?;
+		cb.draw_indexed(self.index_count, 1, 0, self.vertex_offset, 0)?;
 		Ok(())
 	}
 
@@ -246,6 +264,33 @@ fn data_type_to_id(value: DataType) -> TypeId
 		DataType::F32 => TypeId::of::<f32>(),
 	}
 }
+
+/// Get a slice of the part of the buffer that the accessor points to.
+fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>)
+	-> Result<&'a [T], GenericEngineError>
+{
+	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
+		return Err(
+			format!("expected '{:?}', but given glTF primitive has `{:?}`", TypeId::of::<T>(), accessor.data_type()).into()
+		);
+	}
+
+	let view = accessor
+		.view()
+		.ok_or("unexpected sparse accessor in glTF file")?;
+	if view.stride().is_some() {
+		return Err("unexpected interleaved data in glTF file".into());
+	}
+	let start = view.offset() as usize;
+	let end = start + view.length() as usize;
+	let buf_i = view.buffer().index();
+	// The offset and length should've been validated by the glTF loader,
+	// hence why we use functions that may panic here.
+	let data_slice = &buffers[buf_i][start..end];
+	let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
+	Ok(reinterpreted_slice)
+}
+
 fn get_buf_slice<T>(
 	accessor: &gltf::Accessor, gpu_buffers: &Vec<Arc<DeviceLocalBuffer<[u8]>>>,
 ) -> Result<Arc<BufferSlice<[T], DeviceLocalBuffer<[u8]>>>, GenericEngineError>
@@ -271,7 +316,7 @@ where
 	// hence why we use functions that may panic here.
 	let buf_u8 = gpu_buffers[buf_i]
 		.slice(start..end)
-		.expect("buffer slice out of range");
+		.expect("buffer silce out of range");
 
 	// This is a valid conversion as long as the glTF offsets and lengths are
 	// valid, which they should be since the glTF loader validates it for us.
