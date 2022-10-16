@@ -31,7 +31,7 @@ struct GameContext
 {
 	//pref_path: String,
 	world: World,
-	egui_gui: egui::Gui,
+	egui_gui: egui_winit_vulkano::Gui,
 
 	selected_ent: EntityId,
 	right_mouse_button_pressed: bool,
