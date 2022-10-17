@@ -10,7 +10,7 @@ mod render;
 use glam::*;
 use serde::Deserialize;
 use shipyard::iter::{IntoIter, IntoWithId};
-use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
+use shipyard::{EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use egui_winit_vulkano::egui;
 use component::camera::Camera;
 use component::ui;
 use component::ui::canvas::Canvas;
-use component::{DeferGpuResourceLoading, Draw};
+use component::DeferGpuResourceLoading;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -394,12 +394,14 @@ fn draw_3d(
 	command_buffer.bind_pipeline(render_ctx.get_pipeline("PBR")?);
 
 	camera.bind(&mut command_buffer)?;
+	let projview = camera.get_projview();
 	for (eid, transform) in transforms.iter().with_id() {
-		transform.bind_descriptor_set(&mut command_buffer)?;
-
 		// draw 3D meshes
 		if let Ok(c) = meshes.get(eid) {
-			c.draw(&mut command_buffer)?;
+			transform.bind_descriptor_set(&mut command_buffer)?;
+
+			let transform_mat = projview * transform.get_matrix();
+			c.draw(&mut command_buffer, &transform_mat)?;
 		}
 	}
 

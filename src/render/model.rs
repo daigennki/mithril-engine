@@ -13,7 +13,7 @@ use std::any::TypeId;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use vulkano::buffer::{BufferAccess, BufferUsage, DeviceLocalBuffer};
+use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 
 /// 3D model
@@ -113,14 +113,24 @@ impl Model
 		&mut self.materials
 	}
 
-	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
+	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, transform: &Mat4) -> Result<(), GenericEngineError>
 	{
-		cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
-		self.index_buffer.bind(cb);
-		for submesh in &self.submeshes {
-			// it's okay that we use a panic function here, since the glTF loader validates the index for us
-			self.materials[submesh.material_index()].bind_descriptor_set(cb)?;
-			submesh.draw(cb)?;
+		// determine which submeshes are visible
+		let mut visible_submeshes = self.submeshes
+			.iter()
+			.filter(|submesh| submesh.cull(transform))
+			.peekable();
+
+		// don't even bother with vertex/index buffer binds if no submeshes are visible
+		if visible_submeshes.peek().is_some() {
+			cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
+			self.index_buffer.bind(cb);
+			for submesh in visible_submeshes {
+				// it's okay that we use a panic function here, since the glTF loader validates the index for us
+				self.materials[submesh.material_index()].bind_descriptor_set(cb)?;
+				submesh.draw(cb)?;
+			}
 		}
 		Ok(())
 	}
@@ -207,6 +217,8 @@ struct SubMesh
 	index_count: u32,
 	vertex_offset: i32,
 	mat_index: usize,
+	corner_min: Vec3,
+	corner_max: Vec3,
 }
 impl SubMesh
 {
@@ -245,7 +257,60 @@ impl SubMesh
 			index_count: indices.count().try_into()?,
 			vertex_offset,
 			mat_index: prim.material().index().unwrap_or(0),
+			corner_min: prim.bounding_box().min.into(),
+			corner_max: prim.bounding_box().max.into()
 		})
+	}
+
+	/// Perform frustum culling. Returns `true` if visible.
+	pub fn cull(&self, projviewmodel: &Mat4) -> bool
+	{
+		// generate vertices for all 8 corners of this bounding box
+		let mut bb_verts: [Vec4; 8] = Default::default();
+		bb_verts[0..4].fill(self.corner_min.extend(1.0));
+		bb_verts[4..8].fill(self.corner_max.extend(1.0));
+		bb_verts[1].x = self.corner_max.x;
+		bb_verts[2].x = self.corner_max.x;
+		bb_verts[2].y = self.corner_max.y;
+		bb_verts[3].y = self.corner_max.y;
+		bb_verts[5].x = self.corner_min.x;
+		bb_verts[6].x = self.corner_min.x;
+		bb_verts[6].y = self.corner_min.y;
+		bb_verts[7].y = self.corner_min.y;
+
+		let mut tf_verts: [Vec4; 8] = Default::default();
+		for (i, vert) in bb_verts.iter().enumerate() {
+			tf_verts[i] = *projviewmodel * *vert;
+		}
+
+		// check if all vertices are on the outside of a plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
+		let mut eval_axis = 0;	// evaluate X (0), Y (1), or Z (2) coordinate
+		for p in 0..6 {
+			let mut outside = false;
+			for tf_vert in tf_verts {
+				let mut axis_coord = tf_vert[eval_axis];
+
+				// negate to flip side vertex is on when evaluating against negative planes, so outside coordinates are always greater than +W
+				if (p % 2) == 0 {
+					axis_coord = -axis_coord;
+				}
+
+				outside = axis_coord > tf_vert.w;	// vertex is outside of plane if coordinate on plane axis is greater than +W
+				if !outside {
+					break;
+				}
+			}
+
+			if outside {
+				return false;	// `outside` will only be true if the loop did not break
+			}
+
+			if (p % 2) != 0 {
+				eval_axis += 1;	// add 1 to evaluate next axis after positive (`p` is odd) axis is evaluated (avoid division)
+			}
+		}
+
+		true
 	}
 
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>

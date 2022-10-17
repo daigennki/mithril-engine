@@ -3,11 +3,12 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::component::{DeferGpuResourceLoading, Draw, EntityComponent};
+use crate::component::{DeferGpuResourceLoading, EntityComponent};
 use crate::material::Material;
 use crate::render::model::Model;
 use crate::render::{command_buffer::CommandBuffer, RenderContext};
 use crate::GenericEngineError;
+use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +33,15 @@ impl Mesh
 	{
 		self.use_embedded_materials.unwrap_or(false)
 	}
+
+	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4) -> Result<(), GenericEngineError>
+	{
+		// only draw if the model has completed loading
+		if let Some(model_loaded) = self.model_data.as_ref() {
+			model_loaded.draw(cb, projviewmodel)?
+		}
+		Ok(())
+	}
 }
 impl DeferGpuResourceLoading for Mesh
 {
@@ -43,14 +53,4 @@ impl DeferGpuResourceLoading for Mesh
 		Ok(())
 	}
 }
-impl Draw for Mesh
-{
-	fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
-	{
-		// only draw if the model has completed loading
-		if let Some(model_loaded) = self.model_data.as_ref() {
-			model_loaded.draw(cb)?
-		}
-		Ok(())
-	}
-}
+

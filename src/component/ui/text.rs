@@ -4,7 +4,6 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use super::mesh::Mesh;
-use crate::component::Draw;
 use crate::render::{command_buffer::CommandBuffer, RenderContext};
 use crate::GenericEngineError;
 use glam::*;
@@ -136,10 +135,8 @@ impl Text
 	{
 		self.text_str.clone()
 	}
-}
-impl Draw for Text
-{
-	fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+
+	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		match self.quad.as_ref() {
 			Some(q) => q.draw(cb),

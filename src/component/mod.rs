@@ -36,16 +36,19 @@ pub struct Transform
 
 	#[serde(skip)]
 	rot_quat: Quat,
+	#[serde(skip)]
+	model_mat: Mat4,
 }
 impl Transform
 {
 	fn update_buffer(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
+		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 		let staged = self
 			.staging_buf
 			.as_ref()
 			.ok_or("transform not loaded")?
-			.from_data(Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position))?;
+			.from_data(self.model_mat)?;
 		render_ctx.copy_buffer(staged, self.buf.as_ref().ok_or("transform not loaded")?.clone());
 		Ok(())
 	}
@@ -87,6 +90,10 @@ impl Transform
 	{
 		self.rotation
 	}
+	pub fn get_matrix(&self) -> Mat4
+	{
+		self.model_mat
+	}
 
 	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
 	{
@@ -106,10 +113,10 @@ impl DeferGpuResourceLoading for Transform
 	{
 		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
-		let transform_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
+		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 
 		let (staging_buf, buf) =
-			render_ctx.new_cpu_buffer_from_data(transform_mat, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
+			render_ctx.new_cpu_buffer_from_data(self.model_mat, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(
 			0,
@@ -139,8 +146,8 @@ pub trait DeferGpuResourceLoading
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
 }
 
-/// Trait for drawable components.
+/*/// Trait for drawable components.
 pub trait Draw
 {
 	fn draw(&self, command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>;
-}
+}*/

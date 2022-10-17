@@ -40,6 +40,8 @@ pub struct Camera
 	width: u32,
 	#[serde(skip)]
 	height: u32,
+	#[serde(skip)]
+	projview: Mat4,
 }
 impl Camera
 {
@@ -63,11 +65,13 @@ impl Camera
 	{
 		self.width = width;
 		self.height = height;
+		let projview_struct = calculate_projview(self.position, self.target, width, height);
+		self.projview = projview_struct.projview;
 		let staged = self
 			.staging_buf
 			.as_ref()
 			.ok_or("camera not loaded")?
-			.from_data(calculate_projview(self.position, self.target, width, height))?;
+			.from_data(projview_struct)?;
 		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
 
 		Ok(())
@@ -79,11 +83,13 @@ impl Camera
 	{
 		self.position = pos;
 		self.target = target;
+		let projview_struct = calculate_projview(self.position, self.target, self.width, self.height);
+		self.projview = projview_struct.projview;
 		let staged = self
 			.staging_buf
 			.as_ref()
 			.ok_or("camera not loaded")?
-			.from_data(calculate_projview(self.position, self.target, self.width, self.height))?;
+			.from_data(projview_struct)?;
 		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
 		Ok(())
 	}
@@ -95,6 +101,11 @@ impl Camera
 		cb.bind_descriptor_set(1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
 		Ok(())
 	}
+
+	pub fn get_projview(&self) -> Mat4
+	{
+		self.projview
+	}
 }
 impl DeferGpuResourceLoading for Camera
 {
@@ -103,9 +114,13 @@ impl DeferGpuResourceLoading for Camera
 		let dim = render_ctx.swapchain_dimensions();
 		self.width = dim[0];
 		self.height = dim[1];
-		let projview = calculate_projview(self.position, self.target, dim[0], dim[1]);
+		let projview_struct = calculate_projview(self.position, self.target, dim[0], dim[1]);
+		self.projview = projview_struct.projview;
 		let (staging_buf, projview_buf) =
-			render_ctx.new_cpu_buffer_from_data(projview, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
+			render_ctx.new_cpu_buffer_from_data(
+				projview_struct, 
+				BufferUsage { uniform_buffer: true, ..BufferUsage::empty() }
+			)?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 1, [WriteDescriptorSet::buffer(
 			0,

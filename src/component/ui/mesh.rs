@@ -3,7 +3,6 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::component::Draw;
 use crate::render::texture::Texture;
 use crate::render::{command_buffer::CommandBuffer, RenderContext};
 use crate::GenericEngineError;
@@ -57,10 +56,8 @@ impl Mesh
 			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, vbo_usage)?,
 		})
 	}
-}
-impl Draw for Mesh
-{
-	fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+
+	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		cb.bind_descriptor_set(1, self.descriptor_set.clone())?;
 		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
