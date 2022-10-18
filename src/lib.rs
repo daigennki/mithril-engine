@@ -6,11 +6,12 @@
 pub mod component;
 mod material;
 mod render;
+mod scene;
 
 use glam::*;
 use serde::Deserialize;
 use shipyard::iter::{IntoIter, IntoWithId};
-use shipyard::{EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
+use shipyard::{EntityId, Get, EntitiesView, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -145,7 +146,7 @@ impl GameContext
 				self.run_default_workload()?;
 
 				// set debug UI layout
-				/*let mut mat_result = None;
+				let mut mat_result = None;
 				let mut tr_result = None;
 				self.egui_gui.immediate_ui(|gui| {
 					let ctx = gui.context();
@@ -181,7 +182,7 @@ impl GameContext
 				}
 				if let Some(tr) = tr_result {
 					tr?;
-				}*/
+				}
 
 				self.world.run(
 					|mut render_ctx: UniqueViewMut<render::RenderContext>,
@@ -213,11 +214,11 @@ impl GameContext
 
 						primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
 						// wait for resources used by previous frame processing to become availble for egui to use
-						/*render_ctx.wait_for_fence()?;
+						//render_ctx.wait_for_fence()?;
 						primary_cb.execute_secondary(
 							self.egui_gui
 								.draw_on_subpass_image(render_ctx.swapchain_dimensions()),
-						)?;*/
+						)?;
 
 						primary_cb.end_render_pass()?;
 
@@ -233,7 +234,7 @@ impl GameContext
 	}
 }
 
-/*/// Generate the entity list for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
+/// Generate the entity list for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
 fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui, selected: EntityId) -> Option<EntityId>
 {
 	let mut newly_selected = None;
@@ -253,42 +254,25 @@ fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui,
 }
 
 fn material_properties_window_layout(
-	world: &shipyard::World, mat_wnd: &mut egui::Ui, selected_ent: EntityId,
+	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId,
 ) -> Result<(), GenericEngineError>
 {
-	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut meshes: ViewMut<component::mesh::Mesh>| {
-		if let Some(materials) = (&mut meshes).get(selected_ent)?.get_materials() {
-			let mat = &mut materials[0];
-			let mut color = mat.get_base_color().to_array();
-			mat_wnd.label("Base Color");
-			mat_wnd.color_edit_button_rgba_unmultiplied(&mut color);
-			mat.set_base_color(color.into(), &mut render_ctx)?;
-		}
-		Ok(())
-	})
+	let (mut render_ctx, mut meshes) = world.borrow::<(UniqueViewMut<_>, ViewMut<component::mesh::Mesh>)>()?;
+	(&mut meshes)
+		.get(selected_ent)?
+		.show_egui(wnd, &mut render_ctx)?;
+	Ok(())
 }
-
 fn transform_properties_window_layout(
 	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId,
 ) -> Result<(), GenericEngineError>
 {
-	world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>, mut transforms: ViewMut<component::Transform>| {
-		let transform = (&mut transforms).get(selected_ent)?;
-		if !transform.is_this_static() {
-			let mut pos = transform.position();
-			wnd.columns(3, |cols| {
-				cols[0].label("X");
-				cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
-				cols[1].label("Y");
-				cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
-				cols[2].label("Z");
-				cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
-			});
-			transform.set_pos(pos, &mut render_ctx)?;
-		}
-		Ok(())
-	})
-}*/
+	let (mut render_ctx, mut transforms) = world.borrow::<(UniqueViewMut<_>, ViewMut<component::Transform>)>()?;
+	(&mut transforms)
+		.get(selected_ent)?
+		.show_egui(wnd, &mut render_ctx)?;
+	Ok(())
+}
 
 #[derive(Deserialize)]
 struct WorldData

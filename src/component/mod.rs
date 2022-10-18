@@ -7,16 +7,19 @@ pub mod camera;
 pub mod mesh;
 pub mod ui;
 
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
+use egui_winit_vulkano::egui;
 use glam::*;
-use mithrilengine_derive::{EntityComponent, UniqueComponent};
 use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+
+use crate::render::{command_buffer::CommandBuffer, RenderContext};
+use crate::GenericEngineError;
+use mithrilengine_derive::{EntityComponent, UniqueComponent};
+
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 pub struct Transform
@@ -104,6 +107,28 @@ impl Transform
 				.ok_or("transform not loaded")?
 				.clone(),
 		)?;
+		Ok(())
+	}
+
+	/// Show the egui collapsing header for this component.
+	pub fn show_egui(&mut self, ui: &mut egui::Ui, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
+	{
+		let mut pos = self.position;
+		egui::CollapsingHeader::new("Transform")
+			.show(ui, |ui| {
+				if !self.is_this_static() {
+					ui.columns(3, |cols| {
+						cols[0].label("X");
+						cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
+						cols[1].label("Y");
+						cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
+						cols[2].label("Z");
+						cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
+					});
+				}
+			});
+		self.set_pos(pos, render_ctx)?;
+
 		Ok(())
 	}
 }
