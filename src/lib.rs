@@ -6,7 +6,6 @@
 pub mod component;
 mod material;
 mod render;
-mod scene;
 
 use glam::*;
 use serde::Deserialize;
@@ -100,7 +99,7 @@ impl GameContext
 	{
 		match event {
 			Event::WindowEvent { event, .. } => {
-				//self.egui_gui.update(we);
+				self.egui_gui.update(event);
 				match event {
 					WindowEvent::MouseInput { button, state, .. } => {
 						if *button == MouseButton::Right {
@@ -258,9 +257,9 @@ fn material_properties_window_layout(
 ) -> Result<(), GenericEngineError>
 {
 	let (mut render_ctx, mut meshes) = world.borrow::<(UniqueViewMut<_>, ViewMut<component::mesh::Mesh>)>()?;
-	(&mut meshes)
-		.get(selected_ent)?
-		.show_egui(wnd, &mut render_ctx)?;
+	if let Ok(mesh) = (&mut meshes).get(selected_ent) {
+		mesh.show_egui(wnd, &mut render_ctx)?;
+	}
 	Ok(())
 }
 fn transform_properties_window_layout(
@@ -268,9 +267,9 @@ fn transform_properties_window_layout(
 ) -> Result<(), GenericEngineError>
 {
 	let (mut render_ctx, mut transforms) = world.borrow::<(UniqueViewMut<_>, ViewMut<component::Transform>)>()?;
-	(&mut transforms)
-		.get(selected_ent)?
-		.show_egui(wnd, &mut render_ctx)?;
+	if let Ok(transform) = (&mut transforms).get(selected_ent) {
+		transform.show_egui(wnd, &mut render_ctx)?;
+	}
 	Ok(())
 }
 
