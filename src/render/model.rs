@@ -117,7 +117,8 @@ impl Model
 	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, transform: &Mat4) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
-		let mut visible_submeshes = self.submeshes
+		let mut visible_submeshes = self
+			.submeshes
 			.iter()
 			.filter(|submesh| submesh.cull(transform))
 			.peekable();
@@ -258,7 +259,7 @@ impl SubMesh
 			vertex_offset,
 			mat_index: prim.material().index().unwrap_or(0),
 			corner_min: prim.bounding_box().min.into(),
-			corner_max: prim.bounding_box().max.into()
+			corner_max: prim.bounding_box().max.into(),
 		})
 	}
 
@@ -284,7 +285,7 @@ impl SubMesh
 		}
 
 		// check if all vertices are on the outside of a plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
-		let mut eval_axis = 0;	// evaluate X (0), Y (1), or Z (2) coordinate
+		let mut eval_axis = 0; // evaluate X (0), Y (1), or Z (2) coordinate
 		for p in 0..6 {
 			let mut outside = false;
 			for tf_vert in tf_verts {
@@ -295,18 +296,18 @@ impl SubMesh
 					axis_coord = -axis_coord;
 				}
 
-				outside = axis_coord > tf_vert.w;	// vertex is outside of plane if coordinate on plane axis is greater than +W
+				outside = axis_coord > tf_vert.w; // vertex is outside of plane if coordinate on plane axis is greater than +W
 				if !outside {
 					break;
 				}
 			}
 
 			if outside {
-				return false;	// `outside` will only be true if the loop did not break
+				return false; // `outside` will only be true if the loop did not break
 			}
 
 			if (p % 2) != 0 {
-				eval_axis += 1;	// add 1 to evaluate next axis after positive (`p` is odd) axis is evaluated (avoid division)
+				eval_axis += 1; // add 1 to evaluate next axis after positive (`p` is odd) axis is evaluated (avoid division)
 			}
 		}
 
@@ -363,4 +364,3 @@ fn get_buf_data<'a, T: 'static>(
 	let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
 	Ok(reinterpreted_slice)
 }
-

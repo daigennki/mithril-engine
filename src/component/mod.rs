@@ -20,7 +20,6 @@ use crate::render::{command_buffer::CommandBuffer, RenderContext};
 use crate::GenericEngineError;
 use mithrilengine_derive::{EntityComponent, UniqueComponent};
 
-
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 pub struct Transform
 {
@@ -114,19 +113,18 @@ impl Transform
 	pub fn show_egui(&mut self, ui: &mut egui::Ui, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		let mut pos = self.position;
-		egui::CollapsingHeader::new("Transform")
-			.show(ui, |ui| {
-				if !self.is_this_static() {
-					ui.columns(3, |cols| {
-						cols[0].label("X");
-						cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
-						cols[1].label("Y");
-						cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
-						cols[2].label("Z");
-						cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
-					});
-				}
-			});
+		egui::CollapsingHeader::new("Transform").show(ui, |ui| {
+			if !self.is_this_static() {
+				ui.columns(3, |cols| {
+					cols[0].label("X");
+					cols[0].add(egui::DragValue::new(&mut pos.x).speed(0.1));
+					cols[1].label("Y");
+					cols[1].add(egui::DragValue::new(&mut pos.y).speed(0.1));
+					cols[2].label("Z");
+					cols[2].add(egui::DragValue::new(&mut pos.z).speed(0.1));
+				});
+			}
+		});
 		self.set_pos(pos, render_ctx)?;
 
 		Ok(())
@@ -140,8 +138,8 @@ impl DeferGpuResourceLoading for Transform
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 
-		let (staging_buf, buf) =
-			render_ctx.new_cpu_buffer_from_data(self.model_mat, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
+		let (staging_buf, buf) = render_ctx
+			.new_cpu_buffer_from_data(self.model_mat, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(
 			0,

@@ -10,7 +10,7 @@ mod render;
 use glam::*;
 use serde::Deserialize;
 use shipyard::iter::{IntoIter, IntoWithId};
-use shipyard::{EntityId, Get, EntitiesView, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
+use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,7 @@ use component::camera::Camera;
 use component::ui;
 use component::ui::canvas::Canvas;
 use component::DeferGpuResourceLoading;
+use render::RenderContext;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -89,12 +90,6 @@ impl GameContext
 		})
 	}
 
-	fn run_default_workload(&mut self) -> Result<(), GenericEngineError>
-	{
-		self.world.run_default()?;
-		Ok(())
-	}
-
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
@@ -141,99 +136,78 @@ impl GameContext
 				_ => (),
 			},
 			Event::MainEventsCleared => {
-				// main rendering (build the secondary command buffers)
-				self.run_default_workload()?;
-
-				// set debug UI layout
-				let mut mat_result = None;
-				let mut tr_result = None;
-				self.egui_gui.immediate_ui(|gui| {
-					let ctx = gui.context();
-					let outermost_frame = egui::containers::Frame::none()
-						.inner_margin(egui::style::Margin::same(4.0))
-						.fill(egui::Color32::TRANSPARENT);
-
-					egui::CentralPanel::default()
-						.frame(outermost_frame)
-						.show(&ctx, |_ui| {
-							// the object list window
-							egui::Window::new("Object list").show(&ctx, |obj_window| {
-								if let Some(s) = generate_egui_entity_list(&self.world, obj_window, self.selected_ent) {
-									self.selected_ent = s;
-								}
-							});
-
-							// the material properties window
-							egui::Window::new("Material properties").show(&ctx, |mat_window| {
-								mat_result =
-									Some(material_properties_window_layout(&self.world, mat_window, self.selected_ent));
-							});
-
-							// transform properties window
-							egui::Window::new("Transform properties").show(&ctx, |mat_window| {
-								tr_result =
-									Some(transform_properties_window_layout(&self.world, mat_window, self.selected_ent));
-							});
-						});
-				});
-				if let Some(mr) = mat_result {
-					mr?;
-				}
-				if let Some(tr) = tr_result {
-					tr?;
-				}
-
-				self.world.run(
-					|mut render_ctx: UniqueViewMut<render::RenderContext>,
-					 mut texts: ViewMut<ui::text::Text>|
-					 -> Result<(), GenericEngineError> {
-						let frame_time = render_ctx.get_frame_time();
-						let frame_time_microseconds = frame_time.as_micros().max(1);
-						let fps = 1000000 / frame_time_microseconds;
-						let frame_time_ms = frame_time.as_millis();
-						(&mut texts)
-							.get(self.fps_ui_ent)?
-							.set_text(format!("{} fps ({} ms)", fps, frame_time_ms), &mut render_ctx)?;
-						Ok(())
-					},
-				)?;
-
-				// finalize the rendering for this frame by executing the secondary command buffers
-				self.world.run(
-					|mut render_ctx: UniqueViewMut<render::RenderContext>,
-					 mut trm: UniqueViewMut<ThreadedRenderingManager>|
-					 -> Result<(), GenericEngineError> {
-						let mut primary_cb = render_ctx.new_primary_command_buffer()?;
-
-						let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer().unwrap());
-						rp_begin_info.clear_values = vec![None, None];
-						primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
-
-						primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
-
-						primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
-						// wait for resources used by previous frame processing to become availble for egui to use
-						//render_ctx.wait_for_fence()?;
-						primary_cb.execute_secondary(
-							self.egui_gui
-								.draw_on_subpass_image(render_ctx.swapchain_dimensions()),
-						)?;
-
-						primary_cb.end_render_pass()?;
-
-						render_ctx.submit_commands(primary_cb.build()?)?;
-
-						Ok(())
-					},
-				)?;
+				self.world.run_default()?; // main rendering (build the secondary command buffers)
+				self.draw_debug()?;
+				self.submit_frame()?;
 			}
 			_ => (),
 		}
 		Ok(())
 	}
+
+	/// Draw some debug stuff, mostly GUI overlays.
+	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
+	{
+		let (mut render_ctx, mut texts) = self
+			.world
+			.borrow::<(UniqueViewMut<RenderContext>, ViewMut<ui::text::Text>)>()?;
+
+		// draw the fps counter
+		let frame_time = render_ctx.get_frame_time();
+		let frame_time_microseconds = frame_time.as_micros().max(1);
+		let fps = 1000000 / frame_time_microseconds;
+		let frame_time_ms = 1000.0 * frame_time.as_secs_f64();
+		(&mut texts)
+			.get(self.fps_ui_ent)
+			.unwrap()
+			.set_text(format!("{} fps ({:.1} ms)", fps, frame_time_ms), &mut render_ctx)?;
+
+		// set egui debug UI layout
+		self.egui_gui.begin_frame();
+		let egui_ctx = self.egui_gui.context();
+		egui::Window::new("Object list").show(&egui_ctx, |wnd| {
+			if let Some(s) = generate_egui_entity_list(&self.world, wnd, self.selected_ent) {
+				self.selected_ent = s;
+			}
+		});
+		egui::Window::new("Components")
+			.show(&egui_ctx, |wnd| components_window_layout(&self.world, wnd, self.selected_ent, &mut render_ctx))
+			.and_then(|response| response.inner)
+			.unwrap_or(Ok(()))?;
+
+		Ok(())
+	}
+
+	/// Submit all the command buffers for this frame to actually render them to the image.
+	fn submit_frame(&mut self) -> Result<(), GenericEngineError>
+	{
+		let (mut render_ctx, mut trm) = self
+			.world
+			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
+
+		// finalize the rendering for this frame by executing the secondary command buffers
+		let mut primary_cb = render_ctx.new_primary_command_buffer()?;
+
+		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer().unwrap());
+		rp_begin_info.clear_values = vec![None, None];
+		primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
+		primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
+
+		primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
+		let egui_cb = self
+			.egui_gui
+			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+		primary_cb.execute_secondary(egui_cb)?;
+
+		primary_cb.end_render_pass()?;
+
+		render_ctx.submit_commands(primary_cb.build()?)?;
+
+		Ok(())
+	}
 }
 
-/// Generate the entity list for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
+/// Generate the entity list window for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
 fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui, selected: EntityId) -> Option<EntityId>
 {
 	let mut newly_selected = None;
@@ -252,24 +226,20 @@ fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui,
 	newly_selected
 }
 
-fn material_properties_window_layout(
-	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId,
+fn components_window_layout(
+	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId, render_ctx: &mut RenderContext,
 ) -> Result<(), GenericEngineError>
 {
-	let (mut render_ctx, mut meshes) = world.borrow::<(UniqueViewMut<_>, ViewMut<component::mesh::Mesh>)>()?;
+	let mut meshes = world.borrow::<ViewMut<component::mesh::Mesh>>()?;
 	if let Ok(mesh) = (&mut meshes).get(selected_ent) {
-		mesh.show_egui(wnd, &mut render_ctx)?;
+		mesh.show_egui(wnd, render_ctx)?;
 	}
-	Ok(())
-}
-fn transform_properties_window_layout(
-	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId,
-) -> Result<(), GenericEngineError>
-{
-	let (mut render_ctx, mut transforms) = world.borrow::<(UniqueViewMut<_>, ViewMut<component::Transform>)>()?;
+
+	let mut transforms = world.borrow::<ViewMut<component::Transform>>()?;
 	if let Ok(transform) = (&mut transforms).get(selected_ent) {
-		transform.show_egui(wnd, &mut render_ctx)?;
+		transform.show_egui(wnd, render_ctx)?;
 	}
+
 	Ok(())
 }
 

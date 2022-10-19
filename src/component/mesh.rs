@@ -16,7 +16,6 @@ use crate::render::model::Model;
 use crate::render::{command_buffer::CommandBuffer, RenderContext};
 use crate::GenericEngineError;
 
-
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 pub struct Mesh
 {
@@ -37,7 +36,9 @@ impl Mesh
 		self.use_embedded_materials.unwrap_or(false)
 	}
 
-	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4) -> Result<(), GenericEngineError>
+	pub fn draw(
+		&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4,
+	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
 		if let Some(model_loaded) = self.model_data.as_ref() {
@@ -52,11 +53,10 @@ impl Mesh
 		if let Some(materials) = self.get_materials() {
 			let mat = &mut materials[0];
 			let mut color = mat.get_base_color().to_array();
-			egui::CollapsingHeader::new("Mesh")
-				.show(ui, |ui| {
-					ui.label("Base Color");
-					ui.color_edit_button_rgba_unmultiplied(&mut color);
-				});
+			egui::CollapsingHeader::new("Mesh").show(ui, |ui| {
+				ui.label("Base Color");
+				ui.color_edit_button_rgba_unmultiplied(&mut color);
+			});
 			mat.set_base_color(color.into(), render_ctx)?;
 		}
 		Ok(())
@@ -72,4 +72,3 @@ impl DeferGpuResourceLoading for Mesh
 		Ok(())
 	}
 }
-
