@@ -334,7 +334,8 @@ impl RenderContext
 		self.swapchain.get_surface()
 	}
 
-	pub fn get_frame_time(&self) -> std::time::Duration
+	/// Get the delta time for last frame.
+	pub fn delta(&self) -> std::time::Duration
 	{
 		self.frame_time
 	}

@@ -138,14 +138,13 @@ impl GameContext
 			.borrow::<(UniqueViewMut<RenderContext>, ViewMut<ui::text::Text>)>()?;
 
 		// draw the fps counter
-		let frame_time = render_ctx.get_frame_time();
-		let frame_time_microseconds = frame_time.as_micros().max(1);
-		let fps = 1000000 / frame_time_microseconds;
-		let frame_time_ms = 1000.0 * frame_time.as_secs_f64();
+		let delta_time = render_ctx.delta().as_secs_f64();
+		let fps = 1.0 / delta_time.max(0.000001);
+		let delta_ms = 1000.0 * delta_time;
 		(&mut texts)
 			.get(self.fps_ui_ent)
 			.unwrap()
-			.set_text(format!("{} fps ({:.1} ms)", fps, frame_time_ms), &mut render_ctx)?;
+			.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
 
 		// set egui debug UI layout
 		self.egui_gui.begin_frame();
