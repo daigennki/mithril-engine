@@ -93,18 +93,12 @@ impl GameContext
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::WindowEvent { event, .. } => if !self.egui_gui.update(event) {
-				match event {
-					WindowEvent::MouseInput { button, state, .. } => {
-						if *button == MouseButton::Right {
-							self.right_mouse_button_pressed = match state {
-								ElementState::Pressed => true,
-								ElementState::Released => false,
-							};
-						}
-					}
-					_ => (),
-				}
+			Event::WindowEvent { event, .. } => { self.egui_gui.update(event); },
+			Event::DeviceEvent { event: DeviceEvent::Button{ button: 1, state }, ..} => {
+				self.right_mouse_button_pressed = match state {
+					ElementState::Pressed => true,
+					ElementState::Released => false,
+				};
 			}
 			Event::DeviceEvent { event: DeviceEvent::MouseMotion{ delta }, .. } => {
 				if self.right_mouse_button_pressed {
@@ -118,14 +112,14 @@ impl GameContext
 					self.camera_rotation.x = self.camera_rotation.x.clamp(-80.0, 80.0);
 
 					let rot_rad = self.camera_rotation * std::f32::consts::PI / 180.0;
-					let rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
+					let rot_quat = Quat::from_euler(EulerRot::ZYX, rot_rad.z, rot_rad.y, rot_rad.x);
 					let rotated = rot_quat.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
 					let pos = Vec3::new(0.0, 0.0, 3.0);
 					let target = pos + rotated;
 					let (mut render_ctx, mut camera) = self.world.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
 					camera.set_pos_and_target(pos, target, &mut render_ctx)?;
 				}
-			},
+			}
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
 				self.draw_debug()?;
