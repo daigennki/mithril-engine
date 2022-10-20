@@ -93,8 +93,7 @@ impl GameContext
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::WindowEvent { event, .. } => {
-				self.egui_gui.update(event);
+			Event::WindowEvent { event, .. } => if !self.egui_gui.update(event) {
 				match event {
 					WindowEvent::MouseInput { button, state, .. } => {
 						if *button == MouseButton::Right {
@@ -102,38 +101,30 @@ impl GameContext
 								ElementState::Pressed => true,
 								ElementState::Released => false,
 							};
-							log::debug!("MouseButton::Right: {}", self.right_mouse_button_pressed);
 						}
 					}
 					_ => (),
 				}
 			}
-			Event::DeviceEvent { event, .. } => match event {
-				DeviceEvent::MouseMotion { delta } => {
-					if self.right_mouse_button_pressed {
-						self.camera_rotation.z += (0.05 * delta.0) as f32;
-						self.camera_rotation.x += (-0.01 * delta.1) as f32;
-						if self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
-							self.camera_rotation.z = self.camera_rotation.z % 360.0;
-						}
-						if self.camera_rotation.x > 80.0 {
-							self.camera_rotation.x = 80.0;
-						} else if self.camera_rotation.x < -80.0 {
-							self.camera_rotation.x = -80.0;
-						}
-						let rot_rad = self.camera_rotation * std::f32::consts::PI / 180.0;
-						let rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
-						let rotated = rot_quat.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
-						let pos = Vec3::new(0.0, 0.0, 3.0);
-						let target = pos + rotated;
-						self.world.run(
-							|mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>| {
-								camera.set_pos_and_target(pos, target, &mut render_ctx)
-							},
-						)?
+			Event::DeviceEvent { event: DeviceEvent::MouseMotion{ delta }, .. } => {
+				if self.right_mouse_button_pressed {
+					let sensitivity = 0.05;
+					self.camera_rotation.z += (sensitivity * delta.0) as f32;
+					while self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
+						self.camera_rotation.z %= 360.0;
 					}
+
+					self.camera_rotation.x += (-sensitivity * delta.1) as f32;
+					self.camera_rotation.x = self.camera_rotation.x.clamp(-80.0, 80.0);
+
+					let rot_rad = self.camera_rotation * std::f32::consts::PI / 180.0;
+					let rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
+					let rotated = rot_quat.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
+					let pos = Vec3::new(0.0, 0.0, 3.0);
+					let target = pos + rotated;
+					let (mut render_ctx, mut camera) = self.world.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
+					camera.set_pos_and_target(pos, target, &mut render_ctx)?;
 				}
-				_ => (),
 			},
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
@@ -476,8 +467,8 @@ fn log_error(e: GenericEngineError)
 	let mut error_string = format!("{}", e);
 	let mut next_err_source = e.source();
 	while let Some(source) = next_err_source {
-		error_string += format!("\ncaused by: {}", source);
-		next_err_source = next_err_source.source();
+		error_string += &format!("\ncaused by: {}", source);
+		next_err_source = source.source();
 	}
 	if log::log_enabled!(log::Level::Error) {
 		log::error!("{}", error_string);
