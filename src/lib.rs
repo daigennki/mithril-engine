@@ -173,7 +173,7 @@ impl GameContext
 		egui::Window::new("Components")
 			.show(&egui_ctx, |wnd| components_window_layout(&self.world, wnd, self.selected_ent, &mut render_ctx))
 			.and_then(|response| response.inner)
-			.unwrap_or(Ok(()))?;
+			.transpose()?;
 
 		Ok(())
 	}
@@ -473,13 +473,12 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 
 fn log_error(e: GenericEngineError)
 {
-	let error_string = format!(
-		"Error: {}\nSource: {}",
-		e,
-		e.source()
-			.map(|e| e.to_string())
-			.unwrap_or("(unknown)".to_string())
-	);
+	let mut error_string = format!("{}", e);
+	let mut next_err_source = e.source();
+	while let Some(source) = next_err_source {
+		error_string += format!("\ncaused by: {}", source);
+		next_err_source = next_err_source.source();
+	}
 	if log::log_enabled!(log::Level::Error) {
 		log::error!("{}", error_string);
 	} else {
