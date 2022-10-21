@@ -272,13 +272,13 @@ impl RenderContext
 		Ok((next_img_fb, new_dim))
 	}
 
-	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
+	/// Build and take the command buffer for staging buffers and images, if anything needs to be copied.
+	fn build_staging_cb(&mut self) -> Result<Option<PrimaryAutoCommandBuffer>, GenericEngineError>
 	{
-		// Build and take the command buffer for staging buffers and images, if anything needs to be copied.
 		// TODO: we might be able to build this command buffer in a separate thread, popping work out of
 		// the `LinkedList` as soon as possible.
-		let staging_cb = if self.staging_work.is_empty() {
-			None
+		if self.staging_work.is_empty() {
+			Ok(None)
 		} else {
 			let cb_queue = self
 				.transfer_queue
@@ -299,8 +299,13 @@ impl RenderContext
 				};
 			}
 
-			Some(staging_cb_builder.build()?)
-		};
+			Ok(Some(staging_cb_builder.build()?))
+		}
+	}
+
+	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
+	{
+		let staging_cb = self.build_staging_cb()?;
 
 		self.swapchain.submit_commands(
 			built_cb,
