@@ -48,14 +48,9 @@ impl Swapchain
 				}
 			},
 			passes: [
-				{	// general rendering subpass
+				{
 					color: [color],
 					depth_stencil: {depth},
-					input: []
-				},
-				{	// egui subpass
-					color: [color],
-					depth_stencil: {},
 					input: []
 				}
 			]

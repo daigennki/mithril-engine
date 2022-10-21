@@ -273,7 +273,7 @@ impl RenderContext
 				.cloned()
 				.unwrap_or_else(|| self.graphics_queue.clone());
 
-			let mut staging_cb = AutoCommandBufferBuilder::primary(
+			let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
 				cb_queue.device().clone(),
 				cb_queue.queue_family_index(),
 				CommandBufferUsage::OneTimeSubmit,
@@ -281,12 +281,12 @@ impl RenderContext
 
 			while let Some(work) = self.staging_work.pop_front() {
 				match work {
-					StagingWork::CopyBuffer(info) => staging_cb.copy_buffer(info)?,
-					StagingWork::CopyBufferToImage(info) => staging_cb.copy_buffer_to_image(info)?,
+					StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
+					StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
 				};
 			}
 
-			Some(staging_cb.build()?)
+			Some(staging_cb_builder.build()?)
 		};
 
 		self.swapchain.submit_commands(
@@ -306,30 +306,25 @@ impl RenderContext
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(
-		&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>, egui_pass_cb: Option<SecondaryAutoCommandBuffer>,
+		&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_framebuffer().unwrap());
 		rp_begin_info.clear_values = vec![None, None];
 
 		// finalize the rendering for this frame by executing the secondary command buffers
-		let mut primary_cb = AutoCommandBufferBuilder::primary(
+		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			self.graphics_queue.device().clone(),
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
-		primary_cb
+
+		primary_cb_builder
 			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(command_buffers)?
-			.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
+			.end_render_pass()?;
 
-		if let Some(egui_cb) = egui_pass_cb {
-			primary_cb.execute_commands(egui_cb)?;
-		}
-		
-		primary_cb.end_render_pass()?;
-
-		self.submit_commands(primary_cb.build()?)?;
+		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
 	}

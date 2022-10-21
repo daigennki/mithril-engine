@@ -59,7 +59,7 @@ impl GameContext
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		// set up egui
-		let subpass = vulkano::render_pass::Subpass::from(render_ctx.get_swapchain_render_pass(), 1).unwrap();
+		let subpass = vulkano::render_pass::Subpass::from(render_ctx.get_swapchain_render_pass(), 0).unwrap();
 		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
@@ -172,12 +172,13 @@ impl GameContext
 			.world
 			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
 
-		let render_command_buffers = trm.take_built_command_buffers();
+		let mut render_command_buffers = trm.take_built_command_buffers();
 		let egui_cb = self
 			.egui_gui
 			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+		render_command_buffers.push(egui_cb);
 
-		render_ctx.submit_frame(render_command_buffers, Some(egui_cb))?;
+		render_ctx.submit_frame(render_command_buffers)?;
 		Ok(())
 	}
 }
