@@ -75,7 +75,7 @@ impl GameContext
 
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(render_ctx);
-		world.add_unique(ThreadedRenderingManager::new(2));
+		world.add_unique(ThreadedRenderingManager::new(8));
 
 		Ok(GameContext {
 			//pref_path,
@@ -162,6 +162,13 @@ impl GameContext
 			.show(&egui_ctx, |wnd| components_window_layout(&self.world, wnd, self.selected_ent, &mut render_ctx))
 			.and_then(|response| response.inner)
 			.transpose()?;
+		
+		// draw egui
+		let mut trm = self.world.borrow::<UniqueViewMut<ThreadedRenderingManager>>()?;
+		let egui_cb = self
+			.egui_gui
+			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+		trm.add_cb(egui_cb);
 
 		Ok(())
 	}
@@ -170,15 +177,8 @@ impl GameContext
 	{
 		let (mut render_ctx, mut trm) = self
 			.world
-			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
-
-		let mut render_command_buffers = trm.take_built_command_buffers();
-		let egui_cb = self
-			.egui_gui
-			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		render_command_buffers.push(egui_cb);
-
-		render_ctx.submit_frame(render_command_buffers)?;
+			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;	
+		render_ctx.submit_frame(trm.take_built_command_buffers())?;
 		Ok(())
 	}
 }
