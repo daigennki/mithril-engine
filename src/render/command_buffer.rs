@@ -6,10 +6,9 @@
 use std::sync::Arc;
 use vulkano::buffer::TypedBufferAccess;
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, BuildError, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
+	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
 	CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, CopyError,
-	ExecuteCommandsError, PipelineExecutionError, PrimaryAutoCommandBuffer, RenderPassBeginInfo, RenderPassError,
-	SecondaryAutoCommandBuffer, SubpassContents,
+	PipelineExecutionError, SecondaryAutoCommandBuffer, 
 };
 use vulkano::descriptor_set::DescriptorSetsCollection;
 use vulkano::device::Queue;
@@ -25,56 +24,6 @@ use crate::GenericEngineError;
 pub struct CommandBuffer<L>
 {
 	cb: AutoCommandBufferBuilder<L>,
-}
-impl CommandBuffer<PrimaryAutoCommandBuffer>
-{
-	pub fn new(queue: Arc<Queue>) -> Result<Self, GenericEngineError>
-	{
-		Ok(CommandBuffer {
-			cb: AutoCommandBufferBuilder::primary(
-				queue.device().clone(),
-				queue.queue_family_index(),
-				CommandBufferUsage::OneTimeSubmit,
-			)?,
-		})
-	}
-
-	pub fn build(self) -> Result<PrimaryAutoCommandBuffer, BuildError>
-	{
-		self.cb.build()
-	}
-
-	pub fn execute_secondary(&mut self, secondary: SecondaryAutoCommandBuffer) -> Result<(), ExecuteCommandsError>
-	{
-		self.cb.execute_commands(secondary)?;
-		Ok(())
-	}
-
-	pub fn execute_secondaries(&mut self, secondaries: Vec<SecondaryAutoCommandBuffer>) -> Result<(), ExecuteCommandsError>
-	{
-		self.cb.execute_commands_from_vec(secondaries)?;
-		Ok(())
-	}
-
-	pub fn begin_render_pass(
-		&mut self, rp_begin_info: RenderPassBeginInfo, contents: SubpassContents,
-	) -> Result<(), RenderPassError>
-	{
-		self.cb.begin_render_pass(rp_begin_info, contents)?;
-		Ok(())
-	}
-
-	pub fn end_render_pass(&mut self) -> Result<(), RenderPassError>
-	{
-		self.cb.end_render_pass()?;
-		Ok(())
-	}
-
-	pub fn next_subpass(&mut self, contents: SubpassContents) -> Result<(), RenderPassError>
-	{
-		self.cb.next_subpass(contents)?;
-		Ok(())
-	}
 }
 impl CommandBuffer<SecondaryAutoCommandBuffer>
 {

@@ -15,7 +15,10 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess};
-use vulkano::command_buffer::{CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::{
+	CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo, 
+	SubpassContents, AutoCommandBufferBuilder, CommandBufferUsage,
+};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
@@ -232,16 +235,10 @@ impl RenderContext
 			.new_descriptor_set(set, writes)
 	}
 
-	/// Issue a new primary command buffer builder to begin recording to.
-	pub fn new_primary_command_buffer(&self) -> Result<CommandBuffer<PrimaryAutoCommandBuffer>, GenericEngineError>
-	{
-		CommandBuffer::<PrimaryAutoCommandBuffer>::new(self.graphics_queue.clone())
-	}
-
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to `framebuffer`.
 	pub fn new_secondary_command_buffer(
-		&self, framebuffer: Arc<vulkano::render_pass::Framebuffer>,
+		&self, framebuffer: Arc<Framebuffer>,
 	) -> Result<CommandBuffer<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		CommandBuffer::<SecondaryAutoCommandBuffer>::new(self.graphics_queue.clone(), Some(framebuffer))
@@ -262,7 +259,7 @@ impl RenderContext
 		Ok((next_img_fb, new_dim))
 	}
 
-	pub fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
+	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
 		// Build and take the command buffer for staging buffers and images, if anything needs to be copied.
 		// TODO: we might be able to build this command buffer in a separate thread, popping work out of
@@ -275,13 +272,20 @@ impl RenderContext
 				.as_ref()
 				.cloned()
 				.unwrap_or_else(|| self.graphics_queue.clone());
-			let mut staging_cb = CommandBuffer::<PrimaryAutoCommandBuffer>::new(cb_queue)?;
+
+			let mut staging_cb = AutoCommandBufferBuilder::primary(
+				cb_queue.device().clone(),
+				cb_queue.queue_family_index(),
+				CommandBufferUsage::OneTimeSubmit,
+			)?;
+
 			while let Some(work) = self.staging_work.pop_front() {
 				match work {
 					StagingWork::CopyBuffer(info) => staging_cb.copy_buffer(info)?,
 					StagingWork::CopyBufferToImage(info) => staging_cb.copy_buffer_to_image(info)?,
-				}
+				};
 			}
+
 			Some(staging_cb.build()?)
 		};
 
@@ -296,6 +300,36 @@ impl RenderContext
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
 		self.frame_time = dur;
+
+		Ok(())
+	}
+
+	/// Submit all the command buffers for this frame to actually render them to the image.
+	pub fn submit_frame(
+		&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>, egui_pass_cb: Option<SecondaryAutoCommandBuffer>,
+	) -> Result<(), GenericEngineError>
+	{
+		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_framebuffer().unwrap());
+		rp_begin_info.clear_values = vec![None, None];
+
+		// finalize the rendering for this frame by executing the secondary command buffers
+		let mut primary_cb = AutoCommandBufferBuilder::primary(
+			self.graphics_queue.device().clone(),
+			self.graphics_queue.queue_family_index(),
+			CommandBufferUsage::OneTimeSubmit,
+		)?;
+		primary_cb
+			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
+			.execute_commands_from_vec(command_buffers)?
+			.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
+
+		if let Some(egui_cb) = egui_pass_cb {
+			primary_cb.execute_commands(egui_cb)?;
+		}
+		
+		primary_cb.end_render_pass()?;
+
+		self.submit_commands(primary_cb.build()?)?;
 
 		Ok(())
 	}

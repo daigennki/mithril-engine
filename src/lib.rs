@@ -7,6 +7,7 @@ pub mod component;
 mod material;
 mod render;
 
+use egui_winit_vulkano::egui;
 use glam::*;
 use serde::Deserialize;
 use shipyard::iter::{IntoIter, IntoWithId};
@@ -14,11 +15,8 @@ use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, View, Vie
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
-
-use vulkano::command_buffer::{RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents};
-
-use egui_winit_vulkano::egui;
+use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 
 use component::camera::Camera;
 use component::ui;
@@ -93,14 +91,18 @@ impl GameContext
 	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
-			Event::WindowEvent { event, .. } => { self.egui_gui.update(event); },
-			Event::DeviceEvent { event: DeviceEvent::Button{ button: 1, state }, ..} => {
+			Event::WindowEvent { event, .. } => {
+				self.egui_gui.update(event);
+			}
+			Event::DeviceEvent {
+				event: DeviceEvent::Button { button: 1, state }, ..
+			} => {
 				self.right_mouse_button_pressed = match state {
 					ElementState::Pressed => true,
 					ElementState::Released => false,
 				};
 			}
-			Event::DeviceEvent { event: DeviceEvent::MouseMotion{ delta }, .. } => {
+			Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
 				if self.right_mouse_button_pressed {
 					let sensitivity = 0.05;
 					self.camera_rotation.z += (sensitivity * delta.0) as f32;
@@ -116,7 +118,9 @@ impl GameContext
 					let rotated = rot_quat.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
 					let pos = Vec3::new(0.0, 0.0, 3.0);
 					let target = pos + rotated;
-					let (mut render_ctx, mut camera) = self.world.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
+					let (mut render_ctx, mut camera) = self
+						.world
+						.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
 					camera.set_pos_and_target(pos, target, &mut render_ctx)?;
 				}
 			}
@@ -162,31 +166,18 @@ impl GameContext
 		Ok(())
 	}
 
-	/// Submit all the command buffers for this frame to actually render them to the image.
 	fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
 		let (mut render_ctx, mut trm) = self
 			.world
 			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
 
-		// finalize the rendering for this frame by executing the secondary command buffers
-		let mut primary_cb = render_ctx.new_primary_command_buffer()?;
-
-		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(render_ctx.get_current_framebuffer().unwrap());
-		rp_begin_info.clear_values = vec![None, None];
-		primary_cb.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?;
-		primary_cb.execute_secondaries(trm.take_built_command_buffers())?;
-
-		primary_cb.next_subpass(SubpassContents::SecondaryCommandBuffers)?;
+		let render_command_buffers = trm.take_built_command_buffers();
 		let egui_cb = self
 			.egui_gui
 			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		primary_cb.execute_secondary(egui_cb)?;
 
-		primary_cb.end_render_pass()?;
-
-		render_ctx.submit_commands(primary_cb.build()?)?;
-
+		render_ctx.submit_frame(render_command_buffers, Some(egui_cb))?;
 		Ok(())
 	}
 }
