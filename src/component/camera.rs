@@ -3,9 +3,6 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::component::{DeferGpuResourceLoading, UniqueComponent};
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
 use bytemuck::{Pod, Zeroable};
 use glam::*;
 use serde::Deserialize;
@@ -13,6 +10,11 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+
+use crate::component::{DeferGpuResourceLoading, UniqueComponent};
+use crate::render::RenderContext;
+use crate::GenericEngineError;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -95,10 +97,10 @@ impl Camera
 	}
 
 	/// Bind this camera's projection and view matrices so they can be used in shaders.
-	pub fn bind<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
+	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		// this must be bound as descriptor set 1
-		cb.bind_descriptor_set(1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
+		crate::render::bind_descriptor_set(cb, 1, self.descriptor_set.as_ref().ok_or("camera not loaded")?.clone())?;
 		Ok(())
 	}
 

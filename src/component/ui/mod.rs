@@ -7,13 +7,15 @@ pub mod canvas;
 pub mod mesh;
 pub mod text;
 
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
 use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::BufferUsage;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+
+use crate::render::RenderContext;
+use crate::GenericEngineError;
 
 #[derive(shipyard::Component)]
 #[track(Insertion)]
@@ -32,13 +34,13 @@ impl Transform
 		Transform { descriptor_set: None, proj: None, pos, scale }
 	}
 
-	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
+	pub fn bind_descriptor_set(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		let descriptor_set_ref = self
 			.descriptor_set
 			.as_ref()
 			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
-		cb.bind_descriptor_set(0, descriptor_set_ref.clone())?;
+		crate::render::bind_descriptor_set(cb, 0, descriptor_set_ref.clone())?;
 		Ok(())
 	}
 

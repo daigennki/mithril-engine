@@ -320,7 +320,7 @@ fn draw_3d(
 
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	command_buffer.bind_pipeline(render_ctx.get_pipeline("PBR")?);
+	render_ctx.get_pipeline("PBR")?.bind(&mut command_buffer);
 
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();
@@ -348,7 +348,7 @@ fn draw_ui(
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
 
-	command_buffer.bind_pipeline(render_ctx.get_pipeline("UI")?);
+	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
 	for (eid, t) in ui_transforms.iter().with_id() {
 		t.bind_descriptor_set(&mut command_buffer)?;
 

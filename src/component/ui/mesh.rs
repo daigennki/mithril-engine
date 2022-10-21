@@ -3,15 +3,15 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::render::texture::Texture;
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
 use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+
+use crate::render::{RenderContext, texture::Texture};
+use crate::GenericEngineError;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 #[derive(shipyard::Component)]
@@ -57,9 +57,9 @@ impl Mesh
 		})
 	}
 
-	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		cb.bind_descriptor_set(1, self.descriptor_set.clone())?;
+		crate::render::bind_descriptor_set(cb, 1, self.descriptor_set.clone())?;
 		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
 		cb.draw(4, 1, 0, 0)?;
 		Ok(())

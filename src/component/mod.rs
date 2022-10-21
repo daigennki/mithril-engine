@@ -12,11 +12,11 @@ use glam::*;
 use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
+use crate::render::RenderContext;
 use crate::GenericEngineError;
 use mithrilengine_derive::{EntityComponent, UniqueComponent};
 
@@ -97,9 +97,10 @@ impl Transform
 		self.model_mat
 	}
 
-	pub fn bind_descriptor_set<L>(&self, cb: &mut CommandBuffer<L>) -> Result<(), GenericEngineError>
+	pub fn bind_descriptor_set(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		cb.bind_descriptor_set(
+		crate::render::bind_descriptor_set(
+			cb, 
 			0,
 			self.descriptor_set
 				.as_ref()

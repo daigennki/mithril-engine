@@ -3,15 +3,16 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use super::mesh::Mesh;
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
 use glam::*;
 use image::{DynamicImage, Rgba};
 use rusttype::{point, Font, Scale};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::format::Format;
 use vulkano::image::{ImageDimensions, MipmapsCount};
+
+use super::mesh::Mesh;
+use crate::render::RenderContext;
+use crate::GenericEngineError;
 
 /// UI component that rasterizes fonts into textures.
 #[derive(shipyard::Component)]
@@ -136,7 +137,7 @@ impl Text
 		self.text_str.clone()
 	}
 
-	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		match self.quad.as_ref() {
 			Some(q) => q.draw(cb),

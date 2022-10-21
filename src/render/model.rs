@@ -3,9 +3,6 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use crate::material::{pbr::PBR, ColorInput, DeferMaterialLoading, Material};
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
-use crate::GenericEngineError;
 use glam::*;
 use gltf::accessor::DataType;
 use gltf::Semantic;
@@ -14,7 +11,12 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+
+use crate::material::{pbr::PBR, ColorInput, DeferMaterialLoading, Material};
+use crate::render::RenderContext;
+use crate::GenericEngineError;
+
 
 /// 3D model
 pub struct Model
@@ -114,7 +116,7 @@ impl Model
 	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
-	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, transform: &Mat4) -> Result<(), GenericEngineError>
+	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, transform: &Mat4) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
 		let mut visible_submeshes = self
@@ -203,7 +205,7 @@ impl IndexBufferVariant
 		})
 	}
 
-	pub fn bind(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>)
+	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
 	{
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
@@ -314,7 +316,7 @@ impl SubMesh
 		true
 	}
 
-	pub fn draw(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, 0)?;
 		Ok(())

@@ -8,8 +8,9 @@ use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::pipeline::graphics::{depth_stencil::CompareOp, input_assembly::PrimitiveTopology};
 use vulkano::sampler::SamplerCreateInfo;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
-use super::{command_buffer::CommandBuffer, RenderContext};
+use super::RenderContext;
 use crate::GenericEngineError;
 
 #[derive(shipyard::Unique)]
@@ -80,12 +81,12 @@ impl Skybox
 		})
 	}
 
-	pub fn draw<L>(
-		&self, cb: &mut CommandBuffer<L>, camera: &crate::component::camera::Camera,
+	pub fn draw(
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, camera: &crate::component::camera::Camera,
 	) -> Result<(), GenericEngineError>
 	{
-		cb.bind_pipeline(&self.sky_pipeline);
-		cb.bind_descriptor_set(0, vec![self.descriptor_set.clone()])?;
+		self.sky_pipeline.bind(cb);
+		crate::render::bind_descriptor_set(cb, 0, vec![self.descriptor_set.clone()])?;
 		camera.bind(cb)?;
 		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()]);
 		cb.bind_index_buffer(self.cube_ibo.clone());

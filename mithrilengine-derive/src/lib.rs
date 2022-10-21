@@ -49,9 +49,13 @@ pub fn derive_material(input: TokenStream) -> TokenStream
 				stringify!(#ident)
 			}
 
-			fn bind_descriptor_set(&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+			fn bind_descriptor_set(
+				&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
+			) -> Result<(), GenericEngineError>
 			{
-				cb.bind_descriptor_set(2, self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone())?;
+				crate::render::bind_descriptor_set(
+					cb, 2, self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone()
+				)?;
 				Ok(())
 			}
 		}

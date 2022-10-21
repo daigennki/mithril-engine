@@ -5,14 +5,14 @@
 ----------------------------------------------------------------------------- */
 pub mod pbr;
 
-use crate::render::{command_buffer::CommandBuffer, texture::Texture, RenderContext};
+use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
 use glam::*;
 use mithrilengine_derive::Material;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::format::Format;
 use vulkano::image::{ImageDimensions, MipmapsCount};
@@ -39,7 +39,7 @@ pub trait Material: Send + Sync + DeferMaterialLoading
 	fn pipeline_name(&self) -> &'static str;
 
 	fn bind_descriptor_set(
-		&self, command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>,
+		&self, command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>;
 }
 

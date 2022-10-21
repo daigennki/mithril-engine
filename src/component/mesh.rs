@@ -8,12 +8,11 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
 use crate::component::{DeferGpuResourceLoading, EntityComponent};
 use crate::material::Material;
-use crate::render::model::Model;
-use crate::render::{command_buffer::CommandBuffer, RenderContext};
+use crate::render::{RenderContext, model::Model};
 use crate::GenericEngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
@@ -37,7 +36,7 @@ impl Mesh
 	}
 
 	pub fn draw(
-		&self, cb: &mut CommandBuffer<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4,
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4,
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
