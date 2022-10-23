@@ -15,8 +15,8 @@ use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, View, Vie
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
 use component::camera::Camera;
 use component::ui;
@@ -162,7 +162,7 @@ impl GameContext
 			.show(&egui_ctx, |wnd| components_window_layout(&self.world, wnd, self.selected_ent, &mut render_ctx))
 			.and_then(|response| response.inner)
 			.transpose()?;
-		
+
 		// draw egui
 		let mut trm = self.world.borrow::<UniqueViewMut<ThreadedRenderingManager>>()?;
 		let egui_cb = self
@@ -177,7 +177,7 @@ impl GameContext
 	{
 		let (mut render_ctx, mut trm) = self
 			.world
-			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;	
+			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
 		render_ctx.submit_frame(trm.take_built_command_buffers())?;
 		Ok(())
 	}

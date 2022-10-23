@@ -12,7 +12,7 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 
 use crate::component::{DeferGpuResourceLoading, EntityComponent};
 use crate::material::Material;
-use crate::render::{RenderContext, model::Model};
+use crate::render::{model::Model, RenderContext};
 use crate::GenericEngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]

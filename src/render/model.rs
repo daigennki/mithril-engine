@@ -17,7 +17,6 @@ use crate::material::{pbr::PBR, ColorInput, DeferMaterialLoading, Material};
 use crate::render::RenderContext;
 use crate::GenericEngineError;
 
-
 /// 3D model
 pub struct Model
 {
@@ -116,7 +115,9 @@ impl Model
 	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
-	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, transform: &Mat4) -> Result<(), GenericEngineError>
+	pub fn draw(
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, transform: &Mat4,
+	) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
 		let mut visible_submeshes = self
@@ -281,35 +282,31 @@ impl SubMesh
 		bb_verts[6].y = self.corner_min.y;
 		bb_verts[7].y = self.corner_min.y;
 
-		let mut tf_verts: [Vec4; 8] = Default::default();
-		for (i, vert) in bb_verts.iter().enumerate() {
-			tf_verts[i] = *projviewmodel * *vert;
+		for vert in &mut bb_verts {
+			*vert = *projviewmodel * *vert;
 		}
 
-		// check if all vertices are on the outside of a plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
+		// check if all vertices are on the outside of any plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
 		let mut eval_axis = 0; // evaluate X (0), Y (1), or Z (2) coordinate
 		for p in 0..6 {
-			let mut outside = false;
-			for tf_vert in tf_verts {
-				let mut axis_coord = tf_vert[eval_axis];
+			let outside = bb_verts.iter().all(|vert| {
+				let mut axis_coord = vert[eval_axis];
 
-				// negate to flip side vertex is on when evaluating against negative planes, so outside coordinates are always greater than +W
+				// negate to flip side vertex is on when evaluating against negative planes,
+				// so outside coordinates are always greater than +W
 				if (p % 2) == 0 {
 					axis_coord = -axis_coord;
 				}
 
-				outside = axis_coord > tf_vert.w; // vertex is outside of plane if coordinate on plane axis is greater than +W
-				if !outside {
-					break;
-				}
-			}
+				axis_coord > vert.w // vertex is outside of plane if coordinate on plane axis is greater than +W
+			});
 
 			if outside {
-				return false; // `outside` will only be true if the loop did not break
+				return false; // `outside` will only be true here if all vertices are outside of the plane being evaluated
 			}
 
 			if (p % 2) != 0 {
-				eval_axis += 1; // add 1 to evaluate next axis after positive (`p` is odd) axis is evaluated (avoid division)
+				eval_axis += 1; // add 1 to evaluate next axis after positive (`p` is odd) axis is evaluated
 			}
 		}
 

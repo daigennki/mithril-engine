@@ -10,7 +10,7 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
 
-use crate::render::{RenderContext, texture::Texture};
+use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.

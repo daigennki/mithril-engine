@@ -8,9 +8,9 @@ use glam::*;
 use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
 use crate::component::{DeferGpuResourceLoading, UniqueComponent};
 use crate::render::RenderContext;

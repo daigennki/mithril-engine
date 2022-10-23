@@ -97,10 +97,12 @@ impl Transform
 		self.model_mat
 	}
 
-	pub fn bind_descriptor_set(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn bind_descriptor_set(
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+	) -> Result<(), GenericEngineError>
 	{
 		crate::render::bind_descriptor_set(
-			cb, 
+			cb,
 			0,
 			self.descriptor_set
 				.as_ref()

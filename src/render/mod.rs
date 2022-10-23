@@ -15,12 +15,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{
-	CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo, 
-	SubpassContents, AutoCommandBufferBuilder, CommandBufferUsage, CommandBufferInheritanceInfo, 
-	CommandBufferInheritanceRenderPassInfo, CommandBufferInheritanceRenderPassType, PipelineExecutionError,
-	CommandBufferBeginError,
+	AutoCommandBufferBuilder, CommandBufferBeginError, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
+	CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PipelineExecutionError,
+	PrimaryAutoCommandBuffer, RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet, DescriptorSetsCollection};
+use vulkano::descriptor_set::{DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	Queue, QueueCreateInfo, QueueFamilyProperties,
@@ -28,7 +27,7 @@ use vulkano::device::{
 use vulkano::format::Format;
 use vulkano::image::{ImageDimensions, MipmapsCount};
 use vulkano::memory::DeviceMemoryError;
-use vulkano::pipeline::{Pipeline, PipelineBindPoint, graphics::viewport::Viewport};
+use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, RenderPass};
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
@@ -323,9 +322,7 @@ impl RenderContext
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
-	pub fn submit_frame(
-		&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>
+	pub fn submit_frame(&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_framebuffer().unwrap());
 		rp_begin_info.clear_values = vec![None, None];
@@ -391,10 +388,10 @@ impl RenderContext
 /// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
 /// This will fail if there is no pipeline currently bound.
 pub fn bind_descriptor_set<L, S>(
-	cb: &mut AutoCommandBufferBuilder<L>, first_set: u32, descriptor_sets: S
+	cb: &mut AutoCommandBufferBuilder<L>, first_set: u32, descriptor_sets: S,
 ) -> Result<(), PipelineExecutionError>
-	where
-		S: DescriptorSetsCollection,
+where
+	S: DescriptorSetsCollection,
 {
 	let pipeline_layout = cb
 		.state()
@@ -402,8 +399,7 @@ pub fn bind_descriptor_set<L, S>(
 		.ok_or(PipelineExecutionError::PipelineNotBound)?
 		.layout()
 		.clone();
-	cb
-		.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
+	cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
 	Ok(())
 }
 

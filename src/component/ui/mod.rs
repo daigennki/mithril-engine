@@ -10,9 +10,9 @@ pub mod text;
 use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::BufferUsage;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
 use crate::render::RenderContext;
 use crate::GenericEngineError;
@@ -34,7 +34,9 @@ impl Transform
 		Transform { descriptor_set: None, proj: None, pos, scale }
 	}
 
-	pub fn bind_descriptor_set(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn bind_descriptor_set(
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+	) -> Result<(), GenericEngineError>
 	{
 		let descriptor_set_ref = self
 			.descriptor_set
