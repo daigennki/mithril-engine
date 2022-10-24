@@ -42,6 +42,7 @@ impl Model
 				let mut vertex_offset: i32 = 0;
 				let mut positions = Vec::new();
 				let mut texcoords = Vec::new();
+				let mut normals = Vec::new();
 				let mut submeshes = Vec::new();
 				let mut indices_u16 = Vec::new();
 				let mut indices_u32 = Vec::new();
@@ -61,6 +62,11 @@ impl Model
 						.ok_or("no texture coordinates in glTF primitive")?;
 					texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
 
+					let normals_accessor = prim
+						.get(&Semantic::Normals)
+						.ok_or("no normals in glTF primitive")?;
+					normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
+
 					let indices_accessor = prim.indices().ok_or("no indices in glTF primitive")?;
 					match indices_accessor.data_type() {
 						DataType::U16 => indices_u16.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?),
@@ -77,6 +83,7 @@ impl Model
 				let vert_buf_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
 				let vbo_positions = render_ctx.new_buffer_from_iter(positions, vert_buf_usage)?;
 				let vbo_texcoords = render_ctx.new_buffer_from_iter(texcoords, vert_buf_usage)?;
+				let vbo_normals = render_ctx.new_buffer_from_iter(normals, vert_buf_usage)?;
 
 				Ok(Model {
 					materials: doc
@@ -84,7 +91,9 @@ impl Model
 						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx, use_embedded_materials))
 						.collect::<Result<_, _>>()?,
 					submeshes,
-					vertex_buffers: vec![vbo_positions, vbo_texcoords],
+					vertex_buffers: vec![
+						vbo_positions, vbo_texcoords, vbo_normals,
+					],
 					index_buffer: IndexBufferVariant::from_u16_and_u32(render_ctx, indices_u16, indices_u32)?,
 				})
 			}
@@ -287,29 +296,25 @@ impl SubMesh
 		}
 
 		// check if all vertices are on the outside of any plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
-		let mut eval_axis = 0; // evaluate X (0), Y (1), or Z (2) coordinate
-		for p in 0..6 {
+		let mut neg_axis = true;
+		for eval_axis in [0, 0, 1, 1, 2, 2] {
+			// `outside` will only be true here if all vertices are outside of the plane being evaluated
 			let outside = bb_verts.iter().all(|vert| {
 				let mut axis_coord = vert[eval_axis];
 
-				// negate to flip side vertex is on when evaluating against negative planes,
-				// so outside coordinates are always greater than +W
-				if (p % 2) == 0 {
+				// negate coordinate when evaluating against negative planes so outside coordinates are greater than +W
+				if neg_axis {
 					axis_coord = -axis_coord;
 				}
 
 				axis_coord > vert.w // vertex is outside of plane if coordinate on plane axis is greater than +W
 			});
-
 			if outside {
-				return false; // `outside` will only be true here if all vertices are outside of the plane being evaluated
+				return false;
 			}
 
-			if (p % 2) != 0 {
-				eval_axis += 1; // add 1 to evaluate next axis after positive (`p` is odd) axis is evaluated
-			}
+			neg_axis = !neg_axis;
 		}
-
 		true
 	}
 

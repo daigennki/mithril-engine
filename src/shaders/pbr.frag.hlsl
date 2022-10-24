@@ -10,6 +10,7 @@ float4 main(PS_INPUT input) : SV_Target
 {
     float4 texColor = base_color.Sample(sampler0, input.uv);
     texColor.rgb *= texColor.a;
+	//input.normal;
 	return texColor;
 }
 
