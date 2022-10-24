@@ -8,7 +8,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::{layout::DescriptorType, PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{layout::DescriptorSetLayoutCreateInfo, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::{
@@ -20,9 +20,9 @@ use vulkano::pipeline::graphics::{
 	viewport::ViewportState,
 };
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
-use vulkano::render_pass::{RenderPass, Subpass};
+use vulkano::render_pass::Subpass;
 use vulkano::sampler::{Filter, Sampler, SamplerCreateInfo};
-use vulkano::shader::{ShaderModule, ShaderScalarType};
+use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderScalarType};
 
 use crate::GenericEngineError;
 
@@ -37,28 +37,16 @@ impl Pipeline
 		vs_filename: String,
 		fs_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
-		render_pass: Arc<RenderPass>,
+		subpass: Subpass,
 		depth_op: CompareOp,
 	) -> Result<Self, GenericEngineError>
 	{
-		let vk_dev = render_pass.device().clone();
+		let vk_dev = subpass.render_pass().device().clone();
 
-		// load vertex shader
-		log::info!("Loading vertex shader {}...", vs_filename);
 		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
-		// load fragment shader (optional)
-		let fs = fs_filename
-			.map(|f| {
-				log::info!("Loading fragment shader {}...", f);
-				load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))
-			})
-			.transpose()?;
-
-		let subpass = Subpass::from(render_pass.clone(), 0).ok_or("Subpass 0 for render pass doesn't exist!")?;
 		let mut input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
 		if primitive_topology == PrimitiveTopology::TriangleStrip {
-			// Enable primitive restart if a triangle strip is being drawn.
 			input_assembly_state = input_assembly_state.primitive_restart_enable();
 		}
 
@@ -71,52 +59,53 @@ impl Pipeline
 			..Default::default()
 		};
 
-		let pipeline_built = build_pipeline_common(
-			vk_dev.clone(),
-			input_assembly_state,
-			vertex_input_state,
-			vs.clone(),
-			fs.clone(),
-			subpass.clone(),
-			&samplers,
-			color_blend_state_from_subpass(&subpass),
-			depth_stencil_state,
-		)?;
+		let rasterization_state = RasterizationState::new()
+			.cull_mode(CullMode::Back)
+			.front_face(FrontFace::CounterClockwise);
 
-		log::debug!("Built pipeline with descriptors:");
-		for ((set, binding), req) in pipeline_built.descriptor_requirements() {
-			log::debug!(
-				"set {}, binding {}: {:?}x {}",
-				set,
-				binding,
-				req.descriptor_count,
-				&print_descriptor_types(&req.descriptor_types)
-			);
+		let color_blend_state = color_blend_state_from_subpass(&subpass);
+
+		// do some building
+		let mut pipeline_builder = GraphicsPipeline::start()
+			.vertex_shader(get_entry_point(&vs, "main")?, ())
+			.vertex_input_state(vertex_input_state)
+			.input_assembly_state(input_assembly_state)
+			.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+			.rasterization_state(rasterization_state)
+			.depth_stencil_state(depth_stencil_state)
+			.render_pass(subpass);
+
+		if let Some(c) = color_blend_state {
+			pipeline_builder = pipeline_builder.color_blend_state(c);
 		}
+
+		// load fragment shader (optional)
+		let fs;
+		if let Some(f) = fs_filename {
+			fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))?;
+			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
+		}
+
+		// build pipeline with immutable samplers, if it needs any
+		let pipeline_built = pipeline_builder.with_auto_layout(vk_dev, |sets| pipeline_sampler_setup(sets, &samplers))?;
+		print_pipeline_descriptors_info(&pipeline_built);
 
 		Ok(Pipeline { pipeline: pipeline_built })
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
-	pub fn new_from_yaml(yaml_filename: &str, render_pass: Arc<RenderPass>) -> Result<Self, GenericEngineError>
+	pub fn new_from_yaml(yaml_filename: &str, subpass: Subpass) -> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 
 		let yaml_reader = File::open(Path::new("shaders").join(yaml_filename))?;
 		let deserialized: PipelineConfig = serde_yaml::from_reader(yaml_reader)?;
+		let vk_dev = subpass.render_pass().device().clone();
 		let generated_samplers = deserialized
 			.samplers
 			.iter()
 			.map(|sampler_config| {
-				let mut sampler_create_info = SamplerCreateInfo::default();
-				if let Some(f) = &sampler_config.mag_filter {
-					sampler_create_info.mag_filter = filter_str_to_enum(&f)?;
-				}
-				if let Some(f) = &sampler_config.min_filter {
-					sampler_create_info.min_filter = filter_str_to_enum(&f)?;
-				}
-
-				let new_sampler = Sampler::new(render_pass.device().clone(), sampler_create_info)?;
+				let new_sampler = Sampler::new(vk_dev.clone(), sampler_config.as_create_info()?)?;
 				Ok((sampler_config.set, sampler_config.binding, new_sampler))
 			})
 			.collect::<Result<_, GenericEngineError>>()?;
@@ -126,7 +115,7 @@ impl Pipeline
 			deserialized.vertex_shader,
 			deserialized.fragment_shader,
 			generated_samplers,
-			render_pass,
+			subpass,
 			CompareOp::Less,
 		)
 	}
@@ -167,6 +156,21 @@ struct PipelineSamplerConfig
 	min_filter: Option<String>,
 	mag_filter: Option<String>,
 }
+impl PipelineSamplerConfig
+{
+	fn as_create_info(&self) -> Result<SamplerCreateInfo, GenericEngineError>
+	{
+		let mut sampler_create_info = SamplerCreateInfo::default();
+		if let Some(f) = self.mag_filter.as_ref() {
+			sampler_create_info.mag_filter = filter_str_to_enum(f)?;
+		}
+		if let Some(f) = self.min_filter.as_ref() {
+			sampler_create_info.min_filter = filter_str_to_enum(f)?;
+		}
+		Ok(sampler_create_info)
+	}
+}
+
 #[derive(Deserialize)]
 struct PipelineConfig
 {
@@ -207,48 +211,42 @@ fn filter_str_to_enum(filter_str: &str) -> Result<Filter, GenericEngineError>
 	})
 }
 
+fn get_entry_point<'a>(
+	shader_module: &'a Arc<ShaderModule>, entry_point_name: &str,
+) -> Result<EntryPoint<'a>, GenericEngineError>
+{
+	shader_module
+		.entry_point(entry_point_name)
+		.ok_or(format!("No entry point called '{}' found in SPIR-V module!", entry_point_name).into())
+}
+
 fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) -> Result<Arc<ShaderModule>, GenericEngineError>
 {
+	let print_file_name = path
+		.file_name()
+		.and_then(|f| f.to_str())
+		.unwrap_or("[invalid file name in path]");
+	log::info!("Loading shader file '{}'...", print_file_name);
 	let spv_data = std::fs::read(path)?;
 	Ok(unsafe { ShaderModule::from_bytes(device, &spv_data) }?)
 }
 
-/// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the SPIR-V file.
+/// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the
+/// SPIR-V file.
 fn load_spirv_vertex(
 	device: Arc<vulkano::device::Device>, path: &Path,
 ) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
 {
-	let spv_data = std::fs::read(path)?;
-	let shader_module = unsafe { ShaderModule::from_bytes(device, &spv_data) }?;
-	let vertex_input_state = shader_module.entry_point("main")
-		.ok_or("SPIR-V vertex shader has no entry point defined!")?
+	let shader_module = load_spirv(device, path)?;
+	let vertex_input_state = shader_module
+		.entry_point("main")
+		.ok_or("No valid 'main' entry point in SPIR-V module!")?
 		.input_interface()
 		.elements()
 		.iter()
 		.fold(VertexInputState::new(), |accum, input| {
 			let binding = input.location;
-			let possible_formats = match input.ty.base_type {
-				ShaderScalarType::Float => [
-					Format::R32_SFLOAT,
-					Format::R32G32_SFLOAT,
-					Format::R32G32B32_SFLOAT,
-					Format::R32G32B32A32_SFLOAT,
-				],
-				ShaderScalarType::Sint => [
-					Format::R32_SINT,
-					Format::R32G32_SINT,
-					Format::R32G32B32_SINT,
-					Format::R32G32B32A32_SINT,
-				],
-				ShaderScalarType::Uint => [
-					Format::R32_UINT,
-					Format::R32G32_UINT,
-					Format::R32G32B32_UINT,
-					Format::R32G32B32A32_UINT,
-				],
-			};
-			let format_index = (input.ty.num_components - 1) as usize;
-			let format = possible_formats[format_index];
+			let format = format_from_interface_type(&input.ty);
 			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
 			accum
 				.binding(binding, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
@@ -258,11 +256,37 @@ fn load_spirv_vertex(
 	Ok((shader_module, vertex_input_state))
 }
 
+fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
+{
+	let possible_formats = match ty.base_type {
+		ShaderScalarType::Float => [
+			Format::R32_SFLOAT,
+			Format::R32G32_SFLOAT,
+			Format::R32G32B32_SFLOAT,
+			Format::R32G32B32A32_SFLOAT,
+		],
+		ShaderScalarType::Sint => [
+			Format::R32_SINT,
+			Format::R32G32_SINT,
+			Format::R32G32B32_SINT,
+			Format::R32G32B32A32_SINT,
+		],
+		ShaderScalarType::Uint => [
+			Format::R32_UINT,
+			Format::R32G32_UINT,
+			Format::R32G32B32_UINT,
+			Format::R32G32B32A32_UINT,
+		],
+	};
+	let format_index = (ty.num_components - 1) as usize;
+	possible_formats[format_index]
+}
+
 fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
 {
-	// only enable blending for the first attachment.
+	// Only enable blending for the first attachment.
 	// This blending configuration is for textures that are *not* premultiplied by alpha.
-	// TODO: expose an option for premultiplied alpha. also be careful about using plain RGBA colors instead of textures, as
+	// TODO: Expose an option for premultiplied alpha. Also be careful about using plain RGBA colors instead of textures, as
 	// those have to be premultiplied too.
 	if subpass.num_color_attachments() > 0 {
 		let mut blend_state = ColorBlendState::new(subpass.num_color_attachments());
@@ -273,80 +297,28 @@ fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
 	}
 }
 
-fn build_pipeline_common(
-	vk_dev: Arc<vulkano::device::Device>, input_assembly_state: InputAssemblyState, vertex_input_state: VertexInputState,
-	vs: Arc<ShaderModule>, fs: Option<Arc<ShaderModule>>, subpass: Subpass, samplers: &Vec<(usize, u32, Arc<Sampler>)>,
-	color_blend_state: Option<ColorBlendState>, depth_stencil_state: DepthStencilState,
-) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
+fn pipeline_sampler_setup(sets: &mut [DescriptorSetLayoutCreateInfo], samplers: &Vec<(usize, u32, Arc<Sampler>)>)
 {
-	let vs_entry = vs
-		.entry_point("main")
-		.ok_or("No valid 'main' entry point in SPIR-V module!")?;
-
-	let rasterization_state = RasterizationState::new()
-		.cull_mode(CullMode::Back)
-		.front_face(FrontFace::CounterClockwise);
-
-	// do some building
-	let mut pipeline_builder = GraphicsPipeline::start()
-		.vertex_shader(vs_entry, ())
-		.vertex_input_state(vertex_input_state)
-		.input_assembly_state(input_assembly_state)
-		.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-		.rasterization_state(rasterization_state)
-		.depth_stencil_state(depth_stencil_state)
-		.render_pass(subpass);
-
-	if let Some(c) = color_blend_state {
-		pipeline_builder = pipeline_builder.color_blend_state(c);
-	}
-	if let Some(fs_exists) = fs.as_ref() {
-		let fs_entry = fs_exists
-			.entry_point("main")
-			.ok_or("No valid 'main' entry point in SPIR-V module!")?;
-		pipeline_builder = pipeline_builder.fragment_shader(fs_entry, ());
-	}
-
-	// build pipeline with immutable samplers, if it needs any
-	let pipeline = pipeline_builder.with_auto_layout(vk_dev, |sets| {
-		for (set_i, binding_i, sampler) in samplers {
-			match sets.get_mut(*set_i) {
-				Some(s) => match s.bindings.get_mut(binding_i) {
-					Some(b) => b.immutable_samplers = vec![sampler.clone()],
-					None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i),
-				},
-				None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i),
-			}
+	for (set_i, binding_i, sampler) in samplers {
+		match sets.get_mut(*set_i) {
+			Some(s) => match s.bindings.get_mut(binding_i) {
+				Some(b) => b.immutable_samplers = vec![sampler.clone()],
+				None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i),
+			},
+			None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i),
 		}
-	})?;
-
-	Ok(pipeline)
+	}
 }
 
-fn print_descriptor_types(types: &Vec<DescriptorType>) -> String
+fn print_pipeline_descriptors_info(pipeline: &GraphicsPipeline)
 {
-	let mut out_str = String::new();
-	let mut first = true;
-	for ty in types {
-		if first {
-			first = false;
-		} else {
-			out_str += "/";
-		}
-		out_str += match ty {
-			DescriptorType::Sampler => "Sampler",
-			DescriptorType::CombinedImageSampler => "Combined image sampler",
-			DescriptorType::SampledImage => "Sampled image",
-			DescriptorType::StorageImage => "Storage image",
-			DescriptorType::UniformTexelBuffer => "Uniform texel buffer",
-			DescriptorType::StorageTexelBuffer => "Storage texel buffer",
-			DescriptorType::UniformBuffer => "Uniform buffer",
-			DescriptorType::StorageBuffer => "Storage buffer",
-			DescriptorType::UniformBufferDynamic => "Dynamic uniform buffer",
-			DescriptorType::StorageBufferDynamic => "Dynamic storage buffer",
-			DescriptorType::InputAttachment => "Input attachment",
-			_ => "(unknown)",
-		}
+	log::debug!("Built pipeline with descriptors:");
+	for ((set, binding), req) in pipeline.descriptor_requirements() {
+		let desc_count_string = match req.descriptor_count {
+			Some(count) => format!("{}x", count),
+			None => "runtime-sized array of".into(),
+		};
+
+		log::debug!("set {}, binding {}: {} {:?}", set, binding, desc_count_string, req.descriptor_types);
 	}
-	out_str
 }

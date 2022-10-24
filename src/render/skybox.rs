@@ -31,7 +31,7 @@ impl Skybox
 	{
 		// sky pipeline
 		// TODO: this should be moved out of here so we're not creating it again when the skybox is changed
-		let render_pass = render_ctx.get_swapchain_render_pass();
+		let subpass = render_ctx.get_swapchain_render_pass().first_subpass();
 		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
 		let cubemap_sampler = vulkano::sampler::Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
 		let sky_pipeline = super::pipeline::Pipeline::new(
@@ -39,7 +39,7 @@ impl Skybox
 			"skybox.vert.spv".into(),
 			Some("skybox.frag.spv".into()),
 			vec![(0, 0, cubemap_sampler)],
-			render_pass,
+			subpass,
 			CompareOp::Always,
 		)?;
 

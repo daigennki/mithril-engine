@@ -90,7 +90,7 @@ impl RenderContext
 			.0
 			.to_string();
 		self.material_pipelines
-			.insert(name, pipeline::Pipeline::new_from_yaml(filename, self.swapchain.render_pass())?);
+			.insert(name, pipeline::Pipeline::new_from_yaml(filename, self.swapchain.render_pass().first_subpass())?);
 		Ok(())
 	}
 
