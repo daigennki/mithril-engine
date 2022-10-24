@@ -20,7 +20,6 @@ image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.31"
 vulkano-win = "0.31"
-spirv-reflect = "0.2"
 # physx = "0.12"
 # ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
 # steamworks = "0.8"
@@ -28,7 +27,6 @@ glam = { version = "0.21", features = ["bytemuck", "serde"] }
 # openal = "0.2"
 # mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 msgbox = "0.7"
-# chrono = "0.4"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 simplelog = "0.12"
 shipyard = "0.6"

@@ -4,7 +4,6 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use serde::{Deserialize, Serialize};
-use spirv_reflect::types::image::ReflectFormat;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -23,7 +22,7 @@ use vulkano::pipeline::graphics::{
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::sampler::{Filter, Sampler, SamplerCreateInfo};
-use vulkano::shader::ShaderModule;
+use vulkano::shader::{ShaderModule, ShaderScalarType};
 
 use crate::GenericEngineError;
 
@@ -220,51 +219,43 @@ fn load_spirv_vertex(
 ) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
 {
 	let spv_data = std::fs::read(path)?;
-	let vertex_input_state = spirv_reflect::ShaderModule::load_u8_data(&spv_data)?
-		.enumerate_input_variables(Some("main"))?
+	let shader_module = unsafe { ShaderModule::from_bytes(device, &spv_data) }?;
+	let vertex_input_state = shader_module.entry_point("main")
+		.ok_or("SPIR-V vertex shader has no entry point defined!")?
+		.input_interface()
+		.elements()
 		.iter()
-		.try_fold(VertexInputState::new(), |acc, input_var| -> Result<_, UnsupportedVertexInputFormat> {
-			let binding = input_var.location;
-			let format = reflect_format_to_vulkano_format(input_var.format)?;
+		.fold(VertexInputState::new(), |accum, input| {
+			let binding = input.location;
+			let possible_formats = match input.ty.base_type {
+				ShaderScalarType::Float => [
+					Format::R32_SFLOAT,
+					Format::R32G32_SFLOAT,
+					Format::R32G32B32_SFLOAT,
+					Format::R32G32B32A32_SFLOAT,
+				],
+				ShaderScalarType::Sint => [
+					Format::R32_SINT,
+					Format::R32G32_SINT,
+					Format::R32G32B32_SINT,
+					Format::R32G32B32A32_SINT,
+				],
+				ShaderScalarType::Uint => [
+					Format::R32_UINT,
+					Format::R32G32_UINT,
+					Format::R32G32B32_UINT,
+					Format::R32G32B32A32_UINT,
+				],
+			};
+			let format_index = (input.ty.num_components - 1) as usize;
+			let format = possible_formats[format_index];
 			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
-			let new_acc = acc
+			accum
 				.binding(binding, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
-				.attribute(binding, VertexInputAttributeDescription { binding, format, offset: 0 });
-			Ok(new_acc)
-		})?;
+				.attribute(binding, VertexInputAttributeDescription { binding, format, offset: 0 })
+		});
 
-	Ok((unsafe { ShaderModule::from_bytes(device, &spv_data) }?, vertex_input_state))
-}
-
-#[derive(Debug)]
-pub struct UnsupportedVertexInputFormat;
-impl std::error::Error for UnsupportedVertexInputFormat {}
-impl std::fmt::Display for UnsupportedVertexInputFormat
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
-	{
-		write!(f, "unsupported vertex input format")
-	}
-}
-fn reflect_format_to_vulkano_format(
-	reflect_format: spirv_reflect::types::image::ReflectFormat,
-) -> Result<Format, UnsupportedVertexInputFormat>
-{
-	Ok(match reflect_format {
-		ReflectFormat::R32_UINT => Format::R32_UINT,
-		ReflectFormat::R32_SINT => Format::R32_UINT,
-		ReflectFormat::R32_SFLOAT => Format::R32_SFLOAT,
-		ReflectFormat::R32G32_UINT => Format::R32G32_UINT,
-		ReflectFormat::R32G32_SINT => Format::R32G32_SINT,
-		ReflectFormat::R32G32_SFLOAT => Format::R32G32_SFLOAT,
-		ReflectFormat::R32G32B32_UINT => Format::R32G32B32_UINT,
-		ReflectFormat::R32G32B32_SINT => Format::R32G32B32_SINT,
-		ReflectFormat::R32G32B32_SFLOAT => Format::R32G32B32_SFLOAT,
-		ReflectFormat::R32G32B32A32_UINT => Format::R32G32B32A32_UINT,
-		ReflectFormat::R32G32B32A32_SINT => Format::R32G32B32A32_SINT,
-		ReflectFormat::R32G32B32A32_SFLOAT => Format::R32G32B32A32_SFLOAT,
-		_ => return Err(UnsupportedVertexInputFormat),
-	})
+	Ok((shader_module, vertex_input_state))
 }
 
 fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>

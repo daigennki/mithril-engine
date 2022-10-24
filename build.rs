@@ -10,8 +10,10 @@ fn main()
 	// Compile HLSL shaders in src/shaders into SPIR-V.
 	let compiler = shaderc::Compiler::new().unwrap();
 	let mut options = shaderc::CompileOptions::new().unwrap();
+	options.set_target_env(shaderc::TargetEnv::Vulkan, shaderc::EnvVersion::Vulkan1_2 as u32);
 	options.set_source_language(shaderc::SourceLanguage::HLSL);
 	options.set_include_callback(shader_src_include_callback);
+	options.set_hlsl_io_mapping(true);
 
 	let shader_paths = std::fs::read_dir("./src/shaders")
 		.unwrap()
