@@ -24,11 +24,11 @@ use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	Queue, QueueCreateInfo, QueueFamilyProperties,
 };
-use vulkano::format::Format;
-use vulkano::image::{ImageDimensions, MipmapsCount};
+use vulkano::format::{ClearValue, Format};
+use vulkano::image::{ImageDimensions, MipmapsCount, ImageUsage, AttachmentImage, view::ImageView, ImageViewAbstract};
 use vulkano::memory::DeviceMemoryError;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
-use vulkano::render_pass::{Framebuffer, RenderPass};
+use vulkano::render_pass::{Framebuffer, RenderPass, FramebufferCreateInfo};
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 
@@ -50,6 +50,8 @@ pub struct RenderContext
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
+
+	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
@@ -68,8 +70,10 @@ impl RenderContext
 			//.with_resizable(false)
 			.build_vk_surface(&event_loop, graphics_queue.device().instance().clone())?;
 
+		let swapchain = swapchain::Swapchain::new(graphics_queue.device().clone(), window_surface)?;
+
 		Ok(RenderContext {
-			swapchain: swapchain::Swapchain::new(graphics_queue.device().clone(), window_surface)?,
+			swapchain,
 			graphics_queue,
 			transfer_queue,
 			staging_work: LinkedList::new(),
@@ -92,6 +96,10 @@ impl RenderContext
 		self.material_pipelines
 			.insert(name, pipeline::Pipeline::new_from_yaml(filename, self.swapchain.render_pass().first_subpass())?);
 		Ok(())
+	}
+	pub fn load_mat_pipeline_manual(&mut self, name: &str, pipeline: pipeline::Pipeline)
+	{
+		self.material_pipelines.insert(name.to_string(), pipeline);
 	}
 
 	/// Get a 3D model from `path`, relative to the current working directory.
@@ -256,6 +264,28 @@ impl RenderContext
 		)
 	}
 
+	/*/// Create a new single-pass framebuffer, automatically creating images for it to fit the given render pass, extent, and
+	/// usage.
+	pub fn new_single_pass_framebuffer_auto_images(
+		&self, render_pass: Arc<RenderPass>, extent: [u32; 2], usage: ImageUsage
+	) -> Result<Arc<Framebuffer>, GenericEngineError>
+	{
+		let attachments = render_pass
+			.attachments()
+			.iter()
+			.map(|a| {
+				let img_fmt = a.format.unwrap();
+				let img = AttachmentImage::with_usage(self.graphics_queue.device().clone(), extent, img_fmt, usage)?;
+				let view: Arc<dyn ImageViewAbstract> = ImageView::new_default(img)?;
+				Ok(view)
+			})
+			.collect::<Result<_, GenericEngineError>>()?;
+			
+		let fb_create_info = FramebufferCreateInfo { attachments, extent, layers: 1, ..Default::default() };
+
+		Ok(Framebuffer::new(render_pass, fb_create_info)?)
+	}*/
+
 	/// Tell the swapchain to go to the next image.
 	/// The image size *may* change here.
 	/// This must only be called once per frame, at the beginning of each frame before any render pass.
@@ -263,7 +293,7 @@ impl RenderContext
 	/// This returns the framebuffer for the image, and if the images were resized, the new dimensions.
 	pub fn next_swapchain_image(
 		&mut self,
-	) -> Result<(Arc<vulkano::render_pass::Framebuffer>, Option<[u32; 2]>), GenericEngineError>
+	) -> Result<(Arc<Framebuffer>, Option<[u32; 2]>), GenericEngineError>
 	{
 		let (next_img_fb, dimensions_changed) = self.swapchain.get_next_image()?;
 		let new_dim = dimensions_changed.then(|| self.swapchain_dimensions());
@@ -322,10 +352,24 @@ impl RenderContext
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
-	pub fn submit_frame(&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn submit_frame(
+		&mut self, 
+		command_buffers: Vec<SecondaryAutoCommandBuffer>,
+		transparency_cb: SecondaryAutoCommandBuffer,
+	) -> Result<(), GenericEngineError>
 	{
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_framebuffer().unwrap());
 		rp_begin_info.clear_values = vec![None, None];
+
+		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_transparency_fb().unwrap());
+		transparency_rp_info.clear_values = vec![
+			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),	// accum
+			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
+			None,	// depth; just load it
+		];
+
+		let mut compositing_rp_info = rp_begin_info.clone();
+		compositing_rp_info.render_pass = self.swapchain.compositing_rp();
 
 		// finalize the rendering for this frame by executing the secondary command buffers
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
@@ -335,10 +379,18 @@ impl RenderContext
 		)?;
 
 		primary_cb_builder
-			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
+			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(command_buffers)?
-			.end_render_pass()?;
-
+			.end_render_pass()?
+			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
+			.execute_commands(transparency_cb)?
+			.end_render_pass()?
+			.begin_render_pass(compositing_rp_info, SubpassContents::Inline)?
+			.set_viewport(0, [self.get_swapchain_viewport()]);
+		self.swapchain.bind_for_transparency_compositing(&mut primary_cb_builder)?;
+		primary_cb_builder
+			.draw(3, 1, 0, 0)?
+			.end_render_pass()?;	
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
@@ -364,9 +416,17 @@ impl RenderContext
 	{
 		self.swapchain.get_current_framebuffer()
 	}
+	pub fn get_transparency_framebuffer(&self) -> Option<Arc<Framebuffer>>
+	{
+		self.swapchain.get_current_transparency_fb()
+	}
 	pub fn get_swapchain_render_pass(&self) -> Arc<RenderPass>
 	{
 		self.swapchain.render_pass()
+	}
+	pub fn get_swapchain_transparency_rp(&self) -> Arc<RenderPass>
+	{
+		self.swapchain.transparency_rp()
 	}
 
 	pub fn get_queue(&self) -> Arc<Queue>

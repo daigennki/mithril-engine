@@ -1,3 +1,5 @@
+#include "wboit_accum.hlsl"
+
 SamplerState sampler0 : register(s0, space2);
 Texture2D base_color : register(t1, space2);
 
@@ -7,6 +9,7 @@ struct PS_INPUT
 	float2 uv : TEXCOORD;
 	float3 normal : NORMAL;
 };
+
 float3 calc_diff(float3 lightDir, float3 normal, float3 tex_diffuse)
 {
 	float diff_intensity = max(dot(normal, lightDir), 0.0);
@@ -25,11 +28,20 @@ float3 calc_dl(float3 tex_diffuse, float3 normal)
 	return light_color * color_out;
 }
 
-float4 main(PS_INPUT input) : SV_Target
-{	
+// PS_OUTPUT is defined in wboit.hlsl, and will change depending on whether or not TRANSPARENCY_PASS is defined.
+PS_OUTPUT main(PS_INPUT input)
+{
 	float4 tex_color = base_color.Sample(sampler0, input.uv);
 	tex_color.rgb *= tex_color.a;
 	float3 shaded = calc_dl(tex_color.rgb, input.normal);
-	return float4(shaded, tex_color.a);
+	float4 with_alpha = float4(shaded, tex_color.a);
+
+#ifdef TRANSPARENCY_PASS	
+	return write_transparent_pixel(with_alpha, input.pos.z);
+#else
+	PS_OUTPUT output;
+	output.color = with_alpha;
+	return output;
+#endif
 }
 

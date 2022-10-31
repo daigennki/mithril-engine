@@ -4,11 +4,17 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::buffer::{BufferUsage, cpu_access::CpuAccessibleBuffer};
+use vulkano::command_buffer::{PrimaryAutoCommandBuffer, AutoCommandBufferBuilder};
+use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
+use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::pipeline::graphics::viewport::Viewport;
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
+use vulkano::pipeline::graphics::depth_stencil::CompareOp;
+use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano::swapchain::{
 	AcquireError, PresentInfo, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo,
@@ -21,7 +27,16 @@ use crate::GenericEngineError;
 pub struct Swapchain
 {
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-	framebuffers: Vec<Arc<Framebuffer>>,
+
+	/// Tuple of the framebuffers and their depth images.
+	framebuffers: Vec<(Arc<Framebuffer>, Arc<AttachmentImage>)>,
+
+	/// Framebuffers for transparency and descriptor sets holding their corresponding sampled images and extent buffers.
+	transparency_framebuffers: Vec<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>)>,
+
+	transparency_compositing_pl: super::pipeline::Pipeline,
+	compositing_rp: Arc<RenderPass>,
+
 	recreate_pending: bool,
 
 	acquire_future: Option<SwapchainAcquireFuture<Window>>,
@@ -29,7 +44,9 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>) -> Result<Self, GenericEngineError>
+	pub fn new(
+		vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>
+	) -> Result<Self, GenericEngineError>
 	{
 		let swapchain_rp = vulkano::ordered_passes_renderpass!(
 			vk_dev.clone(),
@@ -56,11 +73,79 @@ impl Swapchain
 			]
 		)?;
 
-		let (swapchain, framebuffers) = create_swapchain(vk_dev.clone(), surface, swapchain_rp)?;
+		let transparency_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
+			attachments: {
+				accum: {
+					load: Clear,
+					store: Store,
+					format: Format::R16G16B16A16_SFLOAT,
+					samples: 1,
+				},
+				revealage: {
+					load: Clear,
+					store: Store,
+					format: Format::R8_UNORM,
+					samples: 1,
+				},
+				depth: {
+					load: Load,
+					store: Store,
+					format: Format::D16_UNORM,
+					samples: 1,
+				}
+			},
+			pass: {
+				color: [accum, revealage],
+				depth_stencil: { depth }
+			}
+		)?;
+
+		let compositing_rp = vulkano::single_pass_renderpass!(
+			vk_dev.clone(),
+			attachments: {
+				color: {
+					load: Load,	
+					store: Store,
+					format: Format::B8G8R8A8_SRGB,
+					samples: 1,
+				},
+				depth: {
+					load: Load,	
+					store: DontCare,	
+					format: Format::D16_UNORM,
+					samples: 1,
+				}
+			},
+			pass: {
+				color: [color],
+				depth_stencil: {depth}
+			}
+		)?;
+
+		let wboit_compositing_subpass = compositing_rp.clone().first_subpass();
+		let wboit_compositing_blend = ColorBlendState::new(1).blend_alpha();
+		let transparency_compositing_pl = super::pipeline::Pipeline::new(
+			PrimitiveTopology::TriangleList,
+			"fill_viewport.vert.spv".into(),
+			Some("wboit_compositing.frag.spv".into()),
+			vec![],
+			wboit_compositing_subpass,
+			CompareOp::Always,
+			Some(wboit_compositing_blend),
+			false,
+			None
+		)?;
+
+		let (swapchain, framebuffers, transparency_framebuffers) = create_swapchain(
+			vk_dev.clone(), surface, swapchain_rp, transparency_rp, &transparency_compositing_pl
+		)?;
 
 		Ok(Swapchain {
 			swapchain,
 			framebuffers,
+			transparency_framebuffers,
+			transparency_compositing_pl,
+			compositing_rp,
 			recreate_pending: false,
 			acquire_future: None,
 			submission_future: None,
@@ -76,7 +161,12 @@ impl Swapchain
 		create_info.image_extent = self.swapchain.surface().window().inner_size().into();
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
-		self.framebuffers = create_framebuffers(new_images, self.render_pass())?;
+		let framebuffers = create_framebuffers(new_images, self.render_pass())?;
+		let transparency_rp = self.transparency_rp();
+		let transparency_framebuffers = create_transparency_framebuffers(&framebuffers, transparency_rp, &self.transparency_compositing_pl)?;
+
+		self.framebuffers = framebuffers;
+		self.transparency_framebuffers = transparency_framebuffers;
 
 		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
 		if dimensions_changed {
@@ -113,7 +203,7 @@ impl Swapchain
 				}
 				self.recreate_pending = suboptimal;
 				self.acquire_future = Some(acquire_future);
-				Ok((self.framebuffers[image_num].clone(), dimensions_changed))
+				Ok((self.framebuffers[image_num].0.clone(), dimensions_changed))
 			}
 			Err(AcquireError::OutOfDate) => {
 				log::warn!("Swapchain out of date, recreating...");
@@ -173,7 +263,15 @@ impl Swapchain
 
 	pub fn render_pass(&self) -> Arc<RenderPass>
 	{
-		self.framebuffers[0].render_pass().clone()
+		self.framebuffers[0].0.render_pass().clone()
+	}
+	pub fn transparency_rp(&self) -> Arc<RenderPass>
+	{
+		self.transparency_framebuffers[0].0.render_pass().clone()
+	}
+	pub fn compositing_rp(&self) -> Arc<RenderPass>
+	{
+		self.compositing_rp.clone()
 	}
 
 	pub fn dimensions(&self) -> [u32; 2]
@@ -185,11 +283,15 @@ impl Swapchain
 	/// Returns `None` if no image is currently acquired.
 	pub fn get_current_framebuffer(&self) -> Option<Arc<Framebuffer>>
 	{
-		if let Some(f) = self.acquire_future.as_ref() {
-			Some(self.framebuffers[f.image_id()].clone())
-		} else {
-			None
-		}
+		self.acquire_future
+			.as_ref()
+			.map(|f| self.framebuffers[f.image_id()].0.clone())
+	}
+	pub fn get_current_transparency_fb(&self) -> Option<Arc<Framebuffer>>
+	{
+		self.acquire_future
+			.as_ref()
+			.map(|f| self.transparency_framebuffers[f.image_id()].0.clone())
 	}
 
 	pub fn get_surface(&self) -> Arc<Surface<Window>>
@@ -207,11 +309,30 @@ impl Swapchain
 			depth_range: 0.0..1.0,
 		}
 	}
+
+	pub fn bind_for_transparency_compositing<L>(
+		&self, cb: &mut AutoCommandBufferBuilder<L>
+	) -> Result<(), GenericEngineError>
+	{
+		self.transparency_compositing_pl.bind(cb);
+		super::bind_descriptor_set(cb, 0, vec![ 
+			self.transparency_framebuffers[self.acquire_future.as_ref().unwrap().image_id()].1.clone() 
+		])?;
+		Ok(())
+	}
 }
 
 fn create_swapchain(
-	vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>, render_pass: Arc<RenderPass>,
-) -> Result<(Arc<vulkano::swapchain::Swapchain<Window>>, Vec<Arc<Framebuffer>>), GenericEngineError>
+	vk_dev: Arc<vulkano::device::Device>, 
+	surface: Arc<Surface<Window>>, 
+	render_pass: Arc<RenderPass>, 
+	transparency_rp: Arc<RenderPass>,
+	transparency_compositing_pl: &super::pipeline::Pipeline
+) -> Result<(
+		Arc<vulkano::swapchain::Swapchain<Window>>, 
+		Vec<(Arc<Framebuffer>, Arc<AttachmentImage>)>, 
+		Vec<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>)>
+	), GenericEngineError>
 {
 	let pd = vk_dev.physical_device();
 	let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
@@ -232,13 +353,15 @@ fn create_swapchain(
 
 	let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
 	let framebuffers = create_framebuffers(images, render_pass)?;
+	let transparency_framebuffers = create_transparency_framebuffers(&framebuffers, transparency_rp, transparency_compositing_pl)?;
 
-	Ok((swapchain, framebuffers))
+	Ok((swapchain, framebuffers, transparency_framebuffers))
 }
 
+/// Create the framebuffers for each image in the swapchain, while also returning each framebuffer's depth image.
 fn create_framebuffers(
 	images: Vec<Arc<SwapchainImage<Window>>>, render_pass: Arc<RenderPass>,
-) -> Result<Vec<Arc<Framebuffer>>, GenericEngineError>
+) -> Result<Vec<(Arc<Framebuffer>, Arc<AttachmentImage>)>, GenericEngineError>
 {
 	let depth_format = render_pass.attachments()[1].format.unwrap();
 	images
@@ -248,11 +371,43 @@ fn create_framebuffers(
 			let fb_create_info = FramebufferCreateInfo {
 				attachments: vec![
 					ImageView::new_default(img.clone())?,
-					ImageView::new_default(depth_image)?,
+					ImageView::new_default(depth_image.clone())?,
 				],
 				..Default::default()
 			};
-			Ok(Framebuffer::new(render_pass.clone(), fb_create_info)?)
+			Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, depth_image))
 		})
 		.collect()
 }
+fn create_transparency_framebuffers(
+	framebuffers: &Vec<(Arc<Framebuffer>, Arc<AttachmentImage>)>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline
+) -> Result<Vec<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>)>, GenericEngineError>
+{
+	let usage = ImageUsage{ sampled: true, ..Default::default() };
+	let vk_dev = render_pass.device().clone();
+	framebuffers	
+		.iter()
+		.map(|(_, depth_img)| {
+			let extent = depth_img.dimensions().width_height();
+			let accum = AttachmentImage::with_usage(vk_dev.clone(), extent, Format::R16G16B16A16_SFLOAT, usage)?;
+			let revealage = AttachmentImage::with_usage(vk_dev.clone(), extent, Format::R8_UNORM, usage)?;
+			let fb_create_info = FramebufferCreateInfo {
+				attachments: vec![
+					ImageView::new_default(accum)?,
+					ImageView::new_default(revealage)?,
+					ImageView::new_default(depth_img.clone())?,
+				],
+				..Default::default()
+			};
+			let buf_usage = BufferUsage { uniform_buffer: true, ..BufferUsage::empty() };
+			let descriptor_set = pipeline.new_descriptor_set(0, [
+				WriteDescriptorSet::image_view(0, fb_create_info.attachments[0].clone()),
+				WriteDescriptorSet::image_view(1, fb_create_info.attachments[1].clone()),
+				WriteDescriptorSet::buffer(2, CpuAccessibleBuffer::from_iter(vk_dev.clone(), buf_usage, false, extent)?)
+			])?;
+
+			Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, descriptor_set))
+		})
+		.collect()
+}
+

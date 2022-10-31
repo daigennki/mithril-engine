@@ -16,6 +16,9 @@ use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::pipeline::graphics::depth_stencil::CompareOp;
+use vulkano::pipeline::graphics::color_blend::{ColorBlendState, AttachmentBlend, BlendOp, BlendFactor};
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
 use component::camera::Camera;
@@ -55,6 +58,31 @@ impl GameContext
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 		render_ctx.load_material_pipeline("UI.yaml")?;
 		render_ctx.load_material_pipeline("PBR.yaml")?;
+
+		let wboit_accum_subpass = render_ctx.get_swapchain_transparency_rp().first_subpass();
+		let mut wboit_accum_blend = ColorBlendState::new(2);
+		wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend{
+			alpha_op: BlendOp::Add,
+			..AttachmentBlend::additive()
+		});
+		wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend{
+			color_op: BlendOp::Add,
+			color_source: BlendFactor::Zero,
+			color_destination: BlendFactor::OneMinusSrcColor,
+			..AttachmentBlend::ignore_source()
+		});
+		let pbr_wboit_pipeline = render::pipeline::Pipeline::new(
+			PrimitiveTopology::TriangleList,
+			"basic_3d.vert.spv".into(),
+			Some("pbr_wboit.frag.spv".into()),
+			vec![],
+			wboit_accum_subpass,
+			CompareOp::Less,
+			Some(wboit_accum_blend),
+			false,
+			Some(render_ctx.get_pipeline("PBR")?.layout())
+		)?;
+		render_ctx.load_mat_pipeline_manual("PBR_WBOIT", pbr_wboit_pipeline);
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
@@ -103,7 +131,7 @@ impl GameContext
 				};
 			}
 			Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
-				if self.right_mouse_button_pressed {
+				/*if self.right_mouse_button_pressed {
 					let sensitivity = 0.05;
 					self.camera_rotation.z += (sensitivity * delta.0) as f32;
 					while self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
@@ -122,7 +150,7 @@ impl GameContext
 						.world
 						.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
 					camera.set_pos_and_target(pos, target, &mut render_ctx)?;
-				}
+				}*/
 			}
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
@@ -178,7 +206,7 @@ impl GameContext
 		let (mut render_ctx, mut trm) = self
 			.world
 			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
-		render_ctx.submit_frame(trm.take_built_command_buffers())?;
+		render_ctx.submit_frame(trm.take_built_command_buffers(), trm.take_transparency_cb().unwrap())?;
 		Ok(())
 	}
 }
@@ -280,6 +308,7 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 struct ThreadedRenderingManager
 {
 	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
+	transparency_cb: Option<SecondaryAutoCommandBuffer>,
 	default_capacity: usize,
 }
 impl ThreadedRenderingManager
@@ -288,6 +317,7 @@ impl ThreadedRenderingManager
 	{
 		ThreadedRenderingManager {
 			built_command_buffers: Vec::with_capacity(default_capacity),
+			transparency_cb: None,
 			default_capacity,
 		}
 	}
@@ -298,10 +328,20 @@ impl ThreadedRenderingManager
 		self.built_command_buffers.push(command_buffer);
 	}
 
+	pub fn add_transparency_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		self.transparency_cb = Some(command_buffer)
+	}
+
 	/// Take all of the secondary command buffers that have been built.
 	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
 	{
 		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
+	}
+
+	pub fn take_transparency_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
+	{
+		self.transparency_cb.take()
 	}
 }
 
@@ -327,14 +367,48 @@ fn draw_3d(
 	for (eid, transform) in transforms.iter().with_id() {
 		// draw 3D meshes
 		if let Ok(c) = meshes.get(eid) {
-			transform.bind_descriptor_set(&mut command_buffer)?;
+			if !c.has_transparency() {
+				transform.bind_descriptor_set(&mut command_buffer)?;
 
-			let transform_mat = projview * transform.get_matrix();
-			c.draw(&mut command_buffer, &transform_mat)?;
+				let transform_mat = projview * transform.get_matrix();
+				c.draw(&mut command_buffer, &transform_mat)?;
+			}
 		}
 	}
 
 	trm.add_cb(command_buffer.build()?);
+
+	draw_3d_transparent(render_ctx, trm, camera, transforms, meshes)?;
+	
+	Ok(())
+}
+fn draw_3d_transparent(
+	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
+	camera: UniqueView<Camera>, transforms: View<component::Transform>,meshes: View<component::mesh::Mesh>,
+) -> Result<(), GenericEngineError>
+{
+	let cur_fb = render_ctx.get_transparency_framebuffer().unwrap();
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
+	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
+
+	// Draw the transparent objects.
+	render_ctx.get_pipeline("PBR_WBOIT")?.bind(&mut command_buffer);
+
+	camera.bind(&mut command_buffer)?;
+	let projview = camera.get_projview();
+	for (eid, transform) in transforms.iter().with_id() {
+		// draw 3D meshes
+		if let Ok(c) = meshes.get(eid) {
+			if c.has_transparency() {
+				transform.bind_descriptor_set(&mut command_buffer)?;
+
+				let transform_mat = projview * transform.get_matrix();
+				c.draw(&mut command_buffer, &transform_mat)?;
+			}
+		}
+	}
+
+	trm.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
 fn draw_ui(

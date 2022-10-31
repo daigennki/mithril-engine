@@ -20,6 +20,7 @@ entities:
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
       model_path: cube.glb
+      transparent: true
 - 
   - Transform:
       position: [-10.0, -1.5, 2.25 ]
@@ -27,6 +28,7 @@ entities:
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
       model_path: cube.glb
+      transparent: true
 - 
   - Transform:
       position: [-8.0, -2.75, 2.5 ]
@@ -34,6 +36,7 @@ entities:
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
       model_path: cube.glb
+      transparent: true
 - 
   - Transform:
       position: [-7.0, -1.25, 3.5 ]
@@ -41,5 +44,6 @@ entities:
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
       model_path: cube.glb
+      transparent: true
 
 

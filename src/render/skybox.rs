@@ -9,6 +9,7 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::pipeline::graphics::{depth_stencil::CompareOp, input_assembly::PrimitiveTopology};
 use vulkano::sampler::SamplerCreateInfo;
+use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 
 use super::RenderContext;
 use crate::GenericEngineError;
@@ -41,6 +42,9 @@ impl Skybox
 			vec![(0, 0, cubemap_sampler)],
 			subpass,
 			CompareOp::Always,
+			Some(ColorBlendState::new(1).blend_alpha()),
+			true,
+			None
 		)?;
 
 		// sky texture cubemap

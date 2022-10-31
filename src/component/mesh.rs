@@ -19,7 +19,11 @@ use crate::GenericEngineError;
 pub struct Mesh
 {
 	model_path: PathBuf,
-	use_embedded_materials: Option<bool>,
+	#[serde(default)]
+	use_embedded_materials: bool,
+	#[serde(default)]
+	transparent: bool,
+	
 	#[serde(skip)]
 	model_data: Option<Arc<Model>>,
 }
@@ -32,7 +36,12 @@ impl Mesh
 
 	pub fn using_embedded_materials(&self) -> bool
 	{
-		self.use_embedded_materials.unwrap_or(false)
+		self.use_embedded_materials
+	}
+
+	pub fn has_transparency(&self) -> bool
+	{
+		self.transparent
 	}
 
 	pub fn draw(
@@ -67,7 +76,7 @@ impl DeferGpuResourceLoading for Mesh
 	{
 		// model path relative to current directory
 		let model_path_cd_rel = Path::new("./models/").join(&self.model_path);
-		self.model_data = Some(render_ctx.get_model(&model_path_cd_rel, self.use_embedded_materials.unwrap_or(false))?);
+		self.model_data = Some(render_ctx.get_model(&model_path_cd_rel, self.use_embedded_materials)?);
 		Ok(())
 	}
 }

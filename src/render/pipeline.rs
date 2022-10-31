@@ -39,6 +39,9 @@ impl Pipeline
 		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
 		subpass: Subpass,
 		depth_op: CompareOp,
+		color_blend_state: Option<ColorBlendState>,
+		depth_write: bool,
+		reuse_layout: Option<Arc<PipelineLayout>>,
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = subpass.render_pass().device().clone();
@@ -53,7 +56,7 @@ impl Pipeline
 		let depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
 				enable_dynamic: false,
-				write_enable: StateMode::Fixed(true),
+				write_enable: StateMode::Fixed(depth_write),
 				compare_op: StateMode::Fixed(depth_op),
 			}),
 			..Default::default()
@@ -62,8 +65,6 @@ impl Pipeline
 		let rasterization_state = RasterizationState::new()
 			.cull_mode(CullMode::Back)
 			.front_face(FrontFace::CounterClockwise);
-
-		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
 		// do some building
 		let mut pipeline_builder = GraphicsPipeline::start()
@@ -86,8 +87,13 @@ impl Pipeline
 			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
 		}
 
-		// build pipeline with immutable samplers, if it needs any
-		let pipeline_built = pipeline_builder.with_auto_layout(vk_dev, |sets| pipeline_sampler_setup(sets, &samplers))?;
+		let pipeline_built = match reuse_layout {
+			Some(layout) => pipeline_builder.with_pipeline_layout(vk_dev, layout)?,
+			None => {
+				// build pipeline with immutable samplers, if it needs any
+				pipeline_builder.with_auto_layout(vk_dev, |sets| pipeline_sampler_setup(sets, &samplers))?
+			}
+		};
 		print_pipeline_descriptors_info(&pipeline_built);
 
 		Ok(Pipeline { pipeline: pipeline_built })
@@ -109,6 +115,7 @@ impl Pipeline
 				Ok((sampler_config.set, sampler_config.binding, new_sampler))
 			})
 			.collect::<Result<_, GenericEngineError>>()?;
+		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
 		Pipeline::new(
 			deserialized.primitive_topology,
@@ -117,6 +124,9 @@ impl Pipeline
 			generated_samplers,
 			subpass,
 			CompareOp::Less,
+			color_blend_state,
+			true,
+			None
 		)
 	}
 
@@ -148,7 +158,7 @@ impl Pipeline
 	}
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct PipelineSamplerConfig
 {
 	set: usize,
@@ -171,6 +181,12 @@ impl PipelineSamplerConfig
 	}
 }
 
+/*#[derive(Deserialize)]
+struct PipelineBlendState
+{
+	
+}*/
+
 #[derive(Deserialize)]
 struct PipelineConfig
 {
@@ -182,6 +198,9 @@ struct PipelineConfig
 
 	#[serde(default)]
 	samplers: Vec<PipelineSamplerConfig>,
+
+	//#[serde(default)]
+	//attachments: Vec<PipelineBlendState>,
 }
 
 // copy of `vulkano::pipeline::graphics::input_assembly::PrimitiveTopology` so we can more directly (de)serialize it
