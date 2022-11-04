@@ -243,25 +243,37 @@ impl RenderContext
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
-	/// It will be set up for drawing to `framebuffer` in its first subpass.
+	/// It will be set up for drawing to `framebuffer` in its first subpass, 
+	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
 	pub fn new_secondary_command_buffer(
 		&self, framebuffer: Arc<Framebuffer>,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
 			subpass: framebuffer.render_pass().clone().first_subpass(),
-			framebuffer: Some(framebuffer),
+			framebuffer: Some(framebuffer.clone()),
 		});
 		let inheritance = CommandBufferInheritanceInfo {
 			render_pass: Some(inherit_rp),
 			..Default::default()
 		};
-		AutoCommandBufferBuilder::secondary(
+		let mut cb = AutoCommandBufferBuilder::secondary(
 			self.graphics_queue.device().clone(),
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 			inheritance,
-		)
+		)?;
+
+		// set viewport state
+		let fb_extent = framebuffer.extent();
+		let viewport = Viewport { 
+			origin: [ 0.0, 0.0 ],
+			dimensions: [ fb_extent[0] as f32, fb_extent[1] as f32 ],
+			depth_range: 0.0..1.0
+		};
+		cb.set_viewport(0, [viewport]);
+
+		Ok(cb)
 	}
 
 	/*/// Create a new single-pass framebuffer, automatically creating images for it to fit the given render pass, extent, and
@@ -361,7 +373,7 @@ impl RenderContext
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_framebuffer().unwrap());
 		rp_begin_info.clear_values = vec![None, None];
 
-		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_transparency_fb().unwrap());
+		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_transparency_fb());
 		transparency_rp_info.clear_values = vec![
 			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),	// accum
 			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
@@ -386,11 +398,12 @@ impl RenderContext
 			.execute_commands(transparency_cb)?
 			.end_render_pass()?
 			.begin_render_pass(compositing_rp_info, SubpassContents::Inline)?
-			.set_viewport(0, [self.get_swapchain_viewport()]);
+			.set_viewport(0, [self.swapchain.get_viewport()]);
 		self.swapchain.bind_for_transparency_compositing(&mut primary_cb_builder)?;
 		primary_cb_builder
 			.draw(3, 1, 0, 0)?
-			.end_render_pass()?;	
+			.end_render_pass()?;
+
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
@@ -406,19 +419,14 @@ impl RenderContext
 		self.swapchain.dimensions()
 	}
 
-	pub fn get_swapchain_viewport(&self) -> Viewport
-	{
-		self.swapchain.get_viewport()
-	}
-
 	/// Get the current swapchain framebuffer.
 	pub fn get_current_framebuffer(&self) -> Option<Arc<Framebuffer>>
 	{
 		self.swapchain.get_current_framebuffer()
 	}
-	pub fn get_transparency_framebuffer(&self) -> Option<Arc<Framebuffer>>
+	pub fn get_transparency_framebuffer(&self) -> Arc<Framebuffer>
 	{
-		self.swapchain.get_current_transparency_fb()
+		self.swapchain.get_transparency_fb()
 	}
 	pub fn get_swapchain_render_pass(&self) -> Arc<RenderPass>
 	{

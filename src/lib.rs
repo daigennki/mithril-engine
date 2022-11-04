@@ -353,7 +353,6 @@ fn draw_3d(
 {
 	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
 
 	// Draw the skybox. This will effectively clear the framebuffer.
 	skybox.draw(&mut command_buffer, &camera)?;
@@ -387,9 +386,8 @@ fn draw_3d_transparent(
 	camera: UniqueView<Camera>, transforms: View<component::Transform>,meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let cur_fb = render_ctx.get_transparency_framebuffer().unwrap();
+	let cur_fb = render_ctx.get_transparency_framebuffer();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
 
 	// Draw the transparent objects.
 	render_ctx.get_pipeline("PBR_WBOIT")?.bind(&mut command_buffer);
@@ -420,7 +418,6 @@ fn draw_ui(
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-	command_buffer.set_viewport(0, [render_ctx.get_swapchain_viewport()]);
 
 	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
 	for (eid, t) in ui_transforms.iter().with_id() {
