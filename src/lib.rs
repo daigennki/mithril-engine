@@ -409,18 +409,26 @@ fn draw_ui(
 	Ok(())
 }
 fn prepare_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>, canvas: UniqueView<Canvas>,
+	mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>, mut canvas: UniqueViewMut<Canvas>,
 	mut ui_transforms: ViewMut<ui::Transform>,
 ) -> Result<(), GenericEngineError>
 {
-	if let Some(d) = render_ctx.next_swapchain_image()? {
-		camera.update_window_size(d[0], d[1], &mut render_ctx)?;
-	}
+	if render_ctx.window_resized() {
+		let d = render_ctx.swapchain_dimensions();
 
-	// Update the projection matrix on UI `Transform` components,
-	// for entities that have been inserted since last time.
-	for t in ui_transforms.inserted_mut().iter() {
-		t.update_projection(render_ctx.as_mut(), canvas.projection())?;
+		// If the screen size changed, update anything relying on the screen size.
+		camera.update_window_size(d[0], d[1], &mut render_ctx)?;
+
+		canvas.on_screen_resize(d[0], d[1]);
+		for t in (&mut ui_transforms).iter() {
+			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
+		}
+	} else {
+		// Update the projection matrix on UI `Transform` components,
+		// for entities that have been inserted since last time.
+		for t in ui_transforms.inserted_mut().iter() {
+			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
+		}
 	}
 
 	Ok(())

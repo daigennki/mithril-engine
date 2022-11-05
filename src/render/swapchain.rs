@@ -76,10 +76,10 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	/// Returns a bool indicating if the image dimensions changed.
+	/// Returns the image and a bool indicating if the image dimensions changed.
 	/// Subsequent command buffer commands will fail with `vulkano::sync::AccessError::AlreadyInUse`
 	/// if this isn't run after every swapchain command submission.
-	pub fn get_next_image(&mut self) -> Result<bool, GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<(Arc<SwapchainImage<Window>>, bool), GenericEngineError>
 	{
 		// clean up resources from finished submissions
 		if let Some(f) = self.submission_future.as_mut() {
@@ -97,13 +97,13 @@ impl Swapchain
 		}
 
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
-			Ok((_, suboptimal, acquire_future)) => {
+			Ok((image_num, suboptimal, acquire_future)) => {
 				if suboptimal {
 					log::warn!("Swapchain image is suboptimal, swapchain recreate pending...");
 				}
 				self.recreate_pending = suboptimal;
 				self.acquire_future = Some(acquire_future);
-				Ok(dimensions_changed)
+				Ok((self.images[image_num].clone(), dimensions_changed))
 			}
 			Err(AcquireError::OutOfDate) => {
 				log::warn!("Swapchain out of date, recreating...");
@@ -159,15 +159,6 @@ impl Swapchain
 		}
 
 		Ok(())
-	}
-
-	/// Get the currently acquired swapchain image.
-	/// Returns `None` if no image is currently acquired.
-	pub fn get_current_image(&self) -> Option<Arc<SwapchainImage<Window>>>
-	{
-		self.acquire_future
-			.as_ref()
-			.map(|f| self.images[f.image_id()].clone())
 	}
 
 	pub fn dimensions(&self) -> [u32; 2]

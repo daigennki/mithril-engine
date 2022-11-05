@@ -26,12 +26,12 @@ use vulkano::device::{
 	Queue, QueueCreateInfo, QueueFamilyProperties,
 };
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, view::ImageView};
+use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage, view::ImageView};
 use vulkano::memory::DeviceMemoryError;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano_win::VkSurfaceBuild;
-use winit::window::WindowBuilder;
+use winit::window::{Window, WindowBuilder};
 
 use crate::GenericEngineError;
 use model::Model;
@@ -63,6 +63,8 @@ pub struct RenderContext
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
+
+	resize_this_frame: bool,
 }
 impl RenderContext
 {
@@ -137,6 +139,7 @@ impl RenderContext
 			transparency_renderer,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
+			resize_this_frame: false,
 		})
 	}
 
@@ -337,41 +340,48 @@ impl RenderContext
 		Ok(cb)
 	}
 
+	/// Update images to match the current window size.
+	fn fit_images_to_window(&mut self) -> Result<(), GenericEngineError>
+	{
+		let vk_dev = self.graphics_queue.device().clone();
+		let color_usage = ImageUsage { transfer_src: true,..Default::default() };
+		self.color_image = AttachmentImage::with_usage(
+			vk_dev.clone(), self.swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
+		)?;
+
+		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
+		self.depth_image = AttachmentImage::with_usage(
+			vk_dev.clone(), self.swapchain.dimensions(), Format::D16_UNORM, depth_usage
+		)?;
+
+		let fb_create_info = FramebufferCreateInfo {
+			attachments: vec![
+				ImageView::new_default(self.color_image.clone())?,
+				ImageView::new_default(self.depth_image.clone())?,
+			],
+			..Default::default()
+		};
+		self.main_framebuffer = Framebuffer::new(self.main_framebuffer.render_pass().clone(), fb_create_info)?;
+
+		self.transparency_renderer.resize_image(self.depth_image.clone())?;
+
+		Ok(())
+	}
+
 	/// Tell the swapchain to go to the next image.
 	/// The image size *may* change here.
-	/// This must only be called once per frame, at the beginning of each frame before any render pass.
+	/// This must only be called once per frame.
 	///
-	/// This returns the new dimensions if the image dimensions changed.
-	pub fn next_swapchain_image(
-		&mut self,
-	) -> Result<Option<[u32; 2]>, GenericEngineError>
+	/// This returns the acquired swapchain image.
+	fn next_swapchain_image(&mut self) -> Result<Arc<SwapchainImage<Window>>, GenericEngineError>
 	{
-		let dimensions_changed = self.swapchain.get_next_image()?;
+		let (image, dimensions_changed) = self.swapchain.get_next_image()?;
 		if dimensions_changed {
-			let vk_dev = self.graphics_queue.device().clone();
-			let color_usage = ImageUsage { transfer_src: true,..Default::default() };
-			self.color_image = AttachmentImage::with_usage(
-				vk_dev.clone(), self.swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
-			)?;
-
-			let depth_usage = ImageUsage { sampled: true, ..Default::default() };
-			self.depth_image = AttachmentImage::with_usage(
-				vk_dev.clone(), self.swapchain.dimensions(), Format::D16_UNORM, depth_usage
-			)?;
-
-			let fb_create_info = FramebufferCreateInfo {
-				attachments: vec![
-					ImageView::new_default(self.color_image.clone())?,
-					ImageView::new_default(self.depth_image.clone())?,
-				],
-				..Default::default()
-			};
-			self.main_framebuffer = Framebuffer::new(self.main_framebuffer.render_pass().clone(), fb_create_info)?;
-
-			self.transparency_renderer.resize_image(self.depth_image.clone())?;
+			self.fit_images_to_window()?;
 		}
+		self.resize_this_frame = dimensions_changed;
 		
-		Ok(dimensions_changed.then(|| self.swapchain_dimensions()))
+		Ok(image)
 	}
 
 	/// Build and take the command buffer for staging buffers and images, if anything needs to be copied.
@@ -458,22 +468,27 @@ impl RenderContext
 			
 		self.transparency_renderer.composite_transparency(&mut primary_cb_builder, self.main_framebuffer.clone())?;
 
-		let blit_info = BlitImageInfo::images(self.color_image.clone(), self.swapchain.get_current_image().unwrap());
+		let blit_info = BlitImageInfo::images(self.color_image.clone(), self.next_swapchain_image()?);
 		primary_cb_builder.blit_image(blit_info)?;
-
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
 	}
 
-	pub fn get_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
+	/// Check if the window has been resized since the last frame submission.
+	pub fn window_resized(&self) -> bool
 	{
-		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
+		self.resize_this_frame
 	}
 
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()
+	}
+
+	pub fn get_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
+	{
+		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
 	}
 
 	pub fn get_main_framebuffer(&self) -> Arc<Framebuffer>
