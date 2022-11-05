@@ -66,7 +66,7 @@ impl TransparencyRenderer
 				color: {
 					load: Load,	
 					store: Store,
-					format: Format::B8G8R8A8_SRGB,
+					format: Format::R16G16B16A16_SFLOAT,
 					samples: 1,
 				},
 				depth: {
@@ -122,6 +122,7 @@ impl TransparencyRenderer
 		Ok(())
 	}
 
+	/// Composite the processed transparent objects onto the final framebuffer.
 	pub fn composite_transparency(
 		&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, framebuffer: Arc<Framebuffer>
 	) -> Result<(), GenericEngineError>

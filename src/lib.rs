@@ -59,7 +59,7 @@ impl GameContext
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
 		// set up egui
-		let subpass = vulkano::render_pass::Subpass::from(render_ctx.get_swapchain_render_pass(), 0).unwrap();
+		let subpass = render_ctx.get_main_render_pass().first_subpass();
 		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
@@ -323,7 +323,7 @@ fn draw_3d(
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
+	let cur_fb = render_ctx.get_main_framebuffer();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 
 	// Draw the skybox. This will effectively clear the framebuffer.
@@ -388,7 +388,7 @@ fn draw_ui(
 {
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	let cur_fb = render_ctx.get_current_framebuffer().unwrap();
+	let cur_fb = render_ctx.get_main_framebuffer();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 
 	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
@@ -413,9 +413,7 @@ fn prepare_primary_render(
 	mut ui_transforms: ViewMut<ui::Transform>,
 ) -> Result<(), GenericEngineError>
 {
-	let (_, new_image_dimensions) = render_ctx.next_swapchain_image()?;
-
-	if let Some(d) = new_image_dimensions {
+	if let Some(d) = render_ctx.next_swapchain_image()? {
 		camera.update_window_size(d[0], d[1], &mut render_ctx)?;
 	}
 
