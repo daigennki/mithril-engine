@@ -4,6 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use vulkano::descriptor_set::{layout::DescriptorSetLayoutCreateInfo, PersistentD
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, ColorBlendState},
+	color_blend::{AttachmentBlend, ColorBlendState, BlendOp, BlendFactor},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
 	rasterization::{CullMode, FrontFace, RasterizationState},
@@ -29,6 +30,9 @@ use crate::GenericEngineError;
 pub struct Pipeline
 {
 	pipeline: Arc<GraphicsPipeline>,
+
+	/// similar pipeline, except for the fragment shader being capable of processing Order-Independent Transparency
+	transparency_pipeline: Option<Arc<GraphicsPipeline>>,
 }
 impl Pipeline
 {
@@ -36,8 +40,10 @@ impl Pipeline
 		primitive_topology: PrimitiveTopology,
 		vs_filename: String,
 		fs_filename: Option<String>,
+		fs_transparency_filename: Option<String>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
 		subpass: Subpass,
+		transparency_subpass: Option<Subpass>,
 		depth_op: CompareOp,
 		color_blend_state: Option<ColorBlendState>,
 		depth_write: bool,
@@ -53,7 +59,7 @@ impl Pipeline
 			input_assembly_state = input_assembly_state.primitive_restart_enable();
 		}
 
-		let depth_stencil_state = DepthStencilState {
+		let mut depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
 				enable_dynamic: false,
 				write_enable: StateMode::Fixed(depth_write),
@@ -73,7 +79,7 @@ impl Pipeline
 			.input_assembly_state(input_assembly_state)
 			.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
 			.rasterization_state(rasterization_state)
-			.depth_stencil_state(depth_stencil_state)
+			.depth_stencil_state(depth_stencil_state.clone())
 			.render_pass(subpass);
 
 		if let Some(c) = color_blend_state {
@@ -82,25 +88,67 @@ impl Pipeline
 
 		// load fragment shader (optional)
 		let fs;
+		let fs_transparency;
+		let mut builder_transparency = None;
 		if let Some(f) = fs_filename {
 			fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))?;
 			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
+
+			// use a different fragment shader for OIT
+			if let Some(ft) = fs_transparency_filename {
+				let mut wboit_accum_blend = ColorBlendState::new(2);
+				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend{
+					alpha_op: BlendOp::Add,
+					..AttachmentBlend::additive()
+				});
+				wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend{
+					color_op: BlendOp::Add,
+					color_source: BlendFactor::Zero,
+					color_destination: BlendFactor::OneMinusSrcColor,
+					..AttachmentBlend::ignore_source()
+				});
+
+				fs_transparency = load_spirv(vk_dev.clone(), &Path::new("shaders").join(ft))?;
+
+				// WBOIT needs depth write to be disabled
+				depth_stencil_state.depth.as_mut().unwrap().write_enable = StateMode::Fixed(false);
+
+				builder_transparency = Some(
+					pipeline_builder
+						.clone()
+						.depth_stencil_state(depth_stencil_state)
+						.fragment_shader(get_entry_point(&fs_transparency, "main")?, ())
+						.color_blend_state(wboit_accum_blend)
+						.render_pass(transparency_subpass.unwrap())
+				);
+			}
 		}
 
-		let pipeline_built = match reuse_layout {
-			Some(layout) => pipeline_builder.with_pipeline_layout(vk_dev, layout)?,
+		let pipeline = match reuse_layout {
+			Some(layout) => pipeline_builder.with_pipeline_layout(vk_dev.clone(), layout)?,
 			None => {
 				// build pipeline with immutable samplers, if it needs any
-				pipeline_builder.with_auto_layout(vk_dev, |sets| pipeline_sampler_setup(sets, &samplers))?
+				pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?
 			}
 		};
-		print_pipeline_descriptors_info(&pipeline_built);
+		print_pipeline_descriptors_info(&pipeline);
 
-		Ok(Pipeline { pipeline: pipeline_built })
+		let transparency_pipeline = builder_transparency.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
+			let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
+			let layout = pipeline_ref.layout().clone();
+			Ok(bt.with_pipeline_layout(vk_dev, layout)?)
+		}).transpose()?;
+
+		Ok(Pipeline { 
+			pipeline,
+			transparency_pipeline,
+		})
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
-	pub fn new_from_yaml(yaml_filename: &str, subpass: Subpass) -> Result<Self, GenericEngineError>
+	pub fn new_from_yaml(
+		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>
+	) -> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
 
@@ -121,8 +169,10 @@ impl Pipeline
 			deserialized.primitive_topology,
 			deserialized.vertex_shader,
 			deserialized.fragment_shader,
+			deserialized.fragment_shader_transparency,
 			generated_samplers,
 			subpass,
+			transparency_subpass,
 			CompareOp::Less,
 			color_blend_state,
 			true,
@@ -133,6 +183,11 @@ impl Pipeline
 	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>)
 	{
 		command_buffer.bind_pipeline_graphics(self.pipeline.clone());
+	}
+	pub fn bind_transparency<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), TransparencyNotEnabled>
+	{
+		command_buffer.bind_pipeline_graphics(self.transparency_pipeline.clone().ok_or(TransparencyNotEnabled)?);
+		Ok(())
 	}
 
 	pub fn layout(&self) -> Arc<PipelineLayout>
@@ -156,6 +211,15 @@ impl Pipeline
 			.clone();
 		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
 	}
+}
+
+#[derive(Debug)]
+pub struct TransparencyNotEnabled;
+impl Error for TransparencyNotEnabled {}
+impl std::fmt::Display for TransparencyNotEnabled {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "this pipeline hasn't been set up with a fragment shader for OIT")
+    }
 }
 
 #[derive(Deserialize)]
@@ -192,6 +256,7 @@ struct PipelineConfig
 {
 	vertex_shader: String,
 	fragment_shader: Option<String>,
+	fragment_shader_transparency: Option<String>,
 
 	#[serde(with = "PrimitiveTopologyDef")]
 	primitive_topology: PrimitiveTopology,

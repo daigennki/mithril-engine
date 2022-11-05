@@ -16,9 +16,6 @@ use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use vulkano::pipeline::graphics::depth_stencil::CompareOp;
-use vulkano::pipeline::graphics::color_blend::{ColorBlendState, AttachmentBlend, BlendOp, BlendFactor};
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
 use component::camera::Camera;
@@ -58,31 +55,6 @@ impl GameContext
 		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
 		render_ctx.load_material_pipeline("UI.yaml")?;
 		render_ctx.load_material_pipeline("PBR.yaml")?;
-
-		let wboit_accum_subpass = render_ctx.get_swapchain_transparency_rp().first_subpass();
-		let mut wboit_accum_blend = ColorBlendState::new(2);
-		wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend{
-			alpha_op: BlendOp::Add,
-			..AttachmentBlend::additive()
-		});
-		wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend{
-			color_op: BlendOp::Add,
-			color_source: BlendFactor::Zero,
-			color_destination: BlendFactor::OneMinusSrcColor,
-			..AttachmentBlend::ignore_source()
-		});
-		let pbr_wboit_pipeline = render::pipeline::Pipeline::new(
-			PrimitiveTopology::TriangleList,
-			"basic_3d.vert.spv".into(),
-			Some("pbr_wboit.frag.spv".into()),
-			vec![],
-			wboit_accum_subpass,
-			CompareOp::Less,
-			Some(wboit_accum_blend),
-			false,
-			Some(render_ctx.get_pipeline("PBR")?.layout())
-		)?;
-		render_ctx.load_mat_pipeline_manual("PBR_WBOIT", pbr_wboit_pipeline);
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
@@ -390,7 +362,7 @@ fn draw_3d_transparent(
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 
 	// Draw the transparent objects.
-	render_ctx.get_pipeline("PBR_WBOIT")?.bind(&mut command_buffer);
+	render_ctx.get_pipeline("PBR")?.bind_transparency(&mut command_buffer)?;
 
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();

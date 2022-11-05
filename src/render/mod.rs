@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod skybox;
 mod swapchain;
 pub mod texture;
+pub mod transparency;
 
 use std::collections::{HashMap, LinkedList};
 use std::fmt::Debug;
@@ -25,10 +26,10 @@ use vulkano::device::{
 	Queue, QueueCreateInfo, QueueFamilyProperties,
 };
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{ImageDimensions, MipmapsCount, ImageUsage, AttachmentImage, view::ImageView, ImageViewAbstract};
+use vulkano::image::{ImageDimensions, MipmapsCount};
 use vulkano::memory::DeviceMemoryError;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
-use vulkano::render_pass::{Framebuffer, RenderPass, FramebufferCreateInfo};
+use vulkano::render_pass::{Framebuffer, RenderPass};
 use vulkano_win::VkSurfaceBuild;
 use winit::window::WindowBuilder;
 
@@ -50,7 +51,6 @@ pub struct RenderContext
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
-
 	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
@@ -93,8 +93,13 @@ impl RenderContext
 			.ok_or(format!("Invalid material pipeline definition file name '{}'", filename))?
 			.0
 			.to_string();
+		let transparency_rp = self.get_transparency_framebuffer().render_pass().clone();
 		self.material_pipelines
-			.insert(name, pipeline::Pipeline::new_from_yaml(filename, self.swapchain.render_pass().first_subpass())?);
+			.insert(name, pipeline::Pipeline::new_from_yaml(
+				filename, 
+				self.swapchain.render_pass().first_subpass(), 
+				Some(transparency_rp.first_subpass())
+			)?);
 		Ok(())
 	}
 	pub fn load_mat_pipeline_manual(&mut self, name: &str, pipeline: pipeline::Pipeline)
@@ -370,7 +375,8 @@ impl RenderContext
 		transparency_cb: SecondaryAutoCommandBuffer,
 	) -> Result<(), GenericEngineError>
 	{
-		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_current_framebuffer().unwrap());
+		let cur_fb = self.swapchain.get_current_framebuffer().unwrap();
+		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(cur_fb.clone());
 		rp_begin_info.clear_values = vec![None, None];
 
 		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_transparency_fb());
@@ -379,9 +385,6 @@ impl RenderContext
 			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
 			None,	// depth; just load it
 		];
-
-		let mut compositing_rp_info = rp_begin_info.clone();
-		compositing_rp_info.render_pass = self.swapchain.compositing_rp();
 
 		// finalize the rendering for this frame by executing the secondary command buffers
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
@@ -396,13 +399,9 @@ impl RenderContext
 			.end_render_pass()?
 			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands(transparency_cb)?
-			.end_render_pass()?
-			.begin_render_pass(compositing_rp_info, SubpassContents::Inline)?
-			.set_viewport(0, [self.swapchain.get_viewport()]);
-		self.swapchain.bind_for_transparency_compositing(&mut primary_cb_builder)?;
-		primary_cb_builder
-			.draw(3, 1, 0, 0)?
 			.end_render_pass()?;
+			
+		self.swapchain.composite_transparency(&mut primary_cb_builder)?;
 
 		self.submit_commands(primary_cb_builder.build()?)?;
 
@@ -431,10 +430,6 @@ impl RenderContext
 	pub fn get_swapchain_render_pass(&self) -> Arc<RenderPass>
 	{
 		self.swapchain.render_pass()
-	}
-	pub fn get_swapchain_transparency_rp(&self) -> Arc<RenderPass>
-	{
-		self.swapchain.transparency_rp()
 	}
 
 	pub fn get_queue(&self) -> Arc<Queue>

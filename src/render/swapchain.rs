@@ -4,17 +4,11 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, cpu_access::CpuAccessibleBuffer};
 use vulkano::command_buffer::{PrimaryAutoCommandBuffer, AutoCommandBufferBuilder};
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::pipeline::graphics::viewport::Viewport;
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
-use vulkano::pipeline::graphics::depth_stencil::CompareOp;
-use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano::swapchain::{
 	AcquireError, PresentInfo, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo,
@@ -27,17 +21,8 @@ use crate::GenericEngineError;
 pub struct Swapchain
 {
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-
 	framebuffers: Vec<Arc<Framebuffer>>,
-	depth_img: Arc<AttachmentImage>,
-
-	/// Framebuffer for OIT.
-	transparency_fb: Arc<Framebuffer>,
-	/// Descriptor sets holding the sampled images and extent buffer for `transparency_fb`.
-	transparency_set: Arc<PersistentDescriptorSet>,
-
-	transparency_compositing_pl: super::pipeline::Pipeline,
-	compositing_rp: Arc<RenderPass>,
+	transparency_renderer: super::transparency::TransparencyRenderer,
 
 	recreate_pending: bool,
 
@@ -75,82 +60,14 @@ impl Swapchain
 			]
 		)?;
 
-		let transparency_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
-			attachments: {
-				accum: {
-					load: Clear,
-					store: Store,
-					format: Format::R16G16B16A16_SFLOAT,
-					samples: 1,
-				},
-				revealage: {
-					load: Clear,
-					store: Store,
-					format: Format::R8_UNORM,
-					samples: 1,
-				},
-				depth: {
-					load: Load,
-					store: DontCare,
-					format: Format::D16_UNORM,
-					samples: 1,
-				}
-			},
-			pass: {
-				color: [accum, revealage],
-				depth_stencil: { depth }
-			}
-		)?;
-
-		let compositing_rp = vulkano::single_pass_renderpass!(
-			vk_dev.clone(),
-			attachments: {
-				color: {
-					load: Load,	
-					store: Store,
-					format: Format::B8G8R8A8_SRGB,
-					samples: 1,
-				},
-				depth: {
-					load: DontCare,	
-					store: DontCare,	
-					format: Format::D16_UNORM,
-					samples: 1,
-				}
-			},
-			pass: {
-				color: [color],
-				depth_stencil: {depth}
-			}
-		)?;
-
-		let wboit_compositing_subpass = compositing_rp.clone().first_subpass();
-		let wboit_compositing_blend = ColorBlendState::new(1).blend_alpha();
-		let transparency_compositing_pl = super::pipeline::Pipeline::new(
-			PrimitiveTopology::TriangleList,
-			"fill_viewport.vert.spv".into(),
-			Some("wboit_compositing.frag.spv".into()),
-			vec![],
-			wboit_compositing_subpass,
-			CompareOp::Always,
-			Some(wboit_compositing_blend),
-			false,
-			None
-		)?;
-
 		let (swapchain, framebuffers, depth_img) = create_swapchain(vk_dev.clone(), surface, swapchain_rp)?;
-		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
-			depth_img.clone(), transparency_rp, &transparency_compositing_pl
-		)?;
+
+		let transparency_renderer = super::transparency::TransparencyRenderer::new(vk_dev, depth_img.clone())?;
 
 		Ok(Swapchain {
 			swapchain,
 			framebuffers,
-			depth_img,
-			transparency_fb,
-			transparency_set,
-			transparency_compositing_pl,
-			compositing_rp,
+			transparency_renderer,
 			recreate_pending: false,
 			acquire_future: None,
 			submission_future: None,
@@ -167,14 +84,9 @@ impl Swapchain
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
 		let (framebuffers, depth_image) = create_framebuffers(new_images, self.render_pass())?;
-		let transparency_rp = self.transparency_rp();
-		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
-			self.depth_img.clone(), transparency_rp, &self.transparency_compositing_pl
-		)?;
 
 		self.framebuffers = framebuffers;
-		self.transparency_fb = transparency_fb;
-		self.transparency_set = transparency_set;
+		self.transparency_renderer.resize_image(depth_image.clone())?;
 
 		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
 		if dimensions_changed {
@@ -273,14 +185,6 @@ impl Swapchain
 	{
 		self.framebuffers[0].render_pass().clone()
 	}
-	pub fn transparency_rp(&self) -> Arc<RenderPass>
-	{
-		self.transparency_fb.render_pass().clone()
-	}
-	pub fn compositing_rp(&self) -> Arc<RenderPass>
-	{
-		self.compositing_rp.clone()
-	}
 
 	pub fn dimensions(&self) -> [u32; 2]
 	{
@@ -297,7 +201,7 @@ impl Swapchain
 	}
 	pub fn get_transparency_fb(&self) -> Arc<Framebuffer>
 	{
-		self.transparency_fb.clone()
+		self.transparency_renderer.framebuffer()
 	}
 
 	pub fn get_surface(&self) -> Arc<Surface<Window>>
@@ -316,13 +220,9 @@ impl Swapchain
 		}
 	}
 
-	pub fn bind_for_transparency_compositing<L>(
-		&self, cb: &mut AutoCommandBufferBuilder<L>
-	) -> Result<(), GenericEngineError>
+	pub fn composite_transparency(&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		self.transparency_compositing_pl.bind(cb);
-		super::bind_descriptor_set(cb, 0, vec![ self.transparency_set.clone() ])?;
-		Ok(())
+		self.transparency_renderer.composite_transparency(cb, self.get_current_framebuffer().unwrap())
 	}
 }
 
@@ -379,32 +279,5 @@ fn create_framebuffers(
 		})
 		.collect::<Result<_, GenericEngineError>>()?;
 	Ok((framebuffers, depth_image))
-}
-fn create_transparency_framebuffer(
-	depth_img: Arc<AttachmentImage>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline
-) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>), GenericEngineError>
-{
-	let usage = ImageUsage{ sampled: true, ..Default::default() };
-	let vk_dev = render_pass.device().clone();
-
-	let extent = depth_img.dimensions().width_height();
-	let accum = AttachmentImage::with_usage(vk_dev.clone(), extent, Format::R16G16B16A16_SFLOAT, usage)?;
-	let revealage = AttachmentImage::with_usage(vk_dev.clone(), extent, Format::R8_UNORM, usage)?;
-	let fb_create_info = FramebufferCreateInfo {
-		attachments: vec![
-			ImageView::new_default(accum)?,
-			ImageView::new_default(revealage)?,
-			ImageView::new_default(depth_img.clone())?,
-		],
-		..Default::default()
-	};
-	let buf_usage = BufferUsage { uniform_buffer: true, ..BufferUsage::empty() };
-	let descriptor_set = pipeline.new_descriptor_set(0, [
-		WriteDescriptorSet::image_view(0, fb_create_info.attachments[0].clone()),
-		WriteDescriptorSet::image_view(1, fb_create_info.attachments[1].clone()),
-		WriteDescriptorSet::buffer(2, CpuAccessibleBuffer::from_iter(vk_dev.clone(), buf_usage, false, extent)?)
-	])?;
-
-	Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, descriptor_set))
 }
 
