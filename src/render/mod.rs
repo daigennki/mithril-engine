@@ -81,7 +81,7 @@ impl RenderContext
 		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
 
-		let main_rp = vulkano::ordered_passes_renderpass!(
+		let main_rp = vulkano::single_pass_renderpass!(
 			vk_dev.clone(),
 			attachments: {
 				color: {
@@ -97,13 +97,10 @@ impl RenderContext
 					samples: 1,
 				}
 			},
-			passes: [
-				{
-					color: [color],
-					depth_stencil: {depth},
-					input: []
-				}
-			]
+			pass: {
+				color: [color],
+				depth_stencil: {depth}
+			}
 		)?;
 
 		let color_usage = ImageUsage { transfer_src: true,..Default::default() };

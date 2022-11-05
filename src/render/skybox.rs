@@ -38,15 +38,12 @@ impl Skybox
 		let sky_pipeline = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleStrip,
 			"skybox.vert.spv".into(),
-			Some("skybox.frag.spv".into()),
+			Some(("skybox.frag.spv".into(), ColorBlendState::new(1).blend_alpha())),
 			None,
 			vec![(0, 0, cubemap_sampler)],
 			subpass,
-			None,
 			CompareOp::Always,
-			Some(ColorBlendState::new(1).blend_alpha()),
 			true,
-			None
 		)?;
 
 		// sky texture cubemap

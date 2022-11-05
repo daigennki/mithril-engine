@@ -87,15 +87,12 @@ impl TransparencyRenderer
 		let transparency_compositing_pl = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleList,
 			"fill_viewport.vert.spv".into(),
-			Some("wboit_compositing.frag.spv".into()),
+			Some(("wboit_compositing.frag.spv".into(), wboit_compositing_blend)),
 			None,
 			vec![],
 			wboit_compositing_subpass,
-			None,
 			CompareOp::Always,
-			Some(wboit_compositing_blend),
 			false,
-			None
 		)?;
 
 		let (transparency_fb, transparency_set) = create_transparency_framebuffer(

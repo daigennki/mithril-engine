@@ -3,7 +3,7 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
@@ -16,7 +16,7 @@ use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, ColorBlendState, BlendOp, BlendFactor},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
-	rasterization::{CullMode, FrontFace, RasterizationState},
+	rasterization::{CullMode, RasterizationState},
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
 	viewport::ViewportState,
 };
@@ -39,15 +39,12 @@ impl Pipeline
 	pub fn new(
 		primitive_topology: PrimitiveTopology,
 		vs_filename: String,
-		fs_filename: Option<String>,
-		fs_transparency_filename: Option<String>,
+		fs_info: Option<(String, ColorBlendState)>,
+		fs_transparency_info: Option<(String, Subpass)>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
 		subpass: Subpass,
-		transparency_subpass: Option<Subpass>,
 		depth_op: CompareOp,
-		color_blend_state: Option<ColorBlendState>,
 		depth_write: bool,
-		reuse_layout: Option<Arc<PipelineLayout>>,
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = subpass.render_pass().device().clone();
@@ -68,34 +65,28 @@ impl Pipeline
 			..Default::default()
 		};
 
-		let rasterization_state = RasterizationState::new()
-			.cull_mode(CullMode::Back)
-			.front_face(FrontFace::CounterClockwise);
-
 		// do some building
 		let mut pipeline_builder = GraphicsPipeline::start()
 			.vertex_shader(get_entry_point(&vs, "main")?, ())
 			.vertex_input_state(vertex_input_state)
 			.input_assembly_state(input_assembly_state)
 			.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-			.rasterization_state(rasterization_state)
+			.rasterization_state(RasterizationState::new().cull_mode(CullMode::Back))
 			.depth_stencil_state(depth_stencil_state.clone())
 			.render_pass(subpass);
-
-		if let Some(c) = color_blend_state {
-			pipeline_builder = pipeline_builder.color_blend_state(c);
-		}
 
 		// load fragment shader (optional)
 		let fs;
 		let fs_transparency;
 		let mut builder_transparency = None;
-		if let Some(f) = fs_filename {
-			fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(f))?;
-			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
+		if let Some((fs_filename, blend_state)) = fs_info {
+			fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(fs_filename))?;
+			pipeline_builder = pipeline_builder
+				.fragment_shader(get_entry_point(&fs, "main")?, ())
+				.color_blend_state(blend_state);
 
 			// use a different fragment shader for OIT
-			if let Some(ft) = fs_transparency_filename {
+			if let Some((ft, ft_subpass)) = fs_transparency_info {
 				let mut wboit_accum_blend = ColorBlendState::new(2);
 				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend{
 					alpha_op: BlendOp::Add,
@@ -119,18 +110,13 @@ impl Pipeline
 						.depth_stencil_state(depth_stencil_state)
 						.fragment_shader(get_entry_point(&fs_transparency, "main")?, ())
 						.color_blend_state(wboit_accum_blend)
-						.render_pass(transparency_subpass.unwrap())
+						.render_pass(ft_subpass)
 				);
 			}
 		}
 
-		let pipeline = match reuse_layout {
-			Some(layout) => pipeline_builder.with_pipeline_layout(vk_dev.clone(), layout)?,
-			None => {
-				// build pipeline with immutable samplers, if it needs any
-				pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?
-			}
-		};
+		// build pipeline with immutable samplers, if it needs any
+		let pipeline = pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
 		print_pipeline_descriptors_info(&pipeline);
 
 		let transparency_pipeline = builder_transparency.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
@@ -165,18 +151,22 @@ impl Pipeline
 			.collect::<Result<_, GenericEngineError>>()?;
 		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
+		let fs_info = deserialized
+			.fragment_shader
+			.map(|fs| (fs, color_blend_state));
+		let fs_transparency_info = deserialized
+			.fragment_shader_transparency
+			.map(|fst| (fst, transparency_subpass.unwrap()));
+
 		Pipeline::new(
 			deserialized.primitive_topology,
 			deserialized.vertex_shader,
-			deserialized.fragment_shader,
-			deserialized.fragment_shader_transparency,
+			fs_info,
+			fs_transparency_info,
 			generated_samplers,
 			subpass,
-			transparency_subpass,
 			CompareOp::Less,
-			color_blend_state,
 			true,
-			None
 		)
 	}
 
@@ -366,7 +356,7 @@ fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 	possible_formats[format_index]
 }
 
-fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
+fn color_blend_state_from_subpass(subpass: &Subpass) -> ColorBlendState
 {
 	// Only enable blending for the first attachment.
 	// This blending configuration is for textures that are *not* premultiplied by alpha.
@@ -375,9 +365,9 @@ fn color_blend_state_from_subpass(subpass: &Subpass) -> Option<ColorBlendState>
 	if subpass.num_color_attachments() > 0 {
 		let mut blend_state = ColorBlendState::new(subpass.num_color_attachments());
 		blend_state.attachments[0].blend = Some(AttachmentBlend::alpha());
-		Some(blend_state)
+		blend_state
 	} else {
-		None
+		ColorBlendState::default()
 	}
 }
 
