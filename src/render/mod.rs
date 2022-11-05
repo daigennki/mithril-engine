@@ -51,6 +51,8 @@ pub struct RenderContext
 	// User-accessible material pipelines; these will have their viewports resized
 	// when the window size changes
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
+
+	transparency_renderer: transparency::TransparencyRenderer,
 	
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
@@ -70,7 +72,10 @@ impl RenderContext
 			//.with_resizable(false)
 			.build_vk_surface(&event_loop, graphics_queue.device().instance().clone())?;
 
-		let swapchain = swapchain::Swapchain::new(graphics_queue.device().clone(), window_surface)?;
+		let vk_dev = graphics_queue.device().clone();
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
+
+		let transparency_renderer = transparency::TransparencyRenderer::new(vk_dev, swapchain.get_depth_image())?;
 
 		Ok(RenderContext {
 			swapchain,
@@ -79,6 +84,7 @@ impl RenderContext
 			staging_work: LinkedList::new(),
 			models: HashMap::new(),
 			material_pipelines: HashMap::new(),
+			transparency_renderer,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 		})
@@ -313,6 +319,9 @@ impl RenderContext
 	) -> Result<(Arc<Framebuffer>, Option<[u32; 2]>), GenericEngineError>
 	{
 		let (next_img_fb, dimensions_changed) = self.swapchain.get_next_image()?;
+		if dimensions_changed {
+			self.transparency_renderer.resize_image(self.swapchain.get_depth_image())?;
+		}
 		let new_dim = dimensions_changed.then(|| self.swapchain_dimensions());
 
 		Ok((next_img_fb, new_dim))
@@ -379,7 +388,7 @@ impl RenderContext
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(cur_fb.clone());
 		rp_begin_info.clear_values = vec![None, None];
 
-		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.swapchain.get_transparency_fb());
+		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.transparency_renderer.framebuffer());
 		transparency_rp_info.clear_values = vec![
 			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),	// accum
 			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
@@ -401,7 +410,7 @@ impl RenderContext
 			.execute_commands(transparency_cb)?
 			.end_render_pass()?;
 			
-		self.swapchain.composite_transparency(&mut primary_cb_builder)?;
+		self.transparency_renderer.composite_transparency(&mut primary_cb_builder, self.swapchain.get_current_framebuffer().unwrap())?;
 
 		self.submit_commands(primary_cb_builder.build()?)?;
 
@@ -425,7 +434,7 @@ impl RenderContext
 	}
 	pub fn get_transparency_framebuffer(&self) -> Arc<Framebuffer>
 	{
-		self.swapchain.get_transparency_fb()
+		self.transparency_renderer.framebuffer()
 	}
 	pub fn get_swapchain_render_pass(&self) -> Arc<RenderPass>
 	{

@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::command_buffer::{PrimaryAutoCommandBuffer, AutoCommandBufferBuilder};
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage};
@@ -22,7 +22,7 @@ pub struct Swapchain
 {
 	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
 	framebuffers: Vec<Arc<Framebuffer>>,
-	transparency_renderer: super::transparency::TransparencyRenderer,
+	depth_image: Arc<AttachmentImage>,
 
 	recreate_pending: bool,
 
@@ -60,14 +60,12 @@ impl Swapchain
 			]
 		)?;
 
-		let (swapchain, framebuffers, depth_img) = create_swapchain(vk_dev.clone(), surface, swapchain_rp)?;
-
-		let transparency_renderer = super::transparency::TransparencyRenderer::new(vk_dev, depth_img.clone())?;
+		let (swapchain, framebuffers, depth_image) = create_swapchain(vk_dev.clone(), surface, swapchain_rp)?;
 
 		Ok(Swapchain {
 			swapchain,
 			framebuffers,
-			transparency_renderer,
+			depth_image,
 			recreate_pending: false,
 			acquire_future: None,
 			submission_future: None,
@@ -83,10 +81,10 @@ impl Swapchain
 		create_info.image_extent = self.swapchain.surface().window().inner_size().into();
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
-		let (framebuffers, depth_image) = create_framebuffers(new_images, self.render_pass())?;
 
+		let (framebuffers, depth_image) = create_framebuffers(new_images, self.render_pass())?;
 		self.framebuffers = framebuffers;
-		self.transparency_renderer.resize_image(depth_image.clone())?;
+		self.depth_image = depth_image;
 
 		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
 		if dimensions_changed {
@@ -191,6 +189,11 @@ impl Swapchain
 		self.swapchain.image_extent()
 	}
 
+	pub fn get_depth_image(&self) -> Arc<AttachmentImage>
+	{
+		self.depth_image.clone()
+	}
+
 	/// Get the currently acquired swapchain image framebuffer.
 	/// Returns `None` if no image is currently acquired.
 	pub fn get_current_framebuffer(&self) -> Option<Arc<Framebuffer>>
@@ -198,10 +201,6 @@ impl Swapchain
 		self.acquire_future
 			.as_ref()
 			.map(|f| self.framebuffers[f.image_id()].clone())
-	}
-	pub fn get_transparency_fb(&self) -> Arc<Framebuffer>
-	{
-		self.transparency_renderer.framebuffer()
 	}
 
 	pub fn get_surface(&self) -> Arc<Surface<Window>>
@@ -218,11 +217,6 @@ impl Swapchain
 			dimensions: [dim[0] as f32, dim[1] as f32],
 			depth_range: 0.0..1.0,
 		}
-	}
-
-	pub fn composite_transparency(&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
-	{
-		self.transparency_renderer.composite_transparency(cb, self.get_current_framebuffer().unwrap())
 	}
 }
 
