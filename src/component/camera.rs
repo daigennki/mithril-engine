@@ -137,7 +137,7 @@ fn calculate_projview(pos: Vec3, target: Vec3, width: u32, height: u32) -> Camer
 {
 	// Create a camera facing `target` from `pos` with 1 radians vertical FOV.
 	let aspect_ratio = width as f32 / height as f32;
-	let proj = Mat4::perspective_lh(1.0, aspect_ratio, 0.01, 1000.0);
+	let proj = Mat4::perspective_lh(1.0, aspect_ratio, 0.25, 5000.0);
 	let view = Mat4::look_at_lh(pos, target, Vec3::NEG_Z);
 
 	CameraData { projview: proj * view, proj, view }
