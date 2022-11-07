@@ -7,13 +7,14 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::format::Format;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::image::{AttachmentImage, ImageAccess, ImageUsage, view::ImageView};
 use vulkano::pipeline::graphics::{
 	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport
 };
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 
 use crate::GenericEngineError;
 
@@ -31,7 +32,10 @@ pub struct TransparencyRenderer
 }
 impl TransparencyRenderer
 {
-	pub fn new(vk_dev: Arc<Device>, depth_image: Arc<AttachmentImage>) -> Result<Self, GenericEngineError>
+	pub fn new(
+		memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
+		vk_dev: Arc<Device>, depth_image: Arc<AttachmentImage>
+	) -> Result<Self, GenericEngineError>
 	{
 		let transparency_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
 			attachments: {
@@ -96,7 +100,7 @@ impl TransparencyRenderer
 		)?;
 
 		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
-			depth_image.clone(), transparency_rp, &transparency_compositing_pl
+			memory_allocator, descriptor_set_allocator, depth_image.clone(), transparency_rp, &transparency_compositing_pl
 		)?;
 
 		Ok(TransparencyRenderer {
@@ -108,11 +112,14 @@ impl TransparencyRenderer
 	}
 
 	/// Resize the output image to match a resized depth image.
-	pub fn resize_image(&mut self, depth_image: Arc<AttachmentImage>) -> Result<(), GenericEngineError>
+	pub fn resize_image(
+		&mut self, memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
+		depth_image: Arc<AttachmentImage>
+	) -> Result<(), GenericEngineError>
 	{
 		let render_pass = self.transparency_fb.render_pass().clone();
 		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
-			depth_image.clone(), render_pass, &self.transparency_compositing_pl
+			memory_allocator, descriptor_set_allocator, depth_image.clone(), render_pass, &self.transparency_compositing_pl
 		)?;
 		self.transparency_fb = transparency_fb;
 		self.transparency_set = transparency_set;
@@ -150,15 +157,15 @@ impl TransparencyRenderer
 	}
 }
 fn create_transparency_framebuffer(
+	memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
 	depth_img: Arc<AttachmentImage>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline
 ) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>), GenericEngineError>
 {
 	let usage = ImageUsage{ sampled: true, ..Default::default() };
-	let vk_dev = render_pass.device().clone();
 
 	let extent = depth_img.dimensions().width_height();
-	let accum = AttachmentImage::with_usage(vk_dev.clone(), extent, Format::R16G16B16A16_SFLOAT, usage)?;
-	let revealage = AttachmentImage::with_usage(vk_dev.clone(), extent, Format::R8_UNORM, usage)?;
+	let accum = AttachmentImage::with_usage(memory_allocator, extent, Format::R16G16B16A16_SFLOAT, usage)?;
+	let revealage = AttachmentImage::with_usage(memory_allocator, extent, Format::R8_UNORM, usage)?;
 	let fb_create_info = FramebufferCreateInfo {
 		attachments: vec![
 			ImageView::new_default(accum)?,
@@ -168,10 +175,10 @@ fn create_transparency_framebuffer(
 		..Default::default()
 	};
 	let buf_usage = BufferUsage { uniform_buffer: true, ..BufferUsage::empty() };
-	let descriptor_set = pipeline.new_descriptor_set(0, [
+	let descriptor_set = pipeline.new_descriptor_set(descriptor_set_allocator, 0, [
 		WriteDescriptorSet::image_view(0, fb_create_info.attachments[0].clone()),
 		WriteDescriptorSet::image_view(1, fb_create_info.attachments[1].clone()),
-		WriteDescriptorSet::buffer(2, CpuAccessibleBuffer::from_iter(vk_dev.clone(), buf_usage, false, extent)?)
+		WriteDescriptorSet::buffer(2, CpuAccessibleBuffer::from_iter(memory_allocator, buf_usage, false, extent)?)
 	])?;
 
 	Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, descriptor_set))

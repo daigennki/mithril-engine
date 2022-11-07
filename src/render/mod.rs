@@ -19,19 +19,21 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferBeginError, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
 	CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PipelineExecutionError,
 	PrimaryAutoCommandBuffer, RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents, BlitImageInfo,
+	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 };
-use vulkano::descriptor_set::{DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator
+};
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	Queue, QueueCreateInfo, QueueFamilyProperties,
 };
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage, view::ImageView};
-use vulkano::memory::DeviceMemoryError;
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano_win::VkSurfaceBuild;
-use winit::window::{Window, WindowBuilder};
+use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
 use model::Model;
@@ -42,6 +44,9 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,         // this also owns the logical device
 	transfer_queue: Option<Arc<Queue>>, // if there is a dedicated transfer queue, use it for transfers
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
+	memory_allocator: Arc<StandardMemoryAllocator>,
+	command_buffer_allocator: StandardCommandBufferAllocator,
 
 	staging_work: LinkedList<StagingWork>,
 
@@ -73,15 +78,23 @@ impl RenderContext
 		let (graphics_queue, transfer_queue) = vulkan_setup(game_name)?;
 
 		// create window
-		let window_surface = WindowBuilder::new()
+		let window = WindowBuilder::new()
 			.with_min_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
 			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720)) // TODO: load this from config
 			.with_title(game_name)
 			//.with_resizable(false)
-			.build_vk_surface(&event_loop, graphics_queue.device().instance().clone())?;
+			.build(&event_loop)?;
 
 		let vk_dev = graphics_queue.device().clone();
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window_surface)?;
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
+
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone());
+		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
+
+		// TODO: we might not need very many primary command buffers here
+		let command_buffer_allocator = StandardCommandBufferAllocator::new(
+			vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default()
+		);
 
 		let main_rp = vulkano::single_pass_renderpass!(
 			vk_dev.clone(),
@@ -107,12 +120,12 @@ impl RenderContext
 
 		let color_usage = ImageUsage { transfer_src: true,..Default::default() };
 		let color_image = AttachmentImage::with_usage(
-			vk_dev.clone(), swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
+			&memory_allocator, swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
 		)?;
 
 		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
 		let depth_image = AttachmentImage::with_usage(
-			vk_dev.clone(), swapchain.dimensions(), Format::D16_UNORM, depth_usage
+			&memory_allocator, swapchain.dimensions(), Format::D16_UNORM, depth_usage
 		)?;
 
 		let fb_create_info = FramebufferCreateInfo {
@@ -124,12 +137,17 @@ impl RenderContext
 		};
 		let main_framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
-		let transparency_renderer = transparency::TransparencyRenderer::new(vk_dev, depth_image.clone())?;
+		let transparency_renderer = transparency::TransparencyRenderer::new(
+			&memory_allocator, &descriptor_set_allocator, vk_dev, depth_image.clone()
+		)?;
 
 		Ok(RenderContext {
 			swapchain,
 			graphics_queue,
 			transfer_queue,
+			descriptor_set_allocator,
+			memory_allocator,
+			command_buffer_allocator,
 			staging_work: LinkedList::new(),
 			models: HashMap::new(),
 			material_pipelines: HashMap::new(),
@@ -188,14 +206,18 @@ impl RenderContext
 
 	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::Texture::new(self.graphics_queue.device().clone(), path)?;
+		let (tex, staging_work) = texture::Texture::new(
+			&self.memory_allocator, self.graphics_queue.device().clone(), path
+		)?;
 		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
 
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::CubemapTexture::new(self.graphics_queue.device().clone(), faces)?;
+		let (tex, staging_work) = texture::CubemapTexture::new(
+			&self.memory_allocator, self.graphics_queue.device().clone(), faces
+		)?;
 		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
@@ -208,8 +230,9 @@ impl RenderContext
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let (tex, staging_work) =
-			texture::Texture::new_from_iter(self.graphics_queue.device().clone(), iter, vk_fmt, dimensions, mip)?;
+		let (tex, staging_work) =texture::Texture::new_from_iter(
+			&self.memory_allocator, self.graphics_queue.device().clone(), iter, vk_fmt, dimensions, mip
+		)?;
 		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
@@ -224,10 +247,12 @@ impl RenderContext
 		[T]: vulkano::buffer::BufferContents,
 	{
 		let staging_usage = BufferUsage { transfer_src: true, ..BufferUsage::empty() };
-		let staging_buf = CpuAccessibleBuffer::from_iter(self.graphics_queue.device().clone(), staging_usage, false, data)?;
+		let staging_buf = CpuAccessibleBuffer::from_iter(
+			&self.memory_allocator, staging_usage, false, data
+		)?;
 		usage.transfer_dst = true;
 		let buf = DeviceLocalBuffer::array(
-			self.graphics_queue.device().clone(),
+			&self.memory_allocator,
 			staging_buf.len(),
 			usage,
 			self.get_queue_families(),
@@ -245,9 +270,9 @@ impl RenderContext
 		T: vulkano::buffer::BufferContents,
 	{
 		let staging_usage = BufferUsage { transfer_src: true, ..BufferUsage::empty() };
-		let staging_buf = CpuAccessibleBuffer::from_data(self.graphics_queue.device().clone(), staging_usage, false, data)?;
+		let staging_buf = CpuAccessibleBuffer::from_data(&self.memory_allocator, staging_usage, false, data)?;
 		usage.transfer_dst = true;
-		let buf = DeviceLocalBuffer::new(self.graphics_queue.device().clone(), usage, self.get_queue_families())?;
+		let buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
 		self.staging_work
 			.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		Ok(buf)
@@ -268,14 +293,14 @@ impl RenderContext
 	/// The CPU-accessible buffer pool is used for staging, from which data will be copied to the device-local buffer.
 	pub fn new_cpu_buffer_from_data<T>(
 		&mut self, data: T, mut usage: BufferUsage,
-	) -> Result<(CpuBufferPool<T>, Arc<DeviceLocalBuffer<T>>), DeviceMemoryError>
+	) -> Result<(CpuBufferPool<T>, Arc<DeviceLocalBuffer<T>>), GenericEngineError>
 	where
 		[T]: vulkano::buffer::BufferContents,
 		T: Send + Sync + bytemuck::Pod,
 	{
-		let cpu_buf = CpuBufferPool::upload(self.graphics_queue.device().clone());
+		let cpu_buf = CpuBufferPool::upload(self.memory_allocator.clone());
 		usage.transfer_dst = true;
-		let gpu_buf = DeviceLocalBuffer::new(self.graphics_queue.device().clone(), usage, self.get_queue_families())?;
+		let gpu_buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
 		self.staging_work
 			.push_back(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into());
 		Ok((cpu_buf, gpu_buf))
@@ -296,6 +321,15 @@ impl RenderContext
 			.push_back(CopyBufferInfo::buffers(src, dst).into())
 	}
 
+	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
+	{
+		&self.descriptor_set_allocator
+	}
+	pub fn memory_allocator(&self) -> &StandardMemoryAllocator
+	{
+		&self.memory_allocator
+	}
+
 	pub fn new_descriptor_set(
 		&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
@@ -303,7 +337,7 @@ impl RenderContext
 		self.material_pipelines
 			.get(pipeline_name)
 			.ok_or(PipelineNotLoaded)?
-			.new_descriptor_set(set, writes)
+			.new_descriptor_set(&self.descriptor_set_allocator, set, writes)
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
@@ -322,7 +356,7 @@ impl RenderContext
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
-			self.graphics_queue.device().clone(),
+			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 			inheritance,
@@ -343,15 +377,14 @@ impl RenderContext
 	/// Update images to match the current window size.
 	fn fit_images_to_window(&mut self) -> Result<(), GenericEngineError>
 	{
-		let vk_dev = self.graphics_queue.device().clone();
 		let color_usage = ImageUsage { transfer_src: true,..Default::default() };
 		self.color_image = AttachmentImage::with_usage(
-			vk_dev.clone(), self.swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
+			&self.memory_allocator, self.swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
 		)?;
 
 		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
 		self.depth_image = AttachmentImage::with_usage(
-			vk_dev.clone(), self.swapchain.dimensions(), Format::D16_UNORM, depth_usage
+			&self.memory_allocator, self.swapchain.dimensions(), Format::D16_UNORM, depth_usage
 		)?;
 
 		let fb_create_info = FramebufferCreateInfo {
@@ -363,7 +396,9 @@ impl RenderContext
 		};
 		self.main_framebuffer = Framebuffer::new(self.main_framebuffer.render_pass().clone(), fb_create_info)?;
 
-		self.transparency_renderer.resize_image(self.depth_image.clone())?;
+		self.transparency_renderer.resize_image(
+			&self.memory_allocator, &self.descriptor_set_allocator, self.depth_image.clone()
+		)?;
 
 		Ok(())
 	}
@@ -373,7 +408,7 @@ impl RenderContext
 	/// This must only be called once per frame.
 	///
 	/// This returns the acquired swapchain image.
-	fn next_swapchain_image(&mut self) -> Result<Arc<SwapchainImage<Window>>, GenericEngineError>
+	fn next_swapchain_image(&mut self) -> Result<Arc<SwapchainImage>, GenericEngineError>
 	{
 		let (image, dimensions_changed) = self.swapchain.get_next_image()?;
 		if dimensions_changed {
@@ -399,7 +434,7 @@ impl RenderContext
 				.unwrap_or_else(|| self.graphics_queue.clone());
 
 			let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-				cb_queue.device().clone(),
+				&self.command_buffer_allocator,
 				cb_queue.queue_family_index(),
 				CommandBufferUsage::OneTimeSubmit,
 			)?;
@@ -453,7 +488,7 @@ impl RenderContext
 
 		// finalize the rendering for this frame by executing the secondary command buffers
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
-			self.graphics_queue.device().clone(),
+			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
@@ -508,7 +543,7 @@ impl RenderContext
 	{
 		self.graphics_queue.clone()
 	}
-	pub fn get_surface(&self) -> Arc<vulkano::swapchain::Surface<winit::window::Window>>
+	pub fn get_surface(&self) -> Arc<vulkano::swapchain::Surface>
 	{
 		self.swapchain.get_surface()
 	}

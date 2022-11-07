@@ -9,7 +9,9 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::{layout::DescriptorSetLayoutCreateInfo, PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	layout::DescriptorSetLayoutCreateInfo, PersistentDescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator,
+};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::{
@@ -189,7 +191,7 @@ impl Pipeline
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
 	pub fn new_descriptor_set(
-		&self, set_number: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>,
+		&self, allocator: &StandardDescriptorSetAllocator, set_number: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
@@ -199,7 +201,7 @@ impl Pipeline
 			.get(set_number)
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
-		Ok(PersistentDescriptorSet::new(set_layout, writes)?)
+		Ok(PersistentDescriptorSet::new(allocator, set_layout, writes)?)
 	}
 }
 

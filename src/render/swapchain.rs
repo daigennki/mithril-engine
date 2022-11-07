@@ -9,7 +9,8 @@ use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::swapchain::{
-	AcquireError, PresentInfo, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo,
+	AcquireError, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, 
+	SwapchainPresentInfo
 };
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
 use winit::window::Window;
@@ -18,20 +19,24 @@ use crate::GenericEngineError;
 
 pub struct Swapchain
 {
-	swapchain: Arc<vulkano::swapchain::Swapchain<Window>>,
-	images: Vec<Arc<SwapchainImage<Window>>>,
+	window: Arc<Window>,
+	swapchain: Arc<vulkano::swapchain::Swapchain>,
+	images: Vec<Arc<SwapchainImage>>,
 
 	recreate_pending: bool,
 
-	acquire_future: Option<SwapchainAcquireFuture<Window>>,
+	acquire_future: Option<SwapchainAcquireFuture>,
 	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 }
 impl Swapchain
 {
 	pub fn new(
-		vk_dev: Arc<vulkano::device::Device>, surface: Arc<Surface<Window>>
+		vk_dev: Arc<vulkano::device::Device>, window: Window
 	) -> Result<Self, GenericEngineError>
 	{
+		let window_arc = Arc::new(window);
+		let surface = vulkano_win::create_surface_from_winit(window_arc.clone(), vk_dev.instance().clone())?;
+
 		let pd = vk_dev.physical_device();
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
@@ -49,6 +54,7 @@ impl Swapchain
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
 
 		Ok(Swapchain {
+			window: window_arc,
 			swapchain,
 			images,
 			recreate_pending: false,
@@ -63,7 +69,7 @@ impl Swapchain
 	{
 		let prev_dimensions = self.swapchain.image_extent();
 		let mut create_info = self.swapchain.create_info();
-		create_info.image_extent = self.swapchain.surface().window().inner_size().into();
+		create_info.image_extent = self.window.inner_size().into();
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
 		self.images = new_images;
@@ -79,7 +85,7 @@ impl Swapchain
 	/// Returns the image and a bool indicating if the image dimensions changed.
 	/// Subsequent command buffer commands will fail with `vulkano::sync::AccessError::AlreadyInUse`
 	/// if this isn't run after every swapchain command submission.
-	pub fn get_next_image(&mut self) -> Result<(Arc<SwapchainImage<Window>>, bool), GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<(Arc<SwapchainImage>, bool), GenericEngineError>
 	{
 		// clean up resources from finished submissions
 		if let Some(f) = self.submission_future.as_mut() {
@@ -103,7 +109,7 @@ impl Swapchain
 				}
 				self.recreate_pending = suboptimal;
 				self.acquire_future = Some(acquire_future);
-				Ok((self.images[image_num].clone(), dimensions_changed))
+				Ok((self.images[image_num as usize].clone(), dimensions_changed))
 			}
 			Err(AcquireError::OutOfDate) => {
 				log::warn!("Swapchain out of date, recreating...");
@@ -127,10 +133,9 @@ impl Swapchain
 			.take()
 			.expect("Command buffer submitted without acquiring an image!");
 
-		let present_info = PresentInfo {
-			index: acquire_future.image_id(),
-			..PresentInfo::swapchain(acquire_future.swapchain().clone())
-		};
+		let present_info = SwapchainPresentInfo::swapchain_image_index(
+			acquire_future.swapchain().clone(), acquire_future.image_index()
+		);
 
 		let mut joined_futures = acquire_future.boxed_send_sync();
 		if let Some(f) = self.submission_future.take() {
@@ -166,7 +171,7 @@ impl Swapchain
 		self.swapchain.image_extent()
 	}
 
-	pub fn get_surface(&self) -> Arc<Surface<Window>>
+	pub fn get_surface(&self) -> Arc<Surface>
 	{
 		self.swapchain.surface().clone()
 	}

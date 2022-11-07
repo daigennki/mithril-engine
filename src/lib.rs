@@ -30,7 +30,7 @@ struct GameContext
 {
 	//pref_path: String,
 	world: World,
-	egui_gui: egui_winit_vulkano::Gui,
+	//egui_gui: egui_winit_vulkano::Gui,
 
 	selected_ent: EntityId,
 	right_mouse_button_pressed: bool,
@@ -60,13 +60,13 @@ impl GameContext
 
 		// set up egui
 		let subpass = render_ctx.get_main_render_pass().first_subpass();
-		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
+		/*let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
 			None,
 			render_ctx.get_queue(),
 			subpass,
-		);
+		);*/
 
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
@@ -80,7 +80,7 @@ impl GameContext
 		Ok(GameContext {
 			//pref_path,
 			world,
-			egui_gui,
+			//egui_gui,
 			selected_ent: Default::default(),
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
@@ -92,7 +92,7 @@ impl GameContext
 	{
 		match event {
 			Event::WindowEvent { event, .. } => {
-				self.egui_gui.update(event);
+				//self.egui_gui.update(event);
 			}
 			Event::DeviceEvent {
 				event: DeviceEvent::Button { button: 1, state }, ..
@@ -151,7 +151,7 @@ impl GameContext
 			.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
 
 		// set egui debug UI layout
-		self.egui_gui.begin_frame();
+		/*self.egui_gui.begin_frame();
 		let egui_ctx = self.egui_gui.context();
 		egui::Window::new("Object list").show(&egui_ctx, |wnd| {
 			if let Some(s) = generate_egui_entity_list(&self.world, wnd, self.selected_ent) {
@@ -168,7 +168,7 @@ impl GameContext
 		let egui_cb = self
 			.egui_gui
 			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		trm.add_cb(egui_cb);
+		trm.add_cb(egui_cb);*/
 
 		Ok(())
 	}
