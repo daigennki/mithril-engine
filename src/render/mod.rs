@@ -692,10 +692,9 @@ fn get_physical_device(
 		.enumerate()
 		.find(|(_, q)| q.queue_flags.graphics)
 		.ok_or("No graphics queue family found!")?;
-	// TODO: Enable the transfer queue again after the next vulkano release.
-	// As of vulkano 0.31, vulkano has a bug where the number of queue families
-	// used by buffers and images isn't given to `ash`.
-	/*let transfer_qf = None;physical_device.queue_family_properties()
+
+	// get a separate queue family for transfers
+	let transfer_qf = physical_device.queue_family_properties()
 		.iter()
 		.enumerate()
 		.find(|(_, q)| !q.queue_flags.graphics && q.queue_flags.transfer);
@@ -703,8 +702,7 @@ fn get_physical_device(
 	let queue_families = match transfer_qf {
 		Some((tqf, _)) => vec![ graphics_qf, tqf ],
 		None => vec![ graphics_qf ]
-	};*/
-	let queue_families = vec![graphics_qf];
+	};
 
 	Ok((physical_device, queue_families))
 }
