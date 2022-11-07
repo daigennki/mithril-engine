@@ -119,11 +119,10 @@ impl Swapchain
 	}
 
 	/// Submit a primary command buffer's commands.
-	/// Optionally, a command buffer `transfers` containing only transfer commands could also be set. It
-	/// will be executed before `cb` on the same queue, or on `transfer_queue` if it is also set.
+	/// Optionally, a GpuFuture resulting from joining submitted transfers can be given, so that graphics operations
+	/// don't begin until the transfers are complete.
 	pub fn submit_commands(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, transfers: Option<PrimaryAutoCommandBuffer>,
-		transfer_queue: Option<Arc<Queue>>,
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, wait_for_transfers: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
 	) -> Result<(), GenericEngineError>
 	{
 		let acquire_future = self
@@ -136,16 +135,18 @@ impl Swapchain
 		);
 
 		let mut joined_futures = acquire_future.boxed_send_sync();
+
+		// Wait for transfers to complete.
+		if let Some(f) = wait_for_transfers {
+			f.wait(None)?;
+			joined_futures = Box::new(joined_futures.join(f));
+		}
+
 		if let Some(f) = self.submission_future.take() {
 			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
 			joined_futures = Box::new(joined_futures.join(f));
 		}
-		if let Some(t) = transfers {
-			joined_futures = joined_futures
-				.then_execute(transfer_queue.unwrap_or_else(|| queue.clone()), t)?
-				.boxed_send_sync();
-		}
-
+		
 		let future_result = joined_futures
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, present_info)

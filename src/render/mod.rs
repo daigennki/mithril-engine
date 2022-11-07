@@ -19,7 +19,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferBeginError, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
 	CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PipelineExecutionError,
 	PrimaryAutoCommandBuffer, RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents, BlitImageInfo,
-	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
+	PrimaryCommandBufferAbstract, allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 };
 use vulkano::descriptor_set::{
 	DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator
@@ -33,6 +33,7 @@ use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount,
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
+use vulkano::sync::{GpuFuture, FenceSignalFuture};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -43,12 +44,17 @@ pub struct RenderContext
 {
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,         // this also owns the logical device
-	transfer_queue: Option<Arc<Queue>>, // if there is a dedicated transfer queue, use it for transfers
+	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
+	// Staging work to accumulate in case the physical device doesn't have a separate transfer queue, or
+	// the transfer is for a mutable buffer/image (e.g. it might be in use by a previous submission).
 	staging_work: LinkedList<StagingWork>,
+
+	// Futures from submitted immutable buffer/image transfers.
+	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: HashMap<PathBuf, Arc<Model>>,
@@ -144,6 +150,7 @@ impl RenderContext
 			memory_allocator,
 			command_buffer_allocator,
 			staging_work: LinkedList::new(),
+			transfer_future: None,
 			models: HashMap::new(),
 			material_pipelines: HashMap::new(),
 			main_framebuffer,
@@ -202,14 +209,14 @@ impl RenderContext
 	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
 	{
 		let (tex, staging_work) = texture::Texture::new(&self.memory_allocator, path)?;
-		self.staging_work.push_back(staging_work.into());
+		self.submit_transfer(staging_work.into())?;
 		Ok(tex)
 	}
 
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
 	{
 		let (tex, staging_work) = texture::CubemapTexture::new(&self.memory_allocator, faces)?;
-		self.staging_work.push_back(staging_work.into());
+		self.submit_transfer(staging_work.into())?;
 		Ok(tex)
 	}
 
@@ -222,7 +229,7 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator,
 	{
 		let (tex, staging_work) = texture::Texture::new_from_iter(&self.memory_allocator, iter, vk_fmt, dimensions, mip)?;
-		self.staging_work.push_back(staging_work.into());
+		self.submit_transfer(staging_work.into())?;
 		Ok(tex)
 	}
 
@@ -246,8 +253,7 @@ impl RenderContext
 			usage,
 			self.get_queue_families(),
 		)?;
-		self.staging_work
-			.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
+		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
 
@@ -262,8 +268,7 @@ impl RenderContext
 		let staging_buf = CpuAccessibleBuffer::from_data(&self.memory_allocator, staging_usage, false, data)?;
 		usage.transfer_dst = true;
 		let buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
-		self.staging_work
-			.push_back(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
+		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
 
@@ -408,46 +413,49 @@ impl RenderContext
 		Ok(image)
 	}
 
-	/// Build and take the command buffer for staging buffers and images, if anything needs to be copied.
-	fn build_staging_cb(&mut self) -> Result<Option<PrimaryAutoCommandBuffer>, GenericEngineError>
+	/// Submit staging work for immutable objects to the transfer queue, or if there is no transfer queue, 
+	/// keep it for later when the graphics operations are submitted.
+	fn submit_transfer(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
 	{
-		// TODO: we might be able to build this command buffer in a separate thread, popping work out of
-		// the `LinkedList` as soon as possible.
-		if self.staging_work.is_empty() {
-			Ok(None)
-		} else {
-			let cb_queue = self
-				.transfer_queue
-				.as_ref()
-				.cloned()
-				.unwrap_or_else(|| self.graphics_queue.clone());
-
-			let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-				&self.command_buffer_allocator,
-				cb_queue.queue_family_index(),
-				CommandBufferUsage::OneTimeSubmit,
-			)?;
-
-			while let Some(work) = self.staging_work.pop_front() {
+		match self.transfer_queue.as_ref() {
+			Some(q) => {
+				let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
+					&self.command_buffer_allocator,
+					q.queue_family_index(),
+					CommandBufferUsage::OneTimeSubmit,
+				)?;
 				match work {
 					StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
 					StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
 				};
-			}
+				let staging_cb = staging_cb_builder.build()?;
 
-			Ok(Some(staging_cb_builder.build()?))
+				self.transfer_future = Some(match self.transfer_future.take() {
+					Some(f) => {
+						staging_cb
+							.execute_after(f, q.clone())?
+							.boxed_send_sync()
+							.then_signal_fence_and_flush()?
+					},
+					None => {
+						staging_cb
+							.execute(q.clone())?
+							.boxed_send_sync()
+							.then_signal_fence_and_flush()?
+					}
+				});
+			}
+			None => self.staging_work.push_back(work)
 		}
+		Ok(())
 	}
 
 	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
-		let staging_cb = self.build_staging_cb()?;
-
 		self.swapchain.submit_commands(
 			built_cb,
 			self.graphics_queue.clone(),
-			staging_cb,
-			self.transfer_queue.as_ref().cloned(),
+			self.transfer_future.take(),
 		)?;
 
 		let now = std::time::Instant::now();
@@ -481,6 +489,14 @@ impl RenderContext
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
+
+		// Add commands for staging work that can't be done on a separate transfer queue.
+		while let Some(work) = self.staging_work.pop_front() {
+			match work {
+				StagingWork::CopyBuffer(info) => primary_cb_builder.copy_buffer(info)?,
+				StagingWork::CopyBufferToImage(info) => primary_cb_builder.copy_buffer_to_image(info)?,
+			};
+		}
 
 		primary_cb_builder
 			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
@@ -700,7 +716,10 @@ fn get_physical_device(
 		.find(|(_, q)| !q.queue_flags.graphics && q.queue_flags.transfer);
 
 	let queue_families = match transfer_qf {
-		Some((tqf, _)) => vec![ graphics_qf, tqf ],
+		Some((tqf, _)) => {
+			log::info!("Using queue family {} for transfers", tqf);
+			vec![ graphics_qf, tqf ]
+		},
 		None => vec![ graphics_qf ]
 	};
 
@@ -745,8 +764,8 @@ fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>), Gen
 
 	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
 	let graphics_queue = queues
-		.nth(0)
+		.next()
 		.ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?;
-	let transfer_queue = queues.nth(1);
+	let transfer_queue = queues.next();
 	Ok((graphics_queue, transfer_queue))
 }
