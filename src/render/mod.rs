@@ -107,7 +107,7 @@ impl RenderContext
 				},
 				depth: {
 					load: DontCare,	// this too is DontCare since the skybox clears it with 1.0
-					store: Store,	// order-independent transparency might need this to be `Store`
+					store: Store,	// order-independent transparency needs this to be `Store`
 					format: Format::D16_UNORM,	// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
 					samples: 1,
 				}
@@ -118,16 +118,11 @@ impl RenderContext
 			}
 		)?;
 
-		let color_usage = ImageUsage { transfer_src: true,..Default::default() };
+		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
 		let color_image = AttachmentImage::with_usage(
 			&memory_allocator, swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
 		)?;
-
-		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
-		let depth_image = AttachmentImage::with_usage(
-			&memory_allocator, swapchain.dimensions(), Format::D16_UNORM, depth_usage
-		)?;
-
+		let depth_image = AttachmentImage::new(&memory_allocator, swapchain.dimensions(), Format::D16_UNORM)?;
 		let fb_create_info = FramebufferCreateInfo {
 			attachments: vec![
 				ImageView::new_default(color_image.clone())?,
