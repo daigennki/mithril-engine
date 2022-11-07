@@ -12,7 +12,7 @@ use vulkano::image::{AttachmentImage, ImageAccess, ImageUsage, view::ImageView};
 use vulkano::pipeline::graphics::{
 	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport
 };
-use vulkano::device::{Device, DeviceOwned};
+use vulkano::device::DeviceOwned;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 
@@ -34,9 +34,10 @@ impl TransparencyRenderer
 {
 	pub fn new(
 		memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		vk_dev: Arc<Device>, depth_image: Arc<AttachmentImage>
+		depth_image: Arc<AttachmentImage>
 	) -> Result<Self, GenericEngineError>
 	{
+		let vk_dev = memory_allocator.device().clone();
 		let transparency_rp = vulkano::single_pass_renderpass!(vk_dev.clone(),
 			attachments: {
 				accum: {

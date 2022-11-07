@@ -133,7 +133,7 @@ impl RenderContext
 		let main_framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
 		let transparency_renderer = transparency::TransparencyRenderer::new(
-			&memory_allocator, &descriptor_set_allocator, vk_dev, depth_image.clone()
+			&memory_allocator, &descriptor_set_allocator, depth_image.clone()
 		)?;
 
 		Ok(RenderContext {
@@ -201,18 +201,14 @@ impl RenderContext
 
 	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::Texture::new(
-			&self.memory_allocator, self.graphics_queue.device().clone(), path
-		)?;
+		let (tex, staging_work) = texture::Texture::new(&self.memory_allocator, path)?;
 		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
 
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::CubemapTexture::new(
-			&self.memory_allocator, self.graphics_queue.device().clone(), faces
-		)?;
+		let (tex, staging_work) = texture::CubemapTexture::new(&self.memory_allocator, faces)?;
 		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}
@@ -225,9 +221,7 @@ impl RenderContext
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let (tex, staging_work) =texture::Texture::new_from_iter(
-			&self.memory_allocator, self.graphics_queue.device().clone(), iter, vk_fmt, dimensions, mip
-		)?;
+		let (tex, staging_work) = texture::Texture::new_from_iter(&self.memory_allocator, iter, vk_fmt, dimensions, mip)?;
 		self.staging_work.push_back(staging_work.into());
 		Ok(tex)
 	}

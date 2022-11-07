@@ -30,9 +30,7 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(
-		vk_dev: Arc<vulkano::device::Device>, window: Window
-	) -> Result<Self, GenericEngineError>
+	pub fn new(vk_dev: Arc<vulkano::device::Device>, window: Window) -> Result<Self, GenericEngineError>
 	{
 		let window_arc = Arc::new(window);
 		let surface = vulkano_win::create_surface_from_winit(window_arc.clone(), vk_dev.instance().clone())?;

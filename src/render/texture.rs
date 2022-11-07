@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::CopyBufferToImageInfo;
-use vulkano::device::Device;
+use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
 	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, ImageCreateFlags, ImageDimensions, ImageLayout,
@@ -26,7 +26,7 @@ pub struct Texture
 impl Texture
 {
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator, device: Arc<Device>, path: &Path
+		memory_allocator: &StandardMemoryAllocator, path: &Path
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
@@ -40,11 +40,11 @@ impl Texture
 			_ => load_other_format(path)?,
 		};
 
-		Self::new_from_iter(memory_allocator, device, img_raw, vk_fmt, dim, mip)
+		Self::new_from_iter(memory_allocator, img_raw, vk_fmt, dim, mip)
 	}
 
 	pub fn new_from_iter<Px, I>(
-		memory_allocator: &StandardMemoryAllocator, device: Arc<Device>, iter: I, vk_fmt: Format, 
+		memory_allocator: &StandardMemoryAllocator, iter: I, vk_fmt: Format, 
 		dimensions: ImageDimensions, mip: MipmapsCount,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
@@ -52,6 +52,8 @@ impl Texture
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
+		let device = memory_allocator.device().clone();
+
 		// TODO: consider other uses, such as framebuffer attachments
 		let dst_img_usage = ImageUsage {
 			transfer_dst: true,
@@ -100,7 +102,7 @@ impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator, device: Arc<vulkano::device::Device>, faces: [PathBuf; 6],
+		memory_allocator: &StandardMemoryAllocator, faces: [PathBuf; 6],
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
@@ -149,18 +151,17 @@ impl CubemapTexture
 			*array_layers = 6;
 		}
 
-		Self::new_from_iter(memory_allocator, device, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), MipmapsCount::One)
+		Self::new_from_iter(memory_allocator, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), MipmapsCount::One)
 	}
 	pub fn new_from_iter<Px, I>(
-		memory_allocator: &StandardMemoryAllocator, device: Arc<vulkano::device::Device>, 
-		iter: I, vk_fmt: Format, dimensions: ImageDimensions, mip: MipmapsCount,
+		memory_allocator: &StandardMemoryAllocator, iter: I, vk_fmt: Format, dimensions: ImageDimensions, mip: MipmapsCount,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let (vk_img, staging_info) = create_cubemap_image(iter, dimensions, mip, vk_fmt, memory_allocator, device)?;
+		let (vk_img, staging_info) = create_cubemap_image(iter, dimensions, mip, vk_fmt, memory_allocator)?;
 		let mut view_create_info = vulkano::image::view::ImageViewCreateInfo::from_image(&vk_img);
 		view_create_info.view_type = ImageViewType::Cube;
 
@@ -185,14 +186,14 @@ impl CubemapTexture
 }
 
 fn create_cubemap_image<Px, I>(
-	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, 
-	allocator: &StandardMemoryAllocator, device: Arc<vulkano::device::Device>,
+	iter: I, dimensions: ImageDimensions, mip_levels: MipmapsCount, format: Format, allocator: &StandardMemoryAllocator,
 ) -> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
 where
 	[Px]: vulkano::buffer::BufferContents,
 	I: IntoIterator<Item = Px>,
 	I::IntoIter: ExactSizeIterator,
 {
+	let device = allocator.device().clone();
 	let src = CpuAccessibleBuffer::from_iter(
 		allocator,
 		BufferUsage { transfer_src: true, ..BufferUsage::empty() },
