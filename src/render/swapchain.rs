@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract};
 use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::image::{ImageUsage, SwapchainImage};
@@ -116,6 +116,27 @@ impl Swapchain
 			}
 			Err(e) => Err(Box::new(e)),
 		}
+	}
+
+	pub fn submit_transfer_on_graphics_queue(
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>
+	) -> Result<(), GenericEngineError>
+	{
+		self.submission_future = Some(match self.submission_future.take() {
+			Some(f) => {
+				cb
+					.execute_after(f, queue.clone())?
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			},
+			None => {
+				cb
+					.execute(queue.clone())?
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			}
+		});
+		Ok(())
 	}
 
 	/// Submit a primary command buffer's commands.

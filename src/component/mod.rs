@@ -51,7 +51,7 @@ impl Transform
 			.as_ref()
 			.ok_or("transform not loaded")?
 			.from_data(self.model_mat)?;
-		render_ctx.copy_buffer(staged, self.buf.as_ref().ok_or("transform not loaded")?.clone());
+		render_ctx.copy_buffer(staged, self.buf.as_ref().ok_or("transform not loaded")?.clone())?;
 		Ok(())
 	}
 

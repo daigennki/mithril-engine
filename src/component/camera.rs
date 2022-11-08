@@ -74,7 +74,7 @@ impl Camera
 			.as_ref()
 			.ok_or("camera not loaded")?
 			.from_data(projview_struct)?;
-		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
+		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone())?;
 
 		Ok(())
 	}
@@ -92,7 +92,7 @@ impl Camera
 			.as_ref()
 			.ok_or("camera not loaded")?
 			.from_data(projview_struct)?;
-		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone());
+		render_ctx.copy_buffer(staged, self.projview_buf.as_ref().ok_or("camera not loaded")?.clone())?;
 		Ok(())
 	}
 

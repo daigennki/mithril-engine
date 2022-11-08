@@ -49,11 +49,7 @@ pub struct RenderContext
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	// Staging work to accumulate in case the physical device doesn't have a separate transfer queue, or
-	// the transfer is for a mutable buffer/image (e.g. it might be in use by a previous submission).
-	staging_work: LinkedList<StagingWork>,
-
-	// Futures from submitted immutable buffer/image transfers.
+	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
 	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
@@ -149,7 +145,6 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
-			staging_work: LinkedList::new(),
 			transfer_future: None,
 			models: HashMap::new(),
 			material_pipelines: HashMap::new(),
@@ -295,8 +290,7 @@ impl RenderContext
 		let cpu_buf = CpuBufferPool::upload(self.memory_allocator.clone());
 		usage.transfer_dst = true;
 		let gpu_buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
-		self.staging_work
-			.push_back(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into());
+		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into())?;
 		Ok((cpu_buf, gpu_buf))
 	}
 
@@ -310,9 +304,9 @@ impl RenderContext
 
 	/// Queue a buffer copy which will be executed before the next image submission.
 	pub fn copy_buffer(&mut self, src: Arc<dyn BufferAccess>, dst: Arc<dyn BufferAccess>)
+		-> Result<(), GenericEngineError>
 	{
-		self.staging_work
-			.push_back(CopyBufferInfo::buffers(src, dst).into())
+		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
 	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
@@ -444,9 +438,28 @@ impl RenderContext
 							.then_signal_fence_and_flush()?
 					}
 				});
-			}
-			None => self.staging_work.push_back(work)
+			},
+			None => self.submit_transfer_on_graphics_queue(work)?,
 		}
+		Ok(())
+	}
+
+	/// Submit staging work for *mutable* objects to the graphics queue. Use this instead of `submit_transfer` if 
+	/// there's the possibility that the object is in use by a previous submission.
+	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
+	{
+		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
+			&self.command_buffer_allocator,
+			self.graphics_queue.queue_family_index(),
+			CommandBufferUsage::OneTimeSubmit,
+		)?;
+		match work {
+			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
+			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
+		};
+		let staging_cb = staging_cb_builder.build()?;
+
+		self.swapchain.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
 		Ok(())
 	}
 
@@ -489,14 +502,6 @@ impl RenderContext
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
-
-		// Add commands for staging work that can't be done on a separate transfer queue.
-		while let Some(work) = self.staging_work.pop_front() {
-			match work {
-				StagingWork::CopyBuffer(info) => primary_cb_builder.copy_buffer(info)?,
-				StagingWork::CopyBufferToImage(info) => primary_cb_builder.copy_buffer_to_image(info)?,
-			};
-		}
 
 		primary_cb_builder
 			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
@@ -700,7 +705,7 @@ fn get_physical_device(
 
 	log::info!("Using physical device: {}", physical_device.properties().device_name);
 
-	// get queue family that supports graphics
+	// Get a queue family that supports graphics operations.
 	print_queue_families(physical_device.queue_family_properties());
 	let (graphics_qf, _) = physical_device
 		.queue_family_properties()
@@ -709,11 +714,19 @@ fn get_physical_device(
 		.find(|(_, q)| q.queue_flags.graphics)
 		.ok_or("No graphics queue family found!")?;
 
-	// get a separate queue family for transfers
+	// Get a separate queue family for transfers.
+	// First try to get one that is specifically optimized for transfers (supports netiher graphics nor compute),
+	// then if such a queue family doesn't exist, use one that just doesn't support graphics.
 	let transfer_qf = physical_device.queue_family_properties()
 		.iter()
 		.enumerate()
-		.find(|(_, q)| !q.queue_flags.graphics && q.queue_flags.transfer);
+		.find(|(_, q)| !q.queue_flags.graphics && !q.queue_flags.compute && q.queue_flags.transfer)
+		.or_else(|| {
+			physical_device.queue_family_properties()
+				.iter()
+				.enumerate()
+				.find(|(_, q)| !q.queue_flags.graphics && q.queue_flags.transfer)
+		});
 
 	let queue_families = match transfer_qf {
 		Some((tqf, _)) => {
