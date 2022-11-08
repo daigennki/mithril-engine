@@ -10,7 +10,7 @@ mod swapchain;
 pub mod texture;
 pub mod transparency;
 
-use std::collections::{HashMap, LinkedList};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +33,7 @@ use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount,
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano::sync::{GpuFuture, FenceSignalFuture};
+use vulkano::sync::GpuFuture;
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -50,7 +50,7 @@ pub struct RenderContext
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
-	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
+	transfer_future: Option<Box<dyn GpuFuture + Send + Sync>>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: HashMap<PathBuf, Arc<Model>>,
@@ -424,20 +424,12 @@ impl RenderContext
 				};
 				let staging_cb = staging_cb_builder.build()?;
 
-				self.transfer_future = Some(match self.transfer_future.take() {
-					Some(f) => {
-						staging_cb
-							.execute_after(f, q.clone())?
-							.boxed_send_sync()
-							.then_signal_fence_and_flush()?
-					},
-					None => {
-						staging_cb
-							.execute(q.clone())?
-							.boxed_send_sync()
-							.then_signal_fence_and_flush()?
-					}
-				});
+				let new_future = match self.transfer_future.take() {
+					Some(f) => staging_cb.execute_after(f, q.clone())?.boxed_send_sync(),
+					None => staging_cb.execute(q.clone())?.boxed_send_sync(),
+				};
+				new_future.flush()?;
+				self.transfer_future = Some(new_future);
 			},
 			None => self.submit_transfer_on_graphics_queue(work)?,
 		}

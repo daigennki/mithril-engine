@@ -143,7 +143,7 @@ impl Swapchain
 	/// Optionally, a GpuFuture resulting from joining submitted transfers can be given, so that graphics operations
 	/// don't begin until the transfers are complete.
 	pub fn submit_commands(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, wait_for_transfers: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, wait_for_transfers: Option<Box<dyn GpuFuture + Send + Sync>>
 	) -> Result<(), GenericEngineError>
 	{
 		let acquire_future = self
@@ -159,15 +159,17 @@ impl Swapchain
 
 		// Wait for transfers to complete.
 		if let Some(f) = wait_for_transfers {
-			f.wait(None)?;
-			joined_futures = Box::new(joined_futures.join(f));
+			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
+			let fence_future = f.then_signal_fence();
+			fence_future.wait(None)?;
+			joined_futures = Box::new(joined_futures.join(fence_future));
 		}
 
 		if let Some(f) = self.submission_future.take() {
 			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
 			joined_futures = Box::new(joined_futures.join(f));
 		}
-		
+
 		let future_result = joined_futures
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, present_info)
