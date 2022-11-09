@@ -26,7 +26,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	Queue, QueueCreateInfo, QueueFamilyProperties,
+	Queue, QueueCreateInfo, DeviceExtensions, DeviceCreateInfo,
 };
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage, view::ImageView};
@@ -622,37 +622,6 @@ fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
 	// others (use Vulkan version convention)
 	((version >> 22), (version >> 12) & 0x3ff, version & 0xfff, 0)
 }
-fn print_physical_devices(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(), vulkano::VulkanError>
-{
-	log::info!("Available Vulkan physical devices:");
-	for (i, pd) in vkinst.enumerate_physical_devices()?.enumerate() {
-		let driver_ver = decode_driver_version(pd.properties().driver_version, pd.properties().vendor_id);
-
-		log::info!(
-			"{}: {} ({:?}), driver '{}' version {}.{}.{}.{} (Vulkan {})",
-			i,
-			pd.properties().device_name,
-			pd.properties().device_type,
-			pd.properties()
-				.driver_name
-				.clone()
-				.unwrap_or("unknown driver".into()),
-			driver_ver.0,
-			driver_ver.1,
-			driver_ver.2,
-			driver_ver.3,
-			pd.properties().api_version
-		);
-	}
-	Ok(())
-}
-fn print_queue_families<'a>(queue_families: &[QueueFamilyProperties])
-{
-	log::info!("Available physical device queue families:");
-	for (id, qf) in queue_families.iter().enumerate() {
-		log::info!("{}: {} queue(s), {:?}", id, qf.queue_count, qf.queue_flags);
-	}
-}
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
 {
@@ -679,56 +648,76 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
 }
 
-/// Get the most appropriate GPU, along with a pair of graphics queue family and transfer queue family.
-fn get_physical_device(
-	vkinst: Arc<vulkano::instance::Instance>,
-) -> Result<(Arc<PhysicalDevice>, Vec<usize>), GenericEngineError>
+/// Get the most appropriate GPU.
+fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<PhysicalDevice>, GenericEngineError>
 {
-	print_physical_devices(&vkinst)?;
-	let dgpu = vkinst
-		.enumerate_physical_devices()?
-		.find(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
-	let igpu = vkinst
-		.enumerate_physical_devices()?
-		.find(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
+	log::info!("Available Vulkan physical devices:");
+	let (mut dgpu, mut igpu) = (None, None);
+	for (i, pd) in vkinst.enumerate_physical_devices()?.enumerate() {
+		let properties = pd.properties();
+		let driver_ver = decode_driver_version(pd.properties().driver_version, properties.vendor_id);
+		let driver_name = properties.driver_name.as_ref();
+
+		log::info!(
+			"{}: {} ({:?}), driver '{}' version {}.{}.{}.{} (Vulkan {})",
+			i,
+			properties.device_name,
+			properties.device_type,
+			driver_name.map_or("unknown driver", |name| &name),
+			driver_ver.0,
+			driver_ver.1,
+			driver_ver.2,
+			driver_ver.3,
+			properties.api_version
+		);
+		
+		match properties.device_type {
+			PhysicalDeviceType::DiscreteGpu => { dgpu.get_or_insert(pd); },
+			PhysicalDeviceType::IntegratedGpu => { igpu.get_or_insert(pd); },
+			_ => ()
+		}
+	}
 
 	// Try to use a discrete GPU. If there is no discrete GPU, use an integrated GPU instead.
 	let physical_device = dgpu.or(igpu).ok_or("No GPUs were found!")?;
-
 	log::info!("Using physical device: {}", physical_device.properties().device_name);
+	Ok(physical_device)
+}
 
-	// Get a queue family that supports graphics operations.
-	print_queue_families(physical_device.queue_family_properties());
-	let (graphics_qf, _) = physical_device
-		.queue_family_properties()
-		.iter()
-		.enumerate()
-		.find(|(_, q)| q.queue_flags.graphics)
-		.ok_or("No graphics queue family found!")?;
+/// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
+fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCreateInfo>, GenericEngineError>
+{
+	let mut graphics = None;	// required
+	let mut transfer_only = None;	// optional; optimized specifically for transfers
+	let mut transfer = None;	// optional; not transfer-specific, but still works for async transfers
 
-	// Get a separate queue family for transfers.
-	// First try to get one that is specifically optimized for transfers (supports netiher graphics nor compute),
+	// Get the required graphics queue family, and try to get an optional one for async transfers.
+	// For transfers, try to get one that is specifically optimized for async transfers (supports netiher graphics nor compute),
 	// then if such a queue family doesn't exist, use one that just doesn't support graphics.
-	let transfer_qf = physical_device.queue_family_properties()
-		.iter()
-		.enumerate()
-		.find(|(_, q)| !q.queue_flags.graphics && !q.queue_flags.compute && q.queue_flags.transfer)
-		.or_else(|| {
-			physical_device.queue_family_properties()
-				.iter()
-				.enumerate()
-				.find(|(_, q)| !q.queue_flags.graphics && q.queue_flags.transfer)
-		});
+	log::info!("Available physical device queue families:");
+	for (i, q) in physical_device.queue_family_properties().iter().enumerate() {
+		log::info!("{}: {} queue(s), {:?}", i, q.queue_count, q.queue_flags);
 
-	let queue_families = match transfer_qf {
-		Some((tqf, _)) => {
-			log::info!("Using queue family {} for transfers", tqf);
-			vec![ graphics_qf, tqf ]
-		},
-		None => vec![ graphics_qf ]
-	};
+		if q.queue_flags.graphics {
+			graphics.get_or_insert(i);
+		} else if !q.queue_flags.compute && q.queue_flags.transfer {
+			transfer_only.get_or_insert(i);
+		} else if q.queue_flags.transfer {
+			transfer.get_or_insert(i);	
+		}
+	}
+	
+	let mut use_queue_families = vec![ graphics.ok_or("No graphics queue family found!")? ];
+	if let Some(tq) = transfer_only.or(transfer) {
+		log::info!("Using queue family {} for transfers", tq);
+		use_queue_families.push(tq);
+	}
 
-	Ok((physical_device, queue_families))
+	let infos = use_queue_families
+		.into_iter()
+		.map(|i| QueueCreateInfo { queue_family_index: i as u32, ..Default::default() })
+		.collect();
+	Ok(infos)
 }
 
 /// Set up the Vulkan instance, physical device, logical device, and queue.
@@ -736,41 +725,27 @@ fn get_physical_device(
 fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>), GenericEngineError>
 {
 	let vkinst = create_vulkan_instance(game_name)?;
-	let (physical_device, queue_families) = get_physical_device(vkinst.clone())?;
+	let physical_device = get_physical_device(&vkinst)?;
 
-	// Select features and extensions.
-	// The ones chosen here are practically universally supported by any device with Vulkan support.
-	let dev_features = vulkano::device::Features {
+	// The features and extensions enabled here are supported by basically any Vulkan device.
+	let enabled_features = vulkano::device::Features {
 		image_cube_array: true,
 		independent_blend: true,
 		sampler_anisotropy: true,
 		texture_compression_bc: true, // change this to ASTC or ETC2 if we want to support mobile platforms
 		geometry_shader: true,
-		..vulkano::device::Features::empty()
-	};
-	let dev_extensions = vulkano::device::DeviceExtensions {
-		khr_swapchain: true,
-		..vulkano::device::DeviceExtensions::empty()
+		..Default::default()
 	};
 
-	let queue_create_infos: Vec<_> = queue_families
-		.iter()
-		.map(|qf| QueueCreateInfo {
-			queue_family_index: (*qf).try_into().unwrap(),
-			..Default::default()
-		})
-		.collect();
-	let dev_create_info = vulkano::device::DeviceCreateInfo {
-		enabled_extensions: dev_extensions,
-		enabled_features: dev_features,
-		queue_create_infos,
+	let dev_create_info = DeviceCreateInfo {
+		enabled_extensions: DeviceExtensions { khr_swapchain: true, ..Default::default() },
+		enabled_features,
+		queue_create_infos: get_queue_infos(physical_device.clone())?,
 		..Default::default()
 	};
 
 	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
-	let graphics_queue = queues
-		.next()
-		.ok_or("`vulkano::device::Device::new(...) returned 0 queues`")?;
+	let graphics_queue = queues.next().unwrap();
 	let transfer_queue = queues.next();
 	Ok((graphics_queue, transfer_queue))
 }
