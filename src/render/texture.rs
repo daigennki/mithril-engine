@@ -54,7 +54,6 @@ impl Texture
 	{
 		let device = memory_allocator.device().clone();
 
-		// TODO: consider other uses, such as framebuffer attachments
 		let dst_img_usage = ImageUsage {
 			transfer_dst: true,
 			sampled: true,
