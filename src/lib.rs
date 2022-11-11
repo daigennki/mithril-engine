@@ -30,9 +30,10 @@ struct GameContext
 {
 	//pref_path: String,
 	world: World,
-	//egui_gui: egui_winit_vulkano::Gui,
 
+	egui_gui: egui_winit_vulkano::Gui,
 	selected_ent: EntityId,
+
 	right_mouse_button_pressed: bool,
 	camera_rotation: Vec3,
 
@@ -60,13 +61,13 @@ impl GameContext
 
 		// set up egui
 		let subpass = render_ctx.get_main_render_pass().first_subpass();
-		/*let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
+		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
 			None,
 			render_ctx.get_queue(),
 			subpass,
-		);*/
+		);
 
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
@@ -80,7 +81,7 @@ impl GameContext
 		Ok(GameContext {
 			//pref_path,
 			world,
-			//egui_gui,
+			egui_gui,
 			selected_ent: Default::default(),
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
@@ -92,7 +93,7 @@ impl GameContext
 	{
 		match event {
 			Event::WindowEvent { event, .. } => {
-				//self.egui_gui.update(event);
+				self.egui_gui.update(event);
 			}
 			Event::DeviceEvent {
 				event: DeviceEvent::Button { button: 1, state }, ..
@@ -137,39 +138,24 @@ impl GameContext
 	/// Draw some debug stuff, mostly GUI overlays.
 	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
 	{
-		let (mut render_ctx, mut texts) = self
-			.world
-			.borrow::<(UniqueViewMut<RenderContext>, ViewMut<ui::text::Text>)>()?;
+		self.world.run(|
+			mut render_ctx: UniqueViewMut<RenderContext>, 
+			mut texts: ViewMut<ui::text::Text>
+		| -> Result<(), GenericEngineError> {
+			// draw the fps counter
+			let delta_time = render_ctx.delta().as_secs_f64();
+			let fps = 1.0 / delta_time.max(0.000001);
+			let delta_ms = 1000.0 * delta_time;
+			(&mut texts)
+				.get(self.fps_ui_ent)
+				.unwrap()
+				.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
 
-		// draw the fps counter
-		let delta_time = render_ctx.delta().as_secs_f64();
-		let fps = 1.0 / delta_time.max(0.000001);
-		let delta_ms = 1000.0 * delta_time;
-		(&mut texts)
-			.get(self.fps_ui_ent)
-			.unwrap()
-			.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
+			Ok(())
+		})?;
 
-		// set egui debug UI layout
-		/*self.egui_gui.begin_frame();
-		let egui_ctx = self.egui_gui.context();
-		egui::Window::new("Object list").show(&egui_ctx, |wnd| {
-			if let Some(s) = generate_egui_entity_list(&self.world, wnd, self.selected_ent) {
-				self.selected_ent = s;
-			}
-		});
-		egui::Window::new("Components")
-			.show(&egui_ctx, |wnd| components_window_layout(&self.world, wnd, self.selected_ent, &mut render_ctx))
-			.and_then(|response| response.inner)
-			.transpose()?;
-
-		// draw egui
-		let mut trm = self.world.borrow::<UniqueViewMut<ThreadedRenderingManager>>()?;
-		let egui_cb = self
-			.egui_gui
-			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		trm.add_cb(egui_cb);*/
-
+		self.draw_egui()?;
+		
 		Ok(())
 	}
 
@@ -181,42 +167,58 @@ impl GameContext
 		render_ctx.submit_frame(trm.take_built_command_buffers(), trm.take_transparency_cb().unwrap())?;
 		Ok(())
 	}
-}
 
-/// Generate the entity list window for the debug UI. Returns an EntityId of the newly selected entity, if one was selected.
-fn generate_egui_entity_list(world: &shipyard::World, obj_window: &mut egui::Ui, selected: EntityId) -> Option<EntityId>
-{
-	let mut newly_selected = None;
-	world.run(|ents: EntitiesView| {
-		egui::ScrollArea::vertical().show(obj_window, |obj_scroll| {
-			for ent in ents.iter() {
-				if obj_scroll
-					.selectable_label(ent == selected, format!("Entity {}", ent.index()))
-					.clicked()
-				{
-					newly_selected = Some(ent);
+	fn draw_egui(&mut self) -> Result<(), GenericEngineError>
+	{
+		// set egui debug UI layout
+		self.egui_gui.begin_frame();
+		let egui_ctx = self.egui_gui.context();
+		egui::Window::new("Object list").show(&egui_ctx, |wnd| self.generate_egui_entity_list(wnd));
+		egui::Window::new("Components")
+			.show(&egui_ctx, |wnd| self.components_window_layout(wnd))
+			.and_then(|response| response.inner)
+			.transpose()?;
+
+		// draw egui
+		let (mut trm, render_ctx) = self.world.borrow::<(UniqueViewMut<ThreadedRenderingManager>, UniqueView<RenderContext>)>()?;
+		let egui_cb = self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+		trm.add_cb(egui_cb);
+
+		Ok(())
+	}
+
+	/// egui: Generate the entity list window. Returns an EntityId of the newly selected entity, if one was selected.
+	fn generate_egui_entity_list(&mut self, obj_window: &mut egui::Ui)
+	{
+		self.world.run(|ents: EntitiesView| {
+			egui::ScrollArea::vertical().show(obj_window, |obj_scroll| {
+				for ent in ents.iter() {
+					let label = obj_scroll.selectable_label(ent == self.selected_ent, format!("Entity {}", ent.index()));
+					if label.clicked() {
+						self.selected_ent = ent;
+					}
 				}
-			}
+			});
 		});
-	});
-	newly_selected
-}
-
-fn components_window_layout(
-	world: &shipyard::World, wnd: &mut egui::Ui, selected_ent: EntityId, render_ctx: &mut RenderContext,
-) -> Result<(), GenericEngineError>
-{
-	let mut meshes = world.borrow::<ViewMut<component::mesh::Mesh>>()?;
-	if let Ok(mesh) = (&mut meshes).get(selected_ent) {
-		mesh.show_egui(wnd, render_ctx)?;
 	}
 
-	let mut transforms = world.borrow::<ViewMut<component::Transform>>()?;
-	if let Ok(transform) = (&mut transforms).get(selected_ent) {
-		transform.show_egui(wnd, render_ctx)?;
-	}
+	/// egui: Set up the window layout to show the components of the currently selected entity.
+	fn components_window_layout(&mut self, wnd: &mut egui::Ui) -> Result<(), GenericEngineError>
+	{
+		let mut render_ctx = self.world.borrow::<UniqueViewMut<RenderContext>>()?;
 
-	Ok(())
+		let mut meshes = self.world.borrow::<ViewMut<component::mesh::Mesh>>()?;
+		if let Ok(mesh) = (&mut meshes).get(self.selected_ent) {
+			mesh.show_egui(wnd, &mut render_ctx)?;
+		}
+
+		let mut transforms = self.world.borrow::<ViewMut<component::Transform>>()?;
+		if let Ok(transform) = (&mut transforms).get(self.selected_ent) {
+			transform.show_egui(wnd, &mut render_ctx)?;
+		}
+
+		Ok(())
+	}
 }
 
 #[derive(Deserialize)]

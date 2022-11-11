@@ -43,9 +43,9 @@ dependencies = [
 
 [[package]]
 name = "ahash"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "464b3811b747f8f7ebc8849c9c728c39f6ac98a055edad93baf9eb330e3f8f9d"
+checksum = "bf6ccdb167abbf410dcb915cabd428929d7f6a04980b54a11f26a39f1c7f7107"
 dependencies = [
  "cfg-if",
  "getrandom",
@@ -612,7 +612,7 @@ version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc9fcd393c3daaaf5909008a1d948319d538b79c51871e4df0993260260a94e4"
 dependencies = [
- "ahash 0.8.1",
+ "ahash 0.8.2",
  "epaint",
  "nohash-hasher",
  "tracing",
@@ -635,16 +635,16 @@ dependencies = [
 
 [[package]]
 name = "egui_winit_vulkano"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7befd6a9d52b5ff17d7e09986ee183abe634ffb88660685a8128b46b2cc015fa"
+checksum = "08e40c92a55c3171176d7f6dfc82908a68cb1d59c2791270c3a826cd5cffe42e"
 dependencies = [
- "ahash 0.7.6",
+ "ahash 0.8.2",
  "bytemuck",
  "egui",
  "egui-winit",
- "image 0.23.14",
- "vulkano 0.31.1",
+ "image 0.24.4",
+ "vulkano",
  "vulkano-shaders",
  "winit",
 ]
@@ -677,7 +677,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ba04741be7f6602b1a1b28f1082cce45948a7032961c52814f8946b28493300"
 dependencies = [
  "ab_glyph",
- "ahash 0.8.1",
+ "ahash 0.8.2",
  "atomic_refcell",
  "emath",
  "nohash-hasher",
@@ -1246,14 +1246,11 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "color_quant",
- "gif",
  "jpeg-decoder 0.1.22",
  "num-iter",
  "num-rational 0.3.2",
  "num-traits 0.2.15",
  "png 0.16.8",
- "scoped_threadpool",
- "tiff 0.6.1",
 ]
 
 [[package]]
@@ -1272,7 +1269,7 @@ dependencies = [
  "num-traits 0.2.15",
  "png 0.17.7",
  "scoped_threadpool",
- "tiff 0.7.4",
+ "tiff",
 ]
 
 [[package]]
@@ -1344,9 +1341,6 @@ name = "jpeg-decoder"
 version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "229d53d58899083193af11e15917b5640cd40b29ff475a1fe4ef725deb02d0f2"
-dependencies = [
- "rayon",
-]
 
 [[package]]
 name = "jpeg-decoder"
@@ -1430,9 +1424,9 @@ checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
 
 [[package]]
 name = "memmap2"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95af15f345b17af2efc8ead6080fb8bc376f8cec1b35277b935637595fe77498"
+checksum = "4b182332558b18d807c4ce1ca8ca983b34c3ee32765e47b3f0f69b90355cc1dc"
 dependencies = [
  "libc",
 ]
@@ -1459,16 +1453,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "791daaae1ed6889560f8c4359194f56648355540573244a5448a83ba1ecc7435"
 dependencies = [
  "adler32",
-]
-
-[[package]]
-name = "miniz_oxide"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a92518e98c078586bc6c934028adcca4c92a53d6a958196de835170a01d84e4b"
-dependencies = [
- "adler",
- "autocfg",
 ]
 
 [[package]]
@@ -1523,7 +1507,7 @@ dependencies = [
  "simplelog",
  "tobj",
  "typetag",
- "vulkano 0.32.0",
+ "vulkano",
  "vulkano-win",
  "winit",
 ]
@@ -2475,17 +2459,6 @@ dependencies = [
 
 [[package]]
 name = "tiff"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a53f4706d65497df0c4349241deddf35f84cee19c87ed86ea8ca590f4464437"
-dependencies = [
- "jpeg-decoder 0.1.22",
- "miniz_oxide 0.4.4",
- "weezl",
-]
-
-[[package]]
-name = "tiff"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f71e422515e83e3ab8a03d4781d05ebf864fc61f4546e6ecffa58cbd34181a0"
@@ -2690,9 +2663,9 @@ checksum = "f1bddf1187be692e79c5ffeab891132dfb0f236ed36a43c7ed39f1165ee20191"
 
 [[package]]
 name = "version-compare"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe88247b92c1df6b6de80ddc290f3976dbdf2f5f5d3fd049a9fb598c6dd5ca73"
+checksum = "579a42fc0b8e0c63b76519a339be31bed574929511fa53c1a3acae26eb258f29"
 
 [[package]]
 name = "version_check"
@@ -2711,37 +2684,11 @@ dependencies = [
 
 [[package]]
 name = "vulkano"
-version = "0.31.1"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49e6f6f908670b33ec1fcb1e9c25677cb4d6783893f89bc11d49d2eb5061ccb5"
+checksum = "eecedd057ea4cd85c0e43ba2ad30e599954bd958c50d0f7849439548cfa573ce"
 dependencies = [
- "ash",
- "bytemuck",
- "core-graphics-types",
- "crossbeam-queue",
- "half",
- "heck",
- "indexmap",
- "lazy_static",
- "libloading",
- "objc",
- "parking_lot",
- "proc-macro2",
- "quote",
- "regex",
- "serde",
- "serde_json",
- "smallvec",
- "vk-parse",
-]
-
-[[package]]
-name = "vulkano"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddab3045fe32d52809a7cec156aecc6f285c8a5d292c78e782d40613b1406cef"
-dependencies = [
- "ahash 0.8.1",
+ "ahash 0.8.2",
  "ash",
  "bytemuck",
  "core-graphics-types",
@@ -2765,16 +2712,17 @@ dependencies = [
 
 [[package]]
 name = "vulkano-shaders"
-version = "0.31.1"
+version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d37cab769e550b5f969b8ee6c7f7721d51c8da79e40be5bf122b478715500536"
+checksum = "96bbe0784b21e32661fde8a883bb3f659a473693c9f23bab12c26d7884c15ed0"
 dependencies = [
+ "ahash 0.8.2",
  "heck",
  "proc-macro2",
  "quote",
  "shaderc",
  "syn",
- "vulkano 0.31.1",
+ "vulkano",
 ]
 
 [[package]]
@@ -2786,7 +2734,7 @@ dependencies = [
  "core-graphics-types",
  "objc",
  "raw-window-handle 0.5.0",
- "vulkano 0.32.0",
+ "vulkano",
  "winit",
 ]
 
