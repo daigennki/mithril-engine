@@ -7,9 +7,9 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::pipeline::graphics::{depth_stencil::CompareOp, input_assembly::PrimitiveTopology};
 use vulkano::sampler::SamplerCreateInfo;
-use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 
 use super::RenderContext;
 use crate::GenericEngineError;
@@ -52,9 +52,9 @@ impl Skybox
 		];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = render_ctx.new_cubemap_texture(face_paths)?;
-		let descriptor_set = sky_pipeline.new_descriptor_set(
-			render_ctx.descriptor_set_allocator(), 0, [WriteDescriptorSet::image_view(1, sky_cubemap.view().clone())]
-		)?;
+		let descriptor_set = sky_pipeline.new_descriptor_set(render_ctx.descriptor_set_allocator(), 0, [
+			WriteDescriptorSet::image_view(1, sky_cubemap.view().clone()),
+		])?;
 
 		// sky cube
 		#[rustfmt::skip]

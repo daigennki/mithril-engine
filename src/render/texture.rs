@@ -26,7 +26,7 @@ pub struct Texture
 impl Texture
 {
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator, path: &Path
+		memory_allocator: &StandardMemoryAllocator, path: &Path,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
 		// TODO: animated textures using APNG or multi-layer DDS
@@ -44,8 +44,7 @@ impl Texture
 	}
 
 	pub fn new_from_iter<Px, I>(
-		memory_allocator: &StandardMemoryAllocator, iter: I, vk_fmt: Format, 
-		dimensions: ImageDimensions, mip: MipmapsCount,
+		memory_allocator: &StandardMemoryAllocator, iter: I, vk_fmt: Format, dimensions: ImageDimensions, mip: MipmapsCount,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
@@ -193,12 +192,8 @@ where
 	I::IntoIter: ExactSizeIterator,
 {
 	let device = allocator.device().clone();
-	let src = CpuAccessibleBuffer::from_iter(
-		allocator,
-		BufferUsage { transfer_src: true, ..BufferUsage::empty() },
-		false,
-		iter,
-	)?;
+	let src =
+		CpuAccessibleBuffer::from_iter(allocator, BufferUsage { transfer_src: true, ..BufferUsage::empty() }, false, iter)?;
 
 	let usage = ImageUsage {
 		transfer_dst: true,

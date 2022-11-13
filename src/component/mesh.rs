@@ -23,7 +23,7 @@ pub struct Mesh
 	use_embedded_materials: bool,
 	#[serde(default)]
 	transparent: bool,
-	
+
 	#[serde(skip)]
 	model_data: Option<Arc<Model>>,
 }

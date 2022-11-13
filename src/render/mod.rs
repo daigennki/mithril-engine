@@ -16,20 +16,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, CommandBufferBeginError, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
-	CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PipelineExecutionError,
-	PrimaryAutoCommandBuffer, RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents, BlitImageInfo,
-	PrimaryCommandBufferAbstract, allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
+	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
+	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferBeginError, CommandBufferInheritanceInfo,
+	CommandBufferInheritanceRenderPassInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
+	CopyBufferToImageInfo, PipelineExecutionError, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderPassBeginInfo,
+	SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{
-	DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator
+	allocator::StandardDescriptorSetAllocator, DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	Queue, QueueCreateInfo, DeviceExtensions, DeviceCreateInfo,
+	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
 };
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage, view::ImageView};
+use vulkano::image::{view::ImageView, AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
@@ -66,7 +67,7 @@ pub struct RenderContext
 	depth_image: Arc<AttachmentImage>,
 
 	transparency_renderer: transparency::TransparencyRenderer,
-	
+
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
@@ -94,9 +95,8 @@ impl RenderContext
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// TODO: we might not need very many primary command buffers here
-		let command_buffer_allocator = StandardCommandBufferAllocator::new(
-			vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default()
-		);
+		let command_buffer_allocator =
+			StandardCommandBufferAllocator::new(vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default());
 
 		let main_rp = vulkano::single_pass_renderpass!(
 			vk_dev.clone(),
@@ -121,9 +121,8 @@ impl RenderContext
 		)?;
 
 		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
-		let color_image = AttachmentImage::with_usage(
-			&memory_allocator, swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
-		)?;
+		let color_image =
+			AttachmentImage::with_usage(&memory_allocator, swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage)?;
 		let depth_image = AttachmentImage::new(&memory_allocator, swapchain.dimensions(), Format::D16_UNORM)?;
 		let fb_create_info = FramebufferCreateInfo {
 			attachments: vec![
@@ -134,9 +133,8 @@ impl RenderContext
 		};
 		let main_framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
-		let transparency_renderer = transparency::TransparencyRenderer::new(
-			&memory_allocator, &descriptor_set_allocator, depth_image.clone()
-		)?;
+		let transparency_renderer =
+			transparency::TransparencyRenderer::new(&memory_allocator, &descriptor_set_allocator, depth_image.clone())?;
 
 		Ok(RenderContext {
 			swapchain,
@@ -168,12 +166,14 @@ impl RenderContext
 			.0
 			.to_string();
 		let transparency_rp = self.get_transparency_framebuffer().render_pass().clone();
-		self.material_pipelines
-			.insert(name, pipeline::Pipeline::new_from_yaml(
-				filename, 
-				self.get_main_render_pass().first_subpass(), 
-				Some(transparency_rp.first_subpass())
-			)?);
+		self.material_pipelines.insert(
+			name,
+			pipeline::Pipeline::new_from_yaml(
+				filename,
+				self.get_main_render_pass().first_subpass(),
+				Some(transparency_rp.first_subpass()),
+			)?,
+		);
 		Ok(())
 	}
 	pub fn load_mat_pipeline_manual(&mut self, name: &str, pipeline: pipeline::Pipeline)
@@ -238,16 +238,9 @@ impl RenderContext
 		[T]: vulkano::buffer::BufferContents,
 	{
 		let staging_usage = BufferUsage { transfer_src: true, ..BufferUsage::empty() };
-		let staging_buf = CpuAccessibleBuffer::from_iter(
-			&self.memory_allocator, staging_usage, false, data
-		)?;
+		let staging_buf = CpuAccessibleBuffer::from_iter(&self.memory_allocator, staging_usage, false, data)?;
 		usage.transfer_dst = true;
-		let buf = DeviceLocalBuffer::array(
-			&self.memory_allocator,
-			staging_buf.len(),
-			usage,
-			self.get_queue_families(),
-		)?;
+		let buf = DeviceLocalBuffer::array(&self.memory_allocator, staging_buf.len(), usage, self.get_queue_families())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
@@ -290,7 +283,7 @@ impl RenderContext
 		let cpu_buf = CpuBufferPool::upload(self.memory_allocator.clone());
 		usage.transfer_dst = true;
 		let gpu_buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
-		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(cpu_buf.from_data(data)?, gpu_buf.clone()).into())?;
+		self.copy_buffer(cpu_buf.from_data(data)?, gpu_buf.clone())?;
 		Ok((cpu_buf, gpu_buf))
 	}
 
@@ -300,13 +293,6 @@ impl RenderContext
 			.device()
 			.active_queue_family_indices()
 			.into()
-	}
-
-	/// Queue a buffer copy which will be executed before the next image submission.
-	pub fn copy_buffer(&mut self, src: Arc<dyn BufferAccess>, dst: Arc<dyn BufferAccess>)
-		-> Result<(), GenericEngineError>
-	{
-		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
 	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
@@ -329,7 +315,7 @@ impl RenderContext
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
-	/// It will be set up for drawing to `framebuffer` in its first subpass, 
+	/// It will be set up for drawing to `framebuffer` in its first subpass,
 	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
 	pub fn new_secondary_command_buffer(
 		&self, framebuffer: Arc<Framebuffer>,
@@ -352,10 +338,12 @@ impl RenderContext
 
 		// set viewport state
 		let fb_extent = framebuffer.extent();
-		let viewport = Viewport { 
-			origin: [ 0.0, 0.0 ],
-			dimensions: [ fb_extent[0] as f32, fb_extent[1] as f32 ],
-			depth_range: 0.0..1.0
+		let viewport = Viewport {
+			origin: [0.0, 0.0],
+			dimensions: [
+				fb_extent[0] as f32, fb_extent[1] as f32,
+			],
+			depth_range: 0.0..1.0,
 		};
 		cb.set_viewport(0, [viewport]);
 
@@ -365,15 +353,17 @@ impl RenderContext
 	/// Update images to match the current window size.
 	fn fit_images_to_window(&mut self) -> Result<(), GenericEngineError>
 	{
-		let color_usage = ImageUsage { transfer_src: true,..Default::default() };
+		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
 		self.color_image = AttachmentImage::with_usage(
-			&self.memory_allocator, self.swapchain.dimensions(), Format::R16G16B16A16_SFLOAT, color_usage
+			&self.memory_allocator,
+			self.swapchain.dimensions(),
+			Format::R16G16B16A16_SFLOAT,
+			color_usage,
 		)?;
 
 		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
-		self.depth_image = AttachmentImage::with_usage(
-			&self.memory_allocator, self.swapchain.dimensions(), Format::D16_UNORM, depth_usage
-		)?;
+		self.depth_image =
+			AttachmentImage::with_usage(&self.memory_allocator, self.swapchain.dimensions(), Format::D16_UNORM, depth_usage)?;
 
 		let fb_create_info = FramebufferCreateInfo {
 			attachments: vec![
@@ -385,7 +375,9 @@ impl RenderContext
 		self.main_framebuffer = Framebuffer::new(self.main_framebuffer.render_pass().clone(), fb_create_info)?;
 
 		self.transparency_renderer.resize_image(
-			&self.memory_allocator, &self.descriptor_set_allocator, self.depth_image.clone()
+			&self.memory_allocator,
+			&self.descriptor_set_allocator,
+			self.depth_image.clone(),
 		)?;
 
 		Ok(())
@@ -403,65 +395,66 @@ impl RenderContext
 			self.fit_images_to_window()?;
 		}
 		self.resize_this_frame = dimensions_changed;
-		
+
 		Ok(image)
 	}
 
-	/// Submit staging work for immutable objects to the transfer queue, or if there is no transfer queue, 
+	/// Create a command buffer for a transfer.
+	/// TODO: should we wait for more work before we build a command buffer? it's probably inefficient to submit a command
+	/// buffer with just a single command...
+	fn create_staging_command_buffer(
+		&self, work: StagingWork, queue_family: u32,
+	) -> Result<PrimaryAutoCommandBuffer, GenericEngineError>
+	{
+		let mut staging_cb_builder =
+			AutoCommandBufferBuilder::primary(&self.command_buffer_allocator, queue_family, CommandBufferUsage::OneTimeSubmit)?;
+		match work {
+			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
+			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
+		};
+		Ok(staging_cb_builder.build()?)
+	}
+
+	/// Submit staging work for immutable objects to the transfer queue, or if there is no transfer queue,
 	/// keep it for later when the graphics operations are submitted.
 	fn submit_transfer(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
 	{
 		match self.transfer_queue.as_ref() {
 			Some(q) => {
-				let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-					&self.command_buffer_allocator,
-					q.queue_family_index(),
-					CommandBufferUsage::OneTimeSubmit,
-				)?;
-				match work {
-					StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
-					StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
-				};
-				let staging_cb = staging_cb_builder.build()?;
-
+				let staging_cb = self.create_staging_command_buffer(work, q.queue_family_index())?;
 				let new_future = match self.transfer_future.take() {
 					Some(f) => staging_cb.execute_after(f, q.clone())?.boxed_send_sync(),
 					None => staging_cb.execute(q.clone())?.boxed_send_sync(),
 				};
 				new_future.flush()?;
 				self.transfer_future = Some(new_future);
-			},
+			}
 			None => self.submit_transfer_on_graphics_queue(work)?,
 		}
 		Ok(())
 	}
 
-	/// Submit staging work for *mutable* objects to the graphics queue. Use this instead of `submit_transfer` if 
+	/// Submit staging work for *mutable* objects to the graphics queue. Use this instead of `submit_transfer` if
 	/// there's the possibility that the object is in use by a previous submission.
 	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
 	{
-		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-			&self.command_buffer_allocator,
-			self.graphics_queue.queue_family_index(),
-			CommandBufferUsage::OneTimeSubmit,
-		)?;
-		match work {
-			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
-			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
-		};
-		let staging_cb = staging_cb_builder.build()?;
-
-		self.swapchain.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
+		let staging_cb = self.create_staging_command_buffer(work, self.graphics_queue.queue_family_index())?;
+		self.swapchain
+			.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
 		Ok(())
+	}
+
+	/// Queue a buffer copy which will be executed before the next image submission.
+	/// Basically a shortcut for `submit_transfer_on_graphics_queue`.
+	pub fn copy_buffer(&mut self, src: Arc<dyn BufferAccess>, dst: Arc<dyn BufferAccess>) -> Result<(), GenericEngineError>
+	{
+		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
 	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
-		self.swapchain.submit_commands(
-			built_cb,
-			self.graphics_queue.clone(),
-			self.transfer_future.take(),
-		)?;
+		self.swapchain
+			.submit_commands(built_cb, self.graphics_queue.clone(), self.transfer_future.take())?;
 
 		let now = std::time::Instant::now();
 		let dur = now - self.last_frame_presented;
@@ -473,9 +466,7 @@ impl RenderContext
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(
-		&mut self, 
-		command_buffers: Vec<SecondaryAutoCommandBuffer>,
-		transparency_cb: SecondaryAutoCommandBuffer,
+		&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>, transparency_cb: SecondaryAutoCommandBuffer,
 	) -> Result<(), GenericEngineError>
 	{
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.main_framebuffer.clone());
@@ -483,9 +474,9 @@ impl RenderContext
 
 		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.transparency_renderer.framebuffer());
 		transparency_rp_info.clear_values = vec![
-			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),	// accum
-			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
-			None,	// depth; just load it
+			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])), // accum
+			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // revealage
+			None,                                          // depth; just load it
 		];
 
 		// finalize the rendering for this frame by executing the secondary command buffers
@@ -502,8 +493,9 @@ impl RenderContext
 			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands(transparency_cb)?
 			.end_render_pass()?;
-			
-		self.transparency_renderer.composite_transparency(&mut primary_cb_builder, self.main_framebuffer.clone())?;
+
+		self.transparency_renderer
+			.composite_transparency(&mut primary_cb_builder, self.main_framebuffer.clone())?;
 
 		let blit_info = BlitImageInfo::images(self.color_image.clone(), self.next_swapchain_image()?);
 		primary_cb_builder.blit_image(blit_info)?;
@@ -606,21 +598,43 @@ impl From<CopyBufferToImageInfo> for StagingWork
 	}
 }
 
-fn decode_driver_version(version: u32, vendor_id: u32) -> (u32, u32, u32, u32)
+enum DriverVersion
 {
-	// NVIDIA
-	if vendor_id == 4318 {
-		return ((version >> 22) & 0x3ff, (version >> 14) & 0x0ff, (version >> 6) & 0x0ff, version & 0x003f);
-	}
-
-	// Intel (Windows only)
+	Nvidia((u32, u32, u32, u32)),
 	#[cfg(target_family = "windows")]
-	if vendor_id == 0x8086 {
-		return ((version >> 14), version & 0x3fff, 0, 0);
-	}
+	IntelWindows((u32, u32)),
+	Other((u32, u32, u32)),
+}
+impl DriverVersion
+{
+	fn new(version: u32, vendor_id: u32) -> Self
+	{
+		// NVIDIA
+		if vendor_id == 4318 {
+			return Self::Nvidia(((version >> 22) & 0x3ff, (version >> 14) & 0x0ff, (version >> 6) & 0x0ff, version & 0x003f));
+		}
 
-	// others (use Vulkan version convention)
-	((version >> 22), (version >> 12) & 0x3ff, version & 0xfff, 0)
+		// Intel (Windows only)
+		#[cfg(target_family = "windows")]
+		if vendor_id == 0x8086 {
+			return Self::IntelWindows(((version >> 14), version & 0x3fff));
+		}
+
+		// others (use Vulkan version convention)
+		Self::Other(((version >> 22), (version >> 12) & 0x3ff, version & 0xfff))
+	}
+}
+impl std::fmt::Display for DriverVersion
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		match self {
+			Self::Nvidia((a, b, c, d)) => write!(f, "{}.{}.{}.{}", a, b, c, d),
+			#[cfg(target_family = "windows")]
+			Self::IntelWindows((a, b)) => write!(f, "{}.{}", a, b),
+			Self::Other((a, b, c)) => write!(f, "{}.{}.{}", a, b, c),
+		}
+	}
 }
 
 fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
@@ -655,26 +669,30 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 	let (mut dgpu, mut igpu) = (None, None);
 	for (i, pd) in vkinst.enumerate_physical_devices()?.enumerate() {
 		let properties = pd.properties();
-		let driver_ver = decode_driver_version(pd.properties().driver_version, properties.vendor_id);
-		let driver_name = properties.driver_name.as_ref();
+		let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
+		let driver_name = properties
+			.driver_name
+			.as_ref()
+			.map_or("unknown driver", |name| &name);
 
 		log::info!(
-			"{}: {} ({:?}), driver '{}' version {}.{}.{}.{} (Vulkan {})",
+			"{}: {} ({:?}), driver '{}' version {} (Vulkan {})",
 			i,
 			properties.device_name,
 			properties.device_type,
-			driver_name.map_or("unknown driver", |name| &name),
-			driver_ver.0,
-			driver_ver.1,
-			driver_ver.2,
-			driver_ver.3,
+			driver_name,
+			driver_ver,
 			properties.api_version
 		);
-		
+
 		match properties.device_type {
-			PhysicalDeviceType::DiscreteGpu => { dgpu.get_or_insert(pd); },
-			PhysicalDeviceType::IntegratedGpu => { igpu.get_or_insert(pd); },
-			_ => ()
+			PhysicalDeviceType::DiscreteGpu => {
+				dgpu.get_or_insert(pd);
+			}
+			PhysicalDeviceType::IntegratedGpu => {
+				igpu.get_or_insert(pd);
+			}
+			_ => (),
 		}
 	}
 
@@ -687,9 +705,9 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
 fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCreateInfo>, GenericEngineError>
 {
-	let mut graphics = None;	// required
-	let mut transfer_only = None;	// optional; optimized specifically for transfers
-	let mut transfer = None;	// optional; not transfer-specific, but still works for async transfers
+	let mut graphics = None; // required
+	let mut transfer_only = None; // optional; optimized specifically for transfers
+	let mut transfer = None; // optional; not transfer-specific, but still works for async transfers
 
 	// Get the required graphics queue family, and try to get an optional one for async transfers.
 	// For transfers, try to get one that is specifically optimized for async transfers (supports netiher graphics nor compute),
@@ -703,11 +721,11 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 		} else if !q.queue_flags.compute && q.queue_flags.transfer {
 			transfer_only.get_or_insert(i);
 		} else if q.queue_flags.transfer {
-			transfer.get_or_insert(i);	
+			transfer.get_or_insert(i);
 		}
 	}
-	
-	let mut use_queue_families = vec![ graphics.ok_or("No graphics queue family found!")? ];
+
+	let mut use_queue_families = vec![graphics.ok_or("No graphics queue family found!")?];
 	if let Some(tq) = transfer_only.or(transfer) {
 		log::info!("Using queue family {} for transfers", tq);
 		use_queue_families.push(tq);
@@ -715,7 +733,10 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 
 	let infos = use_queue_families
 		.into_iter()
-		.map(|i| QueueCreateInfo { queue_family_index: i as u32, ..Default::default() })
+		.map(|i| QueueCreateInfo {
+			queue_family_index: i as u32,
+			..Default::default()
+		})
 		.collect();
 	Ok(infos)
 }

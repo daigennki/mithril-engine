@@ -9,8 +9,7 @@ use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::swapchain::{
-	AcquireError, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, 
-	SwapchainPresentInfo
+	AcquireError, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
 use winit::window::Window;
@@ -119,22 +118,18 @@ impl Swapchain
 	}
 
 	pub fn submit_transfer_on_graphics_queue(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>,
 	) -> Result<(), GenericEngineError>
 	{
 		self.submission_future = Some(match self.submission_future.take() {
-			Some(f) => {
-				cb
-					.execute_after(f, queue.clone())?
-					.boxed_send_sync()
-					.then_signal_fence_and_flush()?
-			},
-			None => {
-				cb
-					.execute(queue.clone())?
-					.boxed_send_sync()
-					.then_signal_fence_and_flush()?
-			}
+			Some(f) => cb
+				.execute_after(f, queue.clone())?
+				.boxed_send_sync()
+				.then_signal_fence_and_flush()?,
+			None => cb
+				.execute(queue.clone())?
+				.boxed_send_sync()
+				.then_signal_fence_and_flush()?,
 		});
 		Ok(())
 	}
@@ -143,7 +138,8 @@ impl Swapchain
 	/// Optionally, a GpuFuture resulting from joining submitted transfers can be given, so that graphics operations
 	/// don't begin until the transfers are complete.
 	pub fn submit_commands(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, wait_for_transfers: Option<Box<dyn GpuFuture + Send + Sync>>
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>,
+		wait_for_transfers: Option<Box<dyn GpuFuture + Send + Sync>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let acquire_future = self
@@ -151,9 +147,8 @@ impl Swapchain
 			.take()
 			.expect("Command buffer submitted without acquiring an image!");
 
-		let present_info = SwapchainPresentInfo::swapchain_image_index(
-			acquire_future.swapchain().clone(), acquire_future.image_index()
-		);
+		let present_info =
+			SwapchainPresentInfo::swapchain_image_index(acquire_future.swapchain().clone(), acquire_future.image_index());
 
 		let mut joined_futures = acquire_future.boxed_send_sync();
 
@@ -198,4 +193,3 @@ impl Swapchain
 		self.swapchain.surface().clone()
 	}
 }
-

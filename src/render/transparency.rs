@@ -1,23 +1,22 @@
- /* -----------------------------------------------------------------------------
+/* -----------------------------------------------------------------------------
 	MithrilEngine Framework (MEF)
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use vulkano::format::Format;
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::image::{AttachmentImage, ImageAccess, ImageUsage, view::ImageView};
-use vulkano::pipeline::graphics::{
-	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport
-};
-use vulkano::device::DeviceOwned;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents};
+use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::device::DeviceOwned;
+use vulkano::format::Format;
+use vulkano::image::{view::ImageView, AttachmentImage, ImageAccess, ImageUsage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::pipeline::graphics::{
+	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport,
+};
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 
 use crate::GenericEngineError;
-
 
 /// A renderer that implements Order-Independent Transparency (OIT).
 pub struct TransparencyRenderer
@@ -34,7 +33,7 @@ impl TransparencyRenderer
 {
 	pub fn new(
 		memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		depth_image: Arc<AttachmentImage>
+		depth_image: Arc<AttachmentImage>,
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = memory_allocator.device().clone();
@@ -69,14 +68,14 @@ impl TransparencyRenderer
 			vk_dev.clone(),
 			attachments: {
 				color: {
-					load: Load,	
+					load: Load,
 					store: Store,
 					format: Format::R16G16B16A16_SFLOAT,
 					samples: 1,
 				},
 				depth: {
-					load: DontCare,	
-					store: DontCare,	
+					load: DontCare,
+					store: DontCare,
 					format: Format::D16_UNORM,
 					samples: 1,
 				}
@@ -101,7 +100,11 @@ impl TransparencyRenderer
 		)?;
 
 		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
-			memory_allocator, descriptor_set_allocator, depth_image.clone(), transparency_rp, &transparency_compositing_pl
+			memory_allocator,
+			descriptor_set_allocator,
+			depth_image.clone(),
+			transparency_rp,
+			&transparency_compositing_pl,
 		)?;
 
 		Ok(TransparencyRenderer {
@@ -115,12 +118,16 @@ impl TransparencyRenderer
 	/// Resize the output image to match a resized depth image.
 	pub fn resize_image(
 		&mut self, memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		depth_image: Arc<AttachmentImage>
+		depth_image: Arc<AttachmentImage>,
 	) -> Result<(), GenericEngineError>
 	{
 		let render_pass = self.transparency_fb.render_pass().clone();
 		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
-			memory_allocator, descriptor_set_allocator, depth_image.clone(), render_pass, &self.transparency_compositing_pl
+			memory_allocator,
+			descriptor_set_allocator,
+			depth_image.clone(),
+			render_pass,
+			&self.transparency_compositing_pl,
 		)?;
 		self.transparency_fb = transparency_fb;
 		self.transparency_set = transparency_set;
@@ -129,7 +136,7 @@ impl TransparencyRenderer
 
 	/// Composite the processed transparent objects onto the final framebuffer.
 	pub fn composite_transparency(
-		&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, framebuffer: Arc<Framebuffer>
+		&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, framebuffer: Arc<Framebuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(framebuffer.clone());
@@ -139,14 +146,16 @@ impl TransparencyRenderer
 		let fb_extent = framebuffer.extent();
 		let viewport = Viewport {
 			origin: [0.0, 0.0],
-			dimensions: [ fb_extent[0] as f32, fb_extent[1] as f32 ],
+			dimensions: [
+				fb_extent[0] as f32, fb_extent[1] as f32,
+			],
 			depth_range: 0.0..1.0,
 		};
 
 		cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
 		cb.set_viewport(0, [viewport]);
 		self.transparency_compositing_pl.bind(cb);
-		super::bind_descriptor_set(cb, 0, vec![ self.transparency_set.clone() ])?;
+		super::bind_descriptor_set(cb, 0, vec![self.transparency_set.clone()])?;
 		cb.draw(3, 1, 0, 0)?;
 		cb.end_render_pass()?;
 		Ok(())
@@ -159,10 +168,10 @@ impl TransparencyRenderer
 }
 fn create_transparency_framebuffer(
 	memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
-	depth_img: Arc<AttachmentImage>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline
+	depth_img: Arc<AttachmentImage>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline,
 ) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>), GenericEngineError>
 {
-	let usage = ImageUsage{ sampled: true, ..Default::default() };
+	let usage = ImageUsage { sampled: true, ..Default::default() };
 
 	let extent = depth_img.dimensions().width_height();
 	let accum = AttachmentImage::with_usage(memory_allocator, extent, Format::R16G16B16A16_SFLOAT, usage)?;
@@ -179,9 +188,8 @@ fn create_transparency_framebuffer(
 	let descriptor_set = pipeline.new_descriptor_set(descriptor_set_allocator, 0, [
 		WriteDescriptorSet::image_view(0, fb_create_info.attachments[0].clone()),
 		WriteDescriptorSet::image_view(1, fb_create_info.attachments[1].clone()),
-		WriteDescriptorSet::buffer(2, CpuAccessibleBuffer::from_iter(memory_allocator, buf_usage, false, extent)?)
+		WriteDescriptorSet::buffer(2, CpuAccessibleBuffer::from_iter(memory_allocator, buf_usage, false, extent)?),
 	])?;
 
 	Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, descriptor_set))
 }
-

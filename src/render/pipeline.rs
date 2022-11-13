@@ -10,12 +10,13 @@ use std::path::Path;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::{
-	layout::DescriptorSetLayoutCreateInfo, PersistentDescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator,
+	allocator::StandardDescriptorSetAllocator, layout::DescriptorSetLayoutCreateInfo, PersistentDescriptorSet,
+	WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, ColorBlendState, BlendOp, BlendFactor},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
 	rasterization::{CullMode, RasterizationState},
@@ -90,11 +91,11 @@ impl Pipeline
 			// use a different fragment shader for OIT
 			if let Some((ft, ft_subpass)) = fs_transparency_info {
 				let mut wboit_accum_blend = ColorBlendState::new(2);
-				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend{
+				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend {
 					alpha_op: BlendOp::Add,
 					..AttachmentBlend::additive()
 				});
-				wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend{
+				wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
 					color_op: BlendOp::Add,
 					color_source: BlendFactor::Zero,
 					color_destination: BlendFactor::OneMinusSrcColor,
@@ -112,7 +113,7 @@ impl Pipeline
 						.depth_stencil_state(depth_stencil_state)
 						.fragment_shader(get_entry_point(&fs_transparency, "main")?, ())
 						.color_blend_state(wboit_accum_blend)
-						.render_pass(ft_subpass)
+						.render_pass(ft_subpass),
 				);
 			}
 		}
@@ -121,21 +122,20 @@ impl Pipeline
 		let pipeline = pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
 		print_pipeline_descriptors_info(&pipeline);
 
-		let transparency_pipeline = builder_transparency.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
-			let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
-			let layout = pipeline_ref.layout().clone();
-			Ok(bt.with_pipeline_layout(vk_dev, layout)?)
-		}).transpose()?;
+		let transparency_pipeline = builder_transparency
+			.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
+				let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
+				let layout = pipeline_ref.layout().clone();
+				Ok(bt.with_pipeline_layout(vk_dev, layout)?)
+			})
+			.transpose()?;
 
-		Ok(Pipeline { 
-			pipeline,
-			transparency_pipeline,
-		})
+		Ok(Pipeline { pipeline, transparency_pipeline })
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(
-		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>
+		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>,
 	) -> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
@@ -153,9 +153,7 @@ impl Pipeline
 			.collect::<Result<_, GenericEngineError>>()?;
 		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
-		let fs_info = deserialized
-			.fragment_shader
-			.map(|fs| (fs, color_blend_state));
+		let fs_info = deserialized.fragment_shader.map(|fs| (fs, color_blend_state));
 		let fs_transparency_info = deserialized
 			.fragment_shader_transparency
 			.map(|fst| (fst, transparency_subpass.unwrap()));
@@ -178,7 +176,11 @@ impl Pipeline
 	}
 	pub fn bind_transparency<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), TransparencyNotEnabled>
 	{
-		command_buffer.bind_pipeline_graphics(self.transparency_pipeline.clone().ok_or(TransparencyNotEnabled)?);
+		command_buffer.bind_pipeline_graphics(
+			self.transparency_pipeline
+				.clone()
+				.ok_or(TransparencyNotEnabled)?,
+		);
 		Ok(())
 	}
 
@@ -191,7 +193,8 @@ impl Pipeline
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
 	pub fn new_descriptor_set(
-		&self, allocator: &StandardDescriptorSetAllocator, set_number: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>,
+		&self, allocator: &StandardDescriptorSetAllocator, set_number: usize,
+		writes: impl IntoIterator<Item = WriteDescriptorSet>,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
@@ -208,10 +211,12 @@ impl Pipeline
 #[derive(Debug)]
 pub struct TransparencyNotEnabled;
 impl Error for TransparencyNotEnabled {}
-impl std::fmt::Display for TransparencyNotEnabled {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "this pipeline hasn't been set up with a fragment shader for OIT")
-    }
+impl std::fmt::Display for TransparencyNotEnabled
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		write!(f, "this pipeline hasn't been set up with a fragment shader for OIT")
+	}
 }
 
 #[derive(Deserialize)]
@@ -240,7 +245,7 @@ impl PipelineSamplerConfig
 /*#[derive(Deserialize)]
 struct PipelineBlendState
 {
-	
+
 }*/
 
 #[derive(Deserialize)]
@@ -255,7 +260,6 @@ struct PipelineConfig
 
 	#[serde(default)]
 	samplers: Vec<PipelineSamplerConfig>,
-
 	//#[serde(default)]
 	//attachments: Vec<PipelineBlendState>,
 }

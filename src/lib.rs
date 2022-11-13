@@ -138,24 +138,25 @@ impl GameContext
 	/// Draw some debug stuff, mostly GUI overlays.
 	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
 	{
-		self.world.run(|
-			mut render_ctx: UniqueViewMut<RenderContext>, 
-			mut texts: ViewMut<ui::text::Text>
-		| -> Result<(), GenericEngineError> {
-			// draw the fps counter
-			let delta_time = render_ctx.delta().as_secs_f64();
-			let fps = 1.0 / delta_time.max(0.000001);
-			let delta_ms = 1000.0 * delta_time;
-			(&mut texts)
-				.get(self.fps_ui_ent)
-				.unwrap()
-				.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
+		self.world.run(
+			|mut render_ctx: UniqueViewMut<RenderContext>,
+			 mut texts: ViewMut<ui::text::Text>|
+			 -> Result<(), GenericEngineError> {
+				// draw the fps counter
+				let delta_time = render_ctx.delta().as_secs_f64();
+				let fps = 1.0 / delta_time.max(0.000001);
+				let delta_ms = 1000.0 * delta_time;
+				(&mut texts)
+					.get(self.fps_ui_ent)
+					.unwrap()
+					.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
 
-			Ok(())
-		})?;
+				Ok(())
+			},
+		)?;
 
 		self.draw_egui()?;
-		
+
 		Ok(())
 	}
 
@@ -180,8 +181,12 @@ impl GameContext
 			.transpose()?;
 
 		// draw egui
-		let (mut trm, render_ctx) = self.world.borrow::<(UniqueViewMut<ThreadedRenderingManager>, UniqueView<RenderContext>)>()?;
-		let egui_cb = self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+		let (mut trm, render_ctx) = self
+			.world
+			.borrow::<(UniqueViewMut<ThreadedRenderingManager>, UniqueView<RenderContext>)>()?;
+		let egui_cb = self
+			.egui_gui
+			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
 		trm.add_cb(egui_cb);
 
 		Ok(())
@@ -352,19 +357,21 @@ fn draw_3d(
 	trm.add_cb(command_buffer.build()?);
 
 	draw_3d_transparent(render_ctx, trm, camera, transforms, meshes)?;
-	
+
 	Ok(())
 }
 fn draw_3d_transparent(
 	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
-	camera: UniqueView<Camera>, transforms: View<component::Transform>,meshes: View<component::mesh::Mesh>,
+	camera: UniqueView<Camera>, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let cur_fb = render_ctx.get_transparency_framebuffer();
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
 
 	// Draw the transparent objects.
-	render_ctx.get_pipeline("PBR")?.bind_transparency(&mut command_buffer)?;
+	render_ctx
+		.get_pipeline("PBR")?
+		.bind_transparency(&mut command_buffer)?;
 
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();
