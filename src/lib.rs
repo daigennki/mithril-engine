@@ -4,14 +4,16 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 pub mod component;
+mod egui_renderer;
 mod material;
 mod render;
 
-use egui_winit_vulkano::egui;
 use glam::*;
 use serde::Deserialize;
-use shipyard::iter::{IntoIter, IntoWithId};
-use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World};
+use shipyard::{
+	iter::{IntoIter, IntoWithId},
+	EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World,
+};
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,7 @@ use component::camera::Camera;
 use component::ui;
 use component::ui::canvas::Canvas;
 use component::DeferGpuResourceLoading;
+use egui_renderer::EguiRenderer;
 use render::RenderContext;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
@@ -31,11 +34,10 @@ struct GameContext
 	//pref_path: String,
 	world: World,
 
-	egui_gui: egui_winit_vulkano::Gui,
-	selected_ent: EntityId,
-
 	right_mouse_button_pressed: bool,
 	camera_rotation: Vec3,
+
+	egui_renderer: EguiRenderer,
 
 	fps_ui_ent: EntityId,
 }
@@ -53,21 +55,13 @@ impl GameContext
 		// get command line arguments
 		// let args: Vec<String> = std::env::args().collect();
 
-		let mut render_ctx = render::RenderContext::new(game_name, &event_loop)?;
+		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 		render_ctx.load_material_pipeline("UI.yaml")?;
 		render_ctx.load_material_pipeline("PBR.yaml")?;
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
-		// set up egui
-		let subpass = render_ctx.get_main_render_pass().first_subpass();
-		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
-			event_loop,
-			render_ctx.get_surface(),
-			None,
-			render_ctx.get_queue(),
-			subpass,
-		);
+		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
 
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
@@ -81,8 +75,7 @@ impl GameContext
 		Ok(GameContext {
 			//pref_path,
 			world,
-			egui_gui,
-			selected_ent: Default::default(),
+			egui_renderer,
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
 			fps_ui_ent,
@@ -93,7 +86,7 @@ impl GameContext
 	{
 		match event {
 			Event::WindowEvent { event, .. } => {
-				self.egui_gui.update(event);
+				self.egui_renderer.update(event);
 			}
 			Event::DeviceEvent {
 				event: DeviceEvent::Button { button: 1, state }, ..
@@ -155,7 +148,7 @@ impl GameContext
 			},
 		)?;
 
-		self.draw_egui()?;
+		self.egui_renderer.draw(&mut self.world)?;
 
 		Ok(())
 	}
@@ -166,62 +159,6 @@ impl GameContext
 			.world
 			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
 		render_ctx.submit_frame(trm.take_built_command_buffers(), trm.take_transparency_cb().unwrap())?;
-		Ok(())
-	}
-
-	fn draw_egui(&mut self) -> Result<(), GenericEngineError>
-	{
-		// set egui debug UI layout
-		self.egui_gui.begin_frame();
-		let egui_ctx = self.egui_gui.context();
-		egui::Window::new("Object list").show(&egui_ctx, |wnd| self.generate_egui_entity_list(wnd));
-		egui::Window::new("Components")
-			.show(&egui_ctx, |wnd| self.components_window_layout(wnd))
-			.and_then(|response| response.inner)
-			.transpose()?;
-
-		// draw egui
-		let (mut trm, render_ctx) = self
-			.world
-			.borrow::<(UniqueViewMut<ThreadedRenderingManager>, UniqueView<RenderContext>)>()?;
-		let egui_cb = self
-			.egui_gui
-			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		trm.add_cb(egui_cb);
-
-		Ok(())
-	}
-
-	/// egui: Generate the entity list window. Returns an EntityId of the newly selected entity, if one was selected.
-	fn generate_egui_entity_list(&mut self, obj_window: &mut egui::Ui)
-	{
-		self.world.run(|ents: EntitiesView| {
-			egui::ScrollArea::vertical().show(obj_window, |obj_scroll| {
-				for ent in ents.iter() {
-					let label = obj_scroll.selectable_label(ent == self.selected_ent, format!("Entity {}", ent.index()));
-					if label.clicked() {
-						self.selected_ent = ent;
-					}
-				}
-			});
-		});
-	}
-
-	/// egui: Set up the window layout to show the components of the currently selected entity.
-	fn components_window_layout(&mut self, wnd: &mut egui::Ui) -> Result<(), GenericEngineError>
-	{
-		let mut render_ctx = self.world.borrow::<UniqueViewMut<RenderContext>>()?;
-
-		let mut meshes = self.world.borrow::<ViewMut<component::mesh::Mesh>>()?;
-		if let Ok(mesh) = (&mut meshes).get(self.selected_ent) {
-			mesh.show_egui(wnd, &mut render_ctx)?;
-		}
-
-		let mut transforms = self.world.borrow::<ViewMut<component::Transform>>()?;
-		if let Ok(transform) = (&mut transforms).get(self.selected_ent) {
-			transform.show_egui(wnd, &mut render_ctx)?;
-		}
-
 		Ok(())
 	}
 }
