@@ -134,12 +134,13 @@ impl Swapchain
 		Ok(())
 	}
 
-	/// Submit a primary command buffer's commands.
-	/// Optionally, a GpuFuture resulting from joining submitted transfers can be given, so that graphics operations
-	/// don't begin until the transfers are complete.
-	pub fn submit_commands(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>,
-		wait_for_transfers: Option<Box<dyn GpuFuture + Send + Sync>>,
+	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
+	/// swapchain image, usually blitting to it) and then present the resulting image.
+	/// Optionally, a GpuFuture `after` to wait for (such as for joining submitted transfers on another queue) can be given, so
+	/// that graphics operations don't begin until after the future is reached.
+	/// Note that `after` does not need to be a signalled fence or semaphore, as signalling will be done in this function.
+	pub fn present(
+		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, after: Option<Box<dyn GpuFuture + Send + Sync>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let acquire_future = self
@@ -152,8 +153,7 @@ impl Swapchain
 
 		let mut joined_futures = acquire_future.boxed_send_sync();
 
-		// Wait for transfers to complete.
-		if let Some(f) = wait_for_transfers {
+		if let Some(f) = after {
 			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
 			let fence_future = f.then_signal_fence();
 			fence_future.wait(None)?;

@@ -452,7 +452,7 @@ impl RenderContext
 	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
 		self.swapchain
-			.submit_commands(built_cb, self.graphics_queue.clone(), self.transfer_future.take())?;
+			.present(built_cb, self.graphics_queue.clone(), self.transfer_future.take())?;
 
 		let now = std::time::Instant::now();
 		let dur = now - self.last_frame_presented;
