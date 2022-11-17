@@ -9,7 +9,6 @@ use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, ViewMut, 
 use crate::component;
 use crate::render::RenderContext;
 use crate::GenericEngineError;
-use crate::ThreadedRenderingManager;
 
 pub struct EguiRenderer
 {
@@ -49,11 +48,11 @@ impl EguiRenderer
 			.transpose()?;
 
 		// draw egui
-		let (mut trm, render_ctx) = world.borrow::<(UniqueViewMut<ThreadedRenderingManager>, UniqueView<RenderContext>)>()?;
+		let render_ctx = world.borrow::<UniqueView<RenderContext>>()?;
 		let egui_cb = self
 			.egui_gui
 			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		trm.add_cb(egui_cb);
+		render_ctx.add_ui_cb(egui_cb)?;
 
 		Ok(())
 	}

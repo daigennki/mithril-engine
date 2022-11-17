@@ -14,7 +14,7 @@ mod vulkan_init;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
@@ -47,6 +47,8 @@ pub struct RenderContext
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
+
+	trm: Mutex<ThreadedRenderingManager>,
 
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
 	transfer_future: Option<Box<dyn GpuFuture + Send + Sync>>,
@@ -134,6 +136,8 @@ impl RenderContext
 		let transparency_renderer =
 			transparency::TransparencyRenderer::new(&memory_allocator, &descriptor_set_allocator, depth_image.clone())?;
 
+		let trm = Mutex::new(ThreadedRenderingManager::new(8));
+
 		Ok(RenderContext {
 			swapchain,
 			graphics_queue,
@@ -141,6 +145,7 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
+			trm,
 			transfer_future: None,
 			models: HashMap::new(),
 			material_pipelines: HashMap::new(),
@@ -449,6 +454,31 @@ impl RenderContext
 		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
+	fn lock_trm(&self) -> Result<std::sync::MutexGuard<'_, ThreadedRenderingManager>, ThreadedRenderingLockError>
+	{
+		let lock_guard = self
+			.trm
+			.lock()
+			.map_err(|e| ThreadedRenderingLockError::new(e))?;
+		Ok(lock_guard)
+	}
+
+	pub fn add_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	{
+		self.lock_trm()?.add_cb(cb);
+		Ok(())
+	}
+	pub fn add_transparency_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	{
+		self.lock_trm()?.add_transparency_cb(cb);
+		Ok(())
+	}
+	pub fn add_ui_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	{
+		self.lock_trm()?.add_ui_cb(cb);
+		Ok(())
+	}
+
 	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
 	{
 		self.swapchain
@@ -463,10 +493,18 @@ impl RenderContext
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
-	pub fn submit_frame(
-		&mut self, command_buffers: Vec<SecondaryAutoCommandBuffer>, transparency_cb: SecondaryAutoCommandBuffer,
-	) -> Result<(), GenericEngineError>
+	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
+		let command_buffers;
+		let transparency_cb;
+		let ui_cb;
+		{
+			let mut trm_locked = self.lock_trm()?;
+			command_buffers = trm_locked.take_built_command_buffers();
+			transparency_cb = trm_locked.take_transparency_cb().unwrap();
+			ui_cb = trm_locked.take_ui_cb();
+		}
+
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.main_framebuffer.clone());
 		rp_begin_info.clear_values = vec![None, None];
 
@@ -496,7 +534,11 @@ impl RenderContext
 			.composite_transparency(&mut primary_cb_builder, self.main_framebuffer.clone())?;
 
 		let blit_info = BlitImageInfo::images(self.color_image.clone(), self.next_swapchain_image()?);
-		primary_cb_builder.blit_image(blit_info)?;
+		primary_cb_builder
+			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
+			.execute_commands_from_vec(ui_cb)?
+			.end_render_pass()?
+			.blit_image(blit_info)?;
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
@@ -576,6 +618,27 @@ impl std::fmt::Display for PipelineNotLoaded
 	}
 }
 
+#[derive(Debug)]
+pub struct ThreadedRenderingLockError
+{
+	cause: String,
+}
+impl ThreadedRenderingLockError
+{
+	pub fn new<T>(e: std::sync::PoisonError<T>) -> Self
+	{
+		Self { cause: format!("{}", e) }
+	}
+}
+impl std::error::Error for ThreadedRenderingLockError {}
+impl std::fmt::Display for ThreadedRenderingLockError
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
+	{
+		write!(f, "failed to lock ThreadedRenderingManager: {}", &self.cause)
+	}
+}
+
 enum StagingWork
 {
 	CopyBuffer(CopyBufferInfo),
@@ -593,5 +656,54 @@ impl From<CopyBufferToImageInfo> for StagingWork
 	fn from(info: CopyBufferToImageInfo) -> StagingWork
 	{
 		Self::CopyBufferToImage(info)
+	}
+}
+
+struct ThreadedRenderingManager
+{
+	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
+	transparency_cb: Option<SecondaryAutoCommandBuffer>,
+	ui_cb: Vec<SecondaryAutoCommandBuffer>,
+	default_capacity: usize,
+}
+impl ThreadedRenderingManager
+{
+	pub fn new(default_capacity: usize) -> Self
+	{
+		ThreadedRenderingManager {
+			built_command_buffers: Vec::with_capacity(default_capacity),
+			transparency_cb: None,
+			ui_cb: Vec::with_capacity(2),
+			default_capacity,
+		}
+	}
+
+	/// Add a secondary command buffer that has been built.
+	pub fn add_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		self.built_command_buffers.push(command_buffer);
+	}
+
+	pub fn add_transparency_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		self.transparency_cb = Some(command_buffer)
+	}
+	pub fn add_ui_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		self.ui_cb.push(command_buffer)
+	}
+
+	/// Take all of the secondary command buffers that have been built.
+	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
+	{
+		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
+	}
+	pub fn take_transparency_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
+	{
+		self.transparency_cb.take()
+	}
+	pub fn take_ui_cb(&mut self) -> Vec<SecondaryAutoCommandBuffer>
+	{
+		std::mem::replace(&mut self.ui_cb, Vec::with_capacity(2))
 	}
 }

@@ -17,7 +17,6 @@ use shipyard::{
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
 use component::camera::Camera;
@@ -70,7 +69,6 @@ impl GameContext
 
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(render_ctx);
-		world.add_unique(ThreadedRenderingManager::new(8));
 
 		Ok(GameContext {
 			//pref_path,
@@ -155,10 +153,8 @@ impl GameContext
 
 	fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
-		let (mut render_ctx, mut trm) = self
-			.world
-			.borrow::<(UniqueViewMut<RenderContext>, UniqueViewMut<ThreadedRenderingManager>)>()?;
-		render_ctx.submit_frame(trm.take_built_command_buffers(), trm.take_transparency_cb().unwrap())?;
+		let mut render_ctx = self.world.borrow::<UniqueViewMut<RenderContext>>()?;
+		render_ctx.submit_frame()?;
 		Ok(())
 	}
 }
@@ -220,51 +216,9 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	Ok(world)
 }
 
-#[derive(shipyard::Unique)]
-struct ThreadedRenderingManager
-{
-	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
-	transparency_cb: Option<SecondaryAutoCommandBuffer>,
-	default_capacity: usize,
-}
-impl ThreadedRenderingManager
-{
-	pub fn new(default_capacity: usize) -> Self
-	{
-		ThreadedRenderingManager {
-			built_command_buffers: Vec::with_capacity(default_capacity),
-			transparency_cb: None,
-			default_capacity,
-		}
-	}
-
-	/// Add a secondary command buffer that has been built.
-	pub fn add_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
-	{
-		self.built_command_buffers.push(command_buffer);
-	}
-
-	pub fn add_transparency_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
-	{
-		self.transparency_cb = Some(command_buffer)
-	}
-
-	/// Take all of the secondary command buffers that have been built.
-	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
-	{
-		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
-	}
-
-	pub fn take_transparency_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
-	{
-		self.transparency_cb.take()
-	}
-}
-
 fn draw_3d(
-	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
-	skybox: UniqueView<render::skybox::Skybox>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
-	meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>, skybox: UniqueView<render::skybox::Skybox>, camera: UniqueView<Camera>,
+	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let cur_fb = render_ctx.get_main_framebuffer();
@@ -291,15 +245,15 @@ fn draw_3d(
 		}
 	}
 
-	trm.add_cb(command_buffer.build()?);
+	render_ctx.add_cb(command_buffer.build()?)?;
 
-	draw_3d_transparent(render_ctx, trm, camera, transforms, meshes)?;
+	draw_3d_transparent(render_ctx, camera, transforms, meshes)?;
 
 	Ok(())
 }
 fn draw_3d_transparent(
-	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
-	camera: UniqueView<Camera>, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let cur_fb = render_ctx.get_transparency_framebuffer();
@@ -324,12 +278,12 @@ fn draw_3d_transparent(
 		}
 	}
 
-	trm.add_transparency_cb(command_buffer.build()?);
+	render_ctx.add_transparency_cb(command_buffer.build()?)?;
 	Ok(())
 }
 fn draw_ui(
-	render_ctx: UniqueView<render::RenderContext>, mut trm: UniqueViewMut<ThreadedRenderingManager>,
-	ui_transforms: View<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>, texts: View<ui::text::Text>,
+	render_ctx: UniqueView<render::RenderContext>, ui_transforms: View<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>,
+	texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw UI elements.
@@ -351,7 +305,7 @@ fn draw_ui(
 		}
 	}
 
-	trm.add_cb(command_buffer.build()?);
+	render_ctx.add_ui_cb(command_buffer.build()?)?;
 	Ok(())
 }
 fn prepare_primary_render(
