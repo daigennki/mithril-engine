@@ -5,10 +5,10 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents};
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
+use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, AttachmentImage, ImageAccess, ImageUsage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::{
@@ -134,11 +134,26 @@ impl TransparencyRenderer
 		Ok(())
 	}
 
-	/// Composite the processed transparent objects onto the final framebuffer.
-	pub fn composite_transparency(
-		&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, framebuffer: Arc<Framebuffer>,
+	/// Composite the drawn transparent objects from the secondary command buffer onto the final framebuffer.
+	pub fn process_transparency(
+		&self, transparency_cb: SecondaryAutoCommandBuffer, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, 
+		framebuffer: Arc<Framebuffer>,
 	) -> Result<(), GenericEngineError>
 	{
+		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.transparency_fb.clone());
+		transparency_rp_info.clear_values = vec![
+			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])), // accum
+			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // revealage
+			None,                                          // depth; just load it
+		];
+
+		// draw the objects to the transparency frame buffer
+		cb
+			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
+			.execute_commands(transparency_cb)?
+			.end_render_pass()?;
+
+		// then composite the transparency onto the main framebuffer
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(framebuffer.clone());
 		rp_begin_info.render_pass = self.compositing_rp.clone();
 		rp_begin_info.clear_values = vec![None, None];
