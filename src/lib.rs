@@ -119,7 +119,7 @@ impl GameContext
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
 				self.draw_debug()?;
-				self.submit_frame()?;
+				self.world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_frame())?;
 			}
 			_ => (),
 		}
@@ -148,13 +148,6 @@ impl GameContext
 
 		self.egui_renderer.draw(&mut self.world)?;
 
-		Ok(())
-	}
-
-	fn submit_frame(&mut self) -> Result<(), GenericEngineError>
-	{
-		let mut render_ctx = self.world.borrow::<UniqueViewMut<RenderContext>>()?;
-		render_ctx.submit_frame()?;
 		Ok(())
 	}
 }
@@ -192,6 +185,7 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	Workload::new("Render loop")
 		.with_try_system(prepare_primary_render)
 		.with_try_system(draw_3d)
+		.with_try_system(draw_3d_transparent)
 		.with_try_system(draw_ui)
 		.after_all(prepare_primary_render)
 		.add_to_world(&world)?;
@@ -216,98 +210,6 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	Ok(world)
 }
 
-fn draw_3d(
-	render_ctx: UniqueView<render::RenderContext>, skybox: UniqueView<render::skybox::Skybox>, camera: UniqueView<Camera>,
-	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
-) -> Result<(), GenericEngineError>
-{
-	let cur_fb = render_ctx.get_main_framebuffer();
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-
-	// Draw the skybox. This will effectively clear the framebuffer.
-	skybox.draw(&mut command_buffer, &camera)?;
-
-	// Draw 3D objects.
-	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	render_ctx.get_pipeline("PBR")?.bind(&mut command_buffer);
-
-	camera.bind(&mut command_buffer)?;
-	let projview = camera.get_projview();
-	for (eid, transform) in transforms.iter().with_id() {
-		// draw 3D meshes
-		if let Ok(c) = meshes.get(eid) {
-			if !c.has_transparency() {
-				transform.bind_descriptor_set(&mut command_buffer)?;
-
-				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat)?;
-			}
-		}
-	}
-
-	render_ctx.add_cb(command_buffer.build()?)?;
-
-	draw_3d_transparent(render_ctx, camera, transforms, meshes)?;
-
-	Ok(())
-}
-fn draw_3d_transparent(
-	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
-	meshes: View<component::mesh::Mesh>,
-) -> Result<(), GenericEngineError>
-{
-	let cur_fb = render_ctx.get_transparency_framebuffer();
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-
-	// Draw the transparent objects.
-	render_ctx
-		.get_pipeline("PBR")?
-		.bind_transparency(&mut command_buffer)?;
-
-	camera.bind(&mut command_buffer)?;
-	let projview = camera.get_projview();
-	for (eid, transform) in transforms.iter().with_id() {
-		// draw 3D meshes
-		if let Ok(c) = meshes.get(eid) {
-			if c.has_transparency() {
-				transform.bind_descriptor_set(&mut command_buffer)?;
-
-				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat)?;
-			}
-		}
-	}
-
-	render_ctx.add_transparency_cb(command_buffer.build()?)?;
-	Ok(())
-}
-fn draw_ui(
-	render_ctx: UniqueView<render::RenderContext>, ui_transforms: View<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>,
-	texts: View<ui::text::Text>,
-) -> Result<(), GenericEngineError>
-{
-	// Draw UI elements.
-	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	let cur_fb = render_ctx.get_main_framebuffer();
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(cur_fb)?;
-
-	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
-	for (eid, t) in ui_transforms.iter().with_id() {
-		t.bind_descriptor_set(&mut command_buffer)?;
-
-		// draw UI meshes
-		// TODO: how do we respect the render order?
-		if let Ok(c) = ui_meshes.get(eid) {
-			c.draw(&mut command_buffer)?;
-		}
-		if let Ok(c) = texts.get(eid) {
-			c.draw(&mut command_buffer)?;
-		}
-	}
-
-	render_ctx.add_ui_cb(command_buffer.build()?)?;
-	Ok(())
-}
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>, mut canvas: UniqueViewMut<Canvas>,
 	mut ui_transforms: ViewMut<ui::Transform>,
@@ -331,6 +233,89 @@ fn prepare_primary_render(
 		}
 	}
 
+	Ok(())
+}
+fn draw_3d(
+	render_ctx: UniqueView<render::RenderContext>, skybox: UniqueView<render::skybox::Skybox>, camera: UniqueView<Camera>,
+	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+) -> Result<(), GenericEngineError>
+{
+	let mut command_buffer = render_ctx.record_main_draws()?;
+
+	// Draw the skybox. This will effectively clear the framebuffer.
+	skybox.draw(&mut command_buffer, &camera)?;
+
+	// Draw 3D objects.
+	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	render_ctx.get_pipeline("PBR")?.bind(&mut command_buffer);
+	camera.bind(&mut command_buffer)?;
+	let projview = camera.get_projview();
+	for (eid, transform) in transforms.iter().with_id() {
+		if let Ok(c) = meshes.get(eid) {
+			if !c.has_transparency() {
+				transform.bind_descriptor_set(&mut command_buffer)?;
+
+				let transform_mat = projview * transform.get_matrix();
+				c.draw(&mut command_buffer, &transform_mat)?;
+			}
+		}
+	}
+
+	render_ctx.add_cb(command_buffer.build()?)?;
+	Ok(())
+}
+fn draw_3d_transparent(
+	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
+) -> Result<(), GenericEngineError>
+{
+	let mut command_buffer = render_ctx.record_transparency_draws()?;
+
+	// Draw the transparent objects.
+	render_ctx
+		.get_pipeline("PBR")?
+		.bind_transparency(&mut command_buffer)?;
+
+	camera.bind(&mut command_buffer)?;
+	let projview = camera.get_projview();
+	for (eid, transform) in transforms.iter().with_id() {
+		if let Ok(c) = meshes.get(eid) {
+			if c.has_transparency() {
+				transform.bind_descriptor_set(&mut command_buffer)?;
+
+				let transform_mat = projview * transform.get_matrix();
+				c.draw(&mut command_buffer, &transform_mat)?;
+			}
+		}
+	}
+
+	render_ctx.add_transparency_cb(command_buffer.build()?)?;
+	Ok(())
+}
+fn draw_ui(
+	render_ctx: UniqueView<render::RenderContext>, ui_transforms: View<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>,
+	texts: View<ui::text::Text>,
+) -> Result<(), GenericEngineError>
+{
+	let mut command_buffer = render_ctx.record_main_draws()?;
+	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
+
+	// Draw UI elements.
+	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	for (eid, t) in ui_transforms.iter().with_id() {
+		t.bind_descriptor_set(&mut command_buffer)?;
+
+		// draw UI meshes
+		// TODO: how do we respect the render order?
+		if let Ok(c) = ui_meshes.get(eid) {
+			c.draw(&mut command_buffer)?;
+		}
+		if let Ok(c) = texts.get(eid) {
+			c.draw(&mut command_buffer)?;
+		}
+	}
+
+	render_ctx.add_ui_cb(command_buffer.build()?)?;
 	Ok(())
 }
 

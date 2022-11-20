@@ -95,9 +95,12 @@ impl RenderContext
 		let command_buffer_allocator =
 			StandardCommandBufferAllocator::new(vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default());
 
-		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;	
-		let transparency_renderer =
-			transparency::TransparencyRenderer::new(&memory_allocator, &descriptor_set_allocator, main_render_target.depth_image().clone())?;
+		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
+		let transparency_renderer = transparency::TransparencyRenderer::new(
+			&memory_allocator,
+			&descriptor_set_allocator,
+			main_render_target.depth_image().clone(),
+		)?;
 
 		Ok(RenderContext {
 			swapchain,
@@ -127,7 +130,7 @@ impl RenderContext
 			.ok_or(format!("Invalid material pipeline definition file name '{}'", filename))?
 			.0
 			.to_string();
-		let transparency_rp = self.get_transparency_framebuffer().render_pass().clone();
+		let transparency_rp = self.transparency_renderer.framebuffer().render_pass().clone();
 		self.material_pipelines.insert(
 			name,
 			pipeline::Pipeline::new_from_yaml(
@@ -279,7 +282,7 @@ impl RenderContext
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to `framebuffer` in its first subpass,
 	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
-	pub fn new_secondary_command_buffer(
+	fn new_secondary_command_buffer(
 		&self, framebuffer: Arc<Framebuffer>,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
@@ -311,6 +314,14 @@ impl RenderContext
 
 		Ok(cb)
 	}
+	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	{
+		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone())
+	}
+	pub fn record_transparency_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	{
+		self.new_secondary_command_buffer(self.transparency_renderer.framebuffer())
+	}
 
 	/// Tell the swapchain to go to the next image.
 	/// The image size *may* change here.
@@ -322,7 +333,8 @@ impl RenderContext
 		let (image, dimensions_changed) = self.swapchain.get_next_image()?;
 		if dimensions_changed {
 			// Update images to match the current window size.
-			self.main_render_target.resize(&self.memory_allocator, self.swapchain.dimensions())?;
+			self.main_render_target
+				.resize(&self.memory_allocator, self.swapchain.dimensions())?;
 
 			self.transparency_renderer.resize_image(
 				&self.memory_allocator,
@@ -395,7 +407,6 @@ impl RenderContext
 			.map_err(|e| ThreadedRenderingLockError::new(e))?;
 		Ok(lock_guard)
 	}
-
 	pub fn add_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
 	{
 		self.lock_trm()?.add_cb(cb);
@@ -438,7 +449,7 @@ impl RenderContext
 			ui_cb = trm_locked.take_ui_cb();
 		}
 
-		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.get_main_framebuffer());
+		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.main_render_target.framebuffer().clone());
 		rp_begin_info.clear_values = vec![None, None];
 
 		// finalize the rendering for this frame by executing the secondary command buffers
@@ -453,8 +464,11 @@ impl RenderContext
 			.execute_commands_from_vec(command_buffers)?
 			.end_render_pass()?;
 
-		self.transparency_renderer
-			.process_transparency(transparency_cb, &mut primary_cb_builder, self.get_main_framebuffer())?;
+		self.transparency_renderer.process_transparency(
+			transparency_cb,
+			&mut primary_cb_builder,
+			self.main_render_target.framebuffer().clone(),
+		)?;
 
 		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.next_swapchain_image()?);
 		primary_cb_builder
@@ -483,14 +497,6 @@ impl RenderContext
 		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
 	}
 
-	pub fn get_main_framebuffer(&self) -> Arc<Framebuffer>
-	{
-		self.main_render_target.framebuffer().clone()
-	}
-	pub fn get_transparency_framebuffer(&self) -> Arc<Framebuffer>
-	{
-		self.transparency_renderer.framebuffer()
-	}
 	pub fn get_main_render_pass(&self) -> Arc<RenderPass>
 	{
 		self.main_render_target.framebuffer().render_pass().clone()
@@ -666,8 +672,7 @@ impl RenderTarget
 		)?;
 
 		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
-		let color_image =
-			AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
+		let color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 		let depth_image = AttachmentImage::new(memory_allocator, dimensions, Format::D16_UNORM)?;
 		let fb_create_info = FramebufferCreateInfo {
 			attachments: vec![
@@ -678,26 +683,17 @@ impl RenderTarget
 		};
 		let framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
-		Ok(Self {
-			framebuffer,
-			color_image,
-			depth_image,
-		})
+		Ok(Self { framebuffer, color_image, depth_image })
 	}
 
-	pub fn resize(&mut self, memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2]) -> Result<(), GenericEngineError>
+	pub fn resize(&mut self, memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2])
+		-> Result<(), GenericEngineError>
 	{
 		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
-		self.color_image = AttachmentImage::with_usage(
-			memory_allocator,
-			dimensions,
-			Format::R16G16B16A16_SFLOAT,
-			color_usage,
-		)?;
+		self.color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 
 		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
-		self.depth_image =
-			AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?;
+		self.depth_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?;
 
 		let fb_create_info = FramebufferCreateInfo {
 			attachments: vec![

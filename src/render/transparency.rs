@@ -5,7 +5,9 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents};
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents,
+};
 use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
@@ -136,27 +138,24 @@ impl TransparencyRenderer
 
 	/// Composite the drawn transparent objects from the secondary command buffer onto the final framebuffer.
 	pub fn process_transparency(
-		&self, transparency_cb: SecondaryAutoCommandBuffer, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, 
+		&self, transparency_cb: SecondaryAutoCommandBuffer, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		framebuffer: Arc<Framebuffer>,
 	) -> Result<(), GenericEngineError>
 	{
-		let mut transparency_rp_info = RenderPassBeginInfo::framebuffer(self.transparency_fb.clone());
-		transparency_rp_info.clear_values = vec![
-			Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])), // accum
-			Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // revealage
-			None,                                          // depth; just load it
-		];
+		let transparency_rp_info = RenderPassBeginInfo {
+			clear_values: vec![
+				Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])), // accum
+				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // revealage
+				None,                                          // depth; just load it
+			],
+			..RenderPassBeginInfo::framebuffer(self.transparency_fb.clone())
+		};
 
-		// draw the objects to the transparency frame buffer
-		cb
-			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
-			.execute_commands(transparency_cb)?
-			.end_render_pass()?;
-
-		// then composite the transparency onto the main framebuffer
-		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(framebuffer.clone());
-		rp_begin_info.render_pass = self.compositing_rp.clone();
-		rp_begin_info.clear_values = vec![None, None];
+		let comp_rp_info = RenderPassBeginInfo {
+			render_pass: self.compositing_rp.clone(),
+			clear_values: vec![None, None],
+			..RenderPassBeginInfo::framebuffer(framebuffer.clone())
+		};
 
 		let fb_extent = framebuffer.extent();
 		let viewport = Viewport {
@@ -167,12 +166,16 @@ impl TransparencyRenderer
 			depth_range: 0.0..1.0,
 		};
 
-		cb.begin_render_pass(rp_begin_info, SubpassContents::Inline)?;
-		cb.set_viewport(0, [viewport]);
+		// draw the objects to the transparency framebuffer, then composite the transparency onto the main framebuffer
+		cb.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
+			.execute_commands(transparency_cb)?
+			.end_render_pass()?
+			.begin_render_pass(comp_rp_info, SubpassContents::Inline)?
+			.set_viewport(0, [viewport]);
 		self.transparency_compositing_pl.bind(cb);
 		super::bind_descriptor_set(cb, 0, vec![self.transparency_set.clone()])?;
-		cb.draw(3, 1, 0, 0)?;
-		cb.end_render_pass()?;
+		cb.draw(3, 1, 0, 0)?
+			.end_render_pass()?;
 		Ok(())
 	}
 
@@ -181,6 +184,9 @@ impl TransparencyRenderer
 		self.transparency_fb.clone()
 	}
 }
+
+
+
 fn create_transparency_framebuffer(
 	memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
 	depth_img: Arc<AttachmentImage>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline,
