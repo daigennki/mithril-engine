@@ -1,14 +1,13 @@
 
 // The shader code used for WBOIT accumulation, meant to be included by other shaders.
 
-#ifdef TRANSPARENCY_PASS
 struct PS_OUTPUT
 {
 	float4 accum : SV_Target0;
 	float revealage : SV_Target1;
 };
 
-PS_OUTPUT write_transparent_pixel(float4 premul_reflect, float depth) 
+PS_OUTPUT write_transparent_pixel(float4 premul_reflect, float depth, float2 screen_pos) 
 { 
     /* Modulate the net coverage for composition by the transmission. This does not affect the color channels of the
        transparent surface because the caller's BSDF model should have already taken into account if transmission modulates
@@ -32,10 +31,4 @@ PS_OUTPUT write_transparent_pixel(float4 premul_reflect, float depth)
     output.revealage = premul_reflect.a;
 	return output;
 }
-#else
-struct PS_OUTPUT
-{
-	float4 color : SV_Target0;
-};
-#endif
 

@@ -1,5 +1,3 @@
-#include "wboit_accum.hlsl"
-
 SamplerState sampler0 : register(s0, space2);
 Texture2D base_color : register(t1, space2);
 
@@ -9,6 +7,13 @@ struct PS_INPUT
 	float2 uv : TEXCOORD;
 	float3 normal : NORMAL;
 };
+
+#ifndef TRANSPARENCY_PASS
+struct PS_OUTPUT
+{
+	float4 color : SV_Target0;
+};
+#endif
 
 float3 calc_diff(float3 lightDir, float3 normal, float3 tex_diffuse)
 {
@@ -36,8 +41,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 shaded = calc_dl(tex_color.rgb, input.normal);
 	float4 with_alpha = float4(shaded, tex_color.a);
 
-#ifdef TRANSPARENCY_PASS	
-	return write_transparent_pixel(with_alpha, input.pos.z);
+#ifdef TRANSPARENCY_PASS
+	// `write_transparent_pixel` must be defined in the file that defines `TRANSPARENCY_PASS`
+	return write_transparent_pixel(with_alpha, input.pos.z, input.pos.xy);
 #else
 	PS_OUTPUT output;
 	output.color = with_alpha;

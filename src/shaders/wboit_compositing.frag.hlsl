@@ -1,12 +1,12 @@
 // The shader used to composite transparent objects over opaque objects, when using WBOIT.
 
 /* sum(rgb * a, a) */
-Texture2D accum_texture : register(t0);
+Texture2D accum_texture : register(t0, space3);
 
 /* prod(1 - a) */
-Texture2D revealage_texture : register(t1);
+Texture2D revealage_texture : register(t1, space3);
 
-cbuffer tex_dim : register(b2)
+cbuffer tex_dim : register(b2, space3)
 {
 	uint2 texture_dimensions;
 };

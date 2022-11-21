@@ -122,20 +122,25 @@ impl Pipeline
 		let pipeline = pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
 		print_pipeline_descriptors_info(&pipeline);
 
-		let transparency_pipeline = builder_transparency
+		/*let transparency_pipeline = builder_transparency
 			.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
 				let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
 				let layout = pipeline_ref.layout().clone();
 				Ok(bt.with_pipeline_layout(vk_dev, layout)?)
 			})
-			.transpose()?;
+			.transpose()?;*/
+		let transparency_pipeline = if let Some(bt) = builder_transparency {
+			Some(bt.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?)
+		} else {
+			None
+		};
 
 		Ok(Pipeline { pipeline, transparency_pipeline })
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(
-		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>,
+		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>, tex_sampler: Arc<Sampler>,
 	) -> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
@@ -147,8 +152,9 @@ impl Pipeline
 			.samplers
 			.iter()
 			.map(|sampler_config| {
-				let new_sampler = Sampler::new(vk_dev.clone(), sampler_config.as_create_info()?)?;
-				Ok((sampler_config.set, sampler_config.binding, new_sampler))
+				//let new_sampler = Sampler::new(vk_dev.clone(), sampler_config.as_create_info()?)?;
+				//Ok((sampler_config.set, sampler_config.binding, new_sampler))
+				Ok((sampler_config.set, sampler_config.binding, tex_sampler.clone()))
 			})
 			.collect::<Result<_, GenericEngineError>>()?;
 		let color_blend_state = color_blend_state_from_subpass(&subpass);
@@ -332,6 +338,8 @@ fn load_spirv_vertex(
 				.binding(binding, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
 				.attribute(binding, VertexInputAttributeDescription { binding, format, offset: 0 })
 		});
+
+	log::debug!("automatically generated VertexInputState: {:#?}", &vertex_input_state);
 
 	Ok((shader_module, vertex_input_state))
 }

@@ -32,6 +32,7 @@ use vulkano::image::{view::ImageView, AttachmentImage, ImageDimensions, ImageUsa
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
+use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::GpuFuture;
 use winit::window::WindowBuilder;
 
@@ -47,6 +48,7 @@ pub struct RenderContext
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
+	tex_sampler: Arc<Sampler>,
 
 	trm: Mutex<ThreadedRenderingManager>,
 
@@ -63,7 +65,7 @@ pub struct RenderContext
 	// The final contents of this render target's color image will be blitted to the swapchain's image.
 	main_render_target: RenderTarget,
 
-	transparency_renderer: transparency::TransparencyRenderer,
+	transparency_renderer: transparency::MomentTransparencyRenderer,
 
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
@@ -95,11 +97,15 @@ impl RenderContext
 		let command_buffer_allocator =
 			StandardCommandBufferAllocator::new(vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default());
 
+		// TODO: enable anisotropic filtering
+		let tex_sampler = Sampler::new(vk_dev.clone(), SamplerCreateInfo::simple_repeat_linear())?;
+
 		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
-		let transparency_renderer = transparency::TransparencyRenderer::new(
+		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			&memory_allocator,
 			&descriptor_set_allocator,
 			main_render_target.depth_image().clone(),
+			tex_sampler.clone()
 		)?;
 
 		Ok(RenderContext {
@@ -109,6 +115,7 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
+			tex_sampler,
 			trm: Mutex::new(ThreadedRenderingManager::new(8)),
 			transfer_future: None,
 			models: HashMap::new(),
@@ -137,6 +144,7 @@ impl RenderContext
 				filename,
 				self.get_main_render_pass().first_subpass(),
 				Some(transparency_rp.first_subpass()),
+				self.tex_sampler.clone()
 			)?,
 		);
 		Ok(())
@@ -318,9 +326,26 @@ impl RenderContext
 	{
 		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone())
 	}
-	pub fn record_transparency_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	pub fn record_transparency_moments_draws(
+		&self
+	)-> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	{
+		self.new_secondary_command_buffer(self.transparency_renderer.moments_framebuffer())
+	}
+	pub fn record_transparency_draws(
+		&self
+	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		self.new_secondary_command_buffer(self.transparency_renderer.framebuffer())
+	}
+
+	pub fn get_moments_pl(&self) -> &pipeline::Pipeline
+	{
+		self.transparency_renderer.get_moments_pipeline()
+	}
+	pub fn get_moments_set(&self) -> Arc<PersistentDescriptorSet>
+	{
+		self.transparency_renderer.get_moments_descriptor_set()
 	}
 
 	/// Tell the swapchain to go to the next image.
@@ -412,6 +437,11 @@ impl RenderContext
 		self.lock_trm()?.add_cb(cb);
 		Ok(())
 	}
+	pub fn add_transparency_moments_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	{
+		self.lock_trm()?.add_transparency_moments_cb(cb);
+		Ok(())
+	}
 	pub fn add_transparency_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
 	{
 		self.lock_trm()?.add_transparency_cb(cb);
@@ -440,11 +470,13 @@ impl RenderContext
 	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
 		let command_buffers;
+		let transparency_moments_cb;
 		let transparency_cb;
 		let ui_cb;
 		{
 			let mut trm_locked = self.lock_trm()?;
 			command_buffers = trm_locked.take_built_command_buffers();
+			transparency_moments_cb = trm_locked.take_transparency_moments_cb().unwrap();
 			transparency_cb = trm_locked.take_transparency_cb().unwrap();
 			ui_cb = trm_locked.take_ui_cb();
 		}
@@ -465,6 +497,7 @@ impl RenderContext
 			.end_render_pass()?;
 
 		self.transparency_renderer.process_transparency(
+			transparency_moments_cb,
 			transparency_cb,
 			&mut primary_cb_builder,
 			self.main_render_target.framebuffer().clone(),
@@ -591,6 +624,7 @@ impl From<CopyBufferToImageInfo> for StagingWork
 struct ThreadedRenderingManager
 {
 	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
+	transparency_moments_cb: Option<SecondaryAutoCommandBuffer>,
 	transparency_cb: Option<SecondaryAutoCommandBuffer>,
 	ui_cb: Vec<SecondaryAutoCommandBuffer>,
 	default_capacity: usize,
@@ -601,6 +635,7 @@ impl ThreadedRenderingManager
 	{
 		ThreadedRenderingManager {
 			built_command_buffers: Vec::with_capacity(default_capacity),
+			transparency_moments_cb: None,
 			transparency_cb: None,
 			ui_cb: Vec::with_capacity(2),
 			default_capacity,
@@ -613,6 +648,10 @@ impl ThreadedRenderingManager
 		self.built_command_buffers.push(command_buffer);
 	}
 
+	pub fn add_transparency_moments_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		self.transparency_moments_cb = Some(command_buffer)
+	}
 	pub fn add_transparency_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
 	{
 		self.transparency_cb = Some(command_buffer)
@@ -626,6 +665,10 @@ impl ThreadedRenderingManager
 	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
 	{
 		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
+	}
+	pub fn take_transparency_moments_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
+	{
+		self.transparency_moments_cb.take()
 	}
 	pub fn take_transparency_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
 	{

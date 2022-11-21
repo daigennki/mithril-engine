@@ -185,6 +185,7 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	Workload::new("Render loop")
 		.with_try_system(prepare_primary_render)
 		.with_try_system(draw_3d)
+		.with_try_system(draw_3d_transparent_moments)
 		.with_try_system(draw_3d_transparent)
 		.with_try_system(draw_ui)
 		.after_all(prepare_primary_render)
@@ -264,6 +265,33 @@ fn draw_3d(
 	render_ctx.add_cb(command_buffer.build()?)?;
 	Ok(())
 }
+fn draw_3d_transparent_moments(
+	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
+) -> Result<(), GenericEngineError>
+{
+	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
+
+	// Draw the transparent objects.
+	render_ctx.get_moments_pl().bind(&mut command_buffer);
+
+	camera.bind(&mut command_buffer)?;
+	let projview = camera.get_projview();
+	for (eid, transform) in transforms.iter().with_id() {
+		if let Ok(c) = meshes.get(eid) {
+			if c.has_transparency() {
+				transform.bind_descriptor_set(&mut command_buffer)?;
+
+				let transform_mat = projview * transform.get_matrix();
+				c.draw(&mut command_buffer, &transform_mat)?;
+			}
+		}
+	}
+
+	render_ctx.add_transparency_moments_cb(command_buffer.build()?)?;
+	Ok(())
+}
+
 fn draw_3d_transparent(
 	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
@@ -275,6 +303,7 @@ fn draw_3d_transparent(
 	render_ctx
 		.get_pipeline("PBR")?
 		.bind_transparency(&mut command_buffer)?;
+	render::bind_descriptor_set(&mut command_buffer, 3, vec![render_ctx.get_moments_set()])?;
 
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();
@@ -384,9 +413,11 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 fn log_error(e: GenericEngineError)
 {
 	let mut error_string = format!("{}", e);
+	log::debug!("top level error: {:?}", e);
 	let mut next_err_source = e.source();
 	while let Some(source) = next_err_source {
 		error_string += &format!("\ncaused by: {}", source);
+		log::debug!("caused by: {:?}", source);
 		next_err_source = source.source();
 	}
 	if log::log_enabled!(log::Level::Error) {

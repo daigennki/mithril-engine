@@ -1,6 +1,6 @@
 vertex_shader: basic_3d.vert.spv
 fragment_shader: pbr.frag.spv
-fragment_shader_transparency: pbr_wboit.frag.spv
+fragment_shader_transparency: pbr_mboit_weights.frag.spv
 primitive_topology: TriangleList
 
 samplers:

@@ -1,4 +1,4 @@
 #define TRANSPARENCY_PASS
-#include "wboit_accum.hlsl"
+#include "mboit_weights.hlsl"
 #include "pbr.frag.hlsl"
 
