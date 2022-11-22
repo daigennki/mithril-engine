@@ -17,7 +17,7 @@ use vulkano::pipeline::graphics::{
 	color_blend::{BlendOp, ColorBlendState}, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport,
 };
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
-use vulkano::sampler::{Sampler, SamplerCreateInfo};
+use vulkano::sampler::Sampler;
 
 use crate::GenericEngineError;
 
@@ -363,6 +363,8 @@ impl MomentTransparencyRenderer
 			Format::R32G32B32A32_SFLOAT,
 			Format::R32_SFLOAT,
 		)?;
+		self.moments_fb = moments_fb;
+		self.moments_set = moments_set;
 
 		let transparency_rp = self.transparency_fb.render_pass().clone();
 		let (transparency_fb, transparency_set) = create_transparency_framebuffer(
