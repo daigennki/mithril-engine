@@ -326,7 +326,7 @@ fn draw_ui(
 	texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.record_main_draws()?;
+	let mut command_buffer = render_ctx.record_ui_draws()?;
 	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
 
 	// Draw UI elements.

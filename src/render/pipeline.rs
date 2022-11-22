@@ -140,7 +140,7 @@ impl Pipeline
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(
-		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>, tex_sampler: Arc<Sampler>,
+		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>, tex_sampler: Arc<Sampler>
 	) -> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
@@ -160,6 +160,12 @@ impl Pipeline
 			.fragment_shader_transparency
 			.map(|fst| (fst, transparency_subpass.unwrap()));
 
+		let depth_op = if deserialized.always_pass_depth_test {
+			CompareOp::Always
+		} else {
+			CompareOp::Less
+		};
+
 		Pipeline::new(
 			deserialized.primitive_topology,
 			deserialized.vertex_shader,
@@ -167,7 +173,7 @@ impl Pipeline
 			fs_transparency_info,
 			generated_samplers,
 			subpass,
-			CompareOp::Less,
+			depth_op,
 			true,
 		)
 	}
@@ -235,6 +241,9 @@ struct PipelineConfig
 	vertex_shader: String,
 	fragment_shader: Option<String>,
 	fragment_shader_transparency: Option<String>,
+
+	#[serde(default)]
+	always_pass_depth_test: bool,
 
 	#[serde(with = "PrimitiveTopologyDef")]
 	primitive_topology: PrimitiveTopology,

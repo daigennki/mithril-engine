@@ -297,11 +297,13 @@ impl RenderContext
 	/// It will be set up for drawing to `framebuffer` in its first subpass,
 	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
 	fn new_secondary_command_buffer(
-		&self, framebuffer: Arc<Framebuffer>,
+		&self, framebuffer: Arc<Framebuffer>, render_pass: Option<Arc<RenderPass>>
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
+		let use_rp = render_pass
+			.unwrap_or_else(|| framebuffer.render_pass().clone());
 		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
-			subpass: framebuffer.render_pass().clone().first_subpass(),
+			subpass: use_rp.first_subpass(),
 			framebuffer: Some(framebuffer.clone()),
 		});
 		let inheritance = CommandBufferInheritanceInfo {
@@ -330,19 +332,28 @@ impl RenderContext
 	}
 	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone())
+		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None)
 	}
 	pub fn record_transparency_moments_draws(
 		&self
 	)-> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.transparency_renderer.moments_framebuffer())
+		self.new_secondary_command_buffer(self.transparency_renderer.moments_framebuffer(), None)
 	}
 	pub fn record_transparency_draws(
 		&self
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.transparency_renderer.framebuffer())
+		self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None)
+	}
+	pub fn record_ui_draws(
+		&self
+	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	{
+		self.new_secondary_command_buffer(
+			self.main_render_target.framebuffer().clone(), 
+			Some(self.main_render_target.ui_rp().clone())
+		)
 	}
 
 	pub fn get_moments_pl(&self) -> &pipeline::Pipeline
@@ -510,8 +521,9 @@ impl RenderContext
 		)?;
 
 		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.next_swapchain_image()?);
+		rp_begin_info.render_pass = self.main_render_target.ui_rp().clone();
 		primary_cb_builder
-			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
+			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(ui_cb)?
 			.end_render_pass()?
 			.blit_image(blit_info)?;
@@ -692,6 +704,7 @@ struct RenderTarget
 	framebuffer: Arc<Framebuffer>,
 	color_image: Arc<AttachmentImage>,
 	depth_image: Arc<AttachmentImage>,
+	ui_rp: Arc<RenderPass>,
 }
 impl RenderTarget
 {
@@ -720,6 +733,28 @@ impl RenderTarget
 			}
 		)?;
 
+		let ui_rp = vulkano::single_pass_renderpass!(
+			vk_dev.clone(),
+			attachments: {
+				color: {
+					load: Load,
+					store: Store,
+					format: Format::R16G16B16A16_SFLOAT,
+					samples: 1,
+				},
+				depth: {
+					load: Load,
+					store: DontCare,
+					format: Format::D16_UNORM,	// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
+					samples: 1,
+				}
+			},
+			pass: {
+				color: [color],
+				depth_stencil: {depth}
+			}
+		)?;
+
 		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
 		let color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 		let depth_image = AttachmentImage::new(memory_allocator, dimensions, Format::D16_UNORM)?;
@@ -732,7 +767,12 @@ impl RenderTarget
 		};
 		let framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
-		Ok(Self { framebuffer, color_image, depth_image })
+		Ok(Self { 
+			framebuffer, 
+			color_image, 
+			depth_image, 
+			ui_rp 
+		})
 	}
 
 	pub fn resize(&mut self, memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2])
@@ -767,5 +807,9 @@ impl RenderTarget
 	pub fn depth_image(&self) -> &Arc<AttachmentImage>
 	{
 		&self.depth_image
+	}
+	pub fn ui_rp(&self) -> &Arc<RenderPass>
+	{
+		&self.ui_rp
 	}
 }
