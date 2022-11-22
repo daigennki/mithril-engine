@@ -334,11 +334,16 @@ impl RenderContext
 	{
 		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None)
 	}
+
+	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
+	/// anything specific to materials (it only reads the alpha channel of each texture).
 	pub fn record_transparency_moments_draws(
 		&self
 	)-> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.transparency_renderer.moments_framebuffer(), None)
+		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.moments_framebuffer(), None)?;
+		self.transparency_renderer.get_moments_pipeline().bind(&mut cb);
+		Ok(cb)
 	}
 	pub fn record_transparency_draws(
 		&self
@@ -356,13 +361,11 @@ impl RenderContext
 		)
 	}
 
-	pub fn get_moments_pl(&self) -> &pipeline::Pipeline
+	pub fn bind_moments_set(
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
+	) -> Result<(), PipelineExecutionError>
 	{
-		self.transparency_renderer.get_moments_pipeline()
-	}
-	pub fn get_moments_set(&self) -> Arc<PersistentDescriptorSet>
-	{
-		self.transparency_renderer.get_moments_descriptor_set()
+		bind_descriptor_set(cb, 3, self.transparency_renderer.get_moments_descriptor_set())
 	}
 
 	/// Tell the swapchain to go to the next image.

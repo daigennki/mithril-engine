@@ -271,10 +271,8 @@ fn draw_3d_transparent_moments(
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
-
+	
 	// Draw the transparent objects.
-	render_ctx.get_moments_pl().bind(&mut command_buffer);
-
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();
 	for (eid, transform) in transforms.iter().with_id() {
@@ -303,7 +301,7 @@ fn draw_3d_transparent(
 	render_ctx
 		.get_pipeline("PBR")?
 		.bind_transparency(&mut command_buffer)?;
-	render::bind_descriptor_set(&mut command_buffer, 3, vec![render_ctx.get_moments_set()])?;
+	render_ctx.bind_moments_set(&mut command_buffer)?;
 
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();
