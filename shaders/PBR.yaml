@@ -6,6 +6,5 @@ primitive_topology: TriangleList
 samplers:
 - set: 2
   binding: 0
-  mag_filter: Linear
-  min_filter: Linear
+  mag_linear: true
 

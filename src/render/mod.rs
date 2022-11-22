@@ -48,7 +48,10 @@ pub struct RenderContext
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
-	tex_sampler: Arc<Sampler>,
+
+	// Samplers used for 3D draws. All use linear downscaling and have 16x anisotropic filtering enabled.
+	sampler_linear: Arc<Sampler>, // Linear upscaling (default)
+	//sampler_nearest: Arc<Sampler>, // Nearest neighbor upscaling (possibly useful for pixel art)
 
 	trm: Mutex<ThreadedRenderingManager>,
 
@@ -97,15 +100,18 @@ impl RenderContext
 		let command_buffer_allocator =
 			StandardCommandBufferAllocator::new(vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default());
 
-		// TODO: enable anisotropic filtering
-		let tex_sampler = Sampler::new(vk_dev.clone(), SamplerCreateInfo::simple_repeat_linear())?;
+		let sampler_info = SamplerCreateInfo {
+			anisotropy: Some(16.0),
+			..SamplerCreateInfo::simple_repeat_linear()
+		};
+		let sampler_linear = Sampler::new(vk_dev.clone(), sampler_info)?;
 
 		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			&memory_allocator,
 			&descriptor_set_allocator,
 			main_render_target.depth_image().clone(),
-			tex_sampler.clone()
+			sampler_linear.clone()
 		)?;
 
 		Ok(RenderContext {
@@ -115,7 +121,7 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
-			tex_sampler,
+			sampler_linear,
 			trm: Mutex::new(ThreadedRenderingManager::new(8)),
 			transfer_future: None,
 			models: HashMap::new(),
@@ -144,7 +150,7 @@ impl RenderContext
 				filename,
 				self.get_main_render_pass().first_subpass(),
 				Some(transparency_rp.first_subpass()),
-				self.tex_sampler.clone()
+				self.sampler_linear.clone()
 			)?,
 		);
 		Ok(())

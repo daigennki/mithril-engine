@@ -25,7 +25,7 @@ use vulkano::pipeline::graphics::{
 };
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
 use vulkano::render_pass::Subpass;
-use vulkano::sampler::{Filter, Sampler, SamplerCreateInfo};
+use vulkano::sampler::Sampler;
 use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderScalarType};
 
 use crate::GenericEngineError;
@@ -151,12 +151,8 @@ impl Pipeline
 		let generated_samplers = deserialized
 			.samplers
 			.iter()
-			.map(|sampler_config| {
-				//let new_sampler = Sampler::new(vk_dev.clone(), sampler_config.as_create_info()?)?;
-				//Ok((sampler_config.set, sampler_config.binding, new_sampler))
-				Ok((sampler_config.set, sampler_config.binding, tex_sampler.clone()))
-			})
-			.collect::<Result<_, GenericEngineError>>()?;
+			.map(|sampler_config| (sampler_config.set, sampler_config.binding, tex_sampler.clone()))
+			.collect();
 		let color_blend_state = color_blend_state_from_subpass(&subpass);
 
 		let fs_info = deserialized.fragment_shader.map(|fs| (fs, color_blend_state));
@@ -230,29 +226,8 @@ struct PipelineSamplerConfig
 {
 	set: usize,
 	binding: u32,
-	min_filter: Option<String>,
-	mag_filter: Option<String>,
+	mag_linear: bool,
 }
-impl PipelineSamplerConfig
-{
-	fn as_create_info(&self) -> Result<SamplerCreateInfo, GenericEngineError>
-	{
-		let mut sampler_create_info = SamplerCreateInfo::default();
-		if let Some(f) = self.mag_filter.as_ref() {
-			sampler_create_info.mag_filter = filter_str_to_enum(f)?;
-		}
-		if let Some(f) = self.min_filter.as_ref() {
-			sampler_create_info.min_filter = filter_str_to_enum(f)?;
-		}
-		Ok(sampler_create_info)
-	}
-}
-
-/*#[derive(Deserialize)]
-struct PipelineBlendState
-{
-
-}*/
 
 #[derive(Deserialize)]
 struct PipelineConfig
@@ -286,15 +261,6 @@ enum PrimitiveTopologyDef
 	TriangleListWithAdjacency,
 	TriangleStripWithAdjacency,
 	PatchList,
-}
-
-fn filter_str_to_enum(filter_str: &str) -> Result<Filter, GenericEngineError>
-{
-	Ok(match filter_str {
-		"Nearest" => Filter::Nearest,
-		"Linear" => Filter::Linear,
-		_ => return Err("Invalid sampler filter".into()),
-	})
 }
 
 fn get_entry_point<'a>(

@@ -4,6 +4,5 @@ primitive_topology: TriangleStrip
 samplers:
 - set: 1
   binding: 1
-  mag_filter: Linear
-  min_filter: Linear
+  mag_linear: true
 
