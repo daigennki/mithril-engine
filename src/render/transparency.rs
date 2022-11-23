@@ -3,7 +3,7 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents,
@@ -204,6 +204,9 @@ pub struct MomentTransparencyRenderer
 	transparency_set: Arc<PersistentDescriptorSet>,
 	transparency_compositing_pl: super::pipeline::Pipeline,
 	compositing_rp: Arc<RenderPass>,
+
+	transparency_moments_cb: Mutex<Option<SecondaryAutoCommandBuffer>>,
+	transparency_cb: Mutex<Option<SecondaryAutoCommandBuffer>>,
 }
 impl MomentTransparencyRenderer
 {
@@ -344,6 +347,8 @@ impl MomentTransparencyRenderer
 			transparency_set,
 			transparency_compositing_pl,
 			compositing_rp,
+			transparency_moments_cb: Mutex::new(None),
+			transparency_cb: Mutex::new(None),
 		})
 	}
 
@@ -384,12 +389,13 @@ impl MomentTransparencyRenderer
 	/// Composite the drawn transparent objects from the secondary command buffer onto the final framebuffer.
 	pub fn process_transparency(
 		&self, 
-		moments_cb: SecondaryAutoCommandBuffer,
-		transparency_cb: SecondaryAutoCommandBuffer, 
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		framebuffer: Arc<Framebuffer>,
 	) -> Result<(), GenericEngineError>
 	{
+		let moments_cb = self.transparency_moments_cb.lock().unwrap().take().unwrap();
+		let transparency_cb = self.transparency_cb.lock().unwrap().take().unwrap();
+
 		let moments_rp_info = RenderPassBeginInfo {
 			clear_values: vec![
 				Some(ClearValue::Float([1.0, 1.0, 1.0, 1.0])), // accum
@@ -427,8 +433,8 @@ impl MomentTransparencyRenderer
 		cb.begin_render_pass(moments_rp_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands(moments_cb)?
 			.end_render_pass()?
-			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?;
-		cb.execute_commands(transparency_cb)?
+			.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
+			.execute_commands(transparency_cb)?
 			.end_render_pass()?
 			.begin_render_pass(comp_rp_info, SubpassContents::Inline)?
 			.set_viewport(0, [viewport]);
@@ -437,6 +443,15 @@ impl MomentTransparencyRenderer
 		cb.draw(3, 1, 0, 0)?
 			.end_render_pass()?;
 		Ok(())
+	}
+
+	pub fn add_transparency_moments_cb(&self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		*self.transparency_moments_cb.lock().unwrap() = Some(command_buffer)
+	}
+	pub fn add_transparency_cb(&self, command_buffer: SecondaryAutoCommandBuffer)
+	{
+		*self.transparency_cb.lock().unwrap() = Some(command_buffer)
 	}
 
 	pub fn get_moments_descriptor_set(&self) -> Arc<PersistentDescriptorSet>

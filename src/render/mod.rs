@@ -457,15 +457,13 @@ impl RenderContext
 		self.lock_trm()?.add_cb(cb);
 		Ok(())
 	}
-	pub fn add_transparency_moments_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	pub fn add_transparency_moments_cb(&self, cb: SecondaryAutoCommandBuffer)
 	{
-		self.lock_trm()?.add_transparency_moments_cb(cb);
-		Ok(())
+		self.transparency_renderer.add_transparency_moments_cb(cb);
 	}
-	pub fn add_transparency_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	pub fn add_transparency_cb(&self, cb: SecondaryAutoCommandBuffer)
 	{
-		self.lock_trm()?.add_transparency_cb(cb);
-		Ok(())
+		self.transparency_renderer.add_transparency_cb(cb);
 	}
 	pub fn add_ui_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
 	{
@@ -490,14 +488,10 @@ impl RenderContext
 	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
 		let command_buffers;
-		let transparency_moments_cb;
-		let transparency_cb;
 		let ui_cb;
 		{
 			let mut trm_locked = self.lock_trm()?;
 			command_buffers = trm_locked.take_built_command_buffers();
-			transparency_moments_cb = trm_locked.take_transparency_moments_cb().unwrap();
-			transparency_cb = trm_locked.take_transparency_cb().unwrap();
 			ui_cb = trm_locked.take_ui_cb();
 		}
 
@@ -517,8 +511,6 @@ impl RenderContext
 			.end_render_pass()?;
 
 		self.transparency_renderer.process_transparency(
-			transparency_moments_cb,
-			transparency_cb,
 			&mut primary_cb_builder,
 			self.main_render_target.framebuffer().clone(),
 		)?;
@@ -645,8 +637,6 @@ impl From<CopyBufferToImageInfo> for StagingWork
 struct ThreadedRenderingManager
 {
 	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
-	transparency_moments_cb: Option<SecondaryAutoCommandBuffer>,
-	transparency_cb: Option<SecondaryAutoCommandBuffer>,
 	ui_cb: Vec<SecondaryAutoCommandBuffer>,
 	default_capacity: usize,
 }
@@ -656,8 +646,6 @@ impl ThreadedRenderingManager
 	{
 		ThreadedRenderingManager {
 			built_command_buffers: Vec::with_capacity(default_capacity),
-			transparency_moments_cb: None,
-			transparency_cb: None,
 			ui_cb: Vec::with_capacity(2),
 			default_capacity,
 		}
@@ -669,14 +657,6 @@ impl ThreadedRenderingManager
 		self.built_command_buffers.push(command_buffer);
 	}
 
-	pub fn add_transparency_moments_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
-	{
-		self.transparency_moments_cb = Some(command_buffer)
-	}
-	pub fn add_transparency_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
-	{
-		self.transparency_cb = Some(command_buffer)
-	}
 	pub fn add_ui_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
 	{
 		self.ui_cb.push(command_buffer)
@@ -686,14 +666,6 @@ impl ThreadedRenderingManager
 	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
 	{
 		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
-	}
-	pub fn take_transparency_moments_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
-	{
-		self.transparency_moments_cb.take()
-	}
-	pub fn take_transparency_cb(&mut self) -> Option<SecondaryAutoCommandBuffer>
-	{
-		self.transparency_cb.take()
 	}
 	pub fn take_ui_cb(&mut self) -> Vec<SecondaryAutoCommandBuffer>
 	{

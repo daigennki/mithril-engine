@@ -286,7 +286,7 @@ fn draw_3d_transparent_moments(
 		}
 	}
 
-	render_ctx.add_transparency_moments_cb(command_buffer.build()?)?;
+	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
 
@@ -316,7 +316,7 @@ fn draw_3d_transparent(
 		}
 	}
 
-	render_ctx.add_transparency_cb(command_buffer.build()?)?;
+	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
 fn draw_ui(
