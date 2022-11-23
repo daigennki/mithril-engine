@@ -155,10 +155,6 @@ impl RenderContext
 		);
 		Ok(())
 	}
-	pub fn load_mat_pipeline_manual(&mut self, name: &str, pipeline: pipeline::Pipeline)
-	{
-		self.material_pipelines.insert(name.to_string(), pipeline);
-	}
 
 	/// Get a 3D model from `path`, relative to the current working directory.
 	/// This attempts loading if it hasn't been loaded into memory yet.
@@ -239,17 +235,6 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/*/// Create a new CPU-accessible buffer, initialized with `data` for `usage`.
-	pub fn new_cpu_buffer_from_iter<I, T>(&self, data: I, usage: BufferUsage)
-		-> Result<Arc<CpuAccessibleBuffer<[T]>>, DeviceMemoryError>
-		where
-			I: IntoIterator<Item = T>,
-			I::IntoIter: ExactSizeIterator,
-			[T]: vulkano::buffer::BufferContents
-	{
-		CpuAccessibleBuffer::from_iter(self.graphics_queue.device().clone(), usage, false, data)
-	}*/
-
 	/// Create a new pair of CPU-accessible buffer pool and device-local buffer, which will be initialized with `data` for `usage`.
 	/// The CPU-accessible buffer pool is used for staging, from which data will be copied to the device-local buffer.
 	pub fn new_cpu_buffer_from_data<T>(
@@ -272,15 +257,6 @@ impl RenderContext
 			.device()
 			.active_queue_family_indices()
 			.into()
-	}
-
-	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
-	{
-		&self.descriptor_set_allocator
-	}
-	pub fn memory_allocator(&self) -> &StandardMemoryAllocator
-	{
-		&self.memory_allocator
 	}
 
 	pub fn new_descriptor_set(
@@ -444,18 +420,9 @@ impl RenderContext
 		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
-	fn lock_trm(&self) -> Result<std::sync::MutexGuard<'_, ThreadedRenderingManager>, ThreadedRenderingLockError>
+	pub fn add_cb(&self, cb: SecondaryAutoCommandBuffer)
 	{
-		let lock_guard = self
-			.trm
-			.lock()
-			.map_err(|e| ThreadedRenderingLockError::new(e))?;
-		Ok(lock_guard)
-	}
-	pub fn add_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
-	{
-		self.lock_trm()?.add_cb(cb);
-		Ok(())
+		self.trm.lock().unwrap().add_cb(cb);
 	}
 	pub fn add_transparency_moments_cb(&self, cb: SecondaryAutoCommandBuffer)
 	{
@@ -465,10 +432,9 @@ impl RenderContext
 	{
 		self.transparency_renderer.add_transparency_cb(cb);
 	}
-	pub fn add_ui_cb(&self, cb: SecondaryAutoCommandBuffer) -> Result<(), ThreadedRenderingLockError>
+	pub fn add_ui_cb(&self, cb: SecondaryAutoCommandBuffer)
 	{
-		self.lock_trm()?.add_ui_cb(cb);
-		Ok(())
+		self.trm.lock().unwrap().add_ui_cb(cb);
 	}
 
 	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
@@ -487,14 +453,6 @@ impl RenderContext
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
-		let command_buffers;
-		let ui_cb;
-		{
-			let mut trm_locked = self.lock_trm()?;
-			command_buffers = trm_locked.take_built_command_buffers();
-			ui_cb = trm_locked.take_ui_cb();
-		}
-
 		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.main_render_target.framebuffer().clone());
 		rp_begin_info.clear_values = vec![None, None];
 
@@ -505,6 +463,7 @@ impl RenderContext
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
 
+		let command_buffers = self.trm.lock().unwrap().take_built_command_buffers();
 		primary_cb_builder
 			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(command_buffers)?
@@ -515,8 +474,9 @@ impl RenderContext
 			self.main_render_target.framebuffer().clone(),
 		)?;
 
-		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.next_swapchain_image()?);
+		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
 		rp_begin_info.render_pass = self.main_render_target.ui_rp().clone();
+		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.next_swapchain_image()?);
 		primary_cb_builder
 			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(ui_cb)?
@@ -525,6 +485,15 @@ impl RenderContext
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
+	}
+
+	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
+	{
+		&self.descriptor_set_allocator
+	}
+	pub fn memory_allocator(&self) -> &StandardMemoryAllocator
+	{
+		&self.memory_allocator
 	}
 
 	/// Check if the window has been resized since the last frame submission.
@@ -590,27 +559,6 @@ impl std::fmt::Display for PipelineNotLoaded
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
 	{
 		write!(f, "the specified pipeline is not loaded")
-	}
-}
-
-#[derive(Debug)]
-pub struct ThreadedRenderingLockError
-{
-	cause: String,
-}
-impl ThreadedRenderingLockError
-{
-	pub fn new<T>(e: std::sync::PoisonError<T>) -> Self
-	{
-		Self { cause: format!("{}", e) }
-	}
-}
-impl std::error::Error for ThreadedRenderingLockError {}
-impl std::fmt::Display for ThreadedRenderingLockError
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
-	{
-		write!(f, "failed to lock ThreadedRenderingManager: {}", &self.cause)
 	}
 }
 

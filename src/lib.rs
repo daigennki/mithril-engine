@@ -262,7 +262,7 @@ fn draw_3d(
 		}
 	}
 
-	render_ctx.add_cb(command_buffer.build()?)?;
+	render_ctx.add_cb(command_buffer.build()?);
 	Ok(())
 }
 fn draw_3d_transparent_moments(
@@ -342,7 +342,7 @@ fn draw_ui(
 		}
 	}
 
-	render_ctx.add_ui_cb(command_buffer.build()?)?;
+	render_ctx.add_ui_cb(command_buffer.build()?);
 	Ok(())
 }
 

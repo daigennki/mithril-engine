@@ -52,7 +52,7 @@ impl EguiRenderer
 		let egui_cb = self
 			.egui_gui
 			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
-		render_ctx.add_ui_cb(egui_cb)?;
+		render_ctx.add_ui_cb(egui_cb);
 
 		Ok(())
 	}
