@@ -70,7 +70,7 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	inst_create_info.engine_version = inst_create_info.application_version.clone();
 	inst_create_info.enabled_extensions = vk_ext;
 	inst_create_info.enabled_layers = vk_layers;
-	inst_create_info.max_api_version = Some(vulkano::Version::V1_2);
+	inst_create_info.max_api_version = Some(vulkano::Version::V1_3);
 
 	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
 }
@@ -166,7 +166,7 @@ pub fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>),
 		image_cube_array: true,
 		independent_blend: true,
 		sampler_anisotropy: true,
-		texture_compression_bc: true, // change this to ASTC or ETC2 if we want to support mobile platforms
+		texture_compression_bc: true,
 		geometry_shader: true,
 		..Default::default()
 	};
