@@ -269,8 +269,8 @@ impl MomentTransparencyRenderer
 			]
 		)?;
 		
-		let moments_blend = ColorBlendState::new(2).blend_additive();
-		moments_blend.attachments[0].blend.unwrap().alpha_op = BlendOp::Add;
+		let mut moments_blend = ColorBlendState::new(2).blend_additive();
+		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_op = BlendOp::Add;
 		let moments_pl = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleList,
 			"basic_3d_nonorm.vert.spv".into(),
