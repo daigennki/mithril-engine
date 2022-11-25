@@ -205,7 +205,7 @@ pub struct MomentTransparencyRenderer
 impl MomentTransparencyRenderer
 {
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: &StandardDescriptorSetAllocator,
+		memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 		color_image: Arc<AttachmentImage>, depth_image: Arc<AttachmentImage>, main_sampler: Arc<Sampler>
 	) -> Result<Self, GenericEngineError>
 	{
@@ -245,7 +245,7 @@ impl MomentTransparencyRenderer
 				},
 				depth: {
 					load: Load,
-					store: DontCare,
+					store: Store,
 					format: Format::D16_UNORM,
 					samples: 1,
 				}
@@ -263,7 +263,7 @@ impl MomentTransparencyRenderer
 				},
 				{	// MBOIT stage 4: composite transparency image onto opaque image
 					color: [color],
-					depth_stencil: { depth },
+					depth_stencil: {},
 					input: [accum, revealage]
 				}
 			]
@@ -280,6 +280,7 @@ impl MomentTransparencyRenderer
 			Subpass::from(moments_rp.clone(), 0).unwrap(),
 			CompareOp::Less,
 			false,
+			descriptor_set_allocator.clone()
 		)?;
 
 		let wboit_compositing_blend = ColorBlendState::new(1).blend_alpha();
@@ -292,10 +293,11 @@ impl MomentTransparencyRenderer
 			Subpass::from(moments_rp.clone(), 2).unwrap(),
 			CompareOp::Always,
 			false,
+			descriptor_set_allocator
 		)?;
 
 		let (moments_fb, stage3_inputs, stage4_inputs) = create_mboit_framebuffer(
-			memory_allocator, descriptor_set_allocator, moments_rp, color_image, depth_image, &transparency_compositing_pl
+			memory_allocator, moments_rp, color_image, depth_image, &transparency_compositing_pl
 		)?;
 
 		Ok(MomentTransparencyRenderer {
@@ -311,13 +313,13 @@ impl MomentTransparencyRenderer
 
 	/// Resize the output image to match a resized depth image.
 	pub fn resize_image(
-		&mut self, memory_allocator: &StandardMemoryAllocator, desc_set_allocator: &StandardDescriptorSetAllocator, 
-		color_image: Arc<AttachmentImage>, depth_image: Arc<AttachmentImage>,
+		&mut self, memory_allocator: &StandardMemoryAllocator, color_image: Arc<AttachmentImage>, 
+		depth_image: Arc<AttachmentImage>,
 	) -> Result<(), GenericEngineError>
 	{
 		let moments_rp = self.moments_fb.render_pass().clone();
 		let (moments_fb, stage3_inputs, stage4_inputs) = create_mboit_framebuffer(
-			memory_allocator, desc_set_allocator, moments_rp, color_image, depth_image, &self.transparency_compositing_pl
+			memory_allocator, moments_rp, color_image, depth_image, &self.transparency_compositing_pl
 		)?;
 		self.moments_fb = moments_fb;
 		self.stage3_inputs = stage3_inputs;
@@ -325,11 +327,9 @@ impl MomentTransparencyRenderer
 		Ok(())
 	}
 
-	/// Composite the drawn transparent objects from the secondary command buffer onto the final framebuffer.
+	/// Do the OIT processing using the secondary command buffers that have already been received.
 	pub fn process_transparency(
-		&self, 
-		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		framebuffer: Arc<Framebuffer>,
+		&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		let moments_cb = self.transparency_moments_cb.lock().unwrap().take().unwrap();
@@ -346,7 +346,7 @@ impl MomentTransparencyRenderer
 			],
 			..RenderPassBeginInfo::framebuffer(self.moments_fb.clone())
 		};
-		let fb_extent = framebuffer.extent();
+		let fb_extent = self.moments_fb.extent();
 		let viewport = Viewport {
 			origin: [0.0, 0.0],
 			dimensions: [
@@ -395,10 +395,9 @@ impl MomentTransparencyRenderer
 }
 
 fn create_mboit_framebuffer(
-	memory_allocator: &StandardMemoryAllocator, desc_set_allocator: &StandardDescriptorSetAllocator,
-	render_pass: Arc<RenderPass>, color_img: Arc<AttachmentImage>, depth_img: Arc<AttachmentImage>,
-	stage4_pl: &super::pipeline::Pipeline,
-	) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), GenericEngineError>
+	memory_allocator: &StandardMemoryAllocator, render_pass: Arc<RenderPass>, color_img: Arc<AttachmentImage>, 
+	depth_img: Arc<AttachmentImage>, stage4_pl: &super::pipeline::Pipeline,
+) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), GenericEngineError>
 {
 	let extent = depth_img.dimensions().width_height();
 	let oit_images_usage = ImageUsage { transient_attachment: true, input_attachment: true, ..Default::default() };
@@ -424,11 +423,11 @@ fn create_mboit_framebuffer(
 		..Default::default()
 	};
 
-	let stage3_inputs = stage4_pl.new_descriptor_set(desc_set_allocator, 3, [
+	let stage3_inputs = stage4_pl.new_descriptor_set(3, [
 		WriteDescriptorSet::image_view(0, moments_view),
 		WriteDescriptorSet::image_view(1, od_view),
 	])?;
-	let stage4_inputs = stage4_pl.new_descriptor_set(desc_set_allocator, 3, [
+	let stage4_inputs = stage4_pl.new_descriptor_set(3, [
 		WriteDescriptorSet::image_view(0, accum_view),
 		WriteDescriptorSet::image_view(1, revealage_view),
 	])?;

@@ -44,6 +44,7 @@ impl Skybox
 			subpass,
 			CompareOp::Always,
 			true,
+			render_ctx.descriptor_set_allocator().clone(),
 		)?;
 
 		// sky texture cubemap
@@ -52,7 +53,7 @@ impl Skybox
 		];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = render_ctx.new_cubemap_texture(face_paths)?;
-		let descriptor_set = sky_pipeline.new_descriptor_set(render_ctx.descriptor_set_allocator(), 0, [
+		let descriptor_set = sky_pipeline.new_descriptor_set(0, [
 			WriteDescriptorSet::image_view(1, sky_cubemap.view().clone()),
 		])?;
 

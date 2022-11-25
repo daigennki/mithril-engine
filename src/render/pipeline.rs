@@ -32,6 +32,7 @@ use crate::GenericEngineError;
 
 pub struct Pipeline
 {
+	descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	pipeline: Arc<GraphicsPipeline>,
 
 	/// similar pipeline, except for the fragment shader being capable of processing Order-Independent Transparency
@@ -48,6 +49,7 @@ impl Pipeline
 		subpass: Subpass,
 		depth_op: CompareOp,
 		depth_write: bool,
+		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = subpass.render_pass().device().clone();
@@ -139,12 +141,17 @@ impl Pipeline
 			None
 		};
 
-		Ok(Pipeline { pipeline, transparency_pipeline })
+		Ok(Pipeline { 
+			descriptor_set_allocator, 
+			pipeline, 
+			transparency_pipeline 
+		})
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(
-		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>, tex_sampler: Arc<Sampler>
+		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>, tex_sampler: Arc<Sampler>,
+		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	) -> Result<Self, GenericEngineError>
 	{
 		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
@@ -178,6 +185,7 @@ impl Pipeline
 			subpass,
 			depth_op,
 			true,
+			descriptor_set_allocator,
 		)
 	}
 
@@ -204,7 +212,7 @@ impl Pipeline
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
 	pub fn new_descriptor_set(
-		&self, allocator: &StandardDescriptorSetAllocator, set_number: usize,
+		&self, set_number: usize,
 		writes: impl IntoIterator<Item = WriteDescriptorSet>,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
@@ -215,7 +223,7 @@ impl Pipeline
 			.get(set_number)
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
-		Ok(PersistentDescriptorSet::new(allocator, set_layout, writes)?)
+		Ok(PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes)?)
 	}
 }
 

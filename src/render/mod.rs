@@ -45,7 +45,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,         // this also owns the logical device
 	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
-	descriptor_set_allocator: StandardDescriptorSetAllocator,
+	descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
@@ -93,7 +93,7 @@ impl RenderContext
 		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
 
-		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone());
+		let descriptor_set_allocator = Arc::new(StandardDescriptorSetAllocator::new(vk_dev.clone()));
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// TODO: we might not need very many primary command buffers here
@@ -108,7 +108,7 @@ impl RenderContext
 
 		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
-			&memory_allocator, &descriptor_set_allocator,
+			&memory_allocator, descriptor_set_allocator.clone(),
 			main_render_target.color_image().clone(),
 			main_render_target.depth_image().clone(),
 			sampler_linear.clone()
@@ -150,7 +150,8 @@ impl RenderContext
 				filename,
 				self.get_main_render_pass().first_subpass(),
 				Some(Subpass::from(transparency_rp, 1).unwrap()),
-				self.sampler_linear.clone()
+				self.sampler_linear.clone(),
+				self.descriptor_set_allocator.clone(),
 			)?,
 		);
 		Ok(())
@@ -266,7 +267,7 @@ impl RenderContext
 		self.material_pipelines
 			.get(pipeline_name)
 			.ok_or(PipelineNotLoaded)?
-			.new_descriptor_set(&self.descriptor_set_allocator, set, writes)
+			.new_descriptor_set(set, writes)
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
@@ -356,7 +357,6 @@ impl RenderContext
 
 			self.transparency_renderer.resize_image(
 				&self.memory_allocator,
-				&self.descriptor_set_allocator,
 				self.main_render_target.color_image().clone(),
 				self.main_render_target.depth_image().clone(),
 			)?;
@@ -467,10 +467,7 @@ impl RenderContext
 			.execute_commands_from_vec(command_buffers)?
 			.end_render_pass()?;
 
-		self.transparency_renderer.process_transparency(
-			&mut primary_cb_builder,
-			self.main_render_target.framebuffer().clone(),
-		)?;
+		self.transparency_renderer.process_transparency(&mut primary_cb_builder)?;
 
 		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
 		rp_begin_info.render_pass = self.main_render_target.ui_rp().clone();
@@ -485,7 +482,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
+	pub fn descriptor_set_allocator(&self) -> &Arc<StandardDescriptorSetAllocator>
 	{
 		&self.descriptor_set_allocator
 	}
