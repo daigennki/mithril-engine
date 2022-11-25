@@ -31,7 +31,7 @@ use vulkano::format::Format;
 use vulkano::image::{view::ImageView, AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::GpuFuture;
 use winit::window::WindowBuilder;
@@ -108,8 +108,8 @@ impl RenderContext
 
 		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
-			&memory_allocator,
-			&descriptor_set_allocator,
+			&memory_allocator, &descriptor_set_allocator,
+			main_render_target.color_image().clone(),
 			main_render_target.depth_image().clone(),
 			sampler_linear.clone()
 		)?;
@@ -149,7 +149,7 @@ impl RenderContext
 			pipeline::Pipeline::new_from_yaml(
 				filename,
 				self.get_main_render_pass().first_subpass(),
-				Some(transparency_rp.first_subpass()),
+				Some(Subpass::from(transparency_rp, 1).unwrap()),
 				self.sampler_linear.clone()
 			)?,
 		);
@@ -270,16 +270,16 @@ impl RenderContext
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
-	/// It will be set up for drawing to `framebuffer` in its first subpass,
+	/// It will be set up for drawing to `framebuffer` in its subpass number `subpass`,
 	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
 	fn new_secondary_command_buffer(
-		&self, framebuffer: Arc<Framebuffer>, render_pass: Option<Arc<RenderPass>>
+		&self, framebuffer: Arc<Framebuffer>, render_pass: Option<Arc<RenderPass>>, subpass: u32,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		let use_rp = render_pass
 			.unwrap_or_else(|| framebuffer.render_pass().clone());
 		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
-			subpass: use_rp.first_subpass(),
+			subpass: Subpass::from(use_rp, subpass).unwrap(),
 			framebuffer: Some(framebuffer.clone()),
 		});
 		let inheritance = CommandBufferInheritanceInfo {
@@ -308,7 +308,7 @@ impl RenderContext
 	}
 	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None)
+		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None, 0)
 	}
 
 	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
@@ -317,15 +317,18 @@ impl RenderContext
 		&self
 	)-> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.moments_framebuffer(), None)?;
+		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None, 0)?;
 		self.transparency_renderer.get_moments_pipeline().bind(&mut cb);
 		Ok(cb)
 	}
 	pub fn record_transparency_draws(
-		&self
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+		&self, first_bind_pipeline: &pipeline::Pipeline
+	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None)
+		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None, 1)?;
+		first_bind_pipeline.bind_transparency(&mut cb)?;
+		bind_descriptor_set(&mut cb, 3, vec![self.transparency_renderer.get_stage3_inputs()])?;
+		Ok(cb)
 	}
 	pub fn record_ui_draws(
 		&self
@@ -333,15 +336,9 @@ impl RenderContext
 	{
 		self.new_secondary_command_buffer(
 			self.main_render_target.framebuffer().clone(), 
-			Some(self.main_render_target.ui_rp().clone())
+			Some(self.main_render_target.ui_rp().clone()),
+			0
 		)
-	}
-
-	pub fn bind_moments_set(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
-	) -> Result<(), PipelineExecutionError>
-	{
-		bind_descriptor_set(cb, 3, self.transparency_renderer.get_moments_descriptor_set())
 	}
 
 	/// Tell the swapchain to go to the next image.
@@ -360,6 +357,7 @@ impl RenderContext
 			self.transparency_renderer.resize_image(
 				&self.memory_allocator,
 				&self.descriptor_set_allocator,
+				self.main_render_target.color_image().clone(),
 				self.main_render_target.depth_image().clone(),
 			)?;
 		}

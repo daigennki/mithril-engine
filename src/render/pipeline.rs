@@ -130,7 +130,11 @@ impl Pipeline
 			})
 			.transpose()?;*/
 		let transparency_pipeline = if let Some(bt) = builder_transparency {
-			Some(bt.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?)
+			let built_transparency_pipeline = bt.with_auto_layout(
+				vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers)
+			)?;
+			print_pipeline_descriptors_info(&built_transparency_pipeline);
+			Some(built_transparency_pipeline)
 		} else {
 			None
 		};
@@ -147,7 +151,6 @@ impl Pipeline
 
 		let yaml_reader = File::open(Path::new("shaders").join(yaml_filename))?;
 		let deserialized: PipelineConfig = serde_yaml::from_reader(yaml_reader)?;
-		let vk_dev = subpass.render_pass().device().clone();
 		let generated_samplers = deserialized
 			.samplers
 			.iter()

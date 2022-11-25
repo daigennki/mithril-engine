@@ -295,13 +295,8 @@ fn draw_3d_transparent(
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.record_transparency_draws()?;
-
 	// Draw the transparent objects.
-	render_ctx
-		.get_pipeline("PBR")?
-		.bind_transparency(&mut command_buffer)?;
-	render_ctx.bind_moments_set(&mut command_buffer)?;
+	let mut command_buffer = render_ctx.record_transparency_draws(render_ctx.get_pipeline("PBR")?)?;
 
 	camera.bind(&mut command_buffer)?;
 	let projview = camera.get_projview();
