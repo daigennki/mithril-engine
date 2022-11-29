@@ -26,7 +26,7 @@ pub trait DeferMaterialLoading
 
 	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>;
 
-	fn get_base_color(&self) -> Vec4;
+	fn get_base_color(&self) -> Option<Vec4>;
 	fn set_base_color(&mut self, color: Vec4, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
 }
 

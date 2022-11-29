@@ -52,11 +52,11 @@ impl DeferMaterialLoading for PBR
 		self.descriptor_set.as_ref()
 	}
 
-	fn get_base_color(&self) -> Vec4
+	fn get_base_color(&self) -> Option<Vec4>
 	{
 		match &self.base_color {
-			ColorInput::Color(c) => *c,
-			ColorInput::Texture(t) => Vec4::new(1.0, 1.0, 1.0, 1.0),
+			ColorInput::Color(c) => Some(*c),
+			_ => None,
 		}
 	}
 	fn set_base_color(&mut self, color: Vec4, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
