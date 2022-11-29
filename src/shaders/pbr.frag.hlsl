@@ -37,16 +37,20 @@ float3 calc_dl(float3 tex_diffuse, float3 normal)
 PS_OUTPUT main(PS_INPUT input)
 {
 	float4 tex_color = base_color.Sample(sampler0, input.uv);
+
+#ifdef TRANSPARENCY_PASS
 	tex_color.rgb *= tex_color.a;
+#endif
+
 	float3 shaded = calc_dl(tex_color.rgb, input.normal);
-	float4 with_alpha = float4(shaded, tex_color.a);
 
 #ifdef TRANSPARENCY_PASS
 	// `write_transparent_pixel` must be defined in the file that defines `TRANSPARENCY_PASS`
+	float4 with_alpha = float4(shaded, tex_color.a);
 	return write_transparent_pixel(with_alpha, input.pos.z, input.pos.xy);
 #else
 	PS_OUTPUT output;
-	output.color = with_alpha;
+	output.color = float4(shaded, 1.0);
 	return output;
 #endif
 }

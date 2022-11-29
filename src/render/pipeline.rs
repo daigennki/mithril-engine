@@ -86,9 +86,7 @@ impl Pipeline
 		let mut builder_transparency = None;
 		if let Some((fs_filename, blend_state)) = fs_info {
 			fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(fs_filename))?;
-			pipeline_builder = pipeline_builder
-				.fragment_shader(get_entry_point(&fs, "main")?, ())
-				.color_blend_state(blend_state);
+			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
 
 			// use a different fragment shader for OIT
 			if let Some((ft, ft_subpass)) = fs_transparency_info {
@@ -117,6 +115,9 @@ impl Pipeline
 						.color_blend_state(wboit_accum_blend)
 						.render_pass(ft_subpass),
 				);
+			} else {
+				// only enable color blending for the basic fragment shader if there isn't a separate transparency shader
+				pipeline_builder = pipeline_builder.color_blend_state(blend_state);
 			}
 		}
 
