@@ -19,7 +19,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
-use component::camera::Camera;
+use component::camera::{Camera, CameraManager, CameraFov};
 use component::ui;
 use component::ui::canvas::Canvas;
 use component::DeferGpuResourceLoading;
@@ -62,12 +62,15 @@ impl GameContext
 
 		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
 
+		let camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
+
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
 		let fps_ui_ent = world.add_entity(ui::new_text(&mut render_ctx, "0 fps".to_string(), 32.0, [-500, -320].into())?);
 
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
+		world.add_unique(camera_manager);
 		world.add_unique(render_ctx);
 
 		Ok(GameContext {
@@ -193,7 +196,6 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 
 	// finish loading GPU resources for components
 	// TODO: maybe figure out a way to get trait objects from shipyard
-	world.run(|mut camera: UniqueViewMut<Camera>| camera.finish_loading(render_ctx))?;
 	world.run(
 		|mut transforms: ViewMut<component::Transform>,
 		 mut meshes: ViewMut<component::mesh::Mesh>|
@@ -212,16 +214,13 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 }
 
 fn prepare_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, mut camera: UniqueViewMut<Camera>, mut canvas: UniqueViewMut<Canvas>,
-	mut ui_transforms: ViewMut<ui::Transform>,
+	mut render_ctx: UniqueViewMut<render::RenderContext>, cameras: View<Camera>, transforms: View<component::Transform>,
+	mut canvas: UniqueViewMut<Canvas>, mut ui_transforms: ViewMut<ui::Transform>,
+	mut camera_manager: UniqueViewMut<CameraManager>,
 ) -> Result<(), GenericEngineError>
 {
 	if render_ctx.window_resized() {
 		let d = render_ctx.swapchain_dimensions();
-
-		// If the screen size changed, update anything relying on the screen size.
-		camera.update_window_size(d[0], d[1], &mut render_ctx)?;
-
 		canvas.on_screen_resize(d[0], d[1]);
 		for t in (&mut ui_transforms).iter() {
 			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
@@ -234,23 +233,36 @@ fn prepare_primary_render(
 		}
 	}
 
+	// for now, just choose the first camera in the world.
+	// TODO: figure out a better way to choose the default camera
+	if let Some((eid, _)) = cameras.iter().with_id().next() {
+		camera_manager.set_active(eid);
+	}
+
+	let active_camera_id = camera_manager.active_camera();
+	if let Ok(cam) = cameras.get(active_camera_id) {
+		if let Ok(t) = transforms.get(active_camera_id) {
+			camera_manager.update(&mut render_ctx, t.position(), t.rotation_quat(), cam.fov)?;
+		}
+	}
+
 	Ok(())
 }
 fn draw_3d(
-	render_ctx: UniqueView<render::RenderContext>, skybox: UniqueView<render::skybox::Skybox>, camera: UniqueView<Camera>,
-	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>, skybox: UniqueView<render::skybox::Skybox>, 
+	camera_manager: UniqueView<CameraManager>, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_main_draws()?;
 
 	// Draw the skybox. This will effectively clear the framebuffer.
-	skybox.draw(&mut command_buffer, &camera)?;
+	skybox.draw(&mut command_buffer, &camera_manager)?;
 
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	render_ctx.get_pipeline("PBR")?.bind(&mut command_buffer);
-	camera.bind(&mut command_buffer)?;
-	let projview = camera.get_projview();
+	camera_manager.bind(&mut command_buffer)?;
+	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
 			if !c.has_transparency() {
@@ -266,15 +278,15 @@ fn draw_3d(
 	Ok(())
 }
 fn draw_3d_transparent_moments(
-	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
-	meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>, camera_manager: UniqueView<CameraManager>, 
+	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
 	
 	// Draw the transparent objects.
-	camera.bind(&mut command_buffer)?;
-	let projview = camera.get_projview();
+	camera_manager.bind(&mut command_buffer)?;
+	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
 			if c.has_transparency() {
@@ -291,15 +303,15 @@ fn draw_3d_transparent_moments(
 }
 
 fn draw_3d_transparent(
-	render_ctx: UniqueView<render::RenderContext>, camera: UniqueView<Camera>, transforms: View<component::Transform>,
-	meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>, camera_manager: UniqueView<CameraManager>, 
+	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
 	let mut command_buffer = render_ctx.record_transparency_draws(render_ctx.get_pipeline("PBR")?)?;
 
-	camera.bind(&mut command_buffer)?;
-	let projview = camera.get_projview();
+	camera_manager.bind(&mut command_buffer)?;
+	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
 			if c.has_transparency() {

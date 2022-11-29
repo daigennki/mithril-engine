@@ -92,6 +92,10 @@ impl Transform
 	{
 		self.rotation
 	}
+	pub fn rotation_quat(&self) -> &Quat
+	{
+		&self.rot_quat
+	}
 	pub fn get_matrix(&self) -> Mat4
 	{
 		self.model_mat

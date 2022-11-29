@@ -1,9 +1,13 @@
 uniques:
-- Camera:
-    position: [-13.0, -2.0, 3.0]
-    target: [-5.0, -2.0, 3.0]
 
 entities:
+- 
+  - Transform:
+      position: [-13.0, -2.0, 3.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [0.0, 0.0, -90.0]
+  - Camera:
+      
 - 
   - Transform:
       position: [0.0, 0.0, 0.0]
@@ -45,5 +49,3 @@ entities:
   - Mesh:
       model_path: cube.glb
       transparent: true
-
-
