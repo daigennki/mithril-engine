@@ -109,8 +109,17 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 		}
 	}
 
-	// Try to use a discrete GPU. If there is no discrete GPU, use an integrated GPU instead.
-	let physical_device = dgpu.or(igpu).ok_or("No GPUs were found!")?;
+	// If the "-prefer_igp" argument was provided, prefer the integrated GPU over the discrete GPU.
+	let prefer_igp = std::env::args()
+		.find(|arg| arg == "-prefer_igp")
+		.is_some();
+
+	let physical_device = if prefer_igp {
+		igpu.or(dgpu).ok_or("No GPUs were found!")?
+	} else {
+		// Try to use a discrete GPU. If there is no discrete GPU, use an integrated GPU instead.
+		dgpu.or(igpu).ok_or("No GPUs were found!")?
+	};
 	log::info!("Using physical device: {}", physical_device.properties().device_name);
 	Ok(physical_device)
 }

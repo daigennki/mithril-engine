@@ -51,8 +51,6 @@ impl GameContext
 		setup_log(org_name, game_name)?;
 
 		log::info!("--- Initializing MithrilEngine... ---");
-		// get command line arguments
-		// let args: Vec<String> = std::env::args().collect();
 
 		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 		render_ctx.load_material_pipeline("UI.yaml")?;
