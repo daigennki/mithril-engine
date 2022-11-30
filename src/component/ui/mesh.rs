@@ -23,7 +23,7 @@ pub struct Mesh
 }
 impl Mesh
 {
-	pub fn new(render_ctx: &mut RenderContext, tex: Texture) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, tex: Arc<Texture>) -> Result<Self, GenericEngineError>
 	{
 		// resize position vertices according to texture dimensions
 		let dimensions = UVec2::from_array(tex.dimensions().width_height()).as_vec2();
@@ -32,7 +32,7 @@ impl Mesh
 	}
 
 	pub fn new_from_corners(
-		render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Texture,
+		render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Arc<Texture>,
 	) -> Result<Self, GenericEngineError>
 	{
 		// vertex data

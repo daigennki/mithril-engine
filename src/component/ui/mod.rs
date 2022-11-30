@@ -74,7 +74,7 @@ pub fn new_image(render_ctx: &mut RenderContext, path: &str, pos: IVec2)
 	-> Result<(Transform, mesh::Mesh), GenericEngineError>
 {
 	let img_transform = Transform::new(pos, Vec2::new(1.0, 1.0));
-	let img_tex = render_ctx.new_texture(std::path::Path::new(path))?;
+	let img_tex = render_ctx.get_texture(std::path::Path::new(path))?;
 	let img_mesh = mesh::Mesh::new(render_ctx, img_tex)?;
 
 	Ok((img_transform, img_mesh))

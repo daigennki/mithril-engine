@@ -5,8 +5,6 @@
 ----------------------------------------------------------------------------- */
 pub mod pbr;
 
-use crate::render::{texture::Texture, RenderContext};
-use crate::GenericEngineError;
 use glam::*;
 use mithrilengine_derive::Material;
 use serde::Deserialize;
@@ -16,6 +14,10 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::format::Format;
 use vulkano::image::{ImageDimensions, MipmapsCount};
+
+use crate::render::{texture::Texture, RenderContext};
+use crate::GenericEngineError;
+
 
 /// Trait which allows materials to defer loading using `RenderContext` to after deserialization.
 /// This allows each `Material` implementor to define the loading function differently.
@@ -57,19 +59,19 @@ pub enum ColorInput
 }
 impl ColorInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Texture, GenericEngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, GenericEngineError>
 	{
 		match self {
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				render_ctx.new_texture_from_iter(
+				Ok(Arc::new(render_ctx.new_texture_from_iter(
 					color.to_array(),
 					Format::R32G32B32A32_SFLOAT,
 					ImageDimensions::Dim2d { width: 1, height: 1, array_layers: 1 },
 					MipmapsCount::One,
-				)
+				)?))
 			}
-			ColorInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
+			ColorInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
 	}
 }
@@ -84,19 +86,19 @@ enum SingleChannelInput
 }
 impl SingleChannelInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Texture, GenericEngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, GenericEngineError>
 	{
 		match self {
 			SingleChannelInput::Value(value) => {
 				// If the input is a single value, make a 1x1 greyscale texture with just the value.
-				render_ctx.new_texture_from_iter(
+				Ok(Arc::new(render_ctx.new_texture_from_iter(
 					[*value],
 					Format::R32_SFLOAT,
 					ImageDimensions::Dim2d { width: 1, height: 1, array_layers: 1 },
 					MipmapsCount::One,
-				)
+				)?))
 			}
-			SingleChannelInput::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
+			SingleChannelInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
 	}
 }

@@ -38,6 +38,7 @@ use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
 use model::Model;
+use texture::Texture;
 
 #[derive(shipyard::Unique)]
 pub struct RenderContext
@@ -61,8 +62,10 @@ pub struct RenderContext
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: HashMap<PathBuf, Arc<Model>>,
 
-	// User-accessible material pipelines; these will have their viewports resized
-	// when the window size changes
+	// Ditto, but with textures.
+	textures: HashMap<PathBuf, Arc<Texture>>,
+
+	// User-accessible material pipelines
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
 
 	// The final contents of this render target's color image will be blitted to the swapchain's image.
@@ -125,6 +128,7 @@ impl RenderContext
 			trm: Mutex::new(ThreadedRenderingManager::new(8)),
 			transfer_future: None,
 			models: HashMap::new(),
+			textures: HashMap::new(),
 			material_pipelines: HashMap::new(),
 			main_render_target,
 			transparency_renderer,
@@ -174,11 +178,22 @@ impl RenderContext
 		}
 	}
 
-	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>
+	/// Ditto, but with textures.
+	pub fn get_texture(&mut self, path: &Path) -> Result<Arc<Texture>, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::Texture::new(&self.memory_allocator, path)?;
-		self.submit_transfer(staging_work.into())?;
-		Ok(tex)
+		match self.textures.get(path) {
+			Some(tex) => {
+				log::info!("Reusing loaded texture '{}'", path.display());
+				Ok(tex.clone())
+			}
+			None => {
+				let (tex, staging_work) = texture::Texture::new(&self.memory_allocator, path)?;
+				self.submit_transfer(staging_work.into())?;
+				let tex_arc = Arc::new(tex);
+				self.textures.insert(path.to_path_buf(), tex_arc.clone());
+				Ok(tex_arc)
+			}
+		}
 	}
 
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
