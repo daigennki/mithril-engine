@@ -16,7 +16,6 @@ entities:
       is_static: true
   - Mesh:
       model_path: modular_terrain_island.glb
-      use_embedded_materials: true
 - 
   - Transform:
       position: [-9.0, -2.0, 3.0 ]

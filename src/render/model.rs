@@ -6,6 +6,7 @@
 use glam::*;
 use gltf::accessor::DataType;
 use gltf::Semantic;
+use serde::Deserialize;
 use std::any::TypeId;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -28,7 +29,7 @@ pub struct Model
 }
 impl Model
 {
-	pub fn new(render_ctx: &mut RenderContext, path: &Path, use_embedded_materials: bool) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> Result<Self, GenericEngineError>
 	{
 		let parent_folder = path.parent().unwrap();
 
@@ -89,7 +90,7 @@ impl Model
 				Ok(Model {
 					materials: doc
 						.materials()
-						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx, use_embedded_materials))
+						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
 						.collect::<Result<_, _>>()?,
 					submeshes,
 					vertex_buffers: vec![
@@ -176,23 +177,39 @@ impl Model
 	Ok(Box::new(loaded_mat))
 }*/
 
+#[derive(Deserialize)]
+struct MaterialExtras
+{
+	#[serde(default)]
+	external: i32,
+}
+
 fn load_gltf_material(
-	mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext, use_embedded: bool,
+	mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext
 ) -> Result<Box<dyn Material>, GenericEngineError>
 {
 	let material_name = mat.name().ok_or("glTF mesh material has no name")?;
 	let mat_path = search_folder.join(material_name).with_extension("yaml");
+	
+	// Use an external material file if specified in the extras.
+	// This can be specified in Blender by giving a material a custom property called "external" with an integer value of 1.
+	let use_external = if let Some(extras) = mat.extras() {
+		let parsed_extras: MaterialExtras = serde_json::from_str(extras.get())?;
+		parsed_extras.external != 0
+	} else {
+		false
+	};
 
-	if use_embedded {
+	if use_external {
+		log::info!("External material specified, loading material file '{}'...", mat_path.display());
+		let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
+		deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
+		Ok(deserialized_mat)
+	} else {
 		let base_color = ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor()));
 		let mut loaded_mat = PBR::new(base_color);
 		loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
 		Ok(Box::new(loaded_mat))
-	} else {
-		log::info!("Loading material file '{}'...", mat_path.display());
-		let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
-		deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
-		Ok(deserialized_mat)
 	}
 }
 

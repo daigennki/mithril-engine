@@ -159,21 +159,19 @@ impl RenderContext
 
 	/// Get a 3D model from `path`, relative to the current working directory.
 	/// This attempts loading if it hasn't been loaded into memory yet.
-	/// `use_embedded_materials` only takes effect if the model hasn't been loaded yet.
-	pub fn get_model(&mut self, path: &Path, use_embedded_materials: bool) -> Result<Arc<Model>, GenericEngineError>
+	pub fn get_model(&mut self, path: &Path) -> Result<Arc<Model>, GenericEngineError>
 	{
-		let model_data = match self.models.get(path) {
+		match self.models.get(path) {
 			Some(model) => {
 				log::info!("Reusing loaded model '{}'", path.display());
-				model.clone()
+				Ok(model.clone())
 			}
 			None => {
-				let new_model = Arc::new(Model::new(self, path, use_embedded_materials)?);
+				let new_model = Arc::new(Model::new(self, path)?);
 				self.models.insert(path.to_path_buf(), new_model.clone());
-				new_model
+				Ok(new_model)
 			}
-		};
-		Ok(model_data)
+		}
 	}
 
 	pub fn new_texture(&mut self, path: &Path) -> Result<texture::Texture, GenericEngineError>

@@ -20,8 +20,6 @@ pub struct Mesh
 {
 	model_path: PathBuf,
 	#[serde(default)]
-	use_embedded_materials: bool,
-	#[serde(default)]
 	transparent: bool,
 
 	#[serde(skip)]
@@ -42,11 +40,6 @@ impl Mesh
 	pub fn get_material_overrides(&mut self) -> &mut Vec<Option<Box<dyn Material>>>
 	{
 		&mut self.material_overrides
-	}
-
-	pub fn using_embedded_materials(&self) -> bool
-	{
-		self.use_embedded_materials
 	}
 
 	pub fn has_transparency(&self) -> bool
@@ -98,7 +91,7 @@ impl DeferGpuResourceLoading for Mesh
 	{
 		// model path relative to current directory
 		let model_path_cd_rel = Path::new("./models/").join(&self.model_path);
-		let model_data = render_ctx.get_model(&model_path_cd_rel, self.use_embedded_materials)?;
+		let model_data = render_ctx.get_model(&model_path_cd_rel)?;
 		let material_count = model_data.get_materials().len();
 
 		self.model_data = Some(model_data);
