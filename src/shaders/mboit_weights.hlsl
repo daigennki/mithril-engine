@@ -112,16 +112,6 @@ float calc_w(float z, float alpha, float2 screen_pos)
 }
 PS_OUTPUT write_transparent_pixel(float4 premul_reflect, float depth, float2 screen_pos) 
 { 
-    /* Modulate the net coverage for composition by the transmission. This does not affect the color channels of the
-       transparent surface because the caller's BSDF model should have already taken into account if transmission modulates
-       reflection. This model doesn't handled colored transmission, so it averages the color channels. See 
-
-          McGuire and Enderton, Colored Stochastic Shadow Maps, ACM I3D, February 2011
-          http://graphics.cs.williams.edu/papers/CSSM/
-
-       for a full explanation and derivation.*/
-    premul_reflect.a *= 1.0 - clamp((premul_reflect.r + premul_reflect.g + premul_reflect.b) * (1.0 / 3.0), 0, 1);
-
 	float w = calc_w(depth, premul_reflect.a, screen_pos);
 	
 	PS_OUTPUT output;
