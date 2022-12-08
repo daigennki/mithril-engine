@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use vulkano::buffer::{BufferAccess, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess};
+use vulkano::buffer::{
+	BufferAccess, BufferUsage, BufferContents, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess
+};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferBeginError, CommandBufferInheritanceInfo,
@@ -555,6 +557,24 @@ where
 		.layout()
 		.clone();
 	cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
+	Ok(())
+}
+
+/// Push push constants to the currently bound pipeline on the given command buffer builder.
+/// This will fail if there is no pipeline currently bound.
+pub fn push_constants<L, Pc>(
+	cb: &mut AutoCommandBufferBuilder<L>, offset: u32, data: Pc,
+) -> Result<(), PipelineExecutionError>
+where
+	Pc: BufferContents
+{
+	let pipeline_layout = cb
+		.state()
+		.pipeline_graphics()
+		.ok_or(PipelineExecutionError::PipelineNotBound)?
+		.layout()
+		.clone();
+	cb.push_constants(pipeline_layout, offset, data);
 	Ok(())
 }
 

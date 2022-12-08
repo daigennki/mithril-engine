@@ -1,6 +1,5 @@
-cbuffer renderParams : register(b0, space1)
+[[vk::push_constant]] cbuffer renderParams
 {
-	float4x4 projview;
 	float4x4 sky_projview;
 };
 struct VS_OUTPUT

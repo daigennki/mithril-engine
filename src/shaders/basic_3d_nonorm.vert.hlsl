@@ -2,7 +2,7 @@ cbuffer model : register(b0)
 {
 	float4x4 transform;	    // rotation, scale, and translation
 };
-cbuffer projviewmat : register(b0, space1)
+[[vk::push_constant]] cbuffer projviewmat
 {
     float4x4 projview;
 };

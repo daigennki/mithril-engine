@@ -93,7 +93,7 @@ impl Skybox
 	{
 		self.sky_pipeline.bind(cb);
 		crate::render::bind_descriptor_set(cb, 0, vec![self.descriptor_set.clone()])?;
-		camera_manager.bind(cb)?;
+		camera_manager.push_sky_projview(cb)?;
 		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()]);
 		cb.bind_index_buffer(self.cube_ibo.clone());
 		cb.draw_indexed(20, 1, 0, 0, 0)?;

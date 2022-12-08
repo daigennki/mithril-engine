@@ -259,7 +259,7 @@ fn draw_3d(
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	render_ctx.get_pipeline("PBR")?.bind(&mut command_buffer);
-	camera_manager.bind(&mut command_buffer)?;
+	camera_manager.push_projview(&mut command_buffer)?;
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
@@ -283,7 +283,7 @@ fn draw_3d_transparent_moments(
 	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
 	
 	// Draw the transparent objects.
-	camera_manager.bind(&mut command_buffer)?;
+	camera_manager.push_projview(&mut command_buffer)?;
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
@@ -308,7 +308,7 @@ fn draw_3d_transparent(
 	// Draw the transparent objects.
 	let mut command_buffer = render_ctx.record_transparency_draws(render_ctx.get_pipeline("PBR")?)?;
 
-	camera_manager.bind(&mut command_buffer)?;
+	camera_manager.push_projview(&mut command_buffer)?;
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
