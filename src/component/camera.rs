@@ -112,8 +112,7 @@ impl CameraManager
 struct CameraData
 {
 	projview: Mat4,
-	proj: Mat4,
-	view: Mat4,
+	sky_projview: Mat4,
 }
 
 /// A component that turns an entity into a camera.
@@ -140,6 +139,10 @@ fn calculate_projview(pos: Vec3, dir: Vec3, width: u32, height: u32, fov: Camera
 
 	let proj = Mat4::perspective_lh(fov_y_rad, aspect_ratio, 0.25, 5000.0);
 	let view = Mat4::look_at_lh(pos, pos + dir, Vec3::NEG_Z);
+	let sky_view = Mat4::look_at_lh(Vec3::ZERO, dir, Vec3::NEG_Z);
 
-	CameraData { projview: proj * view, proj, view }
+	CameraData { 
+		projview: proj * view, 
+		sky_projview: proj * sky_view,
+	}
 }

@@ -5,8 +5,6 @@ cbuffer model : register(b0)
 cbuffer projviewmat : register(b0, space1)
 {
     float4x4 projview;
-	float4x4 proj;
-	float4x4 view;
 };
 struct VS_INPUT
 {
