@@ -717,7 +717,7 @@ impl RenderTarget
 		};
 		let framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
-		Ok(Self { 
+		Ok(Self {
 			framebuffer, 
 			color_image, 
 			depth_image, 

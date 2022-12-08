@@ -19,8 +19,6 @@ use crate::GenericEngineError;
 pub struct Mesh
 {
 	model_path: PathBuf,
-	#[serde(default)]
-	transparent: bool,
 
 	#[serde(skip)]
 	model_data: Option<Arc<Model>>,
@@ -42,18 +40,49 @@ impl Mesh
 		&mut self.material_overrides
 	}
 
+	/// Check if any of the materials are enabled for transparency.
+	/// This will panic if loading hasn't finished yet!
 	pub fn has_transparency(&self) -> bool
 	{
-		self.transparent
+		let original_materials = self.model_data
+			.as_ref()
+			.unwrap()
+			.get_materials();
+
+		// substitute the original material if no override was specified,
+		// then look for any materials with transparency enabled
+		self.material_overrides
+			.iter()
+			.enumerate()
+			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+			.any(|mat| mat.has_transparency())
+	}
+
+	/// Check if there are any materials that are *not* enabled for transparency.
+	/// This will panic if loading hasn't finished yet!
+	pub fn has_opaque_materials(&self) -> bool
+	{
+		let original_materials = self.model_data
+			.as_ref()
+			.unwrap()
+			.get_materials();
+
+		// substitute the original material if no override was specified,
+		// then look for any materials with transparency disabled
+		self.material_overrides
+			.iter()
+			.enumerate()
+			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+			.any(|mat| !mat.has_transparency())
 	}
 
 	pub fn draw(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4,
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4, transparency_pass: bool
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
 		if let Some(model_loaded) = self.model_data.as_ref() {
-			model_loaded.draw(cb, projviewmodel, &self.material_overrides)?
+			model_loaded.draw(cb, projviewmodel, &self.material_overrides, transparency_pass)?
 		}
 		Ok(())
 	}
@@ -65,7 +94,7 @@ impl Mesh
 			let was_none = mat.is_none();
 			let mat_override = mat.get_or_insert_with(|| {
 				let default_color = ColorInput::Color(Vec4::ONE);
-				Box::new(PBR::new(default_color))
+				Box::new(PBR::new(default_color, true))
 			});
 			if was_none {
 				mat_override.update_descriptor_set(self.model_data.as_ref().unwrap().path(), render_ctx)?;

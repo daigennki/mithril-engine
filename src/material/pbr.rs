@@ -15,20 +15,47 @@ use crate::render::RenderContext;
 use crate::GenericEngineError;
 
 /// The standard PBR (Physically Based Rendering) material.
-#[derive(Deserialize, Material)]
+#[derive(Deserialize)]
 pub struct PBR
 {
 	base_color: ColorInput,
 	//roughness: SingleChannelInput,
 	//specular: SingleChannelInput,
+	
+	#[serde(default)]
+	transparent: bool,
+
 	#[serde(skip)]
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
 }
 impl PBR
 {
-	pub fn new(base_color: ColorInput) -> Self
+	pub fn new(base_color: ColorInput, transparent: bool) -> Self
 	{
-		PBR { base_color, descriptor_set: None }
+		PBR { base_color, transparent, descriptor_set: None }
+	}
+}
+#[typetag::deserialize]
+impl Material for PBR
+{
+	fn pipeline_name(&self) -> &'static str
+	{
+		"PBR"
+	}
+
+	fn bind_descriptor_set(
+		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
+	) -> Result<(), GenericEngineError>
+	{
+		crate::render::bind_descriptor_set(
+			cb, 2, self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone()
+		)?;
+		Ok(())
+	}
+
+	fn has_transparency(&self) -> bool
+	{
+		self.transparent
 	}
 }
 impl DeferMaterialLoading for PBR

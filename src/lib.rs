@@ -263,11 +263,11 @@ fn draw_3d(
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
-			if !c.has_transparency() {
+			if c.has_opaque_materials() {
 				transform.bind_descriptor_set(&mut command_buffer)?;
 
 				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat)?;
+				c.draw(&mut command_buffer, &transform_mat, false)?;
 			}
 		}
 	}
@@ -291,7 +291,7 @@ fn draw_3d_transparent_moments(
 				transform.bind_descriptor_set(&mut command_buffer)?;
 
 				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat)?;
+				c.draw(&mut command_buffer, &transform_mat, true)?;
 			}
 		}
 	}
@@ -316,7 +316,7 @@ fn draw_3d_transparent(
 				transform.bind_descriptor_set(&mut command_buffer)?;
 
 				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat)?;
+				c.draw(&mut command_buffer, &transform_mat, true)?;
 			}
 		}
 	}

@@ -134,7 +134,7 @@ impl Model
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
 	pub fn draw(
 		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, transform: &Mat4,
-		material_overrides: &Vec<Option<Box<dyn Material>>>,
+		material_overrides: &Vec<Option<Box<dyn Material>>>, transparency_pass: bool
 	) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
@@ -150,11 +150,14 @@ impl Model
 			self.index_buffer.bind(cb);
 			for submesh in visible_submeshes {
 				// it's okay that we use a panic function here, since the glTF loader validates the index for us
-				material_overrides[submesh.material_index()]
+				let mat = material_overrides[submesh.material_index()]
 					.as_ref()
-					.unwrap_or_else(|| &self.materials[submesh.material_index()])
-					.bind_descriptor_set(cb)?;
-				submesh.draw(cb)?;
+					.unwrap_or_else(|| &self.materials[submesh.material_index()]);
+
+				if mat.has_transparency() == transparency_pass {
+					mat.bind_descriptor_set(cb)?;
+					submesh.draw(cb)?;
+				}
 			}
 		}
 		Ok(())
@@ -207,7 +210,11 @@ fn load_gltf_material(
 		Ok(deserialized_mat)
 	} else {
 		let base_color = ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor()));
-		let mut loaded_mat = PBR::new(base_color);
+		let transparency = mat.alpha_mode() == gltf::material::AlphaMode::Blend;
+		if transparency {
+			log::debug!("found a transparent glTF material");
+		}
+		let mut loaded_mat = PBR::new(base_color, transparency);
 		loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
 		Ok(Box::new(loaded_mat))
 	}

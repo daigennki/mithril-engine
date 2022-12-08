@@ -1,4 +1,4 @@
 PBR:
   base_color: [0.8, 0.8, 0.8, 0.8]
-  transparency: true
+  transparent: true
 

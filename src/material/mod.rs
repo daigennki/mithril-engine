@@ -6,7 +6,6 @@
 pub mod pbr;
 
 use glam::*;
-use mithrilengine_derive::Material;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +32,7 @@ pub trait DeferMaterialLoading
 }
 
 /// A material used by meshes to define shader parameters.
-/// Derive from this using `#[derive(Material)]`, then also define a loading function and descriptor set getter by implementing
+/// Derive from this, then also define a loading function and descriptor set getter by implementing
 /// `DeferMaterialLoading` manually.
 #[typetag::deserialize]
 pub trait Material: Send + Sync + DeferMaterialLoading
@@ -43,6 +42,8 @@ pub trait Material: Send + Sync + DeferMaterialLoading
 	fn bind_descriptor_set(
 		&self, command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>;
+
+	fn has_transparency(&self) -> bool;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
