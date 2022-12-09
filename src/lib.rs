@@ -17,6 +17,7 @@ use shipyard::{
 use simplelog::*;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
 use component::camera::{Camera, CameraManager, CameraFov};
@@ -275,13 +276,11 @@ fn draw_3d(
 	render_ctx.add_cb(command_buffer.build()?);
 	Ok(())
 }
-fn draw_3d_transparent_moments(
-	render_ctx: UniqueView<render::RenderContext>, camera_manager: UniqueView<CameraManager>, 
-	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+fn draw_transparent_common(
+	cb: &AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+	camera_manager: &CameraManager, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
-	
 	// Draw the transparent objects.
 	camera_manager.push_projview(&mut command_buffer)?;
 	let projview = camera_manager.projview();
@@ -295,7 +294,15 @@ fn draw_3d_transparent_moments(
 			}
 		}
 	}
-
+	Ok(())
+}
+fn draw_3d_transparent_moments(
+	render_ctx: UniqueView<render::RenderContext>, camera_manager: UniqueView<CameraManager>, 
+	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+) -> Result<(), GenericEngineError>
+{
+	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
+	draw_transparent_common(&command_buffer, &camera_manager, transforms, meshes)?;
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -307,20 +314,7 @@ fn draw_3d_transparent(
 {
 	// Draw the transparent objects.
 	let mut command_buffer = render_ctx.record_transparency_draws(render_ctx.get_pipeline("PBR")?)?;
-
-	camera_manager.push_projview(&mut command_buffer)?;
-	let projview = camera_manager.projview();
-	for (eid, transform) in transforms.iter().with_id() {
-		if let Ok(c) = meshes.get(eid) {
-			if c.has_transparency() {
-				transform.bind_descriptor_set(&mut command_buffer)?;
-
-				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat, true)?;
-			}
-		}
-	}
-
+	draw_transparent_common(&command_buffer, &camera_manager, transforms, meshes)?;
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
