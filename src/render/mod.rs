@@ -285,16 +285,15 @@ impl RenderContext
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
-	/// It will be set up for drawing to `framebuffer` in its subpass number `subpass`,
+	/// It will be set up for drawing to `framebuffer` in `subpass`,
 	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
+	/// If no subpass was specified, the first subpass of the render pass that `framebuffer` was created with will be used.
 	fn new_secondary_command_buffer(
-		&self, framebuffer: Arc<Framebuffer>, render_pass: Option<Arc<RenderPass>>, subpass: u32,
+		&self, framebuffer: Arc<Framebuffer>, subpass: Option<Subpass>,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		let use_rp = render_pass
-			.unwrap_or_else(|| framebuffer.render_pass().clone());
 		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
-			subpass: Subpass::from(use_rp, subpass).unwrap(),
+			subpass: subpass.unwrap_or_else(|| framebuffer.render_pass().clone().first_subpass()),
 			framebuffer: Some(framebuffer.clone()),
 		});
 		let inheritance = CommandBufferInheritanceInfo {
@@ -323,7 +322,7 @@ impl RenderContext
 	}
 	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None, 0)
+		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None)
 	}
 
 	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
@@ -332,7 +331,7 @@ impl RenderContext
 		&self
 	)-> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None, 0)?;
+		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None)?;
 		self.transparency_renderer.get_moments_pipeline().bind(&mut cb);
 		Ok(cb)
 	}
@@ -340,7 +339,9 @@ impl RenderContext
 		&self, first_bind_pipeline: &pipeline::Pipeline
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None, 1)?;
+		let fb = self.transparency_renderer.framebuffer();
+		let subpass = Subpass::from(fb.render_pass().clone(), 1).unwrap();
+		let mut cb = self.new_secondary_command_buffer(fb, Some(subpass))?;
 		first_bind_pipeline.bind_transparency(&mut cb)?;
 		bind_descriptor_set(&mut cb, 3, vec![self.transparency_renderer.get_stage3_inputs()])?;
 		Ok(cb)
@@ -351,8 +352,7 @@ impl RenderContext
 	{
 		self.new_secondary_command_buffer(
 			self.main_render_target.framebuffer().clone(), 
-			Some(self.main_render_target.ui_rp().clone()),
-			0
+			Some(self.main_render_target.ui_rp().clone().first_subpass()),
 		)
 	}
 
