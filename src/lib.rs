@@ -277,20 +277,20 @@ fn draw_3d(
 	Ok(())
 }
 fn draw_transparent_common(
-	cb: &AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	camera_manager: &CameraManager, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
-	camera_manager.push_projview(&mut command_buffer)?;
+	camera_manager.push_projview(command_buffer)?;
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
 			if c.has_transparency() {
-				transform.bind_descriptor_set(&mut command_buffer)?;
+				transform.bind_descriptor_set(command_buffer)?;
 
 				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat, true)?;
+				c.draw(command_buffer, &transform_mat, true)?;
 			}
 		}
 	}
@@ -302,7 +302,7 @@ fn draw_3d_transparent_moments(
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
-	draw_transparent_common(&command_buffer, &camera_manager, transforms, meshes)?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes)?;
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -314,7 +314,7 @@ fn draw_3d_transparent(
 {
 	// Draw the transparent objects.
 	let mut command_buffer = render_ctx.record_transparency_draws(render_ctx.get_pipeline("PBR")?)?;
-	draw_transparent_common(&command_buffer, &camera_manager, transforms, meshes)?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes)?;
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
