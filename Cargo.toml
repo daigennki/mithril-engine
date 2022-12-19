@@ -20,12 +20,7 @@ image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.32"
 vulkano-win = "0.32"
-# physx = "0.12"
-# ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
-# steamworks = "0.8"
 glam = { version = "0.21", features = ["bytemuck", "serde"] }
-# openal = "0.2"
-# mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 msgbox = "0.7"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 simplelog = "0.12"
@@ -37,6 +32,12 @@ serde_yaml = "0.9"
 serde_json = { version = "1.0", features = ["raw_value"] }
 typetag = "0.2"
 gltf = { version = "1.0", features = ["extras", "names", "utils", "import"] }
-tobj = "3.2.3"
 egui_winit_vulkano = "0.21"
+#rapier = "0.16.1"
+#kira = "0.7.1"
+
+#tobj = "3.2.3"
+#ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
+#steamworks = "0.8"
+#mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
 
