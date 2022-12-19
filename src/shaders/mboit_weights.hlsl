@@ -121,7 +121,7 @@ float calc_w(float z, float alpha, float2 screen_pos)
 	const float correction_inv = (1.0 / correction_threshold);
 	if (z > min_z) {
 		float z_diff = z - min_z;
-		float correction = z_diff * correction_inv;
+		float correction = saturate(z_diff * correction_inv);
 		w *= correction;
 	}
 	
