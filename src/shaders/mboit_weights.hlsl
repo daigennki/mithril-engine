@@ -9,6 +9,9 @@
 //Texture2D optical_depth_in : register(t1, space3);
 [[vk::input_attachment_index(1)]] SubpassInput optical_depth_in : register(t1, space3);
 
+/* minimum depth for correction */
+[[vk::input_attachment_index(2)]] SubpassInput min_depth : register(t2, space3);
+
 /*cbuffer tex_dim : register(b2, space3)
 {
 	uint2 texture_dimensions;
@@ -106,9 +109,23 @@ float calc_w(float z, float alpha, float2 screen_pos)
 	if (total_od != 0.0) {
 		moments /= total_od; // normalize
 	}
+
 	float ma = hamburger4msm(moments, unit_pos);
 	ma = exp(-ma * total_od);
-	return ma * alpha;
+	float w = ma * alpha;
+
+	// if this is *not* the top fragment, but the depth of this fragment is still close to the minimum depth,
+	// correct the "gradient" that might appear under such conditions
+	float min_z = min_depth.SubpassLoad();
+	const float correction_threshold = 0.01;
+	const float correction_inv = (1.0 / correction_threshold);
+	if (z > min_z) {
+		float z_diff = z - min_z;
+		float correction = z_diff * correction_inv;
+		w *= correction;
+	}
+	
+	return w;
 }
 PS_OUTPUT write_transparent_pixel(float4 premul_reflect, float depth, float2 screen_pos) 
 { 

@@ -12,6 +12,7 @@ struct PS_OUTPUT
 {
 	float4 moments : SV_Target0;
 	float optical_depth : SV_Target1;
+	float min_depth : SV_Target2;
 };
 
 float depth_to_unit(float z, float c0, float c1)
@@ -41,6 +42,7 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT output;
 	output.moments = make_moments4(unit_pos) * optical_depth;
 	output.optical_depth = optical_depth;
+	output.min_depth = depth;
 	return output;
 }
 

@@ -18,7 +18,7 @@ entities:
       model_path: modular_terrain_island.glb
 - 
   - Transform:
-      position: [-9.0, -2.0, 3.0 ]
+      position: [-9.7, -2.0, 3.0 ]
       scale: [0.5, 0.5, 0.5]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:

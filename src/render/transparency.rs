@@ -13,7 +13,8 @@ use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, AttachmentImage, ImageAccess, ImageUsage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::{
-	color_blend::{BlendOp, ColorBlendState}, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport,
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState}, 
+	depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport,
 };
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::sampler::Sampler;
@@ -225,6 +226,12 @@ impl MomentTransparencyRenderer
 					format: Format::R32_SFLOAT,
 					samples: 1,
 				},
+				min_depth: {
+					load: Clear,
+					store: DontCare,
+					format: Format::R32_SFLOAT,
+					samples: 1,
+				},
 				accum: {
 					load: Clear,
 					store: DontCare,
@@ -252,25 +259,31 @@ impl MomentTransparencyRenderer
 			},
 			passes: [
 				{	// MBOIT stage 2: calculate moments
-					color: [moments, optical_depth],
+					color: [moments, optical_depth, min_depth],
 					depth_stencil: { depth },
 					input: []
 				},
 				{	// MBOIT stage 3: calculate weights
 					color: [accum, revealage],
 					depth_stencil: { depth },
-					input: [moments, optical_depth]
+					input: [moments, optical_depth, min_depth]
 				},
 				{	// MBOIT stage 4: composite transparency image onto opaque image
 					color: [color],
 					depth_stencil: {},
-					input: [accum, revealage]
+					input: [accum, revealage, min_depth]
 				}
 			]
 		)?;
 		
-		let mut moments_blend = ColorBlendState::new(2).blend_additive();
+		let mut moments_blend = ColorBlendState::new(3).blend_additive();
 		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_op = BlendOp::Add;
+		moments_blend.attachments[2].blend = Some(AttachmentBlend {
+			color_op: BlendOp::Min,
+			color_source: BlendFactor::One,
+			color_destination: BlendFactor::One,
+			..AttachmentBlend::ignore_source()
+		});
 		let moments_pl = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleList,
 			"basic_3d_nonorm.vert.spv".into(),
@@ -339,6 +352,7 @@ impl MomentTransparencyRenderer
 			clear_values: vec![
 				Some(ClearValue::Float([1.0, 1.0, 1.0, 1.0])),	// moments
 				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// optical depth
+				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// minimum depth
 				Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),	// accum
 				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
 				None,	// color
@@ -403,11 +417,13 @@ fn create_mboit_framebuffer(
 	let oit_images_usage = ImageUsage { transient_attachment: true, input_attachment: true, ..Default::default() };
 	let moments_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32G32B32A32_SFLOAT, oit_images_usage)?;
 	let od_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32_SFLOAT, oit_images_usage)?;
+	let min_depth_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32_SFLOAT, oit_images_usage)?;
 	let accum = AttachmentImage::with_usage(memory_allocator, extent, Format::R16G16B16A16_SFLOAT, oit_images_usage)?;
 	let revealage = AttachmentImage::with_usage(memory_allocator, extent, Format::R8_UNORM, oit_images_usage)?;
 
 	let moments_view = ImageView::new_default(moments_img)?;
 	let od_view = ImageView::new_default(od_img)?;
+	let min_depth_view = ImageView::new_default(min_depth_img)?;
 	let accum_view = ImageView::new_default(accum)?;
 	let revealage_view = ImageView::new_default(revealage)?;
 
@@ -415,6 +431,7 @@ fn create_mboit_framebuffer(
 		attachments: vec![
 			moments_view.clone(),
 			od_view.clone(),
+			min_depth_view.clone(),
 			accum_view.clone(),
 			revealage_view.clone(),
 			ImageView::new_default(color_img)?,
@@ -426,10 +443,12 @@ fn create_mboit_framebuffer(
 	let stage3_inputs = stage4_pl.new_descriptor_set(3, [
 		WriteDescriptorSet::image_view(0, moments_view),
 		WriteDescriptorSet::image_view(1, od_view),
+		WriteDescriptorSet::image_view(2, min_depth_view.clone()),
 	])?;
 	let stage4_inputs = stage4_pl.new_descriptor_set(3, [
 		WriteDescriptorSet::image_view(0, accum_view),
 		WriteDescriptorSet::image_view(1, revealage_view),
+		WriteDescriptorSet::image_view(2, min_depth_view),
 	])?;
 
 	Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, stage3_inputs, stage4_inputs))

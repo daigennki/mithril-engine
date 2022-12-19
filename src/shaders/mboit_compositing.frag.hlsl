@@ -8,6 +8,8 @@
 //Texture2D revealage_texture : register(t1, space3);
 [[vk::input_attachment_index(1)]] SubpassInput revealage_in : register(t1, space3);
 
+[[vk::input_attachment_index(2)]] SubpassInput placeholder_in : register(t2, space3);
+
 /*cbuffer tex_dim : register(b2, space3)
 {
 	uint2 texture_dimensions;
@@ -29,7 +31,11 @@ float4 main(/*PS_INPUT input*/) : SV_Target
     //int2 tex_coords_int = int2(input.texcoords * texture_dimensions);
     //float revealage = revealage_texture.Load(int3(tex_coords_int, 0)).r;
     float revealage = revealage_in.SubpassLoad();
-	if (revealage == 1.0) {
+
+	// hack to make sure the placeholder doesn't get optimized out
+	bool force_placeholder_usage = placeholder_in.SubpassLoad().r < 1.0;
+
+	if (revealage == 1.0 && force_placeholder_usage) {
         // Save the blending and color texture fetch cost
         discard;
     }
