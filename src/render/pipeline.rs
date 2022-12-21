@@ -164,18 +164,21 @@ impl Pipeline
 			.iter()
 			.map(|sampler_config| (sampler_config.set, sampler_config.binding, tex_sampler.clone()))
 			.collect();
-		let color_blend_state = color_blend_state_from_subpass(&subpass);
+
+		let mut color_blend_state = ColorBlendState::new(subpass.num_color_attachments());
+		if deserialized.alpha_blending {
+			color_blend_state = color_blend_state.blend_alpha();
+		}
 
 		let fs_info = deserialized.fragment_shader.map(|fs| (fs, color_blend_state));
 		let fs_transparency_info = deserialized
 			.fragment_shader_transparency
 			.map(|fst| (fst, transparency_subpass.unwrap()));
 
-		let depth_op = if deserialized.always_pass_depth_test {
-			CompareOp::Always
-		} else {
-			CompareOp::Less
-		};
+		let depth_op = deserialized
+			.always_pass_depth_test
+			.then_some(CompareOp::Always)
+			.unwrap_or(CompareOp::Less);
 
 		Pipeline::new(
 			deserialized.primitive_topology,
@@ -256,6 +259,9 @@ struct PipelineConfig
 
 	#[serde(default)]
 	always_pass_depth_test: bool,
+
+	#[serde(default)]
+	alpha_blending: bool,
 
 	#[serde(with = "PrimitiveTopologyDef")]
 	primitive_topology: PrimitiveTopology,
@@ -355,21 +361,6 @@ fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 	};
 	let format_index = (ty.num_components - 1) as usize;
 	possible_formats[format_index]
-}
-
-fn color_blend_state_from_subpass(subpass: &Subpass) -> ColorBlendState
-{
-	// Only enable blending for the first attachment.
-	// This blending configuration is for textures that are *not* premultiplied by alpha.
-	// TODO: Expose an option for premultiplied alpha. Also be careful about using plain RGBA colors instead of textures, as
-	// those have to be premultiplied too.
-	if subpass.num_color_attachments() > 0 {
-		let mut blend_state = ColorBlendState::new(subpass.num_color_attachments());
-		blend_state.attachments[0].blend = Some(AttachmentBlend::alpha());
-		blend_state
-	} else {
-		ColorBlendState::default()
-	}
 }
 
 fn pipeline_sampler_setup(sets: &mut [DescriptorSetLayoutCreateInfo], samplers: &Vec<(usize, u32, Arc<Sampler>)>)

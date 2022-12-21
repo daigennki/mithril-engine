@@ -2,6 +2,8 @@ vertex_shader: ui.vert.spv
 fragment_shader: ui.frag.spv
 primitive_topology: TriangleStrip
 always_pass_depth_test: true
+alpha_blending: true
+
 samplers:
 - set: 1
   binding: 1

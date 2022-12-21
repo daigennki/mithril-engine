@@ -38,7 +38,7 @@ impl Skybox
 		let sky_pipeline = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleStrip,
 			"skybox.vert.spv".into(),
-			Some(("skybox.frag.spv".into(), ColorBlendState::new(1).blend_alpha())),
+			Some(("skybox.frag.spv".into(), ColorBlendState::new(1))),
 			None,
 			vec![(0, 0, cubemap_sampler)],
 			subpass,
