@@ -3,12 +3,14 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use egui_winit_vulkano::egui;
 use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+
+#[cfg(feature = "egui")]
+use egui_winit_vulkano::egui;
 
 use crate::component::{DeferGpuResourceLoading, EntityComponent};
 use crate::material::{ColorInput, Material, pbr::PBR};
@@ -88,6 +90,7 @@ impl Mesh
 	}
 
 	/// Show the egui collapsing header for this component.
+	#[cfg(feature = "egui")]
 	pub fn show_egui(&mut self, ui: &mut egui::Ui, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		if let Some(mat) = self.material_overrides.get_mut(0) {

@@ -5,6 +5,7 @@
 ----------------------------------------------------------------------------- */
 use egui_winit_vulkano::egui;
 use shipyard::{EntitiesView, EntityId, Get, UniqueView, UniqueViewMut, ViewMut, World};
+use std::sync::Arc;
 
 use crate::component;
 use crate::render::RenderContext;
@@ -23,7 +24,7 @@ impl EguiRenderer
 		let egui_gui = egui_winit_vulkano::Gui::new_with_subpass(
 			event_loop,
 			render_ctx.get_surface(),
-			None,
+			Some(vulkano::format::Format::R16G16B16A16_SFLOAT),
 			render_ctx.get_queue(),
 			subpass,
 		);
@@ -41,6 +42,11 @@ impl EguiRenderer
 		// set egui debug UI layout
 		self.egui_gui.begin_frame();
 		let egui_ctx = self.egui_gui.context();
+		let mut style = egui::style::Style::default();
+		style.visuals.window_shadow = egui::epaint::Shadow::default();
+		style.visuals.popup_shadow = egui::epaint::Shadow::default();
+		egui_ctx.set_style(Arc::new(style));
+
 		egui::Window::new("Object list").show(&egui_ctx, |wnd| self.generate_egui_entity_list(wnd, world));
 		egui::Window::new("Components")
 			.show(&egui_ctx, |wnd| self.components_window_layout(wnd, world))

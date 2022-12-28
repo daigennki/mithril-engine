@@ -7,7 +7,6 @@ pub mod camera;
 pub mod mesh;
 pub mod ui;
 
-use egui_winit_vulkano::egui;
 use glam::*;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -15,6 +14,9 @@ use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
+
+#[cfg(feature = "egui")]
+use egui_winit_vulkano::egui;
 
 use crate::render::RenderContext;
 use crate::GenericEngineError;
@@ -117,6 +119,7 @@ impl Transform
 	}
 
 	/// Show the egui collapsing header for this component.
+	#[cfg(feature = "egui")]
 	pub fn show_egui(&mut self, ui: &mut egui::Ui, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		let mut pos = self.position;
