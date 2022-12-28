@@ -117,12 +117,9 @@ float calc_w(float z, float alpha, float2 screen_pos)
 	// if this is *not* the top fragment, but the depth of this fragment is still close to the minimum depth,
 	// correct the "gradient" that might appear under such conditions
 	float min_z = min_depth.SubpassLoad();
-	const float correction_threshold = 0.01;
-	const float correction_inv = (1.0 / correction_threshold);
+	const float correction_factor = 100.0;
 	if (z > min_z) {
-		float z_diff = z - min_z;
-		float correction = saturate(z_diff * correction_inv);
-		w *= correction;
+		w *= saturate((z - min_z) * correction_factor);
 	}
 	
 	return w;
