@@ -4,9 +4,11 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 pub mod component;
-mod egui_renderer;
 mod material;
 mod render;
+
+#[cfg(feature = "egui")]
+mod egui_renderer;
 
 use glam::*;
 use serde::Deserialize;
@@ -24,8 +26,10 @@ use component::camera::{Camera, CameraManager, CameraFov};
 use component::ui;
 use component::ui::canvas::Canvas;
 use component::DeferGpuResourceLoading;
-use egui_renderer::EguiRenderer;
 use render::RenderContext;
+
+#[cfg(feature = "egui")]
+use egui_renderer::EguiRenderer;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -37,6 +41,7 @@ struct GameContext
 	right_mouse_button_pressed: bool,
 	camera_rotation: Vec3,
 
+	#[cfg(feature = "egui")]
 	egui_renderer: EguiRenderer,
 
 	fps_ui_ent: EntityId,
@@ -59,6 +64,7 @@ impl GameContext
 
 		let mut world = load_world(&mut render_ctx, start_map)?;
 
+		#[cfg(feature = "egui")]
 		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
 
 		let camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
@@ -75,7 +81,10 @@ impl GameContext
 		Ok(GameContext {
 			//pref_path,
 			world,
+			
+			#[cfg(feature = "egui")]
 			egui_renderer,
+			
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
 			fps_ui_ent,
@@ -86,6 +95,7 @@ impl GameContext
 	{
 		match event {
 			Event::WindowEvent { event, .. } => {
+				#[cfg(feature = "egui")]
 				self.egui_renderer.update(event);
 			}
 			Event::DeviceEvent {
@@ -148,6 +158,7 @@ impl GameContext
 			},
 		)?;
 
+		#[cfg(feature = "egui")]
 		self.egui_renderer.draw(&mut self.world)?;
 
 		Ok(())
