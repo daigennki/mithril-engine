@@ -13,8 +13,10 @@ use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, AttachmentImage, ImageAccess, ImageUsage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState}, 
-	depth_stencil::CompareOp, input_assembly::PrimitiveTopology, viewport::Viewport,
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState},
+	depth_stencil::CompareOp,
+	input_assembly::PrimitiveTopology,
+	viewport::Viewport,
 };
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::sampler::Sampler;
@@ -206,12 +208,15 @@ pub struct MomentTransparencyRenderer
 impl MomentTransparencyRenderer
 {
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator, descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
-		color_image: Arc<AttachmentImage>, depth_image: Arc<AttachmentImage>, main_sampler: Arc<Sampler>
+		memory_allocator: &StandardMemoryAllocator,
+		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
+		color_image: Arc<AttachmentImage>,
+		depth_image: Arc<AttachmentImage>,
+		main_sampler: Arc<Sampler>,
 	) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = memory_allocator.device().clone();
-		
+
 		let moments_rp = vulkano::ordered_passes_renderpass!(vk_dev.clone(),
 			attachments: {
 				moments: {
@@ -275,7 +280,7 @@ impl MomentTransparencyRenderer
 				}
 			]
 		)?;
-		
+
 		let mut moments_blend = ColorBlendState::new(3).blend_additive();
 		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_op = BlendOp::Add;
 		moments_blend.attachments[2].blend = Some(AttachmentBlend {
@@ -289,11 +294,11 @@ impl MomentTransparencyRenderer
 			"basic_3d_nonorm.vert.spv".into(),
 			Some(("mboit_moments.frag.spv".into(), moments_blend)),
 			None,
-			vec![ (2, 0, main_sampler) ],
+			vec![(2, 0, main_sampler)],
 			Subpass::from(moments_rp.clone(), 0).unwrap(),
 			CompareOp::Less,
 			false,
-			descriptor_set_allocator.clone()
+			descriptor_set_allocator.clone(),
 		)?;
 
 		let wboit_compositing_blend = ColorBlendState::new(1).blend_alpha();
@@ -306,11 +311,15 @@ impl MomentTransparencyRenderer
 			Subpass::from(moments_rp.clone(), 2).unwrap(),
 			CompareOp::Always,
 			false,
-			descriptor_set_allocator
+			descriptor_set_allocator,
 		)?;
 
 		let (moments_fb, stage3_inputs, stage4_inputs) = create_mboit_framebuffer(
-			memory_allocator, moments_rp, color_image, depth_image, &transparency_compositing_pl
+			memory_allocator,
+			moments_rp,
+			color_image,
+			depth_image,
+			&transparency_compositing_pl,
 		)?;
 
 		Ok(MomentTransparencyRenderer {
@@ -326,13 +335,19 @@ impl MomentTransparencyRenderer
 
 	/// Resize the output image to match a resized depth image.
 	pub fn resize_image(
-		&mut self, memory_allocator: &StandardMemoryAllocator, color_image: Arc<AttachmentImage>, 
+		&mut self,
+		memory_allocator: &StandardMemoryAllocator,
+		color_image: Arc<AttachmentImage>,
 		depth_image: Arc<AttachmentImage>,
 	) -> Result<(), GenericEngineError>
 	{
 		let moments_rp = self.moments_fb.render_pass().clone();
 		let (moments_fb, stage3_inputs, stage4_inputs) = create_mboit_framebuffer(
-			memory_allocator, moments_rp, color_image, depth_image, &self.transparency_compositing_pl
+			memory_allocator,
+			moments_rp,
+			color_image,
+			depth_image,
+			&self.transparency_compositing_pl,
 		)?;
 		self.moments_fb = moments_fb;
 		self.stage3_inputs = stage3_inputs;
@@ -342,7 +357,8 @@ impl MomentTransparencyRenderer
 
 	/// Do the OIT processing using the secondary command buffers that have already been received.
 	pub fn process_transparency(
-		&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		&self,
+		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		let moments_cb = self.transparency_moments_cb.lock().unwrap().take().unwrap();
@@ -350,22 +366,20 @@ impl MomentTransparencyRenderer
 
 		let rp_info = RenderPassBeginInfo {
 			clear_values: vec![
-				Some(ClearValue::Float([1.0, 1.0, 1.0, 1.0])),	// moments
-				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// optical depth
-				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// minimum depth
-				Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),	// accum
-				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),	// revealage
-				None,	// color
-				None,	// depth
+				Some(ClearValue::Float([1.0, 1.0, 1.0, 1.0])), // moments
+				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // optical depth
+				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // minimum depth
+				Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])), // accum
+				Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])), // revealage
+				None,                                          // color
+				None,                                          // depth
 			],
 			..RenderPassBeginInfo::framebuffer(self.moments_fb.clone())
 		};
 		let fb_extent = self.moments_fb.extent();
 		let viewport = Viewport {
 			origin: [0.0, 0.0],
-			dimensions: [
-				fb_extent[0] as f32, fb_extent[1] as f32,
-			],
+			dimensions: [fb_extent[0] as f32, fb_extent[1] as f32],
 			depth_range: 0.0..1.0,
 		};
 
@@ -378,8 +392,7 @@ impl MomentTransparencyRenderer
 			.set_viewport(0, [viewport]);
 		self.transparency_compositing_pl.bind(cb);
 		super::bind_descriptor_set(cb, 3, vec![self.stage4_inputs.clone()])?;
-		cb.draw(3, 1, 0, 0)?
-			.end_render_pass()?;
+		cb.draw(3, 1, 0, 0)?.end_render_pass()?;
 		Ok(())
 	}
 
@@ -409,12 +422,19 @@ impl MomentTransparencyRenderer
 }
 
 fn create_mboit_framebuffer(
-	memory_allocator: &StandardMemoryAllocator, render_pass: Arc<RenderPass>, color_img: Arc<AttachmentImage>, 
-	depth_img: Arc<AttachmentImage>, stage4_pl: &super::pipeline::Pipeline,
+	memory_allocator: &StandardMemoryAllocator,
+	render_pass: Arc<RenderPass>,
+	color_img: Arc<AttachmentImage>,
+	depth_img: Arc<AttachmentImage>,
+	stage4_pl: &super::pipeline::Pipeline,
 ) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), GenericEngineError>
 {
 	let extent = depth_img.dimensions().width_height();
-	let oit_images_usage = ImageUsage { transient_attachment: true, input_attachment: true, ..Default::default() };
+	let oit_images_usage = ImageUsage {
+		transient_attachment: true,
+		input_attachment: true,
+		..Default::default()
+	};
 	let moments_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32G32B32A32_SFLOAT, oit_images_usage)?;
 	let od_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32_SFLOAT, oit_images_usage)?;
 	let min_depth_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32_SFLOAT, oit_images_usage)?;
@@ -440,18 +460,28 @@ fn create_mboit_framebuffer(
 		..Default::default()
 	};
 
-	let stage3_inputs = stage4_pl.new_descriptor_set(3, [
-		WriteDescriptorSet::image_view(0, moments_view),
-		WriteDescriptorSet::image_view(1, od_view),
-		WriteDescriptorSet::image_view(2, min_depth_view.clone()),
-	])?;
-	let stage4_inputs = stage4_pl.new_descriptor_set(3, [
-		WriteDescriptorSet::image_view(0, accum_view),
-		WriteDescriptorSet::image_view(1, revealage_view),
-		WriteDescriptorSet::image_view(2, min_depth_view),
-	])?;
+	let stage3_inputs = stage4_pl.new_descriptor_set(
+		3,
+		[
+			WriteDescriptorSet::image_view(0, moments_view),
+			WriteDescriptorSet::image_view(1, od_view),
+			WriteDescriptorSet::image_view(2, min_depth_view.clone()),
+		],
+	)?;
+	let stage4_inputs = stage4_pl.new_descriptor_set(
+		3,
+		[
+			WriteDescriptorSet::image_view(0, accum_view),
+			WriteDescriptorSet::image_view(1, revealage_view),
+			WriteDescriptorSet::image_view(2, min_depth_view),
+		],
+	)?;
 
-	Ok((Framebuffer::new(render_pass.clone(), fb_create_info)?, stage3_inputs, stage4_inputs))
+	Ok((
+		Framebuffer::new(render_pass.clone(), fb_create_info)?,
+		stage3_inputs,
+		stage4_inputs,
+	))
 }
 
 /*fn create_transparency_framebuffer(

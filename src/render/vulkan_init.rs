@@ -24,7 +24,12 @@ impl DriverVersion
 	{
 		// NVIDIA
 		if vendor_id == 4318 {
-			return Self::Nvidia(((version >> 22) & 0x3ff, (version >> 14) & 0x0ff, (version >> 6) & 0x0ff, version & 0x003f));
+			return Self::Nvidia((
+				(version >> 22) & 0x3ff,
+				(version >> 14) & 0x0ff,
+				(version >> 6) & 0x0ff,
+				version & 0x003f,
+			));
 		}
 
 		// Intel (Windows only)
@@ -83,10 +88,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 	for (i, pd) in vkinst.enumerate_physical_devices()?.enumerate() {
 		let properties = pd.properties();
 		let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
-		let driver_name = properties
-			.driver_name
-			.as_ref()
-			.map_or("unknown driver", |name| &name);
+		let driver_name = properties.driver_name.as_ref().map_or("unknown driver", |name| &name);
 
 		log::info!(
 			"{}: {} ({:?}), driver '{}' version {} (Vulkan {})",
@@ -110,9 +112,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 	}
 
 	// If the "-prefer_igp" argument was provided, prefer the integrated GPU over the discrete GPU.
-	let prefer_igp = std::env::args()
-		.find(|arg| arg == "-prefer_igp")
-		.is_some();
+	let prefer_igp = std::env::args().find(|arg| arg == "-prefer_igp").is_some();
 
 	let physical_device = if prefer_igp {
 		igpu.or(dgpu).ok_or("No GPUs were found!")?
@@ -181,7 +181,10 @@ pub fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>),
 	};
 
 	let dev_create_info = DeviceCreateInfo {
-		enabled_extensions: DeviceExtensions { khr_swapchain: true, ..Default::default() },
+		enabled_extensions: DeviceExtensions {
+			khr_swapchain: true,
+			..Default::default()
+		},
 		enabled_features,
 		queue_create_infos: get_queue_infos(physical_device.clone())?,
 		..Default::default()

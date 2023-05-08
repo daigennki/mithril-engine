@@ -23,7 +23,10 @@ fn main()
 	for shader_path in shader_paths {
 		match detect_shader_stage(&shader_path) {
 			Some(shader_stage) => compile_shader(&shader_path, shader_stage, &compiler, &options),
-			None => println!("could not detect shader stage for shader '{}', skipping...", shader_path.to_str().unwrap()),
+			None => println!(
+				"could not detect shader stage for shader '{}', skipping...",
+				shader_path.to_str().unwrap()
+			),
 		}
 	}
 
@@ -50,14 +53,17 @@ fn compile_shader(path: &Path, stage: shaderc::ShaderKind, compiler: &shaderc::C
 }
 
 fn shader_src_include_callback(
-	src_req: &str, _include_type: shaderc::IncludeType, src_containing: &str, _include_depth: usize,
+	src_req: &str,
+	_include_type: shaderc::IncludeType,
+	src_containing: &str,
+	_include_depth: usize,
 ) -> shaderc::IncludeCallbackResult
 {
 	let src_req_path = Path::new("./src/shaders/").join(src_req);
-	let content = String::from_utf8(
-		std::fs::read(&src_req_path)
-			.expect(&format!("failed to read shader source '{}' included from '{}'", src_req, src_containing)),
-	)
+	let content = String::from_utf8(std::fs::read(&src_req_path).expect(&format!(
+		"failed to read shader source '{}' included from '{}'",
+		src_req, src_containing
+	)))
 	.unwrap();
 
 	Ok(shaderc::ResolvedInclude {

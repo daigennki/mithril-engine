@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 
-use component::camera::{Camera, CameraManager, CameraFov};
+use component::camera::{Camera, CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
 use component::DeferGpuResourceLoading;
@@ -50,7 +50,10 @@ impl GameContext
 {
 	// game context "constructor"
 	pub fn new(
-		org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>,
+		org_name: &str,
+		game_name: &str,
+		start_map: &str,
+		event_loop: &winit::event_loop::EventLoop<()>,
 	) -> Result<Self, GenericEngineError>
 	{
 		/*let pref_path =*/
@@ -81,10 +84,10 @@ impl GameContext
 		Ok(GameContext {
 			//pref_path,
 			world,
-			
+
 			#[cfg(feature = "egui")]
 			egui_renderer,
-			
+
 			right_mouse_button_pressed: false,
 			camera_rotation: Vec3::ZERO,
 			fps_ui_ent,
@@ -99,14 +102,18 @@ impl GameContext
 				self.egui_renderer.update(event);
 			}
 			Event::DeviceEvent {
-				event: DeviceEvent::Button { button: 1, state }, ..
+				event: DeviceEvent::Button { button: 1, state },
+				..
 			} => {
 				self.right_mouse_button_pressed = match state {
 					ElementState::Pressed => true,
 					ElementState::Released => false,
 				};
 			}
-			Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
+			Event::DeviceEvent {
+				event: DeviceEvent::MouseMotion { delta },
+				..
+			} => {
 				/*if self.right_mouse_button_pressed {
 					let sensitivity = 0.05;
 					self.camera_rotation.z += (sensitivity * delta.0) as f32;
@@ -131,7 +138,8 @@ impl GameContext
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
 				self.draw_debug()?;
-				self.world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_frame())?;
+				self.world
+					.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_frame())?;
 			}
 			_ => (),
 		}
@@ -224,8 +232,11 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 }
 
 fn prepare_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>, cameras: View<Camera>, transforms: View<component::Transform>,
-	mut canvas: UniqueViewMut<Canvas>, mut ui_transforms: ViewMut<ui::Transform>,
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	cameras: View<Camera>,
+	transforms: View<component::Transform>,
+	mut canvas: UniqueViewMut<Canvas>,
+	mut ui_transforms: ViewMut<ui::Transform>,
 	mut camera_manager: UniqueViewMut<CameraManager>,
 ) -> Result<(), GenericEngineError>
 {
@@ -259,8 +270,11 @@ fn prepare_primary_render(
 	Ok(())
 }
 fn draw_3d(
-	render_ctx: UniqueView<render::RenderContext>, skybox: UniqueView<render::skybox::Skybox>, 
-	camera_manager: UniqueView<CameraManager>, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>,
+	skybox: UniqueView<render::skybox::Skybox>,
+	camera_manager: UniqueView<CameraManager>,
+	transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_main_draws()?;
@@ -289,7 +303,9 @@ fn draw_3d(
 }
 fn draw_transparent_common(
 	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	camera_manager: &CameraManager, transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+	camera_manager: &CameraManager,
+	transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
@@ -308,8 +324,10 @@ fn draw_transparent_common(
 	Ok(())
 }
 fn draw_3d_transparent_moments(
-	render_ctx: UniqueView<render::RenderContext>, camera_manager: UniqueView<CameraManager>, 
-	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>,
+	camera_manager: UniqueView<CameraManager>,
+	transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
@@ -319,8 +337,10 @@ fn draw_3d_transparent_moments(
 }
 
 fn draw_3d_transparent(
-	render_ctx: UniqueView<render::RenderContext>, camera_manager: UniqueView<CameraManager>, 
-	transforms: View<component::Transform>, meshes: View<component::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>,
+	camera_manager: UniqueView<CameraManager>,
+	transforms: View<component::Transform>,
+	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
@@ -330,7 +350,9 @@ fn draw_3d_transparent(
 	Ok(())
 }
 fn draw_ui(
-	render_ctx: UniqueView<render::RenderContext>, ui_transforms: View<ui::Transform>, ui_meshes: View<ui::mesh::Mesh>,
+	render_ctx: UniqueView<render::RenderContext>,
+	ui_transforms: View<ui::Transform>,
+	ui_meshes: View<ui::mesh::Mesh>,
 	texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
@@ -368,7 +390,10 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 		.and_then(|mut gctx| {
 			event_loop.run(move |event, _, control_flow| {
 				match event {
-					Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+					Event::WindowEvent {
+						event: WindowEvent::CloseRequested,
+						..
+					} => {
 						*control_flow = winit::event_loop::ControlFlow::Exit; // TODO: show exit confirmation dialog here
 					}
 					_ => (),
@@ -411,7 +436,12 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 		.build();
 
 	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
-	let term_logger = TermLogger::new(LevelFilter::Debug, logger_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
+	let term_logger = TermLogger::new(
+		LevelFilter::Debug,
+		logger_config.clone(),
+		TerminalMode::Mixed,
+		ColorChoice::Auto,
+	);
 	let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
 	CombinedLogger::init(vec![term_logger, write_logger])?;
 

@@ -21,7 +21,6 @@ pub struct PBR
 	base_color: ColorInput,
 	//roughness: SingleChannelInput,
 	//specular: SingleChannelInput,
-	
 	#[serde(default)]
 	transparent: bool,
 
@@ -32,7 +31,11 @@ impl PBR
 {
 	pub fn new(base_color: ColorInput, transparent: bool) -> Self
 	{
-		PBR { base_color, transparent, descriptor_set: None }
+		PBR {
+			base_color,
+			transparent,
+			descriptor_set: None,
+		}
 	}
 }
 #[typetag::deserialize]
@@ -44,11 +47,14 @@ impl Material for PBR
 	}
 
 	fn bind_descriptor_set(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		crate::render::bind_descriptor_set(
-			cb, 2, self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone()
+			cb,
+			2,
+			self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone(),
 		)?;
 		Ok(())
 	}
@@ -66,10 +72,11 @@ impl DeferMaterialLoading for PBR
 		// TODO: roughness and specular textures
 		let base_color_tex = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		self.descriptor_set = Some(
-			render_ctx
-				.new_descriptor_set(self.pipeline_name(), 2, [WriteDescriptorSet::image_view(1, base_color_tex.view())])?,
-		);
+		self.descriptor_set = Some(render_ctx.new_descriptor_set(
+			self.pipeline_name(),
+			2,
+			[WriteDescriptorSet::image_view(1, base_color_tex.view())],
+		)?);
 
 		Ok(())
 	}

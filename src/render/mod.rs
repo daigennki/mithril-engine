@@ -16,7 +16,7 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use vulkano::buffer::{
-	BufferAccess, BufferUsage, BufferContents, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess
+	BufferAccess, BufferContents, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess,
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
@@ -55,7 +55,6 @@ pub struct RenderContext
 	// Samplers used for 3D draws. All use linear downscaling and have 16x anisotropic filtering enabled.
 	sampler_linear: Arc<Sampler>, // Linear upscaling (default)
 	//sampler_nearest: Arc<Sampler>, // Nearest neighbor upscaling (possibly useful for pixel art)
-
 	trm: Mutex<ThreadedRenderingManager>,
 
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
@@ -113,10 +112,11 @@ impl RenderContext
 
 		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
-			&memory_allocator, descriptor_set_allocator.clone(),
+			&memory_allocator,
+			descriptor_set_allocator.clone(),
 			main_render_target.color_image().clone(),
 			main_render_target.depth_image().clone(),
-			sampler_linear.clone()
+			sampler_linear.clone(),
 		)?;
 
 		Ok(RenderContext {
@@ -206,7 +206,11 @@ impl RenderContext
 	}
 
 	pub fn new_texture_from_iter<Px, I>(
-		&mut self, iter: I, vk_fmt: Format, dimensions: ImageDimensions, mip: MipmapsCount,
+		&mut self,
+		iter: I,
+		vk_fmt: Format,
+		dimensions: ImageDimensions,
+		mip: MipmapsCount,
 	) -> Result<texture::Texture, GenericEngineError>
 	where
 		[Px]: vulkano::buffer::BufferContents,
@@ -220,14 +224,19 @@ impl RenderContext
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer_from_iter<I, T>(
-		&mut self, data: I, mut usage: BufferUsage,
+		&mut self,
+		data: I,
+		mut usage: BufferUsage,
 	) -> Result<Arc<DeviceLocalBuffer<[T]>>, GenericEngineError>
 	where
 		I: IntoIterator<Item = T>,
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
 	{
-		let staging_usage = BufferUsage { transfer_src: true, ..BufferUsage::empty() };
+		let staging_usage = BufferUsage {
+			transfer_src: true,
+			..BufferUsage::empty()
+		};
 		let staging_buf = CpuAccessibleBuffer::from_iter(&self.memory_allocator, staging_usage, false, data)?;
 		usage.transfer_dst = true;
 		let buf = DeviceLocalBuffer::array(&self.memory_allocator, staging_buf.len(), usage, self.get_queue_families())?;
@@ -237,12 +246,17 @@ impl RenderContext
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
 	pub fn new_buffer_from_data<T>(
-		&mut self, data: T, mut usage: BufferUsage,
+		&mut self,
+		data: T,
+		mut usage: BufferUsage,
 	) -> Result<Arc<DeviceLocalBuffer<T>>, GenericEngineError>
 	where
 		T: vulkano::buffer::BufferContents,
 	{
-		let staging_usage = BufferUsage { transfer_src: true, ..BufferUsage::empty() };
+		let staging_usage = BufferUsage {
+			transfer_src: true,
+			..BufferUsage::empty()
+		};
 		let staging_buf = CpuAccessibleBuffer::from_data(&self.memory_allocator, staging_usage, false, data)?;
 		usage.transfer_dst = true;
 		let buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
@@ -253,7 +267,9 @@ impl RenderContext
 	/// Create a new pair of CPU-accessible buffer pool and device-local buffer, which will be initialized with `data` for `usage`.
 	/// The CPU-accessible buffer pool is used for staging, from which data will be copied to the device-local buffer.
 	pub fn new_cpu_buffer_from_data<T>(
-		&mut self, data: T, mut usage: BufferUsage,
+		&mut self,
+		data: T,
+		mut usage: BufferUsage,
 	) -> Result<(CpuBufferPool<T>, Arc<DeviceLocalBuffer<T>>), GenericEngineError>
 	where
 		[T]: vulkano::buffer::BufferContents,
@@ -268,14 +284,14 @@ impl RenderContext
 
 	fn get_queue_families(&self) -> Vec<u32>
 	{
-		self.graphics_queue
-			.device()
-			.active_queue_family_indices()
-			.into()
+		self.graphics_queue.device().active_queue_family_indices().into()
 	}
 
 	pub fn new_descriptor_set(
-		&self, pipeline_name: &str, set: usize, writes: impl IntoIterator<Item = WriteDescriptorSet>,
+		&self,
+		pipeline_name: &str,
+		set: usize,
+		writes: impl IntoIterator<Item = WriteDescriptorSet>,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
 		self.material_pipelines
@@ -289,7 +305,9 @@ impl RenderContext
 	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
 	/// If no subpass was specified, the first subpass of the render pass that `framebuffer` was created with will be used.
 	fn new_secondary_command_buffer(
-		&self, framebuffer: Arc<Framebuffer>, subpass: Option<Subpass>,
+		&self,
+		framebuffer: Arc<Framebuffer>,
+		subpass: Option<Subpass>,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
@@ -311,9 +329,7 @@ impl RenderContext
 		let fb_extent = framebuffer.extent();
 		let viewport = Viewport {
 			origin: [0.0, 0.0],
-			dimensions: [
-				fb_extent[0] as f32, fb_extent[1] as f32,
-			],
+			dimensions: [fb_extent[0] as f32, fb_extent[1] as f32],
 			depth_range: 0.0..1.0,
 		};
 		cb.set_viewport(0, [viewport]);
@@ -328,15 +344,16 @@ impl RenderContext
 	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
 	/// anything specific to materials (it only reads the alpha channel of each texture).
 	pub fn record_transparency_moments_draws(
-		&self
-	)-> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+		&self,
+	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None)?;
 		self.transparency_renderer.get_moments_pipeline().bind(&mut cb);
 		Ok(cb)
 	}
 	pub fn record_transparency_draws(
-		&self, first_bind_pipeline: &pipeline::Pipeline
+		&self,
+		first_bind_pipeline: &pipeline::Pipeline,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let fb = self.transparency_renderer.framebuffer();
@@ -346,12 +363,10 @@ impl RenderContext
 		bind_descriptor_set(&mut cb, 3, vec![self.transparency_renderer.get_stage3_inputs()])?;
 		Ok(cb)
 	}
-	pub fn record_ui_draws(
-		&self
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	pub fn record_ui_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		self.new_secondary_command_buffer(
-			self.main_render_target.framebuffer().clone(), 
+			self.main_render_target.framebuffer().clone(),
 			Some(self.main_render_target.ui_rp().clone().first_subpass()),
 		)
 	}
@@ -384,11 +399,16 @@ impl RenderContext
 	/// TODO: should we wait for more work before we build a command buffer? it's probably inefficient to submit a command
 	/// buffer with just a single command...
 	fn create_staging_command_buffer(
-		&self, work: StagingWork, queue_family: u32,
+		&self,
+		work: StagingWork,
+		queue_family: u32,
 	) -> Result<PrimaryAutoCommandBuffer, GenericEngineError>
 	{
-		let mut staging_cb_builder =
-			AutoCommandBufferBuilder::primary(&self.command_buffer_allocator, queue_family, CommandBufferUsage::OneTimeSubmit)?;
+		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
+			&self.command_buffer_allocator,
+			queue_family,
+			CommandBufferUsage::OneTimeSubmit,
+		)?;
 		match work {
 			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
 			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
@@ -545,7 +565,9 @@ impl RenderContext
 /// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
 /// This will fail if there is no pipeline currently bound.
 pub fn bind_descriptor_set<L, S>(
-	cb: &mut AutoCommandBufferBuilder<L>, first_set: u32, descriptor_sets: S,
+	cb: &mut AutoCommandBufferBuilder<L>,
+	first_set: u32,
+	descriptor_sets: S,
 ) -> Result<(), PipelineExecutionError>
 where
 	S: DescriptorSetsCollection,
@@ -562,11 +584,9 @@ where
 
 /// Push push constants to the currently bound pipeline on the given command buffer builder.
 /// This will fail if there is no pipeline currently bound.
-pub fn push_constants<L, Pc>(
-	cb: &mut AutoCommandBufferBuilder<L>, offset: u32, data: Pc,
-) -> Result<(), PipelineExecutionError>
+pub fn push_constants<L, Pc>(cb: &mut AutoCommandBufferBuilder<L>, offset: u32, data: Pc) -> Result<(), PipelineExecutionError>
 where
-	Pc: BufferContents
+	Pc: BufferContents,
 {
 	let pipeline_layout = cb
 		.state()
@@ -705,7 +725,10 @@ impl RenderTarget
 			}
 		)?;
 
-		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
+		let color_usage = ImageUsage {
+			transfer_src: true,
+			..Default::default()
+		};
 		let color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 		let depth_image = AttachmentImage::new(memory_allocator, dimensions, Format::D16_UNORM)?;
 		let fb_create_info = FramebufferCreateInfo {
@@ -718,20 +741,26 @@ impl RenderTarget
 		let framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
 		Ok(Self {
-			framebuffer, 
-			color_image, 
-			depth_image, 
-			ui_rp 
+			framebuffer,
+			color_image,
+			depth_image,
+			ui_rp,
 		})
 	}
 
 	pub fn resize(&mut self, memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2])
 		-> Result<(), GenericEngineError>
 	{
-		let color_usage = ImageUsage { transfer_src: true, ..Default::default() };
+		let color_usage = ImageUsage {
+			transfer_src: true,
+			..Default::default()
+		};
 		self.color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 
-		let depth_usage = ImageUsage { sampled: true, ..Default::default() };
+		let depth_usage = ImageUsage {
+			sampled: true,
+			..Default::default()
+		};
 		self.depth_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?;
 
 		let fb_create_info = FramebufferCreateInfo {

@@ -40,7 +40,10 @@ impl Swapchain
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
-		let image_usage = ImageUsage { transfer_dst: true, ..ImageUsage::empty() };
+		let image_usage = ImageUsage {
+			transfer_dst: true,
+			..ImageUsage::empty()
+		};
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
 			image_format: Some(Format::B8G8R8A8_SRGB),
@@ -73,7 +76,11 @@ impl Swapchain
 
 		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
 		if dimensions_changed {
-			log::info!("Swapchain resized: {:?} -> {:?}", prev_dimensions, self.swapchain.image_extent());
+			log::info!(
+				"Swapchain resized: {:?} -> {:?}",
+				prev_dimensions,
+				self.swapchain.image_extent()
+			);
 		}
 		Ok(dimensions_changed)
 	}
@@ -118,7 +125,9 @@ impl Swapchain
 	}
 
 	pub fn submit_transfer_on_graphics_queue(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>,
+		&mut self,
+		cb: PrimaryAutoCommandBuffer,
+		queue: Arc<Queue>,
 	) -> Result<(), GenericEngineError>
 	{
 		self.submission_future = Some(match self.submission_future.take() {
@@ -126,10 +135,7 @@ impl Swapchain
 				.execute_after(f, queue.clone())?
 				.boxed_send_sync()
 				.then_signal_fence_and_flush()?,
-			None => cb
-				.execute(queue.clone())?
-				.boxed_send_sync()
-				.then_signal_fence_and_flush()?,
+			None => cb.execute(queue.clone())?.boxed_send_sync().then_signal_fence_and_flush()?,
 		});
 		Ok(())
 	}
@@ -140,7 +146,10 @@ impl Swapchain
 	/// that graphics operations don't begin until after the future is reached.
 	/// Note that `after` does not need to be a signalled fence or semaphore, as signalling will be done in this function.
 	pub fn present(
-		&mut self, cb: PrimaryAutoCommandBuffer, queue: Arc<Queue>, after: Option<Box<dyn GpuFuture + Send + Sync>>,
+		&mut self,
+		cb: PrimaryAutoCommandBuffer,
+		queue: Arc<Queue>,
+		after: Option<Box<dyn GpuFuture + Send + Sync>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let acquire_future = self

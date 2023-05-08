@@ -48,14 +48,11 @@ impl Skybox
 		)?;
 
 		// sky texture cubemap
-		let face_names = [
-			"Right", "Left", "Top", "Bottom", "Front", "Back",
-		];
+		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = render_ctx.new_cubemap_texture(face_paths)?;
-		let descriptor_set = sky_pipeline.new_descriptor_set(0, [
-			WriteDescriptorSet::image_view(1, sky_cubemap.view().clone()),
-		])?;
+		let descriptor_set =
+			sky_pipeline.new_descriptor_set(0, [WriteDescriptorSet::image_view(1, sky_cubemap.view().clone())])?;
 
 		// sky cube
 		#[rustfmt::skip]
@@ -80,14 +77,27 @@ impl Skybox
 
 		Ok(Skybox {
 			sky_pipeline,
-			cube_vbo: render_ctx.new_buffer_from_iter(position, BufferUsage { vertex_buffer: true, ..BufferUsage::empty() })?,
-			cube_ibo: render_ctx.new_buffer_from_iter(indices, BufferUsage { index_buffer: true, ..BufferUsage::empty() })?,
+			cube_vbo: render_ctx.new_buffer_from_iter(
+				position,
+				BufferUsage {
+					vertex_buffer: true,
+					..BufferUsage::empty()
+				},
+			)?,
+			cube_ibo: render_ctx.new_buffer_from_iter(
+				indices,
+				BufferUsage {
+					index_buffer: true,
+					..BufferUsage::empty()
+				},
+			)?,
 			descriptor_set,
 		})
 	}
 
 	pub fn draw(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, 
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		camera_manager: &crate::component::camera::CameraManager,
 	) -> Result<(), GenericEngineError>
 	{

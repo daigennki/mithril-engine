@@ -54,9 +54,7 @@ impl Model
 					.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
 					.flatten();
 				for prim in primitives {
-					let positions_accessor = prim
-						.get(&Semantic::Positions)
-						.ok_or("no positions in glTF primitive")?;
+					let positions_accessor = prim.get(&Semantic::Positions).ok_or("no positions in glTF primitive")?;
 					positions.extend_from_slice(get_buf_data(&positions_accessor, &data_buffers)?);
 
 					let texcoords_accessor = prim
@@ -64,9 +62,7 @@ impl Model
 						.ok_or("no texture coordinates in glTF primitive")?;
 					texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
 
-					let normals_accessor = prim
-						.get(&Semantic::Normals)
-						.ok_or("no normals in glTF primitive")?;
+					let normals_accessor = prim.get(&Semantic::Normals).ok_or("no normals in glTF primitive")?;
 					normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
 
 					let indices_accessor = prim.indices().ok_or("no indices in glTF primitive")?;
@@ -82,7 +78,10 @@ impl Model
 					vertex_offset += positions_accessor.count() as i32;
 				}
 
-				let vert_buf_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
+				let vert_buf_usage = BufferUsage {
+					vertex_buffer: true,
+					..BufferUsage::empty()
+				};
 				let vbo_positions = render_ctx.new_buffer_from_iter(positions, vert_buf_usage)?;
 				let vbo_texcoords = render_ctx.new_buffer_from_iter(texcoords, vert_buf_usage)?;
 				let vbo_normals = render_ctx.new_buffer_from_iter(normals, vert_buf_usage)?;
@@ -93,9 +92,7 @@ impl Model
 						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
 						.collect::<Result<_, _>>()?,
 					submeshes,
-					vertex_buffers: vec![
-						vbo_positions, vbo_texcoords, vbo_normals,
-					],
+					vertex_buffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer: IndexBufferVariant::from_u16_and_u32(render_ctx, indices_u16, indices_u32)?,
 					path: path.to_path_buf(),
 				})
@@ -133,16 +130,15 @@ impl Model
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
 	pub fn draw(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, transform: &Mat4,
-		material_overrides: &Vec<Option<Box<dyn Material>>>, transparency_pass: bool
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		transform: &Mat4,
+		material_overrides: &Vec<Option<Box<dyn Material>>>,
+		transparency_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
-		let mut visible_submeshes = self
-			.submeshes
-			.iter()
-			.filter(|submesh| submesh.cull(transform))
-			.peekable();
+		let mut visible_submeshes = self.submeshes.iter().filter(|submesh| submesh.cull(transform)).peekable();
 
 		// don't even bother with vertex/index buffer binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
@@ -188,12 +184,14 @@ struct MaterialExtras
 }
 
 fn load_gltf_material(
-	mat: &gltf::Material, search_folder: &Path, render_ctx: &mut RenderContext
+	mat: &gltf::Material,
+	search_folder: &Path,
+	render_ctx: &mut RenderContext,
 ) -> Result<Box<dyn Material>, GenericEngineError>
 {
 	let material_name = mat.name().ok_or("glTF mesh material has no name")?;
 	let mat_path = search_folder.join(material_name).with_extension("yaml");
-	
+
 	// Use an external material file if specified in the extras.
 	// This can be specified in Blender by giving a material a custom property called "external" with an integer value of 1.
 	let use_external = if let Some(extras) = mat.extras() {
@@ -204,7 +202,10 @@ fn load_gltf_material(
 	};
 
 	if use_external {
-		log::info!("External material specified, loading material file '{}'...", mat_path.display());
+		log::info!(
+			"External material specified, loading material file '{}'...",
+			mat_path.display()
+		);
 		let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
 		deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
 		Ok(deserialized_mat)
@@ -232,7 +233,9 @@ impl IndexBufferVariant
 	/// If there are any u32 indices, a u32 index buffer will be created, and any u16 indices that may exist
 	/// will be converted to u32.
 	pub fn from_u16_and_u32(
-		render_ctx: &mut RenderContext, indices_u16: Vec<u16>, mut indices_u32: Vec<u32>,
+		render_ctx: &mut RenderContext,
+		indices_u16: Vec<u16>,
+		mut indices_u32: Vec<u32>,
 	) -> Result<Self, GenericEngineError>
 	{
 		// Convert the u16 indices into u32, if there are some u32 indices they will be mixed with.
@@ -241,7 +244,10 @@ impl IndexBufferVariant
 			indices_u32.extend(u16_to_u32);
 		}
 
-		let index_buf_usage = BufferUsage { index_buffer: true, ..BufferUsage::empty() };
+		let index_buf_usage = BufferUsage {
+			index_buffer: true,
+			..BufferUsage::empty()
+		};
 
 		Ok(if indices_u32.is_empty() {
 			IndexBufferVariant::U16(render_ctx.new_buffer_from_iter(indices_u16, index_buf_usage)?)
@@ -379,18 +385,20 @@ fn data_type_to_id(value: DataType) -> TypeId
 
 /// Get a slice of the part of the buffer that the accessor points to.
 fn get_buf_data<'a, T: 'static>(
-	accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>,
+	accessor: &gltf::Accessor,
+	buffers: &'a Vec<gltf::buffer::Data>,
 ) -> Result<&'a [T], GenericEngineError>
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
-		return Err(
-			format!("expected '{:?}', but given glTF primitive has `{:?}`", TypeId::of::<T>(), accessor.data_type()).into()
-		);
+		return Err(format!(
+			"expected '{:?}', but given glTF primitive has `{:?}`",
+			TypeId::of::<T>(),
+			accessor.data_type()
+		)
+		.into());
 	}
 
-	let view = accessor
-		.view()
-		.ok_or("unexpected sparse accessor in glTF file")?;
+	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
 	if view.stride().is_some() {
 		return Err("unexpected interleaved data in glTF file".into());
 	}

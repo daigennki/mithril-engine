@@ -32,7 +32,10 @@ impl Mesh
 	}
 
 	pub fn new_from_corners(
-		render_ctx: &mut RenderContext, top_left: Vec2, bottom_right: Vec2, tex: Arc<Texture>,
+		render_ctx: &mut RenderContext,
+		top_left: Vec2,
+		bottom_right: Vec2,
+		tex: Arc<Texture>,
 	) -> Result<Self, GenericEngineError>
 	{
 		// vertex data
@@ -49,7 +52,10 @@ impl Mesh
 			Vec2::new(1.0, 1.0),
 		];
 
-		let vbo_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
+		let vbo_usage = BufferUsage {
+			vertex_buffer: true,
+			..BufferUsage::empty()
+		};
 		Ok(Mesh {
 			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?,
 			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, vbo_usage)?,

@@ -29,7 +29,10 @@ impl EguiRenderer
 			subpass,
 		);
 
-		EguiRenderer { egui_gui, selected_ent: Default::default() }
+		EguiRenderer {
+			egui_gui,
+			selected_ent: Default::default(),
+		}
 	}
 
 	pub fn update(&mut self, winit_event: &winit::event::WindowEvent) -> bool
@@ -55,9 +58,7 @@ impl EguiRenderer
 
 		// draw egui
 		let render_ctx = world.borrow::<UniqueView<RenderContext>>()?;
-		let egui_cb = self
-			.egui_gui
-			.draw_on_subpass_image(render_ctx.swapchain_dimensions());
+		let egui_cb = self.egui_gui.draw_on_subpass_image(render_ctx.swapchain_dimensions());
 		render_ctx.add_ui_cb(egui_cb);
 
 		Ok(())

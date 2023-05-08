@@ -49,8 +49,8 @@ impl CameraManager
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let (projview, sky_projview) = calculate_projview(Vec3::ZERO, Vec3::Y, dim[0], dim[1], default_fov);
-		
-		Ok(CameraManager{
+
+		Ok(CameraManager {
 			active_camera: Default::default(),
 			default_fov,
 			projview,
@@ -60,7 +60,11 @@ impl CameraManager
 
 	/// This function *must* be run every frame, before entities are rendered.
 	pub fn update(
-		&mut self, render_ctx: &mut RenderContext, current_pos: Vec3, current_rotation: &Quat, fov: Option<CameraFov>
+		&mut self,
+		render_ctx: &mut RenderContext,
+		current_pos: Vec3,
+		current_rotation: &Quat,
+		fov: Option<CameraFov>,
 	) -> Result<(), GenericEngineError>
 	{
 		let target = *current_rotation * Vec3::Y;
@@ -72,9 +76,8 @@ impl CameraManager
 	}
 
 	/// Push the multiplied projection and view matrix so they can be used in shaders.
-	pub fn push_projview(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
-	) -> Result<(), GenericEngineError>
+	pub fn push_projview(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
+		-> Result<(), GenericEngineError>
 	{
 		crate::render::push_constants(cb, 0, self.projview)?;
 		Ok(())
@@ -83,7 +86,8 @@ impl CameraManager
 	/// Push the multiplied projection and view matrix so they can be used specifically in the skybox shader.
 	/// (the view matrix here never changes its eye position from (0, 0, 0))
 	pub fn push_sky_projview(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		crate::render::push_constants(cb, 0, self.sky_projview)?;
@@ -107,7 +111,7 @@ impl CameraManager
 
 /// Calculate the projection and view matrices from the given camera parameters.
 /// Returns a pair of the typical projview and the skybox projview.
-fn calculate_projview(pos: Vec3, dir: Vec3, width: u32, height: u32, fov: CameraFov) ->(Mat4, Mat4) 
+fn calculate_projview(pos: Vec3, dir: Vec3, width: u32, height: u32, fov: CameraFov) -> (Mat4, Mat4)
 {
 	let aspect_ratio = width as f32 / height as f32;
 	let fov_y_deg = match fov {
@@ -125,4 +129,3 @@ fn calculate_projview(pos: Vec3, dir: Vec3, width: u32, height: u32, fov: Camera
 
 	(projview, sky_projview)
 }
-

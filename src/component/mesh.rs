@@ -13,7 +13,7 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 use egui_winit_vulkano::egui;
 
 use crate::component::{DeferGpuResourceLoading, EntityComponent};
-use crate::material::{ColorInput, Material, pbr::PBR};
+use crate::material::{pbr::PBR, ColorInput, Material};
 use crate::render::{model::Model, RenderContext};
 use crate::GenericEngineError;
 
@@ -46,10 +46,7 @@ impl Mesh
 	/// This will panic if loading hasn't finished yet!
 	pub fn has_transparency(&self) -> bool
 	{
-		let original_materials = self.model_data
-			.as_ref()
-			.unwrap()
-			.get_materials();
+		let original_materials = self.model_data.as_ref().unwrap().get_materials();
 
 		// substitute the original material if no override was specified,
 		// then look for any materials with transparency enabled
@@ -64,10 +61,7 @@ impl Mesh
 	/// This will panic if loading hasn't finished yet!
 	pub fn has_opaque_materials(&self) -> bool
 	{
-		let original_materials = self.model_data
-			.as_ref()
-			.unwrap()
-			.get_materials();
+		let original_materials = self.model_data.as_ref().unwrap().get_materials();
 
 		// substitute the original material if no override was specified,
 		// then look for any materials with transparency disabled
@@ -79,7 +73,10 @@ impl Mesh
 	}
 
 	pub fn draw(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, projviewmodel: &Mat4, transparency_pass: bool
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		projviewmodel: &Mat4,
+		transparency_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
@@ -103,10 +100,7 @@ impl Mesh
 				mat_override.update_descriptor_set(self.model_data.as_ref().unwrap().path(), render_ctx)?;
 			}
 
-			let mut color = mat_override
-				.get_base_color()
-				.unwrap()
-				.to_array();
+			let mut color = mat_override.get_base_color().unwrap().to_array();
 			egui::CollapsingHeader::new("Mesh").show(ui, |ui| {
 				ui.label("Base Color");
 				ui.color_edit_button_rgba_unmultiplied(&mut color);
@@ -127,7 +121,7 @@ impl DeferGpuResourceLoading for Mesh
 		let material_count = model_data.get_materials().len();
 
 		self.model_data = Some(model_data);
-		
+
 		self.material_overrides = Vec::with_capacity(material_count);
 		for _ in 0..material_count {
 			self.material_overrides.push(None);

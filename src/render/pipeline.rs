@@ -126,32 +126,34 @@ impl Pipeline
 		print_pipeline_descriptors_info(&pipeline);
 
 		/*let transparency_pipeline = builder_transparency
-			.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
-				let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
-				let layout = pipeline_ref.layout().clone();
-				Ok(bt.with_pipeline_layout(vk_dev, layout)?)
-			})
-			.transpose()?;*/
+		.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
+			let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
+			let layout = pipeline_ref.layout().clone();
+			Ok(bt.with_pipeline_layout(vk_dev, layout)?)
+		})
+		.transpose()?;*/
 		let transparency_pipeline = if let Some(bt) = builder_transparency {
-			let built_transparency_pipeline = bt.with_auto_layout(
-				vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers)
-			)?;
+			let built_transparency_pipeline =
+				bt.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
 			print_pipeline_descriptors_info(&built_transparency_pipeline);
 			Some(built_transparency_pipeline)
 		} else {
 			None
 		};
 
-		Ok(Pipeline { 
-			descriptor_set_allocator, 
-			pipeline, 
-			transparency_pipeline 
+		Ok(Pipeline {
+			descriptor_set_allocator,
+			pipeline,
+			transparency_pipeline,
 		})
 	}
 
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(
-		yaml_filename: &str, subpass: Subpass, transparency_subpass: Option<Subpass>, tex_sampler: Arc<Sampler>,
+		yaml_filename: &str,
+		subpass: Subpass,
+		transparency_subpass: Option<Subpass>,
+		tex_sampler: Arc<Sampler>,
 		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	) -> Result<Self, GenericEngineError>
 	{
@@ -199,11 +201,7 @@ impl Pipeline
 	}
 	pub fn bind_transparency<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), TransparencyNotEnabled>
 	{
-		command_buffer.bind_pipeline_graphics(
-			self.transparency_pipeline
-				.clone()
-				.ok_or(TransparencyNotEnabled)?,
-		);
+		command_buffer.bind_pipeline_graphics(self.transparency_pipeline.clone().ok_or(TransparencyNotEnabled)?);
 		Ok(())
 	}
 
@@ -216,7 +214,8 @@ impl Pipeline
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
 	/// into the descriptor set.
 	pub fn new_descriptor_set(
-		&self, set_number: usize,
+		&self,
+		set_number: usize,
 		writes: impl IntoIterator<Item = WriteDescriptorSet>,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
@@ -227,7 +226,11 @@ impl Pipeline
 			.get(set_number)
 			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
 			.clone();
-		Ok(PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes)?)
+		Ok(PersistentDescriptorSet::new(
+			&self.descriptor_set_allocator,
+			set_layout,
+			writes,
+		)?)
 	}
 }
 
@@ -291,7 +294,8 @@ enum PrimitiveTopologyDef
 }
 
 fn get_entry_point<'a>(
-	shader_module: &'a Arc<ShaderModule>, entry_point_name: &str,
+	shader_module: &'a Arc<ShaderModule>,
+	entry_point_name: &str,
 ) -> Result<EntryPoint<'a>, GenericEngineError>
 {
 	shader_module
@@ -313,7 +317,8 @@ fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) -> Result<Arc<S
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the
 /// SPIR-V file.
 fn load_spirv_vertex(
-	device: Arc<vulkano::device::Device>, path: &Path,
+	device: Arc<vulkano::device::Device>,
+	path: &Path,
 ) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
 {
 	let shader_module = load_spirv(device, path)?;
@@ -328,8 +333,21 @@ fn load_spirv_vertex(
 			let format = format_from_interface_type(&input.ty);
 			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
 			accum
-				.binding(binding, VertexInputBindingDescription { stride, input_rate: VertexInputRate::Vertex })
-				.attribute(binding, VertexInputAttributeDescription { binding, format, offset: 0 })
+				.binding(
+					binding,
+					VertexInputBindingDescription {
+						stride,
+						input_rate: VertexInputRate::Vertex,
+					},
+				)
+				.attribute(
+					binding,
+					VertexInputAttributeDescription {
+						binding,
+						format,
+						offset: 0,
+					},
+				)
 		});
 
 	log::debug!("automatically generated VertexInputState: {:#?}", &vertex_input_state);
@@ -385,6 +403,12 @@ fn print_pipeline_descriptors_info(pipeline: &GraphicsPipeline)
 			None => "runtime-sized array of".into(),
 		};
 
-		log::debug!("set {}, binding {}: {} {:?}", set, binding, desc_count_string, req.descriptor_types);
+		log::debug!(
+			"set {}, binding {}: {} {:?}",
+			set,
+			binding,
+			desc_count_string,
+			req.descriptor_types
+		);
 	}
 }

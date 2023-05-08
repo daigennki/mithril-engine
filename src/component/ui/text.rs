@@ -3,10 +3,10 @@
 
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
-use std::sync::Arc;
 use glam::*;
 use image::{DynamicImage, Rgba};
 use rusttype::{point, Font, Scale};
+use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::format::Format;
 use vulkano::image::{ImageDimensions, MipmapsCount};
@@ -102,16 +102,7 @@ impl Text
 						);
 					} else {
 						// Turn the coverage into an alpha value
-						image.put_pixel(
-							x_offset,
-							y_offset,
-							Rgba([
-								color.0,
-								color.1,
-								color.2,
-								(v * 255.0) as u8,
-							]),
-						)
+						image.put_pixel(x_offset, y_offset, Rgba([color.0, color.1, color.2, (v * 255.0) as u8]))
 					}
 				});
 			}
@@ -127,7 +118,12 @@ impl Text
 		let mesh_top_left = Vec2::new(img_dim.width() as f32 / -2.0, -v_metrics.ascent - 1.0);
 		let mesh_bottom_right = Vec2::new(img_dim.width() as f32 / 2.0, -v_metrics.descent + 1.0);
 
-		self.quad = Some(Mesh::new_from_corners(render_ctx, mesh_top_left, mesh_bottom_right, Arc::new(tex))?);
+		self.quad = Some(Mesh::new_from_corners(
+			render_ctx,
+			mesh_top_left,
+			mesh_bottom_right,
+			Arc::new(tex),
+		)?);
 
 		Ok(())
 	}

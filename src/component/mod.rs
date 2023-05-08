@@ -104,17 +104,11 @@ impl Transform
 	}
 
 	pub fn bind_descriptor_set(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
-		crate::render::bind_descriptor_set(
-			cb,
-			0,
-			self.descriptor_set
-				.as_ref()
-				.ok_or("transform not loaded")?
-				.clone(),
-		)?;
+		crate::render::bind_descriptor_set(cb, 0, self.descriptor_set.as_ref().ok_or("transform not loaded")?.clone())?;
 		Ok(())
 	}
 
@@ -148,13 +142,15 @@ impl DeferGpuResourceLoading for Transform
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 
-		let (staging_buf, buf) = render_ctx
-			.new_cpu_buffer_from_data(self.model_mat, BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
+		let (staging_buf, buf) = render_ctx.new_cpu_buffer_from_data(
+			self.model_mat,
+			BufferUsage {
+				uniform_buffer: true,
+				..BufferUsage::empty()
+			},
+		)?;
 
-		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(
-			0,
-			buf.clone(),
-		)])?);
+		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?);
 		self.staging_buf = Some(staging_buf);
 		self.buf = Some(buf);
 

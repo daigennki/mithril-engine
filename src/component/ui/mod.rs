@@ -31,11 +31,17 @@ impl Transform
 {
 	pub fn new(pos: IVec2, scale: Vec2) -> Self
 	{
-		Transform { descriptor_set: None, proj: None, pos, scale }
+		Transform {
+			descriptor_set: None,
+			proj: None,
+			pos,
+			scale,
+		}
 	}
 
 	pub fn bind_descriptor_set(
-		&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
 		let descriptor_set_ref = self
@@ -55,18 +61,23 @@ impl Transform
 }
 
 fn update_matrix(
-	render_ctx: &mut RenderContext, proj: Mat4, pos: IVec2, scale: Vec2,
+	render_ctx: &mut RenderContext,
+	proj: Mat4,
+	pos: IVec2,
+	scale: Vec2,
 ) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 {
 	let projected = proj * Mat4::from_scale_rotation_translation(scale.extend(0.0), Quat::IDENTITY, pos.as_vec2().extend(0.0));
-	let buf = render_ctx
-		.new_buffer_from_data(projected.to_cols_array(), BufferUsage { uniform_buffer: true, ..BufferUsage::empty() })?;
+	let buf = render_ctx.new_buffer_from_data(
+		projected.to_cols_array(),
+		BufferUsage {
+			uniform_buffer: true,
+			..BufferUsage::empty()
+		},
+	)?;
 
 	// create descriptor set
-	render_ctx.new_descriptor_set("UI", 0, [WriteDescriptorSet::buffer(
-		0,
-		buf.clone(),
-	)])
+	render_ctx.new_descriptor_set("UI", 0, [WriteDescriptorSet::buffer(0, buf.clone())])
 }
 
 /// Convenience function: create a tuple of `Transform` and `Mesh` to display an image loaded from a file on the UI.
@@ -82,7 +93,10 @@ pub fn new_image(render_ctx: &mut RenderContext, path: &str, pos: IVec2)
 
 /// Convenience function: create a tuple of `Transform` and `Text` to display text.
 pub fn new_text(
-	render_ctx: &mut RenderContext, text: String, size: f32, pos: IVec2,
+	render_ctx: &mut RenderContext,
+	text: String,
+	size: f32,
+	pos: IVec2,
 ) -> Result<(Transform, text::Text), GenericEngineError>
 {
 	let text_transform = Transform::new(pos, Vec2::new(1.0, 1.0));

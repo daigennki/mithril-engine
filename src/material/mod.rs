@@ -17,7 +17,6 @@ use vulkano::image::{ImageDimensions, MipmapsCount};
 use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
 
-
 /// Trait which allows materials to defer loading using `RenderContext` to after deserialization.
 /// This allows each `Material` implementor to define the loading function differently.
 pub trait DeferMaterialLoading
@@ -40,7 +39,8 @@ pub trait Material: Send + Sync + DeferMaterialLoading
 	fn pipeline_name(&self) -> &'static str;
 
 	fn bind_descriptor_set(
-		&self, command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		&self,
+		command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
@@ -68,7 +68,11 @@ impl ColorInput
 				Ok(Arc::new(render_ctx.new_texture_from_iter(
 					color.to_array(),
 					Format::R32G32B32A32_SFLOAT,
-					ImageDimensions::Dim2d { width: 1, height: 1, array_layers: 1 },
+					ImageDimensions::Dim2d {
+						width: 1,
+						height: 1,
+						array_layers: 1,
+					},
 					MipmapsCount::One,
 				)?))
 			}
@@ -95,7 +99,11 @@ impl SingleChannelInput
 				Ok(Arc::new(render_ctx.new_texture_from_iter(
 					[*value],
 					Format::R32_SFLOAT,
-					ImageDimensions::Dim2d { width: 1, height: 1, array_layers: 1 },
+					ImageDimensions::Dim2d {
+						width: 1,
+						height: 1,
+						array_layers: 1,
+					},
 					MipmapsCount::One,
 				)?))
 			}
