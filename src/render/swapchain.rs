@@ -40,9 +40,14 @@ impl Swapchain
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
+		// NVIDIA on Linux (possibly only when using Wayland?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it would be a
+		// safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
+		// https://vulkan.gpuinfo.org/listsurfaceformats.php?platform=linux
+		// This means we need to be sure to convert from linear to nonlinear sRGB beforehand. See `RenderContext::submit_frame`
+		// for that conversion.
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
-			image_format: Some(Format::B8G8R8A8_SRGB),
+			image_format: Some(Format::B8G8R8A8_UNORM),
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Immediate,
 			..Default::default()

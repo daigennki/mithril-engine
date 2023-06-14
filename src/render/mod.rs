@@ -25,7 +25,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferBeginError, CommandBufferInheritanceInfo,
 	CommandBufferInheritanceRenderPassInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
 	CopyBufferToImageInfo, PipelineExecutionError, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderPassBeginInfo,
-	SecondaryAutoCommandBuffer, SubpassContents,
+	SecondaryAutoCommandBuffer, SubpassContents, CopyImageInfo
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator, DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet,
@@ -71,8 +71,12 @@ pub struct RenderContext
 	// User-accessible material pipelines
 	material_pipelines: HashMap<String, pipeline::Pipeline>,
 
-	// The final contents of this render target's color image will be blitted to the swapchain's image.
+	// The final contents of this render target's color image will be blitted to the intermediate sRGB nonlinear image.
 	main_render_target: RenderTarget,
+
+	// An sRGB image which the above `main_render_target` will be blitted to, thus converting it to nonlinear.
+	// This will be copied, not blitted, to the swapchain.
+	intermediate_srgb_img: Arc<AttachmentImage>,
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
@@ -113,6 +117,12 @@ impl RenderContext
 		let sampler_linear = Sampler::new(vk_dev.clone(), sampler_info)?;
 
 		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
+		let intermediate_srgb_img = AttachmentImage::with_usage(
+			&memory_allocator,
+			swapchain.dimensions(),
+			Format::B8G8R8A8_SRGB,
+			ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC
+		)?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			&memory_allocator,
 			descriptor_set_allocator.clone(),
@@ -135,6 +145,7 @@ impl RenderContext
 			textures: HashMap::new(),
 			material_pipelines: HashMap::new(),
 			main_render_target,
+			intermediate_srgb_img,
 			transparency_renderer,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
@@ -551,12 +562,14 @@ impl RenderContext
 
 		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
 		rp_begin_info.render_pass = self.main_render_target.ui_rp().clone();
-		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.next_swapchain_image()?);
+		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.intermediate_srgb_img.clone());
+		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), self.next_swapchain_image()?);
 		primary_cb_builder
 			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(ui_cb)?
 			.end_render_pass()?
-			.blit_image(blit_info)?;
+			.blit_image(blit_info)?		// convert from linear to non-linear sRGB
+			.copy_image(copy_info)?;	// copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())
