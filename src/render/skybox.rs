@@ -4,7 +4,7 @@
 	Copyright (c) 2021-2022, daigennki (@daigennki)
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
+use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::pipeline::graphics::color_blend::ColorBlendState;
@@ -18,8 +18,8 @@ use crate::GenericEngineError;
 pub struct Skybox
 {
 	sky_pipeline: super::pipeline::Pipeline,
-	cube_vbo: Arc<DeviceLocalBuffer<[f32]>>,
-	cube_ibo: Arc<DeviceLocalBuffer<[u16]>>,
+	cube_vbo: Subbuffer<[f32]>,
+	cube_ibo: Subbuffer<[u16]>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 }
 impl Skybox
@@ -77,20 +77,8 @@ impl Skybox
 
 		Ok(Skybox {
 			sky_pipeline,
-			cube_vbo: render_ctx.new_buffer_from_iter(
-				position,
-				BufferUsage {
-					vertex_buffer: true,
-					..BufferUsage::empty()
-				},
-			)?,
-			cube_ibo: render_ctx.new_buffer_from_iter(
-				indices,
-				BufferUsage {
-					index_buffer: true,
-					..BufferUsage::empty()
-				},
-			)?,
+			cube_vbo: render_ctx.new_buffer_from_iter(position, BufferUsage::VERTEX_BUFFER)?,
+			cube_ibo: render_ctx.new_buffer_from_iter(indices, BufferUsage::INDEX_BUFFER)?,
 			descriptor_set,
 		})
 	}

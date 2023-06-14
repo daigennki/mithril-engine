@@ -16,7 +16,9 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use vulkano::buffer::{
-	BufferAccess, BufferContents, BufferUsage, CpuAccessibleBuffer, CpuBufferPool, DeviceLocalBuffer, TypedBufferAccess,
+	Buffer, BufferContents, BufferUsage, BufferCreateInfo, 
+	subbuffer::Subbuffer,
+	allocator::{ SubbufferAllocator, SubbufferAllocatorCreateInfo }
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
@@ -31,11 +33,11 @@ use vulkano::descriptor_set::{
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage};
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{ StandardMemoryAllocator, AllocationCreateInfo, MemoryUsage };
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
-use vulkano::sync::GpuFuture;
+use vulkano::sync::{ GpuFuture, Sharing };
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -213,6 +215,7 @@ impl RenderContext
 		mip: MipmapsCount,
 	) -> Result<texture::Texture, GenericEngineError>
 	where
+		Px: Send + Sync + bytemuck::Pod,
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
@@ -227,19 +230,34 @@ impl RenderContext
 		&mut self,
 		data: I,
 		mut usage: BufferUsage,
-	) -> Result<Arc<DeviceLocalBuffer<[T]>>, GenericEngineError>
+	) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
+		T: Send + Sync + bytemuck::Pod,
 		I: IntoIterator<Item = T>,
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
 	{
-		let staging_usage = BufferUsage {
-			transfer_src: true,
-			..BufferUsage::empty()
+		let buffer_info = BufferCreateInfo {
+			usage: BufferUsage::TRANSFER_SRC,
+			..Default::default()
 		};
-		let staging_buf = CpuAccessibleBuffer::from_iter(&self.memory_allocator, staging_usage, false, data)?;
-		usage.transfer_dst = true;
-		let buf = DeviceLocalBuffer::array(&self.memory_allocator, staging_buf.len(), usage, self.get_queue_families())?;
+		let allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::Upload,
+			..Default::default()
+		};
+		let staging_buf = Buffer::from_iter(&self.memory_allocator, buffer_info, allocation_info, data)?;
+
+		usage |= BufferUsage::TRANSFER_DST;
+		let buffer_info = BufferCreateInfo {
+			sharing: Sharing::Concurrent(self.get_queue_families().into()),
+			usage, 
+			..Default::default()
+		};
+		let allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::DeviceOnly,
+			..Default::default()
+		};
+		let buf = Buffer::new_slice(&self.memory_allocator, buffer_info, allocation_info, staging_buf.len())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
@@ -249,17 +267,31 @@ impl RenderContext
 		&mut self,
 		data: T,
 		mut usage: BufferUsage,
-	) -> Result<Arc<DeviceLocalBuffer<T>>, GenericEngineError>
+	) -> Result<Subbuffer<T>, GenericEngineError>
 	where
 		T: vulkano::buffer::BufferContents,
 	{
-		let staging_usage = BufferUsage {
-			transfer_src: true,
-			..BufferUsage::empty()
+		let buffer_info = BufferCreateInfo {
+			usage: BufferUsage::TRANSFER_SRC, 
+			..Default::default()
 		};
-		let staging_buf = CpuAccessibleBuffer::from_data(&self.memory_allocator, staging_usage, false, data)?;
-		usage.transfer_dst = true;
-		let buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
+		let allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::Upload,
+			..Default::default()
+		};
+		let staging_buf = Buffer::from_data(&self.memory_allocator, buffer_info, allocation_info, data)?;
+	
+		usage |= BufferUsage::TRANSFER_DST;	
+		let buffer_info = BufferCreateInfo {
+			sharing: Sharing::Concurrent(self.get_queue_families().into()),
+			usage, 
+			..Default::default()
+		};
+		let allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::DeviceOnly,
+			..Default::default()
+		};
+		let buf = Buffer::new_sized(&self.memory_allocator, buffer_info, allocation_info)?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
@@ -270,15 +302,29 @@ impl RenderContext
 		&mut self,
 		data: T,
 		mut usage: BufferUsage,
-	) -> Result<(CpuBufferPool<T>, Arc<DeviceLocalBuffer<T>>), GenericEngineError>
+	) -> Result<(SubbufferAllocator, Subbuffer<T>), GenericEngineError>
 	where
 		[T]: vulkano::buffer::BufferContents,
 		T: Send + Sync + bytemuck::Pod,
 	{
-		let cpu_buf = CpuBufferPool::upload(self.memory_allocator.clone());
-		usage.transfer_dst = true;
-		let gpu_buf = DeviceLocalBuffer::new(&self.memory_allocator, usage, self.get_queue_families())?;
-		self.copy_buffer(cpu_buf.from_data(data)?, gpu_buf.clone())?;
+		// TODO: figure out a good `arena_size` here (get size of T, double it, then round it up to the nearest power of 2?)
+		let pool_create_info = SubbufferAllocatorCreateInfo::default();
+		let cpu_buf = SubbufferAllocator::new(self.memory_allocator.clone(), pool_create_info);
+		
+		usage |= BufferUsage::TRANSFER_DST;	
+		let buffer_info = BufferCreateInfo {
+			sharing: Sharing::Concurrent(self.get_queue_families().into()),
+			usage, 
+			..Default::default()
+		};
+		let allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::DeviceOnly,
+			..Default::default()
+		};
+		let gpu_buf = Buffer::new_sized(&self.memory_allocator, buffer_info, allocation_info)?;
+		let written = cpu_buf.allocate_sized()?;
+		*written.write()? = data;
+		self.copy_buffer(written, gpu_buf.clone())?;
 		Ok((cpu_buf, gpu_buf))
 	}
 
@@ -447,7 +493,7 @@ impl RenderContext
 
 	/// Queue a buffer copy which will be executed before the next image submission.
 	/// Basically a shortcut for `submit_transfer_on_graphics_queue`.
-	pub fn copy_buffer(&mut self, src: Arc<dyn BufferAccess>, dst: Arc<dyn BufferAccess>) -> Result<(), GenericEngineError>
+	pub fn copy_buffer(&mut self, src: Subbuffer<impl ?Sized>, dst: Subbuffer<impl ?Sized>) -> Result<(), GenericEngineError>
 	{
 		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
@@ -725,10 +771,7 @@ impl RenderTarget
 			}
 		)?;
 
-		let color_usage = ImageUsage {
-			transfer_src: true,
-			..Default::default()
-		};
+		let color_usage = ImageUsage::TRANSFER_SRC;
 		let color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 		let depth_image = AttachmentImage::new(memory_allocator, dimensions, Format::D16_UNORM)?;
 		let fb_create_info = FramebufferCreateInfo {
@@ -751,16 +794,10 @@ impl RenderTarget
 	pub fn resize(&mut self, memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2])
 		-> Result<(), GenericEngineError>
 	{
-		let color_usage = ImageUsage {
-			transfer_src: true,
-			..Default::default()
-		};
+		let color_usage = ImageUsage::TRANSFER_SRC;
 		self.color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
 
-		let depth_usage = ImageUsage {
-			sampled: true,
-			..Default::default()
-		};
+		let depth_usage = ImageUsage::SAMPLED;
 		self.depth_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?;
 
 		let fb_create_info = FramebufferCreateInfo {

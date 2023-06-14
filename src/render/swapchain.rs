@@ -11,7 +11,7 @@ use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::swapchain::{
 	AcquireError, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
-use vulkano::sync::{FenceSignalFuture, FlushError, GpuFuture};
+use vulkano::sync::{future::{FenceSignalFuture, GpuFuture}, FlushError};
 use winit::window::Window;
 
 use crate::GenericEngineError;
@@ -40,14 +40,10 @@ impl Swapchain
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
-		let image_usage = ImageUsage {
-			transfer_dst: true,
-			..ImageUsage::empty()
-		};
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
 			image_format: Some(Format::B8G8R8A8_SRGB),
-			image_usage,
+			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Immediate,
 			..Default::default()
 		};

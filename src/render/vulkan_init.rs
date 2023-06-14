@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo,
+	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags
 };
 
 use crate::GenericEngineError;
@@ -138,11 +138,11 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 	for (i, q) in physical_device.queue_family_properties().iter().enumerate() {
 		log::info!("{}: {} queue(s), {:?}", i, q.queue_count, q.queue_flags);
 
-		if q.queue_flags.graphics {
+		if q.queue_flags.intersects(QueueFlags::GRAPHICS) {
 			graphics.get_or_insert(i);
-		} else if !q.queue_flags.compute && q.queue_flags.transfer {
+		} else if !q.queue_flags.intersects(QueueFlags::COMPUTE) && q.queue_flags.intersects(QueueFlags::TRANSFER) {
 			transfer_only.get_or_insert(i);
-		} else if q.queue_flags.transfer {
+		} else if q.queue_flags.intersects(QueueFlags::TRANSFER) {
 			transfer.get_or_insert(i);
 		}
 	}

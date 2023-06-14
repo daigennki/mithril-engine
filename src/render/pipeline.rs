@@ -123,7 +123,7 @@ impl Pipeline
 
 		// build pipeline with immutable samplers, if it needs any
 		let pipeline = pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
-		print_pipeline_descriptors_info(&pipeline);
+		print_pipeline_descriptors_info(pipeline.as_ref());
 
 		/*let transparency_pipeline = builder_transparency
 		.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
@@ -135,7 +135,7 @@ impl Pipeline
 		let transparency_pipeline = if let Some(bt) = builder_transparency {
 			let built_transparency_pipeline =
 				bt.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
-			print_pipeline_descriptors_info(&built_transparency_pipeline);
+			print_pipeline_descriptors_info(built_transparency_pipeline.as_ref());
 			Some(built_transparency_pipeline)
 		} else {
 			None
@@ -394,10 +394,10 @@ fn pipeline_sampler_setup(sets: &mut [DescriptorSetLayoutCreateInfo], samplers: 
 	}
 }
 
-fn print_pipeline_descriptors_info(pipeline: &GraphicsPipeline)
+fn print_pipeline_descriptors_info(pipeline: &dyn vulkano::pipeline::Pipeline)
 {
 	log::debug!("Built pipeline with descriptors:");
-	for ((set, binding), req) in pipeline.descriptor_requirements() {
+	for ((set, binding), req) in pipeline.descriptor_binding_requirements() {
 		let desc_count_string = match req.descriptor_count {
 			Some(count) => format!("{}x", count),
 			None => "runtime-sized array of".into(),

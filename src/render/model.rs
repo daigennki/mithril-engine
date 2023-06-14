@@ -11,7 +11,7 @@ use std::any::TypeId;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
+use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
 use crate::material::{pbr::PBR, ColorInput, DeferMaterialLoading, Material};
@@ -23,7 +23,7 @@ pub struct Model
 {
 	materials: Vec<Box<dyn Material>>,
 	submeshes: Vec<SubMesh>,
-	vertex_buffers: Vec<Arc<DeviceLocalBuffer<[f32]>>>,
+	vertex_buffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
 	path: PathBuf,
 }
@@ -78,10 +78,7 @@ impl Model
 					vertex_offset += positions_accessor.count() as i32;
 				}
 
-				let vert_buf_usage = BufferUsage {
-					vertex_buffer: true,
-					..BufferUsage::empty()
-				};
+				let vert_buf_usage = BufferUsage::VERTEX_BUFFER;
 				let vbo_positions = render_ctx.new_buffer_from_iter(positions, vert_buf_usage)?;
 				let vbo_texcoords = render_ctx.new_buffer_from_iter(texcoords, vert_buf_usage)?;
 				let vbo_normals = render_ctx.new_buffer_from_iter(normals, vert_buf_usage)?;
@@ -223,8 +220,8 @@ fn load_gltf_material(
 
 enum IndexBufferVariant
 {
-	U16(Arc<DeviceLocalBuffer<[u16]>>),
-	U32(Arc<DeviceLocalBuffer<[u32]>>),
+	U16(Subbuffer<[u16]>),
+	U32(Subbuffer<[u32]>),
 }
 impl IndexBufferVariant
 {
@@ -244,10 +241,7 @@ impl IndexBufferVariant
 			indices_u32.extend(u16_to_u32);
 		}
 
-		let index_buf_usage = BufferUsage {
-			index_buffer: true,
-			..BufferUsage::empty()
-		};
+		let index_buf_usage = BufferUsage::INDEX_BUFFER;
 
 		Ok(if indices_u32.is_empty() {
 			IndexBufferVariant::U16(render_ctx.new_buffer_from_iter(indices_u16, index_buf_usage)?)

@@ -9,8 +9,10 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
-use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, CpuBufferPool, DeviceLocalBuffer};
+use std::sync::{Arc, Mutex};
+use vulkano::buffer::{
+	Subbuffer, BufferUsage, allocator::SubbufferAllocator
+};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
@@ -27,9 +29,9 @@ pub struct Transform
 {
 	// TODO: parent-child relationship
 	#[serde(skip)]
-	staging_buf: Option<CpuBufferPool<Mat4>>,
+	staging_buf: Option<Mutex<SubbufferAllocator>>,
 	#[serde(skip)]
-	buf: Option<Arc<DeviceLocalBuffer<Mat4>>>,
+	buf: Option<Subbuffer<Mat4>>,
 	#[serde(skip)]
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
 
@@ -52,7 +54,10 @@ impl Transform
 			.staging_buf
 			.as_ref()
 			.ok_or("transform not loaded")?
-			.from_data(self.model_mat)?;
+			.lock()
+			.or(Err("`Transform` staging buffer allocator mutex is poisoned!"))?
+			.allocate_sized::<Mat4>()?;
+		*staged.write()? = self.model_mat;
 		render_ctx.copy_buffer(staged, self.buf.as_ref().ok_or("transform not loaded")?.clone())?;
 		Ok(())
 	}
@@ -142,16 +147,10 @@ impl DeferGpuResourceLoading for Transform
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 
-		let (staging_buf, buf) = render_ctx.new_cpu_buffer_from_data(
-			self.model_mat,
-			BufferUsage {
-				uniform_buffer: true,
-				..BufferUsage::empty()
-			},
-		)?;
+		let (staging_buf, buf) = render_ctx.new_cpu_buffer_from_data(self.model_mat, BufferUsage::UNIFORM_BUFFER)?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?);
-		self.staging_buf = Some(staging_buf);
+		self.staging_buf = Some(Mutex::new(staging_buf));
 		self.buf = Some(buf);
 
 		Ok(())
@@ -159,12 +158,12 @@ impl DeferGpuResourceLoading for Transform
 }
 
 #[typetag::deserialize]
-pub trait EntityComponent
+pub trait EntityComponent: Send + Sync
 {
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
 }
 #[typetag::deserialize]
-pub trait UniqueComponent
+pub trait UniqueComponent: Send + Sync
 {
 	fn add_to_world(self: Box<Self>, world: &mut shipyard::World);
 }

@@ -430,11 +430,7 @@ fn create_mboit_framebuffer(
 ) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), GenericEngineError>
 {
 	let extent = depth_img.dimensions().width_height();
-	let oit_images_usage = ImageUsage {
-		transient_attachment: true,
-		input_attachment: true,
-		..Default::default()
-	};
+	let oit_images_usage = ImageUsage::TRANSIENT_ATTACHMENT | ImageUsage::INPUT_ATTACHMENT;
 	let moments_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32G32B32A32_SFLOAT, oit_images_usage)?;
 	let od_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32_SFLOAT, oit_images_usage)?;
 	let min_depth_img = AttachmentImage::with_usage(memory_allocator, extent, Format::R32_SFLOAT, oit_images_usage)?;

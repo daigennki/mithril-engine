@@ -6,7 +6,7 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer};
+use vulkano::buffer::{BufferUsage, Buffer, BufferCreateInfo};
 use vulkano::command_buffer::CopyBufferToImageInfo;
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
@@ -14,7 +14,7 @@ use vulkano::image::{
 	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, ImageCreateFlags, ImageDimensions, ImageLayout,
 	ImageUsage, ImmutableImage, MipmapsCount,
 };
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{StandardMemoryAllocator, MemoryUsage, AllocationCreateInfo};
 
 use crate::GenericEngineError;
 
@@ -30,7 +30,7 @@ impl Texture
 		path: &Path,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
-		// TODO: animated textures using APNG or multi-layer DDS
+		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		log::info!("Loading texture file '{}'...", path.display());
 		let file_ext = path
 			.extension()
@@ -52,23 +52,23 @@ impl Texture
 		mip: MipmapsCount,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
+		Px: Send + Sync + bytemuck::Pod,
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
 		let device = memory_allocator.device().clone();
 
-		let dst_img_usage = ImageUsage {
-			transfer_dst: true,
-			sampled: true,
-			..ImageUsage::empty()
+		let dst_img_usage = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED;
+		let buffer_info = BufferCreateInfo {
+			usage: BufferUsage::TRANSFER_SRC, 
+			..Default::default()
 		};
-
-		let staging_usage = BufferUsage {
-			transfer_src: true,
-			..BufferUsage::empty()
+		let allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::DeviceOnly,
+			..Default::default()
 		};
-		let staging_buf = CpuAccessibleBuffer::from_iter(memory_allocator, staging_usage, false, iter)?;
+		let staging_buf = Buffer::from_iter(memory_allocator, buffer_info, allocation_info, iter)?;
 		let queue_families: Vec<_> = device.active_queue_family_indices().into();
 		let (dst_img, initializer) = ImmutableImage::uninitialized(
 			memory_allocator,
@@ -181,6 +181,7 @@ impl CubemapTexture
 		mip: MipmapsCount,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
+		Px: Send + Sync + bytemuck::Pod,
 		[Px]: vulkano::buffer::BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
@@ -217,30 +218,25 @@ fn create_cubemap_image<Px, I>(
 	allocator: &StandardMemoryAllocator,
 ) -> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
 where
+	Px: Send + Sync + bytemuck::Pod,
 	[Px]: vulkano::buffer::BufferContents,
 	I: IntoIterator<Item = Px>,
 	I::IntoIter: ExactSizeIterator,
 {
 	let device = allocator.device().clone();
-	let src = CpuAccessibleBuffer::from_iter(
-		allocator,
-		BufferUsage {
-			transfer_src: true,
-			..BufferUsage::empty()
-		},
-		false,
-		iter,
-	)?;
 
-	let usage = ImageUsage {
-		transfer_dst: true,
-		sampled: true,
-		..ImageUsage::empty()
+	let buffer_info = BufferCreateInfo {
+		usage: BufferUsage::TRANSFER_SRC, 
+		..Default::default()
 	};
-	let flags = ImageCreateFlags {
-		cube_compatible: true,
-		..ImageCreateFlags::empty()
+	let allocation_info = AllocationCreateInfo {
+		usage: MemoryUsage::DeviceOnly,
+		..Default::default()
 	};
+	let src = Buffer::from_iter(allocator, buffer_info, allocation_info, iter)?;
+
+	let usage = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED;
+	let flags = ImageCreateFlags::CUBE_COMPATIBLE;
 
 	let queue_families: Vec<_> = device.active_queue_family_indices().into();
 	let (image, initializer) = ImmutableImage::uninitialized(

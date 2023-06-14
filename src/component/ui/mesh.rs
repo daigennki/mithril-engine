@@ -5,7 +5,7 @@
 ----------------------------------------------------------------------------- */
 use glam::*;
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
+use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
@@ -17,8 +17,9 @@ use crate::GenericEngineError;
 #[derive(shipyard::Component)]
 pub struct Mesh
 {
-	pos_vert_buf: Arc<DeviceLocalBuffer<[Vec2]>>,
-	uv_vert_buf: Arc<DeviceLocalBuffer<[Vec2]>>,
+	// TODO: optimize these buffers?
+	pos_vert_buf: Subbuffer<[Vec2]>,
+	uv_vert_buf: Subbuffer<[Vec2]>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 }
 impl Mesh
@@ -52,10 +53,7 @@ impl Mesh
 			Vec2::new(1.0, 1.0),
 		];
 
-		let vbo_usage = BufferUsage {
-			vertex_buffer: true,
-			..BufferUsage::empty()
-		};
+		let vbo_usage = BufferUsage::VERTEX_BUFFER;
 		Ok(Mesh {
 			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?,
 			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, vbo_usage)?,
