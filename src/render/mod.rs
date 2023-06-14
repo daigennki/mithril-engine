@@ -252,11 +252,11 @@ impl RenderContext
 			usage: BufferUsage::TRANSFER_SRC,
 			..Default::default()
 		};
-		let allocation_info = AllocationCreateInfo {
+		let staging_allocation_info = AllocationCreateInfo {
 			usage: MemoryUsage::Upload,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_iter(&self.memory_allocator, buffer_info, allocation_info, data)?;
+		let staging_buf = Buffer::from_iter(&self.memory_allocator, buffer_info, staging_allocation_info, data)?;
 
 		usage |= BufferUsage::TRANSFER_DST;
 		let buffer_info = BufferCreateInfo {
@@ -286,11 +286,11 @@ impl RenderContext
 			usage: BufferUsage::TRANSFER_SRC, 
 			..Default::default()
 		};
-		let allocation_info = AllocationCreateInfo {
+		let staging_allocation_info = AllocationCreateInfo {
 			usage: MemoryUsage::Upload,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_data(&self.memory_allocator, buffer_info, allocation_info, data)?;
+		let staging_buf = Buffer::from_data(&self.memory_allocator, buffer_info, staging_allocation_info, data)?;
 	
 		usage |= BufferUsage::TRANSFER_DST;	
 		let buffer_info = BufferCreateInfo {

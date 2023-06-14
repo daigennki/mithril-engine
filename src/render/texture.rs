@@ -64,11 +64,11 @@ impl Texture
 			usage: BufferUsage::TRANSFER_SRC, 
 			..Default::default()
 		};
-		let allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::DeviceOnly,
+		let buf_allocation_info = AllocationCreateInfo {
+			usage: MemoryUsage::Upload,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_iter(memory_allocator, buffer_info, allocation_info, iter)?;
+		let staging_buf = Buffer::from_iter(memory_allocator, buffer_info, buf_allocation_info, iter)?;
 		let queue_families: Vec<_> = device.active_queue_family_indices().into();
 		let (dst_img, initializer) = ImmutableImage::uninitialized(
 			memory_allocator,
@@ -229,11 +229,11 @@ where
 		usage: BufferUsage::TRANSFER_SRC, 
 		..Default::default()
 	};
-	let allocation_info = AllocationCreateInfo {
-		usage: MemoryUsage::DeviceOnly,
+	let buf_allocation_info = AllocationCreateInfo {
+		usage: MemoryUsage::Upload,
 		..Default::default()
 	};
-	let src = Buffer::from_iter(allocator, buffer_info, allocation_info, iter)?;
+	let src = Buffer::from_iter(allocator, buffer_info, buf_allocation_info, iter)?;
 
 	let usage = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED;
 	let flags = ImageCreateFlags::CUBE_COMPATIBLE;
