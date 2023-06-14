@@ -40,6 +40,9 @@ impl Swapchain
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
+		// Explicitly set `image_extent` since some environments, such as Wayland, require it to not cause a panic.
+		let image_extent: [u32; 2] = window_arc.inner_size().into();
+
 		// NVIDIA on Linux (possibly only when using Wayland?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it would be a
 		// safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
 		// https://vulkan.gpuinfo.org/listsurfaceformats.php?platform=linux
@@ -47,9 +50,10 @@ impl Swapchain
 		// for that conversion.
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
+			image_extent,
 			image_format: Some(Format::B8G8R8A8_UNORM),
 			image_usage: ImageUsage::TRANSFER_DST,
-			present_mode: PresentMode::Immediate,
+			present_mode: PresentMode::Fifo,
 			..Default::default()
 		};
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
