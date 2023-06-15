@@ -6,7 +6,7 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, Buffer, BufferCreateInfo};
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::CopyBufferToImageInfo;
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
@@ -14,7 +14,7 @@ use vulkano::image::{
 	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, ImageCreateFlags, ImageDimensions, ImageLayout,
 	ImageUsage, ImmutableImage, MipmapsCount,
 };
-use vulkano::memory::allocator::{StandardMemoryAllocator, MemoryUsage, AllocationCreateInfo};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 
 use crate::GenericEngineError;
 
@@ -61,7 +61,7 @@ impl Texture
 
 		let dst_img_usage = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED;
 		let buffer_info = BufferCreateInfo {
-			usage: BufferUsage::TRANSFER_SRC, 
+			usage: BufferUsage::TRANSFER_SRC,
 			..Default::default()
 		};
 		let buf_allocation_info = AllocationCreateInfo {
@@ -226,7 +226,7 @@ where
 	let device = allocator.device().clone();
 
 	let buffer_info = BufferCreateInfo {
-		usage: BufferUsage::TRANSFER_SRC, 
+		usage: BufferUsage::TRANSFER_SRC,
 		..Default::default()
 	};
 	let buf_allocation_info = AllocationCreateInfo {

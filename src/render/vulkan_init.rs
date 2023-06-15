@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags
+	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
 
 use crate::GenericEngineError;

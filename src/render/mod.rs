@@ -16,16 +16,16 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use vulkano::buffer::{
-	Buffer, BufferContents, BufferUsage, BufferCreateInfo, 
+	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
 	subbuffer::Subbuffer,
-	allocator::{ SubbufferAllocator, SubbufferAllocatorCreateInfo }
+	Buffer, BufferContents, BufferCreateInfo, BufferUsage,
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferBeginError, CommandBufferInheritanceInfo,
 	CommandBufferInheritanceRenderPassInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
-	CopyBufferToImageInfo, PipelineExecutionError, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderPassBeginInfo,
-	SecondaryAutoCommandBuffer, SubpassContents, CopyImageInfo
+	CopyBufferToImageInfo, CopyImageInfo, PipelineExecutionError, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
+	RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator, DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet,
@@ -33,11 +33,11 @@ use vulkano::descriptor_set::{
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage};
-use vulkano::memory::allocator::{ StandardMemoryAllocator, AllocationCreateInfo, MemoryUsage };
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
-use vulkano::sync::{ GpuFuture, Sharing };
+use vulkano::sync::{GpuFuture, Sharing};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -121,7 +121,7 @@ impl RenderContext
 			&memory_allocator,
 			swapchain.dimensions(),
 			Format::B8G8R8A8_SRGB,
-			ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC
+			ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
 		)?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			&memory_allocator,
@@ -237,11 +237,7 @@ impl RenderContext
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer_from_iter<I, T>(
-		&mut self,
-		data: I,
-		mut usage: BufferUsage,
-	) -> Result<Subbuffer<[T]>, GenericEngineError>
+	pub fn new_buffer_from_iter<I, T>(&mut self, data: I, buf_usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
 		T: Send + Sync + bytemuck::Pod,
 		I: IntoIterator<Item = T>,
@@ -258,32 +254,23 @@ impl RenderContext
 		};
 		let staging_buf = Buffer::from_iter(&self.memory_allocator, buffer_info, staging_allocation_info, data)?;
 
-		usage |= BufferUsage::TRANSFER_DST;
 		let buffer_info = BufferCreateInfo {
 			sharing: Sharing::Concurrent(self.get_queue_families().into()),
-			usage, 
+			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::DeviceOnly,
-			..Default::default()
-		};
-		let buf = Buffer::new_slice(&self.memory_allocator, buffer_info, allocation_info, staging_buf.len())?;
+		let buf = Buffer::new_slice(&self.memory_allocator, buffer_info, Default::default(), staging_buf.len())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer_from_data<T>(
-		&mut self,
-		data: T,
-		mut usage: BufferUsage,
-	) -> Result<Subbuffer<T>, GenericEngineError>
+	pub fn new_buffer_from_data<T>(&mut self, data: T, buf_usage: BufferUsage) -> Result<Subbuffer<T>, GenericEngineError>
 	where
 		T: vulkano::buffer::BufferContents,
 	{
 		let buffer_info = BufferCreateInfo {
-			usage: BufferUsage::TRANSFER_SRC, 
+			usage: BufferUsage::TRANSFER_SRC,
 			..Default::default()
 		};
 		let staging_allocation_info = AllocationCreateInfo {
@@ -291,18 +278,13 @@ impl RenderContext
 			..Default::default()
 		};
 		let staging_buf = Buffer::from_data(&self.memory_allocator, buffer_info, staging_allocation_info, data)?;
-	
-		usage |= BufferUsage::TRANSFER_DST;	
+
 		let buffer_info = BufferCreateInfo {
 			sharing: Sharing::Concurrent(self.get_queue_families().into()),
-			usage, 
+			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::DeviceOnly,
-			..Default::default()
-		};
-		let buf = Buffer::new_sized(&self.memory_allocator, buffer_info, allocation_info)?;
+		let buf = Buffer::new_sized(&self.memory_allocator, buffer_info, Default::default())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
@@ -312,7 +294,7 @@ impl RenderContext
 	pub fn new_cpu_buffer_from_data<T>(
 		&mut self,
 		data: T,
-		mut usage: BufferUsage,
+		buf_usage: BufferUsage,
 	) -> Result<(SubbufferAllocator, Subbuffer<T>), GenericEngineError>
 	where
 		[T]: vulkano::buffer::BufferContents,
@@ -321,11 +303,10 @@ impl RenderContext
 		// TODO: figure out a good `arena_size` here (get size of T, double it, then round it up to the nearest power of 2?)
 		let pool_create_info = SubbufferAllocatorCreateInfo::default();
 		let cpu_buf = SubbufferAllocator::new(self.memory_allocator.clone(), pool_create_info);
-		
-		usage |= BufferUsage::TRANSFER_DST;	
+
 		let buffer_info = BufferCreateInfo {
 			sharing: Sharing::Concurrent(self.get_queue_families().into()),
-			usage, 
+			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
 		let allocation_info = AllocationCreateInfo {
@@ -562,14 +543,17 @@ impl RenderContext
 
 		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
 		rp_begin_info.render_pass = self.main_render_target.ui_rp().clone();
-		let blit_info = BlitImageInfo::images(self.main_render_target.color_image().clone(), self.intermediate_srgb_img.clone());
+		let blit_info = BlitImageInfo::images(
+			self.main_render_target.color_image().clone(),
+			self.intermediate_srgb_img.clone(),
+		);
 		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), self.next_swapchain_image()?);
 		primary_cb_builder
 			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands_from_vec(ui_cb)?
 			.end_render_pass()?
-			.blit_image(blit_info)?		// convert from linear to non-linear sRGB
-			.copy_image(copy_info)?;	// copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
+			.blit_image(blit_info)? // convert from linear to non-linear sRGB
+			.copy_image(copy_info)?; // copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
 		self.submit_commands(primary_cb_builder.build()?)?;
 
 		Ok(())

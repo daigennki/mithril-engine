@@ -10,9 +10,7 @@ pub mod ui;
 use glam::*;
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
-use vulkano::buffer::{
-	Subbuffer, BufferUsage, allocator::SubbufferAllocator
-};
+use vulkano::buffer::{allocator::SubbufferAllocator, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;

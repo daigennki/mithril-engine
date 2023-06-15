@@ -11,7 +11,10 @@ use vulkano::image::{ImageUsage, SwapchainImage};
 use vulkano::swapchain::{
 	AcquireError, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
-use vulkano::sync::{future::{FenceSignalFuture, GpuFuture}, FlushError};
+use vulkano::sync::{
+	future::{FenceSignalFuture, GpuFuture},
+	FlushError,
+};
 use winit::window::Window;
 
 use crate::GenericEngineError;
