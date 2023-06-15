@@ -386,9 +386,6 @@ fn draw_ui(
 /// `start_map` is the first map (level/world) to be loaded.
 pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 {
-	// Temporary workaround to disable Wayland support because the window gets upscaled incorrectly in HiDPI environments
-	std::env::remove_var("WAYLAND_DISPLAY");
-
 	let event_loop = winit::event_loop::EventLoop::new();
 
 	GameContext::new(org_name, game_name, start_map, &event_loop)
