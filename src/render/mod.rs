@@ -302,8 +302,11 @@ impl RenderContext
 		[T]: vulkano::buffer::BufferContents,
 		T: Send + Sync + bytemuck::Pod,
 	{
-		// TODO: figure out a good `arena_size` here (get size of T, double it, then round it up to the nearest power of 2?)
-		let pool_create_info = SubbufferAllocatorCreateInfo::default();
+		// TODO: maybe share a single `SubbufferAllocator` for better memory efficiency, instead of creating it multiple times
+		let pool_create_info = SubbufferAllocatorCreateInfo {
+			arena_size: std::mem::size_of::<T>() as u64,
+			..Default::default()
+		};
 		let cpu_buf = SubbufferAllocator::new(self.memory_allocator.clone(), pool_create_info);
 
 		let buffer_info = BufferCreateInfo {
@@ -311,11 +314,7 @@ impl RenderContext
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::DeviceOnly,
-			..Default::default()
-		};
-		let gpu_buf = Buffer::new_sized(&self.memory_allocator, buffer_info, allocation_info)?;
+		let gpu_buf = Buffer::new_sized(&self.memory_allocator, buffer_info, AllocationCreateInfo::default())?;
 		let written = cpu_buf.allocate_sized()?;
 		*written.write()? = data;
 		self.copy_buffer(written, gpu_buf.clone())?;
