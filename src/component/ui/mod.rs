@@ -70,7 +70,7 @@ fn update_matrix(
 ) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 {
 	let projected = proj * Mat4::from_scale_rotation_translation(scale.extend(0.0), Quat::IDENTITY, pos.as_vec2().extend(0.0));
-	let buf = render_ctx.new_buffer_from_data(projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
+	let buf = render_ctx.new_immutable_buffer_from_data(projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
 
 	// create descriptor set
 	render_ctx.new_descriptor_set("UI", 0, [WriteDescriptorSet::buffer(0, buf.clone())])

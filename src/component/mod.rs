@@ -11,8 +11,8 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
-use std::sync::{Arc, Mutex};
-use vulkano::buffer::{allocator::SubbufferAllocator, BufferUsage, Subbuffer};
+use std::sync::Arc;
+use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::WriteDescriptorSet;
@@ -28,8 +28,6 @@ use mithrilengine_derive::{EntityComponent, UniqueComponent};
 pub struct Transform
 {
 	// TODO: parent-child relationship
-	#[serde(skip)]
-	staging_buf: Option<Mutex<SubbufferAllocator>>,
 	#[serde(skip)]
 	buf: Option<Subbuffer<Mat4>>,
 	#[serde(skip)]
@@ -50,15 +48,7 @@ impl Transform
 	fn update_buffer(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-		let staged = self
-			.staging_buf
-			.as_ref()
-			.ok_or("transform not loaded")?
-			.lock()
-			.or(Err("`Transform` staging buffer allocator mutex is poisoned!"))?
-			.allocate_sized::<Mat4>()?;
-		*staged.write()? = self.model_mat;
-		render_ctx.copy_buffer(staged, self.buf.as_ref().ok_or("transform not loaded")?.clone())?;
+		render_ctx.copy_to_buffer(self.model_mat, self.buf.as_ref().ok_or("transform not loaded")?.clone())?;
 		Ok(())
 	}
 
@@ -147,10 +137,9 @@ impl DeferGpuResourceLoading for Transform
 		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
 		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
 
-		let (staging_buf, buf) = render_ctx.new_cpu_buffer_from_data(self.model_mat, BufferUsage::UNIFORM_BUFFER)?;
+		let buf = render_ctx.new_staged_buffer_from_data(self.model_mat, BufferUsage::UNIFORM_BUFFER)?;
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?);
-		self.staging_buf = Some(Mutex::new(staging_buf));
 		self.buf = Some(buf);
 
 		Ok(())

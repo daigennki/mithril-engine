@@ -58,8 +58,8 @@ impl Mesh
 		let vbo_usage = BufferUsage::VERTEX_BUFFER;
 		Ok(Mesh {
 			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?,
-			pos_vert_buf: render_ctx.new_buffer_from_iter(pos_verts, vbo_usage)?,
-			uv_vert_buf: render_ctx.new_buffer_from_iter(uv_verts, vbo_usage)?,
+			pos_vert_buf: render_ctx.new_immutable_buffer_from_iter(pos_verts, vbo_usage)?,
+			uv_vert_buf: render_ctx.new_immutable_buffer_from_iter(uv_verts, vbo_usage)?,
 		})
 	}
 

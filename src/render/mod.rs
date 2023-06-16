@@ -82,6 +82,9 @@ pub struct RenderContext
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
+	// A common `SubbufferAllocator` for high-frequency staging buffers.
+	staging_buffer_allocator: Mutex<SubbufferAllocator>,
+
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
@@ -133,6 +136,12 @@ impl RenderContext
 			sampler_linear.clone(),
 		)?;
 
+		let pool_create_info = SubbufferAllocatorCreateInfo {
+			arena_size: 128 * 1024,	// TODO: determine an appropriate arena size based on actual memory usage
+			..Default::default()
+		};
+		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
+
 		Ok(RenderContext {
 			swapchain,
 			graphics_queue,
@@ -149,6 +158,7 @@ impl RenderContext
 			main_render_target,
 			intermediate_srgb_img,
 			transparency_renderer,
+			staging_buffer_allocator,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 			resize_this_frame: false,
@@ -239,7 +249,7 @@ impl RenderContext
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer_from_iter<I, T>(&mut self, data: I, buf_usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
+	pub fn new_immutable_buffer_from_iter<I, T>(&mut self, data: I, buf_usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
 		T: Send + Sync + bytemuck::Pod,
 		I: IntoIterator<Item = T>,
@@ -267,7 +277,7 @@ impl RenderContext
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_buffer_from_data<T>(&mut self, data: T, buf_usage: BufferUsage) -> Result<Subbuffer<T>, GenericEngineError>
+	pub fn new_immutable_buffer_from_data<T>(&mut self, data: T, buf_usage: BufferUsage) -> Result<Subbuffer<T>, GenericEngineError>
 	where
 		T: vulkano::buffer::BufferContents,
 	{
@@ -291,34 +301,45 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/// Create a new pair of CPU-accessible buffer pool and device-local buffer, which will be initialized with `data` for `usage`.
-	/// The CPU-accessible buffer pool is used for staging, from which data will be copied to the device-local buffer.
-	pub fn new_cpu_buffer_from_data<T>(
+	/// Create just a device-local buffer. It'll be initialized using the common staging buffer allocator,
+	/// and it can be updated using that as well.
+	pub fn new_staged_buffer_from_data<T>(
 		&mut self,
 		data: T,
 		buf_usage: BufferUsage,
-	) -> Result<(SubbufferAllocator, Subbuffer<T>), GenericEngineError>
+	) -> Result<Subbuffer<T>, GenericEngineError>
 	where
 		[T]: vulkano::buffer::BufferContents,
 		T: Send + Sync + bytemuck::Pod,
 	{
-		// TODO: maybe share a single `SubbufferAllocator` for better memory efficiency, instead of creating it multiple times
-		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: std::mem::size_of::<T>() as u64,
-			..Default::default()
-		};
-		let cpu_buf = SubbufferAllocator::new(self.memory_allocator.clone(), pool_create_info);
-
 		let buffer_info = BufferCreateInfo {
 			sharing: Sharing::Concurrent(self.get_queue_families().into()),
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let gpu_buf = Buffer::new_sized(&self.memory_allocator, buffer_info, AllocationCreateInfo::default())?;
-		let written = cpu_buf.allocate_sized()?;
-		*written.write()? = data;
-		self.copy_buffer(written, gpu_buf.clone())?;
-		Ok((cpu_buf, gpu_buf))
+		let gpu_buf = Buffer::new_sized(&self.memory_allocator, buffer_info, Default::default())?;
+		self.copy_to_buffer(data, gpu_buf.clone())?;
+		Ok(gpu_buf)
+	}
+
+	/// Get a staging buffer from the common staging buffer allocator, and queue an upload using it.
+	pub fn copy_to_buffer<T>(
+		&mut self,
+		data: T,
+		dst_buf: Subbuffer<T>
+	) -> Result<(), GenericEngineError>
+	where
+		[T]: vulkano::buffer::BufferContents,
+		T: Send + Sync + bytemuck::Pod
+	{
+		let staging_buf = self
+			.staging_buffer_allocator
+			.lock()
+			.or_else(|_| Err("Staging buffer allocator is poisoned!"))?
+			.allocate_sized()?;
+		*staging_buf.write()? = data;
+		self.copy_buffer(staging_buf, dst_buf)?;
+		Ok(())
 	}
 
 	fn get_queue_families(&self) -> Vec<u32>

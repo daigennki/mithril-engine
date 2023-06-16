@@ -80,9 +80,9 @@ impl Model
 				}
 
 				let vert_buf_usage = BufferUsage::VERTEX_BUFFER;
-				let vbo_positions = render_ctx.new_buffer_from_iter(positions, vert_buf_usage)?;
-				let vbo_texcoords = render_ctx.new_buffer_from_iter(texcoords, vert_buf_usage)?;
-				let vbo_normals = render_ctx.new_buffer_from_iter(normals, vert_buf_usage)?;
+				let vbo_positions = render_ctx.new_immutable_buffer_from_iter(positions, vert_buf_usage)?;
+				let vbo_texcoords = render_ctx.new_immutable_buffer_from_iter(texcoords, vert_buf_usage)?;
+				let vbo_normals = render_ctx.new_immutable_buffer_from_iter(normals, vert_buf_usage)?;
 
 				Ok(Model {
 					materials: doc
@@ -245,9 +245,9 @@ impl IndexBufferVariant
 		let index_buf_usage = BufferUsage::INDEX_BUFFER;
 
 		Ok(if indices_u32.is_empty() {
-			IndexBufferVariant::U16(render_ctx.new_buffer_from_iter(indices_u16, index_buf_usage)?)
+			IndexBufferVariant::U16(render_ctx.new_immutable_buffer_from_iter(indices_u16, index_buf_usage)?)
 		} else {
-			IndexBufferVariant::U32(render_ctx.new_buffer_from_iter(indices_u32, index_buf_usage)?)
+			IndexBufferVariant::U32(render_ctx.new_immutable_buffer_from_iter(indices_u32, index_buf_usage)?)
 		})
 	}
 
