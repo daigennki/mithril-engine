@@ -75,7 +75,7 @@ impl Swapchain
 
 	/// Recreate the swapchain to fit the window's requirements (e.g., window size changed).
 	/// Returns `Ok(true)` if the image extent has changed.
-	fn fit_window(&mut self) -> Result<bool, GenericEngineError>
+	pub fn fit_window(&mut self) -> Result<bool, GenericEngineError>
 	{
 		let prev_dimensions = self.swapchain.image_extent();
 		let mut create_info = self.swapchain.create_info();

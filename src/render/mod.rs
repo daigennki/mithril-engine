@@ -99,10 +99,9 @@ impl RenderContext
 
 		// create window
 		let window = WindowBuilder::new()
-			.with_min_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
 			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720)) // TODO: load this from config
 			.with_title(game_name)
-			//.with_resizable(false)
+			.with_resizable(false)
 			.build(&event_loop)?;
 
 		let vk_dev = graphics_queue.device().clone();
@@ -440,26 +439,40 @@ impl RenderContext
 	{
 		let (image, dimensions_changed) = self.swapchain.get_next_image()?;
 		if dimensions_changed {
-			// Update images to match the current window size.
-			self.main_render_target
-				.resize(&self.memory_allocator, self.swapchain.dimensions())?;
-
-			self.intermediate_srgb_img = AttachmentImage::with_usage(
-				&self.memory_allocator,
-				self.swapchain.dimensions(),
-				Format::B8G8R8A8_SRGB,
-				ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-			)?;
-
-			self.transparency_renderer.resize_image(
-				&self.memory_allocator,
-				self.main_render_target.color_image().clone(),
-				self.main_render_target.depth_image().clone(),
-			)?;
+			self.resize_everything_else()?;
 		}
 		self.resize_this_frame = dimensions_changed;
 
 		Ok(image)
+	}
+
+	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
+	{
+		// Update images to match the current window size.
+		self.main_render_target
+			.resize(&self.memory_allocator, self.swapchain.dimensions())?;
+
+		self.intermediate_srgb_img = AttachmentImage::with_usage(
+			&self.memory_allocator,
+			self.swapchain.dimensions(),
+			Format::B8G8R8A8_SRGB,
+			ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+		)?;
+
+		self.transparency_renderer.resize_image(
+			&self.memory_allocator,
+			self.main_render_target.color_image().clone(),
+			self.main_render_target.depth_image().clone(),
+		)?;
+
+		Ok(())
+	}
+
+	pub fn resize_swapchain(&mut self) -> Result<(), GenericEngineError>
+	{
+		self.resize_this_frame = self.swapchain.fit_window()?;
+		self.resize_everything_else()?;
+		Ok(())
 	}
 
 	/// Create a command buffer for a transfer.

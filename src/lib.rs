@@ -96,10 +96,31 @@ impl GameContext
 		})
 	}
 
-	pub fn handle_event(&mut self, event: &Event<()>) -> Result<(), GenericEngineError>
+	pub fn handle_event(&mut self, event: &mut Event<()>) -> Result<(), GenericEngineError>
 	{
 		match event {
 			Event::WindowEvent { event, .. } => {
+				match event {
+					WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size } => {
+						let swapchain_dimensions = self.world
+							.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
+						let desired_physical_size = 
+							winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
+						log::info!(
+							"`ScaleFactorChanged` event gave us {:?} inner size (scale factor {}), giving back {:?}...", 
+							&new_inner_size,
+							scale_factor,
+							desired_physical_size
+						);
+						**new_inner_size = desired_physical_size;
+					},
+					WindowEvent::Resized(new_inner_size) => {
+						log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
+						self.world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
+					}
+					_ => ()
+				}
+
 				#[cfg(feature = "egui")]
 				self.egui_renderer.update(event);
 			}
@@ -390,7 +411,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 
 	GameContext::new(org_name, game_name, start_map, &event_loop)
 		.and_then(|mut gctx| {
-			event_loop.run(move |event, _, control_flow| {
+			event_loop.run(move |mut event, _, control_flow| {
 				match event {
 					Event::WindowEvent {
 						event: WindowEvent::CloseRequested,
@@ -401,7 +422,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 					_ => (),
 				};
 
-				if let Err(e) = gctx.handle_event(&event) {
+				if let Err(e) = gctx.handle_event(&mut event) {
 					log_error(e);
 					*control_flow = winit::event_loop::ControlFlow::Exit;
 				}

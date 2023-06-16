@@ -17,12 +17,12 @@ shaderc = "0.8"
 
 [dependencies]
 mithrilengine-derive = { version = "0.1.0", path = "mithrilengine-derive" }
-winit = { version = "0.28", default-features = false, features = ["x11"] }
+winit = "0.28"
 rusttype = "0.9"
 image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.33"
-vulkano-win = { version = "0.33", default-features = false, features = ["raw-window-handle"] }
+vulkano-win = "0.33" 
 glam = { version = "0.21", features = ["bytemuck", "serde"] }
 msgbox = "0.7"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
