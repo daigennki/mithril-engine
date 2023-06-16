@@ -424,6 +424,13 @@ impl RenderContext
 			self.main_render_target
 				.resize(&self.memory_allocator, self.swapchain.dimensions())?;
 
+			self.intermediate_srgb_img = AttachmentImage::with_usage(
+				&self.memory_allocator,
+				self.swapchain.dimensions(),
+				Format::B8G8R8A8_SRGB,
+				ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+			)?;
+
 			self.transparency_renderer.resize_image(
 				&self.memory_allocator,
 				self.main_render_target.color_image().clone(),
