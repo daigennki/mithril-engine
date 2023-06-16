@@ -104,6 +104,26 @@ impl RenderContext
 			.with_resizable(false)
 			.build(&event_loop)?;
 
+		if let Some(current_monitor) = window.current_monitor() {
+			log::info!(
+				"Available video modes for current monitor (\"{}\"):",
+				current_monitor.name().unwrap_or("[no longer exists]".to_string())
+			);
+			for video_mode in current_monitor.video_modes() {
+				let size = video_mode.size();
+				let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
+				let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
+				log::info!(
+					"{} x {} @ {}.{:0>4} Hz {}-bit",
+					size.width,
+					size.height,
+					refresh_rate_hz,
+					refresh_rate_thousandths,
+					video_mode.bit_depth()
+				);
+			}
+		}
+
 		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
 
