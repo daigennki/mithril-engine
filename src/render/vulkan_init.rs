@@ -1,5 +1,5 @@
 /* -----------------------------------------------------------------------------
- 	Copyright (c) daigennki and MithrilEngine developers.
+	Copyright (c) daigennki and MithrilEngine developers.
 
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
@@ -64,19 +64,19 @@ fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Inst
 	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
 	// implementations like MoltenVK. for now, we can go without it.
 	let ideal = vulkano::instance::InstanceExtensions {
-        khr_surface: true,
-        khr_xlib_surface: true,
-        khr_xcb_surface: true,
-        khr_wayland_surface: true,
-        khr_android_surface: true,
-        khr_win32_surface: true,
-        mvk_ios_surface: true,
-        mvk_macos_surface: true,
-        khr_get_physical_device_properties2: true,
-        khr_get_surface_capabilities2: true,
-        ..vulkano::instance::InstanceExtensions::empty()
-    };
-    let vk_ext = lib.supported_extensions().intersection(&ideal);
+		khr_surface: true,
+		khr_xlib_surface: true,
+		khr_xcb_surface: true,
+		khr_wayland_surface: true,
+		khr_android_surface: true,
+		khr_win32_surface: true,
+		mvk_ios_surface: true,
+		mvk_macos_surface: true,
+		khr_get_physical_device_properties2: true,
+		khr_get_surface_capabilities2: true,
+		..vulkano::instance::InstanceExtensions::empty()
+	};
+	let vk_ext = lib.supported_extensions().intersection(&ideal);
 
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]

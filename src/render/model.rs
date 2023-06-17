@@ -1,5 +1,5 @@
 /* -----------------------------------------------------------------------------
- 	Copyright (c) daigennki and MithrilEngine developers.
+	Copyright (c) daigennki and MithrilEngine developers.
 
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/

@@ -1,5 +1,5 @@
 /* -----------------------------------------------------------------------------
- 	Copyright (c) daigennki and MithrilEngine developers.
+	Copyright (c) daigennki and MithrilEngine developers.
 
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
@@ -105,10 +105,9 @@ impl RenderContext
 			.build(&event_loop)?;
 
 		if let Some(current_monitor) = window.current_monitor() {
-			log::info!(
-				"Available video modes for current monitor (\"{}\"):",
-				current_monitor.name().unwrap_or("[no longer exists]".to_string())
-			);
+			let mon_name = current_monitor.name().unwrap_or_else(|| "[no longer exists]".to_string());
+			log::info!("Available video modes for current monitor (\"{mon_name}\"):");
+
 			for video_mode in current_monitor.video_modes() {
 				let size = video_mode.size();
 				let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
@@ -156,7 +155,7 @@ impl RenderContext
 		)?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: 128 * 1024,	// TODO: determine an appropriate arena size based on actual memory usage
+			arena_size: 128 * 1024, // TODO: determine an appropriate arena size based on actual memory usage
 			..Default::default()
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
@@ -268,7 +267,11 @@ impl RenderContext
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_immutable_buffer_from_iter<I, T>(&mut self, data: I, buf_usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
+	pub fn new_immutable_buffer_from_iter<I, T>(
+		&mut self,
+		data: I,
+		buf_usage: BufferUsage,
+	) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
 		T: Send + Sync + bytemuck::Pod,
 		I: IntoIterator<Item = T>,
@@ -296,7 +299,11 @@ impl RenderContext
 	}
 
 	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_immutable_buffer_from_data<T>(&mut self, data: T, buf_usage: BufferUsage) -> Result<Subbuffer<T>, GenericEngineError>
+	pub fn new_immutable_buffer_from_data<T>(
+		&mut self,
+		data: T,
+		buf_usage: BufferUsage,
+	) -> Result<Subbuffer<T>, GenericEngineError>
 	where
 		T: vulkano::buffer::BufferContents,
 	{
@@ -342,19 +349,15 @@ impl RenderContext
 	}
 
 	/// Get a staging buffer from the common staging buffer allocator, and queue an upload using it.
-	pub fn copy_to_buffer<T>(
-		&mut self,
-		data: T,
-		dst_buf: Subbuffer<T>
-	) -> Result<(), GenericEngineError>
+	pub fn copy_to_buffer<T>(&mut self, data: T, dst_buf: Subbuffer<T>) -> Result<(), GenericEngineError>
 	where
 		[T]: vulkano::buffer::BufferContents,
-		T: Send + Sync + bytemuck::Pod
+		T: Send + Sync + bytemuck::Pod,
 	{
 		let staging_buf = self
 			.staging_buffer_allocator
 			.lock()
-			.or_else(|_| Err("Staging buffer allocator is poisoned!"))?
+			.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?
 			.allocate_sized()?;
 		*staging_buf.write()? = data;
 		self.copy_buffer(staging_buf, dst_buf)?;

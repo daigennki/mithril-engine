@@ -1,5 +1,5 @@
 /* -----------------------------------------------------------------------------
- 	Copyright (c) daigennki and MithrilEngine developers.
+	Copyright (c) daigennki and MithrilEngine developers.
 
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
@@ -101,24 +101,29 @@ impl GameContext
 		match event {
 			Event::WindowEvent { event, .. } => {
 				match event {
-					WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size } => {
-						let swapchain_dimensions = self.world
+					WindowEvent::ScaleFactorChanged {
+						scale_factor,
+						new_inner_size,
+					} => {
+						let swapchain_dimensions = self
+							.world
 							.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
-						let desired_physical_size = 
+						let desired_physical_size =
 							winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
 						log::info!(
-							"`ScaleFactorChanged` event gave us {:?} inner size (scale factor {}), giving back {:?}...", 
+							"`ScaleFactorChanged` event gave us {:?} inner size (scale factor {}), giving back {:?}...",
 							&new_inner_size,
 							scale_factor,
 							desired_physical_size
 						);
 						**new_inner_size = desired_physical_size;
-					},
+					}
 					WindowEvent::Resized(new_inner_size) => {
 						log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
-						self.world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
+						self.world
+							.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
 					}
-					_ => ()
+					_ => (),
 				}
 
 				#[cfg(feature = "egui")]

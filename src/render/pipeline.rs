@@ -1,8 +1,10 @@
 /* -----------------------------------------------------------------------------
-	MithrilEngine Framework (MEF)
+	Copyright (c) daigennki and MithrilEngine developers.
 
-	Copyright (c) 2021-2022, daigennki (@daigennki)
+	Licensed under the BSD 3-clause license.
+	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
+
 use serde::Deserialize;
 use std::error::Error;
 use std::fs::File;
