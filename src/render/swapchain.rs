@@ -40,10 +40,14 @@ impl Swapchain
 		let surface = vulkano_win::create_surface_from_handle(window_arc.clone(), vk_dev.instance().clone())?;
 
 		let pd = vk_dev.physical_device();
-		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
+
+		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
+
+		let surface_present_modes = pd.surface_present_modes(&surface)?;
+		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 
 		// Explicitly set `image_extent` since some environments, such as Wayland, require it to not cause a panic.
 		let image_extent: [u32; 2] = window_arc.inner_size().into();
