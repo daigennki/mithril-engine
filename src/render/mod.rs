@@ -105,48 +105,7 @@ impl RenderContext
 			.build(&event_loop)?;
 
 		if let Some(current_monitor) = window.current_monitor() {
-			let cur_mon_size = current_monitor.size();
-			let cur_mon_refresh_rate = current_monitor.refresh_rate_millihertz().unwrap_or(0);
-			let refresh_rate_hz = cur_mon_refresh_rate / 1000;
-			let refresh_rate_thousandths = cur_mon_refresh_rate % 1000;
-			log::info!(
-				"Current monitor video mode: {} x {} @ {}.{:0>4} Hz",
-				cur_mon_size.width,
-				cur_mon_size.height,
-				refresh_rate_hz,
-				refresh_rate_thousandths
-			);
-
-			let mon_name = current_monitor.name().unwrap_or_else(|| "[no longer exists]".to_string());
-			log::info!("Video modes supported by current monitor (\"{mon_name}\"):");
-
-			for video_mode in current_monitor.video_modes() {
-				let size = video_mode.size();
-				let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
-				let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
-				log::info!(
-					"{} x {} @ {}.{:0>4} Hz {}-bit",
-					size.width,
-					size.height,
-					refresh_rate_hz,
-					refresh_rate_thousandths,
-					video_mode.bit_depth()
-				);
-			}
-
-			// filter video modes to those which we want to expose to end users as a setting
-			// (video modes with the same refresh rate as the desktop)
-			let filtered_video_modes: Vec<[u32; 2]> = current_monitor
-				.video_modes()
-				.filter_map(|vm| {
-					(vm.refresh_rate_millihertz() == cur_mon_refresh_rate)
-						.then(|| vm.size().into())
-				})
-				.collect();
-			log::info!("Exposing these window size options:");
-			for size in filtered_video_modes {
-				log::info!("{} x {}", size[0], size[1]);
-			}
+			get_video_modes(current_monitor);
 		}
 
 		let vk_dev = graphics_queue.device().clone();
@@ -694,6 +653,55 @@ impl RenderContext
 	{
 		self.frame_time
 	}
+}
+
+// Get the window sizes that could be used for a fullscreen window on the given monitor.
+fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Vec<[u32; 2]>
+{
+	let cur_mon_size = mon.size();
+	let cur_mon_refresh_rate = mon.refresh_rate_millihertz().unwrap_or(0);
+	let refresh_rate_hz = cur_mon_refresh_rate / 1000;
+	let refresh_rate_thousandths = cur_mon_refresh_rate % 1000;
+	log::info!(
+		"Current monitor video mode: {} x {} @ {}.{:0>4} Hz",
+		cur_mon_size.width,
+		cur_mon_size.height,
+		refresh_rate_hz,
+		refresh_rate_thousandths
+	);
+
+	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
+	log::info!("Video modes supported by current monitor (\"{mon_name}\"):");
+
+	for video_mode in mon.video_modes() {
+		let size = video_mode.size();
+		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
+		let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
+		log::info!(
+			"{} x {} @ {}.{:0>4} Hz {}-bit",
+			size.width,
+			size.height,
+			refresh_rate_hz,
+			refresh_rate_thousandths,
+			video_mode.bit_depth()
+		);
+	}
+
+	// filter video modes to those which we want to expose to end users as a setting
+	// (video modes with the same refresh rate as the desktop)
+	let filtered_video_modes: Vec<[u32; 2]> = mon
+		.video_modes()
+		.filter_map(|vm| {
+			(vm.refresh_rate_millihertz() == cur_mon_refresh_rate)
+				.then(|| vm.size().into())
+		})
+		.collect();
+	log::info!("Exposing these window size options:");
+	for size in &filtered_video_modes {
+		log::info!("{} x {}", size[0], size[1]);
+	}
+
+	filtered_video_modes
 }
 
 /// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
