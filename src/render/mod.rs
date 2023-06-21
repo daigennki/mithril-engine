@@ -687,15 +687,19 @@ fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Vec<[u32; 2]>
 		);
 	}
 
-	// filter video modes to those which we want to expose to end users as a setting
-	// (video modes with the same refresh rate as the desktop)
-	let filtered_video_modes: Vec<[u32; 2]> = mon
+	// get just the sizes of the video modes, and remove any duplicate entries
+	let mut filtered_video_modes: Vec<[u32; 2]> = mon
 		.video_modes()
 		.filter_map(|vm| {
-			(vm.refresh_rate_millihertz() == cur_mon_refresh_rate)
-				.then(|| vm.size().into())
+			let size = vm.size();
+			if size.width >= 1280 && size.height >= 720 && size.width >= size.height {
+				Some(size.into())
+			} else {
+				None
+			}
 		})
 		.collect();
+	filtered_video_modes.dedup();
 	log::info!("Exposing these window size options:");
 	for size in &filtered_video_modes {
 		log::info!("{} x {}", size[0], size[1]);
