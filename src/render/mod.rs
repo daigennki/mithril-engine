@@ -102,12 +102,28 @@ impl RenderContext
 			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720)) // TODO: load this from config
 			.with_title(game_name)
 			.with_resizable(false)
+			.with_decorations(std::env::args().find(|arg| arg == "-borderless").is_none())
 			.build(&event_loop)?;
 
-		if let Some(current_monitor) = window.current_monitor() {
-			get_video_modes(current_monitor);
-		}
+		let use_monitor = window
+			.primary_monitor()
+			.or(window.current_monitor())
+			.ok_or("Neither the primary monitor nor the window's current monitor could be detected.")?;
 
+		let (video_modes, current_video_mode) = get_video_modes(use_monitor);
+
+		// attempt to use fullscreen window if requested
+		// TODO: use VK_EXT_full_screen_exclusive to minimize latency (usually only available on Windows)
+		// TODO: test this on Wayland, as winit docs say that using `set_fullscreen` on Wayland makes it no-op such a request.
+		// TODO: use the closest supported video mode to the configured window size, instead of the current desktop video mode
+		if std::env::args().find(|arg| arg == "-fullscreen").is_some() {
+			if let Some(fullscreen_video_mode) = current_video_mode {
+				window.set_fullscreen(Some(winit::window::Fullscreen::Exclusive(fullscreen_video_mode)));
+			} else {
+				log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
+			}
+		}
+		
 		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
 
@@ -656,20 +672,9 @@ impl RenderContext
 }
 
 // Get the window sizes that could be used for a fullscreen window on the given monitor.
-fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Vec<[u32; 2]>
+// The second parameter is the monitor's (likely) current video mode. It'll be `None` if it couldn't be determined.
+fn get_video_modes(mon: winit::monitor::MonitorHandle) -> (Vec<[u32; 2]>, Option<winit::monitor::VideoMode>)
 {
-	let cur_mon_size = mon.size();
-	let cur_mon_refresh_rate = mon.refresh_rate_millihertz().unwrap_or(0);
-	let refresh_rate_hz = cur_mon_refresh_rate / 1000;
-	let refresh_rate_thousandths = cur_mon_refresh_rate % 1000;
-	log::info!(
-		"Current monitor video mode: {} x {} @ {}.{:0>4} Hz",
-		cur_mon_size.width,
-		cur_mon_size.height,
-		refresh_rate_hz,
-		refresh_rate_thousandths
-	);
-
 	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
 	log::info!("Video modes supported by current monitor (\"{mon_name}\"):");
 
@@ -705,7 +710,24 @@ fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Vec<[u32; 2]>
 		log::info!("{} x {}", size[0], size[1]);
 	}
 
-	filtered_video_modes
+	let current_video_mode = mon
+		.video_modes()
+		.find(|vm| vm.size() == mon.size() && vm.refresh_rate_millihertz() == mon.refresh_rate_millihertz().unwrap_or(0));
+	if let Some(video_mode) = &current_video_mode {
+		let size = video_mode.size();
+		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
+		let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
+		log::info!(
+			"Determined primary monitor video mode: {} x {} @ {}.{:0>4} Hz {}-bit",
+			size.width,
+			size.height,
+			refresh_rate_hz,
+			refresh_rate_thousandths,
+			video_mode.bit_depth()
+		);
+	}
+
+	(filtered_video_modes, current_video_mode)
 }
 
 /// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
