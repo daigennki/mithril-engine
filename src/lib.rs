@@ -111,7 +111,7 @@ impl GameContext
 						let desired_physical_size =
 							winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
 						log::info!(
-							"`ScaleFactorChanged` event gave us {:?} inner size (scale factor {}), giving back {:?}...",
+							"`ScaleFactorChanged` event gave us an inner size of {:?} (scale factor {}), giving back {:?}...",
 							&new_inner_size,
 							scale_factor,
 							desired_physical_size

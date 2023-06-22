@@ -97,32 +97,52 @@ impl RenderContext
 	{
 		let (graphics_queue, transfer_queue) = vulkan_init::vulkan_setup(game_name)?;
 
-		// create window
-		let window = WindowBuilder::new()
-			.with_inner_size(winit::dpi::PhysicalSize::new(1280, 720)) // TODO: load this from config
-			.with_title(game_name)
-			.with_resizable(false)
-			.with_decorations(std::env::args().find(|arg| arg == "-borderless").is_none())
-			.build(&event_loop)?;
-
-		let use_monitor = window
+		let use_monitor = event_loop 
 			.primary_monitor()
-			.or(window.current_monitor())
-			.ok_or("Neither the primary monitor nor the window's current monitor could be detected.")?;
-
-		let (video_modes, current_video_mode) = get_video_modes(use_monitor);
+			.or(event_loop.available_monitors().next())
+			.ok_or("The primary monitor could not be detected.")?;
+		
+		let current_video_mode = get_video_modes(use_monitor.clone());
 
 		// attempt to use fullscreen window if requested
-		// TODO: use VK_EXT_full_screen_exclusive to minimize latency (usually only available on Windows)
-		// TODO: test this on Wayland, as winit docs say that using `set_fullscreen` on Wayland makes it no-op such a request.
-		// TODO: use the closest supported video mode to the configured window size, instead of the current desktop video mode
-		if std::env::args().find(|arg| arg == "-fullscreen").is_some() {
-			if let Some(fullscreen_video_mode) = current_video_mode {
-				window.set_fullscreen(Some(winit::window::Fullscreen::Exclusive(fullscreen_video_mode)));
+		// TODO: load this from config
+		let fullscreen = if std::env::args().find(|arg| arg == "-fullscreen").is_some() {
+			if std::env::args().find(|arg| arg == "-borderless").is_some() {
+				// if "-fullscreen" and "-borderless" were both specified, make a borderless window filling the entire monitor
+				// instead of exclusive fullscreen
+				Some(winit::window::Fullscreen::Borderless(Some(use_monitor.clone())))
 			} else {
-				log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
+				// NOTE: this is specifically *exclusive* fullscreen, which gets ignored on Wayland.
+				// therefore, it might be a good idea to hide such an option in UI from the end user on Wayland.
+				// TODO: use VK_EXT_full_screen_exclusive to minimize latency (usually only available on Windows)
+				if let Some(fullscreen_video_mode) = current_video_mode {
+					Some(winit::window::Fullscreen::Exclusive(fullscreen_video_mode))
+				} else {
+					log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
+					None
+				}
 			}
-		}
+		} else {
+			None
+		};
+
+		let window_size = if let Some(fs_mode) = &fullscreen {
+			match fs_mode {
+				winit::window::Fullscreen::Exclusive(video_mode) => video_mode.size(),
+				winit::window::Fullscreen::Borderless(_) => use_monitor.size()
+			}
+		} else {
+			// TODO: load this from config
+			winit::dpi::PhysicalSize::new(1280, 720)
+		};
+
+		// create window
+		let window = WindowBuilder::new()
+			.with_inner_size(window_size)
+			.with_title(game_name)
+			.with_decorations(std::env::args().find(|arg| arg == "-borderless").is_none())
+			.with_fullscreen(fullscreen)
+			.build(&event_loop)?;	
 		
 		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
@@ -671,14 +691,16 @@ impl RenderContext
 	}
 }
 
-// Get the window sizes that could be used for a fullscreen window on the given monitor.
-// The second parameter is the monitor's (likely) current video mode. It'll be `None` if it couldn't be determined.
-fn get_video_modes(mon: winit::monitor::MonitorHandle) -> (Vec<[u32; 2]>, Option<winit::monitor::VideoMode>)
+// Get and print the video modes supported by the given monitor, and return the monitor's current video mode.
+// This may return `None` if the monitor is currently using a video mode that it really doesn't support,
+// although that should be rare.
+fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Option<winit::monitor::VideoMode>
 {
 	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
 	log::info!("Video modes supported by current monitor (\"{mon_name}\"):");
 
-	for video_mode in mon.video_modes() {
+	let video_modes: Vec<_> = mon.video_modes().collect();
+	for video_mode in &video_modes {
 		let size = video_mode.size();
 		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
 		let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
@@ -692,33 +714,48 @@ fn get_video_modes(mon: winit::monitor::MonitorHandle) -> (Vec<[u32; 2]>, Option
 		);
 	}
 
-	// get just the sizes of the video modes, and remove any duplicate entries
-	let mut filtered_video_modes: Vec<[u32; 2]> = mon
-		.video_modes()
-		.filter_map(|vm| {
-			let size = vm.size();
-			if size.width >= 1280 && size.height >= 720 && size.width >= size.height {
-				Some(size.into())
-			} else {
-				None
-			}
-		})
-		.collect();
+	/*// get just the sizes of the video modes, and remove any duplicate entries
+	let mut filtered_video_modes: Vec<[u32; 2]>;
+	if video_modes.len() == 1 {
+		let monitor_size: [u32; 2] = video_modes[0].size().into();
+		// Wayland might expose only one video mode, so in that case, prepare these common sizes
+		// and filter them to those smaller than the monitor's size.
+		let common_sizes = [ [1280, 720], [1920, 1080], [2560, 1440], [3840, 2160] ];
+		
+		filtered_video_modes = common_sizes
+			.into_iter()
+			.filter(|size| size[0] < monitor_size[0] && size[1] < monitor_size[1])
+			.collect();
+		filtered_video_modes.push(monitor_size);
+	} else {
+		filtered_video_modes = video_modes
+			.iter()
+			.filter_map(|vm| {
+				let size = vm.size();
+				if size.width >= 1280 && size.height >= 720 && size.width >= size.height {
+					Some(size.into())
+				} else {
+					None
+				}
+			})
+			.collect()
+	}
 	filtered_video_modes.dedup();
-	log::info!("Exposing these window size options:");
+
+	log::info!("Exposing these video mode options:");
 	for size in &filtered_video_modes {
 		log::info!("{} x {}", size[0], size[1]);
-	}
+	}*/
 
-	let current_video_mode = mon
-		.video_modes()
+	let current_video_mode = video_modes
+		.into_iter()
 		.find(|vm| vm.size() == mon.size() && vm.refresh_rate_millihertz() == mon.refresh_rate_millihertz().unwrap_or(0));
 	if let Some(video_mode) = &current_video_mode {
 		let size = video_mode.size();
 		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
 		let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
 		log::info!(
-			"Determined primary monitor video mode: {} x {} @ {}.{:0>4} Hz {}-bit",
+			"Detected primary monitor video mode: {} x {} @ {}.{:0>4} Hz {}-bit",
 			size.width,
 			size.height,
 			refresh_rate_hz,
@@ -727,7 +764,8 @@ fn get_video_modes(mon: winit::monitor::MonitorHandle) -> (Vec<[u32; 2]>, Option
 		);
 	}
 
-	(filtered_video_modes, current_video_mode)
+	//(filtered_video_modes, current_video_mode)
+	current_video_mode
 }
 
 /// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.

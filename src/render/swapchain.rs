@@ -81,6 +81,9 @@ impl Swapchain
 	/// Returns `Ok(true)` if the image extent has changed.
 	pub fn fit_window(&mut self) -> Result<bool, GenericEngineError>
 	{
+		// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
+		self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
+
 		let prev_dimensions = self.swapchain.image_extent();
 		let mut create_info = self.swapchain.create_info();
 		create_info.image_extent = self.window.inner_size().into();
