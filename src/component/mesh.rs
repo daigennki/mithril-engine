@@ -118,7 +118,7 @@ impl DeferGpuResourceLoading for Mesh
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
 		// model path relative to current directory
-		let model_path_cd_rel = Path::new("./models/").join(&self.model_path);
+		let model_path_cd_rel = &self.model_path;
 		let model_data = render_ctx.get_model(&model_path_cd_rel)?;
 		let material_count = model_data.get_materials().len();
 

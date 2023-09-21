@@ -32,7 +32,7 @@ impl Text
 	pub fn new(render_ctx: &mut RenderContext, text_str: String, size: f32) -> Result<Self, GenericEngineError>
 	{
 		// TODO: preload fonts
-		let font_data = include_bytes!("../../../examples/ui_menu/resource/mplus-1m-medium.ttf");
+		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
 		let font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
 
 		let mut new_text = Text {

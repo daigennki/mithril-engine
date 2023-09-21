@@ -226,7 +226,7 @@ impl Into<World> for WorldData
 }
 fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, GenericEngineError>
 {
-	let world_data: WorldData = serde_yaml::from_reader(File::open(Path::new("maps").join(file))?)?;
+	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
 	let world: World = world_data.into();
 
 	// This will become the default workload, as the docs say:
