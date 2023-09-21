@@ -697,9 +697,10 @@ impl RenderContext
 fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Option<winit::monitor::VideoMode>
 {
 	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
-	log::info!("Video modes supported by current monitor (\"{mon_name}\"):");
+	log::info!("All video modes supported by current monitor (\"{mon_name}\"):");
+	
+	let mut video_modes: Vec<_> = mon.video_modes().collect();
 
-	let video_modes: Vec<_> = mon.video_modes().collect();
 	for video_mode in &video_modes {
 		let size = video_mode.size();
 		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
@@ -714,38 +715,33 @@ fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Option<winit::monitor:
 		);
 	}
 
-	/*// get just the sizes of the video modes, and remove any duplicate entries
-	let mut filtered_video_modes: Vec<[u32; 2]>;
-	if video_modes.len() == 1 {
-		let monitor_size: [u32; 2] = video_modes[0].size().into();
-		// Wayland might expose only one video mode, so in that case, prepare these common sizes
-		// and filter them to those smaller than the monitor's size.
-		let common_sizes = [ [1280, 720], [1920, 1080], [2560, 1440], [3840, 2160] ];
-		
-		filtered_video_modes = common_sizes
-			.into_iter()
-			.filter(|size| size[0] < monitor_size[0] && size[1] < monitor_size[1])
-			.collect();
-		filtered_video_modes.push(monitor_size);
-	} else {
-		filtered_video_modes = video_modes
-			.iter()
-			.filter_map(|vm| {
-				let size = vm.size();
-				if size.width >= 1280 && size.height >= 720 && size.width >= size.height {
-					Some(size.into())
-				} else {
-					None
-				}
-			})
-			.collect()
-	}
-	filtered_video_modes.dedup();
+	// filter the video modes to those with >=1280 width, >=720 height, highest refresh rate for that size, 
+	// and not vertical (width <= height)
+	log::info!("Filtered video modes:");
+	for video_mode in &video_modes {
+		let size = video_mode.size();
+		let refresh_rate = video_mode.refresh_rate_millihertz();
+		let allow = size.width >= 1280 && size.height >= 720 && size.width >= size.height;
 
-	log::info!("Exposing these video mode options:");
-	for size in &filtered_video_modes {
-		log::info!("{} x {}", size[0], size[1]);
-	}*/
+		// keep this video mode if there are no video modes with the same size but with a higher refresh rate
+		let highest_refresh_rate = video_modes
+			.iter()
+			.find(|e| size == e.size() && video_mode.bit_depth() == e.bit_depth() && refresh_rate < e.refresh_rate_millihertz())
+			.is_none();
+
+		if allow && highest_refresh_rate {
+			let refresh_rate_hz = refresh_rate / 1000;
+			let refresh_rate_thousandths = refresh_rate % 1000;
+			log::info!(
+				"{} x {} @ {}.{:0>3} Hz {}-bit",
+				size.width,
+				size.height,
+				refresh_rate_hz,
+				refresh_rate_thousandths,
+				video_mode.bit_depth()
+			);
+		}
+	};
 
 	let current_video_mode = video_modes
 		.into_iter()
