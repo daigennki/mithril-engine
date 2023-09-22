@@ -697,71 +697,54 @@ impl RenderContext
 fn get_video_modes(mon: winit::monitor::MonitorHandle) -> Option<winit::monitor::VideoMode>
 {
 	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
-	log::info!("All video modes supported by current monitor (\"{mon_name}\"):");
-	
-	let mut video_modes: Vec<_> = mon.video_modes().collect();
 
-	for video_mode in &video_modes {
-		let size = video_mode.size();
-		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
-		let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
-		log::info!(
-			"{} x {} @ {}.{:0>4} Hz {}-bit",
-			size.width,
-			size.height,
-			refresh_rate_hz,
-			refresh_rate_thousandths,
-			video_mode.bit_depth()
-		);
-	}
-
-	// filter the video modes to those with >=1280 width, >=720 height, highest refresh rate for that size, 
-	// and not vertical (width <= height)
-	log::info!("Filtered video modes:");
-	for video_mode in &video_modes {
-		let size = video_mode.size();
-		let refresh_rate = video_mode.refresh_rate_millihertz();
-		let allow = size.width >= 1280 && size.height >= 720 && size.width >= size.height;
-
-		// keep this video mode if there are no video modes with the same size but with a higher refresh rate
-		let highest_refresh_rate = video_modes
-			.iter()
-			.find(|e| size == e.size() && video_mode.bit_depth() == e.bit_depth() && refresh_rate < e.refresh_rate_millihertz())
-			.is_none();
-
-		if allow && highest_refresh_rate {
-			let refresh_rate_hz = refresh_rate / 1000;
-			let refresh_rate_thousandths = refresh_rate % 1000;
-			log::info!(
-				"{} x {} @ {}.{:0>3} Hz {}-bit",
-				size.width,
-				size.height,
-				refresh_rate_hz,
-				refresh_rate_thousandths,
-				video_mode.bit_depth()
-			);
-		}
-	};
-
-	let current_video_mode = video_modes
-		.into_iter()
+	let current_video_mode = mon
+		.video_modes()
 		.find(|vm| vm.size() == mon.size() && vm.refresh_rate_millihertz() == mon.refresh_rate_millihertz().unwrap_or(0));
-	if let Some(video_mode) = &current_video_mode {
+
+	let mut video_modes: Vec<_> = mon.video_modes().collect();
+	log::info!("All video modes supported by current monitor (\"{mon_name}\"):");
+
+	// filter the video modes to those with >=1280 width, >=720 height, and not vertical (width <= height)
+	video_modes.retain(|video_mode| {
+		// print unfiltered video modes while we're at it
+		let video_mode_suffix = match &current_video_mode {
+			Some(cur_vm) if video_mode == cur_vm  => " <- likely current primary monitor video mode",
+			_ => "",
+		};
+		log::info!("{}{}", format_video_mode(video_mode), video_mode_suffix);
+
 		let size = video_mode.size();
-		let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
-		let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
-		log::info!(
-			"Detected primary monitor video mode: {} x {} @ {}.{:0>4} Hz {}-bit",
-			size.width,
-			size.height,
-			refresh_rate_hz,
-			refresh_rate_thousandths,
-			video_mode.bit_depth()
-		);
+		size.width >= 1280 && size.height >= 720 && size.width >= size.height
+	});
+
+	// filter the video modes to the highest refresh rate for each size
+	// (sort beforehand so that highest refresh rate for each size comes first,
+	// then remove duplicates with the same size and bit depth)
+	video_modes.sort();
+	video_modes.dedup_by_key(|video_mode| (video_mode.size(), video_mode.bit_depth()));
+
+	log::info!("Filtered video modes:");
+	for vm in &video_modes {
+		log::info!("{}", format_video_mode(vm))
 	}
 
-	//(filtered_video_modes, current_video_mode)
+	//(video_modes, current_video_mode)
 	current_video_mode
+}
+fn format_video_mode(video_mode: &winit::monitor::VideoMode) -> String
+{
+	let size = video_mode.size();
+	let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
+	let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
+	format!(
+		"{} x {} @ {}.{:0>3} Hz {}-bit",
+		size.width,
+		size.height,
+		refresh_rate_hz,
+		refresh_rate_thousandths,
+		video_mode.bit_depth()
+	)
 }
 
 /// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
