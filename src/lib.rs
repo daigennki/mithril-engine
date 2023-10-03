@@ -72,13 +72,21 @@ impl GameContext
 		#[cfg(feature = "egui")]
 		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
 
-		let camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
+		let mut camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
+		world.run(|cameras: View<Camera>| {
+			// for now, just choose the first camera in the world.
+			// TODO: figure out a better way to choose the default camera
+			if let Some((eid, _)) = cameras.iter().with_id().next() {
+				camera_manager.set_active(eid);
+			}
+		});
 
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
 		let fps_ui_ent = world.add_entity(ui::new_text(&mut render_ctx, "0 fps".to_string(), 32.0, [500, -320].into())?);
 
+		// TODO: give the user a way to specify a skybox through the YAML map file
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(camera_manager);
 		world.add_unique(render_ctx);
@@ -280,12 +288,6 @@ fn prepare_primary_render(
 		for t in ui_transforms.inserted_mut().iter() {
 			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
 		}
-	}
-
-	// for now, just choose the first camera in the world.
-	// TODO: figure out a better way to choose the default camera
-	if let Some((eid, _)) = cameras.iter().with_id().next() {
-		camera_manager.set_active(eid);
 	}
 
 	let active_camera_id = camera_manager.active_camera();
