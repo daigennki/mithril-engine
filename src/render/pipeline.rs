@@ -24,9 +24,9 @@ use vulkano::pipeline::graphics::{
 	rasterization::{CullMode, RasterizationState},
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
 	viewport::ViewportState,
+	render_pass::PipelineRenderingCreateInfo,
 };
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
-use vulkano::render_pass::Subpass;
 use vulkano::sampler::Sampler;
 use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderScalarType};
 
@@ -46,15 +46,15 @@ impl Pipeline
 		primitive_topology: PrimitiveTopology,
 		vs_filename: String,
 		fs_info: Option<(String, ColorBlendState)>,
-		fs_transparency_info: Option<(String, Subpass)>,
+		fs_transparency_info: Option<(String, PipelineRenderingCreateInfo)>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
-		subpass: Subpass,
+		rendering_info: PipelineRenderingCreateInfo,
 		depth_op: CompareOp,
 		depth_write: bool,
 		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	) -> Result<Self, GenericEngineError>
 	{
-		let vk_dev = subpass.render_pass().device().clone();
+		let vk_dev = descriptor_set_allocator.device().clone();
 
 		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
@@ -80,7 +80,7 @@ impl Pipeline
 			.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
 			.rasterization_state(RasterizationState::new().cull_mode(CullMode::Back))
 			.depth_stencil_state(depth_stencil_state.clone())
-			.render_pass(subpass);
+			.render_pass(rendering_info);
 
 		// load fragment shader (optional)
 		let fs;
@@ -91,7 +91,7 @@ impl Pipeline
 			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
 
 			// use a different fragment shader for OIT
-			if let Some((ft, ft_subpass)) = fs_transparency_info {
+			if let Some((ft, ft_rendering_info)) = fs_transparency_info {
 				let mut wboit_accum_blend = ColorBlendState::new(2);
 				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend {
 					alpha_op: BlendOp::Add,
@@ -115,7 +115,7 @@ impl Pipeline
 						.depth_stencil_state(depth_stencil_state)
 						.fragment_shader(get_entry_point(&fs_transparency, "main")?, ())
 						.color_blend_state(wboit_accum_blend)
-						.render_pass(ft_subpass),
+						.render_pass(ft_rendering_info),
 				);
 			} else {
 				// only enable color blending for the basic fragment shader if there isn't a separate transparency shader
@@ -153,8 +153,8 @@ impl Pipeline
 	/// Create a pipeline from a YAML pipeline configuration file.
 	pub fn new_from_yaml(
 		yaml_filename: &str,
-		subpass: Subpass,
-		transparency_subpass: Option<Subpass>,
+		rendering_info: PipelineRenderingCreateInfo,
+		transparency_rendering: Option<PipelineRenderingCreateInfo>,
 		tex_sampler: Arc<Sampler>,
 		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	) -> Result<Self, GenericEngineError>
@@ -169,7 +169,7 @@ impl Pipeline
 			.map(|sampler_config| (sampler_config.set, sampler_config.binding, tex_sampler.clone()))
 			.collect();
 
-		let mut color_blend_state = ColorBlendState::new(subpass.num_color_attachments());
+		let mut color_blend_state = ColorBlendState::new(rendering_info.color_attachment_formats.len().try_into().unwrap());
 		if deserialized.alpha_blending {
 			color_blend_state = color_blend_state.blend_alpha();
 		}
@@ -177,7 +177,7 @@ impl Pipeline
 		let fs_info = deserialized.fragment_shader.map(|fs| (fs, color_blend_state));
 		let fs_transparency_info = deserialized
 			.fragment_shader_transparency
-			.map(|fst| (fst, transparency_subpass.unwrap()));
+			.map(|fst| (fst, transparency_rendering.unwrap()));
 
 		let depth_op = deserialized
 			.always_pass_depth_test
@@ -190,7 +190,7 @@ impl Pipeline
 			fs_info,
 			fs_transparency_info,
 			generated_samplers,
-			subpass,
+			rendering_info,
 			depth_op,
 			true,
 			descriptor_set_allocator,

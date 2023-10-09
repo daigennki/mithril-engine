@@ -25,19 +25,23 @@ use vulkano::buffer::{
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferBeginError, CommandBufferInheritanceInfo,
-	CommandBufferInheritanceRenderPassInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
+	CommandBufferInheritanceRenderingInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
 	CopyBufferToImageInfo, CopyImageInfo, PipelineExecutionError, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
-	RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents,
+	RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator, DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::image::{view::ImageView, AttachmentImage, ImageDimensions, ImageUsage, MipmapsCount, SwapchainImage};
+use vulkano::image::{
+	view::ImageView, AttachmentImage, ImageAccess, ImageDimensions, ImageUsage, ImageViewAbstract, MipmapsCount, SwapchainImage
+};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
-use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint};
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
+use vulkano::pipeline::{
+	graphics::{ render_pass::PipelineRenderingCreateInfo, viewport::Viewport }, Pipeline, PipelineBindPoint,
+};
+use vulkano::render_pass::{ LoadOp, StoreOp };
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::{GpuFuture, Sharing};
 use winit::window::WindowBuilder;
@@ -170,8 +174,7 @@ impl RenderContext
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			&memory_allocator,
 			descriptor_set_allocator.clone(),
-			main_render_target.color_image().clone(),
-			main_render_target.depth_image().clone(),
+			swapchain.dimensions(),
 			sampler_linear.clone(),
 		)?;
 
@@ -213,13 +216,27 @@ impl RenderContext
 			.ok_or(format!("Invalid material pipeline definition file name '{}'", filename))?
 			.0
 			.to_string();
-		let transparency_rp = self.transparency_renderer.framebuffer().render_pass().clone();
+		
+		let rendering_info = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
+			depth_attachment_format: Some(Format::D16_UNORM),
+			..Default::default()
+		};
+
+		let transparency_weights_rendering = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![
+				Some(Format::R16G16B16A16_SFLOAT),
+				Some(Format::R8_UNORM),
+			],
+			depth_attachment_format: Some(Format::D16_UNORM),
+			..Default::default()
+		};
 		self.material_pipelines.insert(
 			name,
 			pipeline::Pipeline::new_from_yaml(
 				filename,
-				self.get_main_render_pass().first_subpass(),
-				Some(Subpass::from(transparency_rp, 1).unwrap()),
+				rendering_info,
+				Some(transparency_weights_rendering),
 				self.sampler_linear.clone(),
 				self.descriptor_set_allocator.clone(),
 			)?,
@@ -404,18 +421,19 @@ impl RenderContext
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
-	/// It will be set up for drawing to `framebuffer` in `subpass`,
-	/// and will have a command added to set its viewport to fill the extent of the framebuffer.
-	/// If no subpass was specified, the first subpass of the render pass that `framebuffer` was created with will be used.
+	/// It will be set up for drawing to color and depth images with the given format,
+	/// and with a viewport as large as `viewport_dimensions`.
 	fn new_secondary_command_buffer(
 		&self,
-		framebuffer: Arc<Framebuffer>,
-		subpass: Option<Subpass>,
+		color_attachment_formats: Vec<Option<Format>>,
+		depth_attachment_format: Option<Format>,
+		viewport_dimensions: [u32; 2]
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRenderPass(CommandBufferInheritanceRenderPassInfo {
-			subpass: subpass.unwrap_or_else(|| framebuffer.render_pass().clone().first_subpass()),
-			framebuffer: Some(framebuffer.clone()),
+		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRendering(CommandBufferInheritanceRenderingInfo {
+			color_attachment_formats,
+			depth_attachment_format,
+			..Default::default()
 		});
 		let inheritance = CommandBufferInheritanceInfo {
 			render_pass: Some(inherit_rp),
@@ -429,10 +447,9 @@ impl RenderContext
 		)?;
 
 		// set viewport state
-		let fb_extent = framebuffer.extent();
 		let viewport = Viewport {
 			origin: [0.0, 0.0],
-			dimensions: [fb_extent[0] as f32, fb_extent[1] as f32],
+			dimensions: [viewport_dimensions[0] as f32, viewport_dimensions[1] as f32],
 			depth_range: 0.0..1.0,
 		};
 		cb.set_viewport(0, [viewport]);
@@ -441,7 +458,11 @@ impl RenderContext
 	}
 	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		self.new_secondary_command_buffer(self.main_render_target.framebuffer().clone(), None)
+		self.new_secondary_command_buffer(
+			vec![ Some(self.main_render_target.color_image().image().format()) ], 
+			Some(self.main_render_target.depth_image().image().format()),
+			self.swapchain_dimensions()
+		)
 	}
 
 	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
@@ -450,7 +471,15 @@ impl RenderContext
 		&self,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
-		let mut cb = self.new_secondary_command_buffer(self.transparency_renderer.framebuffer(), None)?;
+		let mut cb = self.new_secondary_command_buffer(
+			vec![ 
+				Some(Format::R32G32B32A32_SFLOAT),
+				Some(Format::R32_SFLOAT),
+				Some(Format::R32_SFLOAT),
+			], 
+			Some(self.main_render_target.depth_image().image().format()),
+			self.swapchain_dimensions()
+		)?;
 		self.transparency_renderer.get_moments_pipeline().bind(&mut cb);
 		Ok(cb)
 	}
@@ -459,9 +488,9 @@ impl RenderContext
 		first_bind_pipeline: &pipeline::Pipeline,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		let fb = self.transparency_renderer.framebuffer();
-		let subpass = Subpass::from(fb.render_pass().clone(), 1).unwrap();
-		let mut cb = self.new_secondary_command_buffer(fb, Some(subpass))?;
+		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
+
+		let mut cb = self.new_secondary_command_buffer(color_formats, Some(Format::D16_UNORM), self.swapchain_dimensions())?;
 		first_bind_pipeline.bind_transparency(&mut cb)?;
 		bind_descriptor_set(&mut cb, 3, vec![self.transparency_renderer.get_stage3_inputs()])?;
 		Ok(cb)
@@ -469,8 +498,9 @@ impl RenderContext
 	pub fn record_ui_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
 	{
 		self.new_secondary_command_buffer(
-			self.main_render_target.framebuffer().clone(),
-			Some(self.main_render_target.ui_rp().clone().first_subpass()),
+			vec![ Some(self.main_render_target.color_image().image().format()) ], 
+			Some(Format::D16_UNORM), 
+			self.swapchain_dimensions()
 		)
 	}
 
@@ -505,8 +535,7 @@ impl RenderContext
 
 		self.transparency_renderer.resize_image(
 			&self.memory_allocator,
-			self.main_render_target.color_image().clone(),
-			self.main_render_target.depth_image().clone(),
+			self.swapchain.dimensions(),
 		)?;
 
 		Ok(())
@@ -609,9 +638,6 @@ impl RenderContext
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
-		let mut rp_begin_info = RenderPassBeginInfo::framebuffer(self.main_render_target.framebuffer().clone());
-		rp_begin_info.clear_values = vec![None, None];
-
 		// finalize the rendering for this frame by executing the secondary command buffers
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
@@ -619,25 +645,61 @@ impl RenderContext
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
 
+		let main_render_info = RenderingInfo {
+			color_attachments: vec![
+				Some(RenderingAttachmentInfo {
+					// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
+					store_op: StoreOp::Store,
+					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+				}),
+			],
+			depth_attachment: Some(RenderingAttachmentInfo{
+				// `load_op` is `DontCare` here too since the skybox clears it with 1.0
+				store_op: StoreOp::Store, // order-independent transparency needs this to be `Store`
+				..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
+			}),
+			contents: SubpassContents::SecondaryCommandBuffers,
+			..Default::default()
+		};
+		let ui_render_info = RenderingInfo {
+			color_attachments: vec![
+				Some(RenderingAttachmentInfo {
+					load_op: LoadOp::Load,
+					store_op: StoreOp::Store,
+					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+				}),
+			],
+			depth_attachment: Some(RenderingAttachmentInfo{
+				load_op: LoadOp::Load,
+				store_op: StoreOp::DontCare, 
+				..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
+			}),
+			contents: SubpassContents::SecondaryCommandBuffers,
+			..Default::default()
+		};
+
 		let command_buffers = self.trm.lock().unwrap().take_built_command_buffers();
 		primary_cb_builder
-			.begin_render_pass(rp_begin_info.clone(), SubpassContents::SecondaryCommandBuffers)?
+			.begin_rendering(main_render_info)?
 			.execute_commands_from_vec(command_buffers)?
-			.end_render_pass()?;
+			.end_rendering()?;
 
-		self.transparency_renderer.process_transparency(&mut primary_cb_builder)?;
-
-		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
-		rp_begin_info.render_pass = self.main_render_target.ui_rp().clone();
-		let blit_info = BlitImageInfo::images(
+		self.transparency_renderer.process_transparency(
+			&mut primary_cb_builder, 
 			self.main_render_target.color_image().clone(),
+			self.main_render_target.depth_image().clone()
+		)?;
+
+		let ui_cb = self.trm.lock().unwrap().take_ui_cb();	
+		let blit_info = BlitImageInfo::images(
+			self.main_render_target.color_image().image().clone(),
 			self.intermediate_srgb_img.clone(),
 		);
 		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), self.next_swapchain_image()?);
 		primary_cb_builder
-			.begin_render_pass(rp_begin_info, SubpassContents::SecondaryCommandBuffers)?
+			.begin_rendering(ui_render_info)?
 			.execute_commands_from_vec(ui_cb)?
-			.end_render_pass()?
+			.end_rendering()?
 			.blit_image(blit_info)? // convert from linear to non-linear sRGB
 			.copy_image(copy_info)?; // copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
 		self.submit_commands(primary_cb_builder.build()?)?;
@@ -668,11 +730,6 @@ impl RenderContext
 	pub fn get_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
-	}
-
-	pub fn get_main_render_pass(&self) -> Arc<RenderPass>
-	{
-		self.main_render_target.framebuffer().render_pass().clone()
 	}
 
 	pub fn get_queue(&self) -> Arc<Queue>
@@ -855,78 +912,25 @@ impl ThreadedRenderingManager
 
 struct RenderTarget
 {
-	// An FP16, linear gamma framebuffer which everything will be rendered to.
-	framebuffer: Arc<Framebuffer>,
-	color_image: Arc<AttachmentImage>,
-	depth_image: Arc<AttachmentImage>,
-	ui_rp: Arc<RenderPass>,
+	// An FP16, linear gamma image which everything will be rendered to.
+	color_image: Arc<ImageView<AttachmentImage>>,
+	depth_image: Arc<ImageView<AttachmentImage>>,
 }
 impl RenderTarget
 {
 	pub fn new(memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2]) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = memory_allocator.device().clone();
-		let main_rp = vulkano::single_pass_renderpass!(
-			vk_dev.clone(),
-			attachments: {
-				color: {
-					load: DontCare,	// this is DontCare since drawing the skybox effectively clears the image for us
-					store: Store,
-					format: Format::R16G16B16A16_SFLOAT,
-					samples: 1,
-				},
-				depth: {
-					load: DontCare,	// this too is DontCare since the skybox clears it with 1.0
-					store: Store,	// order-independent transparency needs this to be `Store`
-					format: Format::D16_UNORM,	// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
-					samples: 1,
-				}
-			},
-			pass: {
-				color: [color],
-				depth_stencil: {depth}
-			}
-		)?;
-
-		let ui_rp = vulkano::single_pass_renderpass!(
-			vk_dev.clone(),
-			attachments: {
-				color: {
-					load: Load,
-					store: Store,
-					format: Format::R16G16B16A16_SFLOAT,
-					samples: 1,
-				},
-				depth: {
-					load: Load,
-					store: DontCare,
-					format: Format::D16_UNORM,	// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
-					samples: 1,
-				}
-			},
-			pass: {
-				color: [color],
-				depth_stencil: {depth}
-			}
-		)?;
 
 		let color_usage = ImageUsage::TRANSFER_SRC;
 		let color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
+
+		// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
 		let depth_image = AttachmentImage::new(memory_allocator, dimensions, Format::D16_UNORM)?;
-		let fb_create_info = FramebufferCreateInfo {
-			attachments: vec![
-				ImageView::new_default(color_image.clone())?,
-				ImageView::new_default(depth_image.clone())?,
-			],
-			..Default::default()
-		};
-		let framebuffer = Framebuffer::new(main_rp.clone(), fb_create_info)?;
 
 		Ok(Self {
-			framebuffer,
-			color_image,
-			depth_image,
-			ui_rp,
+			color_image: ImageView::new_default(color_image)?,
+			depth_image: ImageView::new_default(depth_image)?,
 		})
 	}
 
@@ -934,37 +938,23 @@ impl RenderTarget
 		-> Result<(), GenericEngineError>
 	{
 		let color_usage = ImageUsage::TRANSFER_SRC;
-		self.color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
+		self.color_image = ImageView::new_default(
+			AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?
+		)?;
 
 		let depth_usage = ImageUsage::SAMPLED;
-		self.depth_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?;
-
-		let fb_create_info = FramebufferCreateInfo {
-			attachments: vec![
-				ImageView::new_default(self.color_image.clone())?,
-				ImageView::new_default(self.depth_image.clone())?,
-			],
-			..Default::default()
-		};
-		self.framebuffer = Framebuffer::new(self.framebuffer.render_pass().clone(), fb_create_info)?;
-
+		self.depth_image = ImageView::new_default(
+			AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?
+		)?;
 		Ok(())
 	}
 
-	pub fn framebuffer(&self) -> &Arc<Framebuffer>
-	{
-		&self.framebuffer
-	}
-	pub fn color_image(&self) -> &Arc<AttachmentImage>
+	pub fn color_image(&self) -> &Arc<ImageView<AttachmentImage>>
 	{
 		&self.color_image
 	}
-	pub fn depth_image(&self) -> &Arc<AttachmentImage>
+	pub fn depth_image(&self) -> &Arc<ImageView<AttachmentImage>>
 	{
 		&self.depth_image
-	}
-	pub fn ui_rp(&self) -> &Arc<RenderPass>
-	{
-		&self.ui_rp
 	}
 }

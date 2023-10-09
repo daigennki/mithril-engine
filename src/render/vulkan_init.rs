@@ -187,6 +187,7 @@ pub fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>),
 
 	// The features and extensions enabled here are supported by basically any Vulkan device.
 	let enabled_features = vulkano::device::Features {
+		dynamic_rendering: true,
 		image_cube_array: true,
 		independent_blend: true,
 		sampler_anisotropy: true,

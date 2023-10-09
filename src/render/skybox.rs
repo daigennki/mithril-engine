@@ -9,8 +9,11 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::pipeline::graphics::color_blend::ColorBlendState;
-use vulkano::pipeline::graphics::{depth_stencil::CompareOp, input_assembly::PrimitiveTopology};
+use vulkano::format::Format;
+use vulkano::pipeline::graphics::{ 
+	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, 
+	render_pass::PipelineRenderingCreateInfo
+};
 use vulkano::sampler::SamplerCreateInfo;
 
 use super::RenderContext;
@@ -34,16 +37,22 @@ impl Skybox
 	{
 		// sky pipeline
 		// TODO: this should be moved out of here so we're not creating it again when the skybox is changed
-		let subpass = render_ctx.get_main_render_pass().first_subpass();
 		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
 		let cubemap_sampler = vulkano::sampler::Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
+
+		let rendering_info = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
+			depth_attachment_format: Some(Format::D16_UNORM),
+			..Default::default()
+		};
+
 		let sky_pipeline = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleStrip,
 			"skybox.vert.spv".into(),
 			Some(("skybox.frag.spv".into(), ColorBlendState::new(1))),
 			None,
 			vec![(0, 0, cubemap_sampler)],
-			subpass,
+			rendering_info,
 			CompareOp::Always,
 			true,
 			render_ctx.descriptor_set_allocator().clone(),

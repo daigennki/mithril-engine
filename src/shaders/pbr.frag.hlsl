@@ -15,9 +15,22 @@ struct PS_OUTPUT
 };
 #endif
 
-float3 calc_diff(float3 lightDir, float3 normal, float3 tex_diffuse)
+/* Environment light */
+/*struct DirLight
 {
-	float diff_intensity = max(dot(normal, lightDir), 0.0);
+	float3 direction;
+	float _filler1;
+	float3 color;
+	float _filler2;
+};
+cbuffer directional_light_ubo : register(b0, space3)
+{
+	DirLight dir_light;
+};*/
+
+float3 calc_diff(float3 light_direction, float3 normal, float3 tex_diffuse)
+{
+	float diff_intensity = max(dot(normal, light_direction), 0.0);
 	float3 diffuse = diff_intensity * tex_diffuse;
 	return diffuse;
 }
@@ -26,6 +39,8 @@ float3 calc_dl(float3 tex_diffuse, float3 normal)
 {
 	float3 light_direction = normalize(float3(1.0, 1.0, 5.0));
 	float3 light_color = float3(12.5, 11.25, 10.0) / 8.0;
+	/*float3 light_direction = dir_light.direction;
+	float3 light_color = dir_light.color;*/
 	float3 ambient = tex_diffuse * 0.04;
 
 	float3 color_out = calc_diff(light_direction, normal, tex_diffuse);

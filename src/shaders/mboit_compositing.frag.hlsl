@@ -1,47 +1,46 @@
 // The shader used to composite transparent objects over opaque objects, when using WBOIT.
 
 /* sum(rgb * a, a) */
-//Texture2D accum_texture : register(t0, space3);
-[[vk::input_attachment_index(0)]] SubpassInput accum_in : register(t0, space3);
+Texture2D accum_texture : register(t0, space3);
+//[[vk::input_attachment_index(0)]] SubpassInput accum_in : register(t0, space3);
 
 /* prod(1 - a) */
-//Texture2D revealage_texture : register(t1, space3);
-[[vk::input_attachment_index(1)]] SubpassInput revealage_in : register(t1, space3);
+Texture2D revealage_texture : register(t1, space3);
+//[[vk::input_attachment_index(1)]] SubpassInput revealage_in : register(t1, space3);
 
-[[vk::input_attachment_index(2)]] SubpassInput placeholder_in : register(t2, space3);
-
-/*cbuffer tex_dim : register(b2, space3)
-{
-	uint2 texture_dimensions;
-};*/
+Texture2D placeholder_in : register(t2, space3);
+//[[vk::input_attachment_index(2)]] SubpassInput placeholder_in : register(t2, space3);
 
 float max_component(float4 color)
 {
 	return max(max(max(color.r, color.g), color.b), color.a);
 }
 
-/*struct PS_INPUT
+struct PS_INPUT
 {
     float4 position : SV_POSITION;
     float2 texcoords : TEXCOORD;
-};*/
+};
 
-float4 main(/*PS_INPUT input*/) : SV_Target
+float4 main(PS_INPUT input) : SV_Target
 {
-    //int2 tex_coords_int = int2(input.texcoords * texture_dimensions);
-    //float revealage = revealage_texture.Load(int3(tex_coords_int, 0)).r;
-    float revealage = revealage_in.SubpassLoad();
+	int2 texture_dimensions;
+	revealage_texture.GetDimensions(texture_dimensions.x, texture_dimensions.y);
+
+    int2 tex_coords_int = int2(input.texcoords * texture_dimensions);
+    float revealage = revealage_texture.Load(int3(tex_coords_int, 0)).r;
+    //float revealage = revealage_in.SubpassLoad();
 
 	// hack to make sure the placeholder doesn't get optimized out
-	bool force_placeholder_usage = placeholder_in.SubpassLoad().r < 1.0;
+	bool force_placeholder_usage = placeholder_in.Load(int3(tex_coords_int, 0)).r < 1.0;
 
 	if (revealage == 1.0 && force_placeholder_usage) {
         // Save the blending and color texture fetch cost
         discard;
     }
 
-    //float4 accum = accum_texture.Load(int3(tex_coords_int, 0));
-    float4 accum = accum_in.SubpassLoad();
+    float4 accum = accum_texture.Load(int3(tex_coords_int, 0));
+    //float4 accum = accum_in.SubpassLoad();
 	// Suppress overflow
     if (isinf(max_component(abs(accum)))) {
         accum.rgb = float3(accum.a);

@@ -2,20 +2,16 @@
 // The shader code used for moment-based OIT moment weight calculation (stage 3), meant to be included by other shaders.
 
 /* sum(rgb * a, a) */
-//Texture2D moments_in : register(t0, space3);
-[[vk::input_attachment_index(0)]] SubpassInput moments_in : register(t0, space3);
+Texture2D moments_in : register(t0, space3);
+//[[vk::input_attachment_index(0)]] SubpassInput moments_in : register(t0, space3);
 
 /* prod(1 - a) */
-//Texture2D optical_depth_in : register(t1, space3);
-[[vk::input_attachment_index(1)]] SubpassInput optical_depth_in : register(t1, space3);
+Texture2D optical_depth_in : register(t1, space3);
+//[[vk::input_attachment_index(1)]] SubpassInput optical_depth_in : register(t1, space3);
 
 /* minimum depth for correction */
-[[vk::input_attachment_index(2)]] SubpassInput min_depth : register(t2, space3);
-
-/*cbuffer tex_dim : register(b2, space3)
-{
-	uint2 texture_dimensions;
-};*/
+Texture2D min_depth : register(t2, space3);
+//[[vk::input_attachment_index(2)]] SubpassInput min_depth : register(t2, space3);
 
 struct PS_OUTPUT
 {
@@ -98,12 +94,15 @@ float calc_w(float z, float alpha, float2 screen_pos)
 	const float c0 = 1.0 / near;
 	const float c1 = 1.0 / log(far / near);
 
-	//float2 texcoords = mad(screen_pos, 0.5, 0.5);
-	//int2 tex_coords_int = int2(texcoords * texture_dimensions);
-    //float4 moments = moments_in.Load(int3(tex_coords_int, 0));
-	//float total_od = optical_depth_in.Load(int3(tex_coords_int, 0));
-	float4 moments = moments_in.SubpassLoad();
-	float total_od = optical_depth_in.SubpassLoad();
+	int2 texture_dimensions;
+	moments_in.GetDimensions(texture_dimensions.x, texture_dimensions.y);
+
+	float2 texcoords = mad(screen_pos, 0.5, 0.5);
+	int2 tex_coords_int = int2(texcoords * texture_dimensions);
+    float4 moments = moments_in.Load(int3(tex_coords_int, 0));
+	float total_od = optical_depth_in.Load(int3(tex_coords_int, 0));
+	//float4 moments = moments_in.SubpassLoad();
+	//float total_od = optical_depth_in.SubpassLoad();
 	float unit_pos = depth_to_unit(z, c0, c1);
 
 	if (total_od != 0.0) {
@@ -116,7 +115,8 @@ float calc_w(float z, float alpha, float2 screen_pos)
 
 	// if this is *not* the top fragment, but the depth of this fragment is still close to the minimum depth,
 	// correct the "gradient" that might appear under such conditions
-	float min_z = min_depth.SubpassLoad();
+	//float min_z = min_depth.SubpassLoad();
+	float min_z = min_depth.Load(int3(tex_coords_int, 0));
 	const float correction_factor = 100.0;
 	if (z > min_z) {
 		w *= saturate((z - min_z) * correction_factor);
