@@ -1,14 +1,14 @@
 // The shader used to composite transparent objects over opaque objects, when using WBOIT.
 
 /* sum(rgb * a, a) */
-Texture2D accum_texture : register(t0, space3);
+Texture2D accum_texture : register(t0);
 //[[vk::input_attachment_index(0)]] SubpassInput accum_in : register(t0, space3);
 
 /* prod(1 - a) */
-Texture2D revealage_texture : register(t1, space3);
+Texture2D revealage_texture : register(t1);
 //[[vk::input_attachment_index(1)]] SubpassInput revealage_in : register(t1, space3);
 
-Texture2D placeholder_in : register(t2, space3);
+Texture2D placeholder_in : register(t2);
 //[[vk::input_attachment_index(2)]] SubpassInput placeholder_in : register(t2, space3);
 
 float max_component(float4 color)

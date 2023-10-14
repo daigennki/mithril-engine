@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
 
 use super::{ColorInput /*SingleChannelInput*/, DeferMaterialLoading, Material};
 use crate::render::RenderContext;
@@ -28,6 +29,8 @@ pub struct PBR
 
 	#[serde(skip)]
 	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
+	#[serde(skip)]
+	pipeline_layout: Option<Arc<PipelineLayout>>,
 }
 impl PBR
 {
@@ -37,6 +40,7 @@ impl PBR
 			base_color,
 			transparent,
 			descriptor_set: None,
+			pipeline_layout: None,
 		}
 	}
 }
@@ -53,10 +57,11 @@ impl Material for PBR
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	) -> Result<(), GenericEngineError>
 	{
-		crate::render::bind_descriptor_set(
-			cb,
-			2,
-			self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone(),
+		cb.bind_descriptor_sets(
+			PipelineBindPoint::Graphics,
+			self.pipeline_layout.as_ref().ok_or("material descriptor set not loaded")?.clone(),
+			1,
+			self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone()
 		)?;
 		Ok(())
 	}
@@ -76,9 +81,10 @@ impl DeferMaterialLoading for PBR
 
 		self.descriptor_set = Some(render_ctx.new_descriptor_set(
 			self.pipeline_name(),
-			2,
+			1,
 			[WriteDescriptorSet::image_view(1, base_color_tex.view())],
 		)?);
+		self.pipeline_layout = Some(render_ctx.get_pipeline(self.pipeline_name())?.layout());
 
 		Ok(())
 	}

@@ -6,15 +6,17 @@
 ----------------------------------------------------------------------------- */
 
 use std::sync::Arc;
+use glam::*;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
+use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::{ 
 	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, 
-	render_pass::PipelineRenderingCreateInfo
+	subpass::PipelineRenderingCreateInfo
 };
-use vulkano::sampler::SamplerCreateInfo;
+use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 
 use super::RenderContext;
 use crate::GenericEngineError;
@@ -38,7 +40,7 @@ impl Skybox
 		// sky pipeline
 		// TODO: this should be moved out of here so we're not creating it again when the skybox is changed
 		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
-		let cubemap_sampler = vulkano::sampler::Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
+		let cubemap_sampler = Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
 
 		let rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
@@ -97,14 +99,14 @@ impl Skybox
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		camera_manager: &crate::component::camera::CameraManager,
+		sky_projview: Mat4,
 	) -> Result<(), GenericEngineError>
 	{
-		self.sky_pipeline.bind(cb);
-		crate::render::bind_descriptor_set(cb, 0, vec![self.descriptor_set.clone()])?;
-		camera_manager.push_sky_projview(cb)?;
-		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()]);
-		cb.bind_index_buffer(self.cube_ibo.clone());
+		self.sky_pipeline.bind(cb)?;
+		cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.sky_pipeline.layout(), 0, vec![self.descriptor_set.clone()])?;
+		cb.push_constants(self.sky_pipeline.layout(), 0, sky_projview)?;
+		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?;
+		cb.bind_index_buffer(self.cube_ibo.clone())?;
 		cb.draw_indexed(20, 1, 0, 0, 0)?;
 		Ok(())
 	}

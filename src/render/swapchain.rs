@@ -6,16 +6,16 @@
 ----------------------------------------------------------------------------- */
 
 use std::sync::Arc;
+use vulkano::{Validated, VulkanError};
 use vulkano::command_buffer::{PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract};
 use vulkano::device::Queue;
 use vulkano::format::Format;
-use vulkano::image::{ImageUsage, SwapchainImage};
+use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
-	AcquireError, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
+	PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{
-	future::{FenceSignalFuture, GpuFuture},
-	FlushError,
+	future::{FenceSignalFuture, GpuFuture}
 };
 use winit::window::Window;
 
@@ -25,7 +25,7 @@ pub struct Swapchain
 {
 	window: Arc<Window>,
 	swapchain: Arc<vulkano::swapchain::Swapchain>,
-	images: Vec<Arc<SwapchainImage>>,
+	images: Vec<Arc<Image>>,
 
 	recreate_pending: bool,
 
@@ -46,21 +46,21 @@ impl Swapchain
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
-		let surface_present_modes = pd.surface_present_modes(&surface)?;
+		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 
 		// Explicitly set `image_extent` since some environments, such as Wayland, require it to not cause a panic.
 		let image_extent: [u32; 2] = window_arc.inner_size().into();
 
-		// NVIDIA on Linux (possibly only when using Wayland?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it would be a
-		// safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
+		// NVIDIA on Linux (possibly only when using Wayland with PRIME?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it
+		// would be a safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
 		// https://vulkan.gpuinfo.org/listsurfaceformats.php?platform=linux
 		// This means we need to be sure to convert from linear to nonlinear sRGB beforehand. See `RenderContext::submit_frame`
 		// for that conversion.
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
 			image_extent,
-			image_format: Some(Format::B8G8R8A8_UNORM),
+			image_format: Format::B8G8R8A8_UNORM,
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Fifo,
 			..Default::default()
@@ -106,7 +106,7 @@ impl Swapchain
 	/// Returns the image and a bool indicating if the image dimensions changed.
 	/// Subsequent command buffer commands will fail with `vulkano::sync::AccessError::AlreadyInUse`
 	/// if this isn't run after every swapchain command submission.
-	pub fn get_next_image(&mut self) -> Result<(Arc<SwapchainImage>, bool), GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<(Arc<Image>, bool), GenericEngineError>
 	{
 		// clean up resources from finished submissions
 		if let Some(f) = self.submission_future.as_mut() {
@@ -132,7 +132,7 @@ impl Swapchain
 				self.acquire_future = Some(acquire_future);
 				Ok((self.images[image_num as usize].clone(), dimensions_changed))
 			}
-			Err(AcquireError::OutOfDate) => {
+			Err(Validated::Error(VulkanError::OutOfDate)) => {
 				log::warn!("Swapchain out of date, recreating...");
 				self.recreate_pending = true;
 				self.get_next_image()
@@ -143,7 +143,7 @@ impl Swapchain
 
 	pub fn submit_transfer_on_graphics_queue(
 		&mut self,
-		cb: PrimaryAutoCommandBuffer,
+		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
 	) -> Result<(), GenericEngineError>
 	{
@@ -164,7 +164,7 @@ impl Swapchain
 	/// Note that `after` does not need to be a signalled fence or semaphore, as signalling will be done in this function.
 	pub fn present(
 		&mut self,
-		cb: PrimaryAutoCommandBuffer,
+		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
 		after: Option<Box<dyn GpuFuture + Send + Sync>>,
 	) -> Result<(), GenericEngineError>
@@ -192,14 +192,14 @@ impl Swapchain
 		}
 
 		let future_result = joined_futures
-			.then_execute(queue.clone(), cb)?
+			.then_execute(queue.clone(), Arc::new(cb))?
 			.then_swapchain_present(queue, present_info)
 			.boxed_send_sync()
 			.then_signal_fence_and_flush();
 
 		match future_result {
 			Ok(future) => self.submission_future = Some(future),
-			Err(FlushError::OutOfDate) => {
+			Err(Validated::Error(VulkanError::OutOfDate)) => {
 				log::warn!("Swapchain out of date, recreating...");
 				self.recreate_pending = true;
 			}

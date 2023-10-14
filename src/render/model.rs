@@ -140,8 +140,8 @@ impl Model
 
 		// don't even bother with vertex/index buffer binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
-			cb.bind_vertex_buffers(0, self.vertex_buffers.clone());
-			self.index_buffer.bind(cb);
+			cb.bind_vertex_buffers(0, self.vertex_buffers.clone())?;
+			self.index_buffer.bind(cb)?;
 			for submesh in visible_submeshes {
 				// it's okay that we use a panic function here, since the glTF loader validates the index for us
 				let mat = material_overrides[submesh.material_index()]
@@ -252,11 +252,13 @@ impl IndexBufferVariant
 	}
 
 	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
+		-> Result<(), GenericEngineError>
 	{
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
 			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
-		};
+		}?;
+		Ok(())
 	}
 }
 

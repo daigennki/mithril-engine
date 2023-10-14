@@ -8,7 +8,6 @@
 use glam::*;
 use serde::Deserialize;
 use shipyard::EntityId;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
 use crate::component::EntityComponent;
 use crate::render::RenderContext;
@@ -77,25 +76,6 @@ impl CameraManager
 		Ok(())
 	}
 
-	/// Push the multiplied projection and view matrix so they can be used in shaders.
-	pub fn push_projview(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
-		-> Result<(), GenericEngineError>
-	{
-		crate::render::push_constants(cb, 0, self.projview)?;
-		Ok(())
-	}
-
-	/// Push the multiplied projection and view matrix so they can be used specifically in the skybox shader.
-	/// (the view matrix here never changes its eye position from (0, 0, 0))
-	pub fn push_sky_projview(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>
-	{
-		crate::render::push_constants(cb, 0, self.sky_projview)?;
-		Ok(())
-	}
-
 	pub fn set_active(&mut self, eid: EntityId)
 	{
 		self.active_camera = eid
@@ -105,9 +85,17 @@ impl CameraManager
 		self.active_camera
 	}
 
+	/// Get the multiplied projection and view matrix to be used in shaders.
 	pub fn projview(&self) -> Mat4
 	{
 		self.projview
+	}
+
+	/// Get the multiplied projection and view matrix to be used specifically in the skybox shader.
+	/// The view matrix here never changes its eye position from (0, 0, 0).
+	pub fn sky_projview(&self) -> Mat4
+	{
+		self.sky_projview
 	}
 }
 

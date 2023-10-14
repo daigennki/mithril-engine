@@ -13,22 +13,23 @@ use vulkano::command_buffer::CopyBufferToImageInfo;
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, ImageCreateFlags, ImageDimensions, ImageLayout,
-	ImageUsage, ImmutableImage, MipmapsCount,
+	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, Image, ImageCreateFlags, ImageCreateInfo, ImageLayout,
+	ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::sync::Sharing;
 
 use crate::GenericEngineError;
 
 pub struct Texture
 {
-	view: Arc<ImageView<ImmutableImage>>,
-	dimensions: ImageDimensions,
+	view: Arc<ImageView>,
+	dimensions: [u32; 2],
 }
 impl Texture
 {
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator,
+		memory_allocator: Arc<StandardMemoryAllocator>,
 		path: &Path,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
@@ -47,11 +48,11 @@ impl Texture
 	}
 
 	pub fn new_from_iter<Px, I>(
-		memory_allocator: &StandardMemoryAllocator,
+		memory_allocator: Arc<StandardMemoryAllocator>,
 		iter: I,
 		vk_fmt: Format,
-		dimensions: ImageDimensions,
-		mip: MipmapsCount,
+		dimensions: [u32; 2],
+		mip_levels: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		Px: Send + Sync + bytemuck::Pod,
@@ -61,44 +62,47 @@ impl Texture
 	{
 		let device = memory_allocator.device().clone();
 
-		let dst_img_usage = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED;
 		let buffer_info = BufferCreateInfo {
 			usage: BufferUsage::TRANSFER_SRC,
 			..Default::default()
 		};
 		let buf_allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::Upload,
+			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_iter(memory_allocator, buffer_info, buf_allocation_info, iter)?;
-		let queue_families: Vec<_> = device.active_queue_family_indices().into();
-		let (dst_img, initializer) = ImmutableImage::uninitialized(
-			memory_allocator,
-			dimensions,
-			vk_fmt,
-			mip,
-			dst_img_usage,
-			ImageCreateFlags::empty(),
-			ImageLayout::ShaderReadOnlyOptimal,
-			queue_families,
-		)?;
+		let staging_buf = Buffer::from_iter(memory_allocator.clone(), buffer_info, buf_allocation_info, iter)?;
 
-		let view = ImageView::new(dst_img.clone(), ImageViewCreateInfo::from_image(&dst_img))?;
+		let sharing = if device.active_queue_family_indices().len() > 1 {
+			Sharing::Concurrent(device.active_queue_family_indices().into())
+		} else {
+			Sharing::Exclusive
+		};
+		let image_info = ImageCreateInfo {
+			format: vk_fmt,
+			extent: [ dimensions[0], dimensions[1], 1 ],
+			mip_levels,
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+			sharing,
+			..Default::default()
+		};
+		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
+
+		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
 
 		// TODO: also copy mipmaps
 
 		Ok((
 			Texture { view, dimensions },
-			CopyBufferToImageInfo::buffer_image(staging_buf, initializer),
+			CopyBufferToImageInfo::buffer_image(staging_buf, image),
 		))
 	}
 
-	pub fn view(&self) -> Arc<ImageView<ImmutableImage>>
+	pub fn view(&self) -> Arc<ImageView>
 	{
 		self.view.clone()
 	}
 
-	pub fn dimensions(&self) -> ImageDimensions
+	pub fn dimensions(&self) -> [u32; 2] 
 	{
 		self.dimensions
 	}
@@ -106,14 +110,14 @@ impl Texture
 
 pub struct CubemapTexture
 {
-	view: Arc<ImageView<ImmutableImage>>,
-	dimensions: ImageDimensions,
+	view: Arc<ImageView>,
+	dimensions: [u32; 2],
 }
 impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
 	pub fn new(
-		memory_allocator: &StandardMemoryAllocator,
+		memory_allocator: Arc<StandardMemoryAllocator>,
 		faces: [PathBuf; 6],
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
@@ -136,10 +140,10 @@ impl CubemapTexture
 			};
 
 			// TODO: ignore other mipmap levels, if there are any
-			if let MipmapsCount::Specific(count) = mip {
+			if mip > 1 {
 				return Err(format!(
 					"expected texture file with only one mipmap level, got {} mipmap levels",
-					count
+					mip	
 				)
 				.into());
 			}
@@ -163,24 +167,20 @@ impl CubemapTexture
 			combined_data.extend(img_raw);
 		}
 
-		if let ImageDimensions::Dim2d { array_layers, .. } = cube_dim.as_mut().unwrap() {
-			*array_layers = 6;
-		}
-
 		Self::new_from_iter(
 			memory_allocator,
 			combined_data,
 			cube_fmt.unwrap(),
 			cube_dim.unwrap(),
-			MipmapsCount::One,
+			1,
 		)
 	}
 	pub fn new_from_iter<Px, I>(
-		memory_allocator: &StandardMemoryAllocator,
+		memory_allocator: Arc<StandardMemoryAllocator>,
 		iter: I,
 		vk_fmt: Format,
-		dimensions: ImageDimensions,
-		mip: MipmapsCount,
+		dimensions: [u32; 2],
+		mip: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		Px: Send + Sync + bytemuck::Pod,
@@ -201,12 +201,12 @@ impl CubemapTexture
 		))
 	}
 
-	pub fn view(&self) -> Arc<ImageView<ImmutableImage>>
+	pub fn view(&self) -> Arc<ImageView>
 	{
 		self.view.clone()
 	}
 
-	pub fn dimensions(&self) -> ImageDimensions
+	pub fn dimensions(&self) -> [u32; 2] 
 	{
 		self.dimensions
 	}
@@ -214,11 +214,11 @@ impl CubemapTexture
 
 fn create_cubemap_image<Px, I>(
 	iter: I,
-	dimensions: ImageDimensions,
-	mip_levels: MipmapsCount,
+	dimensions: [u32; 2],
+	mip_levels: u32,
 	format: Format,
-	allocator: &StandardMemoryAllocator,
-) -> Result<(Arc<ImmutableImage>, CopyBufferToImageInfo), GenericEngineError>
+	allocator: Arc<StandardMemoryAllocator>,
+) -> Result<(Arc<Image>, CopyBufferToImageInfo), GenericEngineError>
 where
 	Px: Send + Sync + bytemuck::Pod,
 	[Px]: vulkano::buffer::BufferContents,
@@ -232,30 +232,32 @@ where
 		..Default::default()
 	};
 	let buf_allocation_info = AllocationCreateInfo {
-		usage: MemoryUsage::Upload,
+		memory_type_filter: MemoryTypeFilter::PREFER_HOST |  MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 		..Default::default()
 	};
-	let src = Buffer::from_iter(allocator, buffer_info, buf_allocation_info, iter)?;
+	let src = Buffer::from_iter(allocator.clone(), buffer_info, buf_allocation_info, iter)?;
 
-	let usage = ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED;
-	let flags = ImageCreateFlags::CUBE_COMPATIBLE;
-
-	let queue_families: Vec<_> = device.active_queue_family_indices().into();
-	let (image, initializer) = ImmutableImage::uninitialized(
-		allocator,
-		dimensions,
+	let sharing = if device.active_queue_family_indices().len() > 1 {
+		Sharing::Concurrent(device.active_queue_family_indices().into())
+	} else {
+		Sharing::Exclusive
+	};
+	let image_info = ImageCreateInfo {
+		flags: ImageCreateFlags::CUBE_COMPATIBLE,
 		format,
+		extent: [ dimensions[0], dimensions[1], 1 ],
+		array_layers: 6,
 		mip_levels,
-		usage,
-		flags,
-		ImageLayout::ShaderReadOnlyOptimal,
-		queue_families,
-	)?;
+		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+		sharing,
+		..Default::default()
+	};
+	let image = Image::new(allocator, image_info, AllocationCreateInfo::default())?;
 
-	Ok((image, CopyBufferToImageInfo::buffer_image(src, initializer)))
+	Ok((image.clone(), CopyBufferToImageInfo::buffer_image(src, image)))
 }
 
-fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
+fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngineError>
 {
 	let dds_file = std::fs::File::open(path).or_else(|e| Err(format!("Could not open '{}': {}", path.display(), e)))?;
 
@@ -265,31 +267,22 @@ fn load_dds(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u
 		.ok_or("Could not determine DDS image format! Make sure it's in DXGI format.")?;
 
 	let vk_fmt = dxgi_to_vulkan_format(dds_format)?;
-	let dim = ImageDimensions::Dim2d {
-		width: dds.get_width(),
-		height: dds.get_height(),
-		array_layers: 1,
-	};
-	let mip = MipmapsCount::Specific(dds.get_num_mipmap_levels());
+	let dim = [ dds.get_width(), dds.get_height() ];
+	let mip = dds.get_num_mipmap_levels();
 	let img_raw = dds.data;
 
 	Ok((vk_fmt, dim, mip, img_raw))
 }
 
-fn load_other_format(path: &Path) -> Result<(Format, ImageDimensions, MipmapsCount, Vec<u8>), GenericEngineError>
+fn load_other_format(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngineError>
 {
 	let img = image::io::Reader::open(path)?.decode()?;
 
 	let vk_fmt = Format::R8G8B8A8_SRGB; // TODO: other formats such as greyscale
-	let dim = ImageDimensions::Dim2d {
-		width: img.width(),
-		height: img.height(),
-		array_layers: 1,
-	};
-	let mip = MipmapsCount::One;
+	let dim = [ img.width(), img.height() ];
 	let img_raw = img.into_rgba8().into_raw();
 
-	Ok((vk_fmt, dim, mip, img_raw))
+	Ok((vk_fmt, dim, 1, img_raw))
 }
 
 fn dxgi_to_vulkan_format(dxgi_format: DxgiFormat) -> Result<Format, GenericEngineError>

@@ -310,17 +310,25 @@ fn draw_3d(
 	let mut command_buffer = render_ctx.record_main_draws()?;
 
 	// Draw the skybox. This will effectively clear the framebuffer.
-	skybox.draw(&mut command_buffer, &camera_manager)?;
+	skybox.draw(&mut command_buffer, camera_manager.sky_projview())?;
 
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	render_ctx.get_pipeline("PBR")?.bind(&mut command_buffer);
-	camera_manager.push_projview(&mut command_buffer)?;
+	let pbr_pipeline = render_ctx.get_pipeline("PBR")?;
+	pbr_pipeline.bind(&mut command_buffer)?;
+
+	command_buffer.push_constants(pbr_pipeline.layout(), 0, camera_manager.projview())?;
+
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
 			if c.has_opaque_materials() {
-				transform.bind_descriptor_set(&mut command_buffer)?;
+				command_buffer.bind_descriptor_sets(
+					vulkano::pipeline::PipelineBindPoint::Graphics,
+					pbr_pipeline.layout(),
+					0,
+					transform.get_descriptor_set().ok_or("transform not loaded")?.clone()
+				)?;
 
 				let transform_mat = projview * transform.get_matrix();
 				c.draw(&mut command_buffer, &transform_mat, false)?;
@@ -336,15 +344,20 @@ fn draw_transparent_common(
 	camera_manager: &CameraManager,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
+	pipeline: &render::pipeline::Pipeline,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
-	camera_manager.push_projview(command_buffer)?;
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
 		if let Ok(c) = meshes.get(eid) {
 			if c.has_transparency() {
-				transform.bind_descriptor_set(command_buffer)?;
+				command_buffer.bind_descriptor_sets(
+					vulkano::pipeline::PipelineBindPoint::Graphics,
+					pipeline.layout(),
+					0,
+					transform.get_descriptor_set().ok_or("transform not loaded")?.clone()
+				)?;
 
 				let transform_mat = projview * transform.get_matrix();
 				c.draw(command_buffer, &transform_mat, true)?;
@@ -360,8 +373,9 @@ fn draw_3d_transparent_moments(
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.record_transparency_moments_draws()?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes)?;
+	let (mut command_buffer, pipeline) = 
+		render_ctx.record_transparency_moments_draws(camera_manager.projview())?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes, pipeline)?;
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -374,8 +388,9 @@ fn draw_3d_transparent(
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
-	let mut command_buffer = render_ctx.record_transparency_draws(render_ctx.get_pipeline("PBR")?)?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes)?;
+	let pipeline = render_ctx.get_pipeline("PBR")?;
+	let mut command_buffer = render_ctx.record_transparency_draws(pipeline, camera_manager.projview())?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes, pipeline)?;
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -387,19 +402,37 @@ fn draw_ui(
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_ui_draws()?;
-	render_ctx.get_pipeline("UI")?.bind(&mut command_buffer);
+	let pipeline = render_ctx.get_pipeline("UI")?;
+	pipeline.bind(&mut command_buffer)?;
 
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	for (eid, t) in ui_transforms.iter().with_id() {
-		t.bind_descriptor_set(&mut command_buffer)?;
+		command_buffer.bind_descriptor_sets(
+			vulkano::pipeline::PipelineBindPoint::Graphics,
+			pipeline.layout(),
+			0,
+			t.get_descriptor_set().ok_or("ui::Transform descriptor set bound before it was set up!")?.clone()
+		)?;
 
 		// draw UI meshes
 		// TODO: how do we respect the render order?
 		if let Ok(c) = ui_meshes.get(eid) {
+			command_buffer.bind_descriptor_sets(
+				vulkano::pipeline::PipelineBindPoint::Graphics, 
+				pipeline.layout(), 
+				1,
+				vec![ c.get_descriptor_set() ]
+			)?;
 			c.draw(&mut command_buffer)?;
 		}
 		if let Ok(c) = texts.get(eid) {
+			command_buffer.bind_descriptor_sets(
+				vulkano::pipeline::PipelineBindPoint::Graphics, 
+				pipeline.layout(), 
+				1,
+				vec![ c.get_descriptor_set() ]
+			)?;
 			c.draw(&mut command_buffer)?;
 		}
 	}

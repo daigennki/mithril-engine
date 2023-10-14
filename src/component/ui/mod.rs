@@ -41,17 +41,9 @@ impl Transform
 		}
 	}
 
-	pub fn bind_descriptor_set(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>
+	pub fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>
 	{
-		let descriptor_set_ref = self
-			.descriptor_set
-			.as_ref()
-			.ok_or("ui::Transform descriptor set bound before it was set up!")?;
-		crate::render::bind_descriptor_set(cb, 0, descriptor_set_ref.clone())?;
-		Ok(())
+		self.descriptor_set.as_ref()
 	}
 
 	pub fn update_projection(&mut self, render_ctx: &mut RenderContext, proj: Mat4) -> Result<(), GenericEngineError>

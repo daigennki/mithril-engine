@@ -29,7 +29,7 @@ impl Mesh
 	pub fn new(render_ctx: &mut RenderContext, tex: Arc<Texture>) -> Result<Self, GenericEngineError>
 	{
 		// resize position vertices according to texture dimensions
-		let dimensions = UVec2::from_array(tex.dimensions().width_height()).as_vec2();
+		let dimensions = UVec2::from_array(tex.dimensions()).as_vec2();
 		let half_dimensions = dimensions * 0.5;
 		Self::new_from_corners(render_ctx, -half_dimensions, half_dimensions, tex)
 	}
@@ -63,10 +63,14 @@ impl Mesh
 		})
 	}
 
+	pub fn get_descriptor_set(&self) -> Arc<PersistentDescriptorSet>
+	{
+		self.descriptor_set.clone()
+	}
+
 	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
-		crate::render::bind_descriptor_set(cb, 1, self.descriptor_set.clone())?;
-		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()));
+		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()))?;
 		cb.draw(4, 1, 0, 0)?;
 		Ok(())
 	}

@@ -4,7 +4,7 @@ fragment_shader_transparency: pbr_mboit_weights.frag.spv
 primitive_topology: TriangleList
 
 samplers:
-- set: 2
+- set: 1
   binding: 0
   mag_linear: true
 

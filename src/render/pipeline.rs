@@ -16,19 +16,24 @@ use vulkano::descriptor_set::{
 	WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
+use vulkano::format::{Format, NumericType};
+use vulkano::pipeline::{
+	layout::PipelineDescriptorSetLayoutCreateInfo, DynamicState, GraphicsPipeline, PipelineLayout,
+	PipelineShaderStageCreateInfo
+};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
+	multisample::MultisampleState,
 	rasterization::{CullMode, RasterizationState},
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
 	viewport::ViewportState,
-	render_pass::PipelineRenderingCreateInfo,
+	subpass::PipelineRenderingCreateInfo,
+	GraphicsPipelineCreateInfo,
 };
-use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, StateMode};
-use vulkano::sampler::Sampler;
-use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderScalarType};
+use vulkano::image::sampler::Sampler;
+use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
 use crate::GenericEngineError;
 
@@ -65,83 +70,97 @@ impl Pipeline
 
 		let mut depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
-				enable_dynamic: false,
-				write_enable: StateMode::Fixed(depth_write),
-				compare_op: StateMode::Fixed(depth_op),
+				write_enable: depth_write,
+				compare_op: depth_op,
 			}),
 			..Default::default()
 		};
-
-		// do some building
-		let mut pipeline_builder = GraphicsPipeline::start()
-			.vertex_shader(get_entry_point(&vs, "main")?, ())
-			.vertex_input_state(vertex_input_state)
-			.input_assembly_state(input_assembly_state)
-			.viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-			.rasterization_state(RasterizationState::new().cull_mode(CullMode::Back))
-			.depth_stencil_state(depth_stencil_state.clone())
-			.render_pass(rendering_info);
-
+		let mut stages = Vec::with_capacity(5);
+		stages.push(PipelineShaderStageCreateInfo::new(get_entry_point(&vs, "main")?));
+		
 		// load fragment shader (optional)
-		let fs;
-		let fs_transparency;
-		let mut builder_transparency = None;
+		let mut transparency_pipeline = None;
+		let mut color_blend_state = None;
 		if let Some((fs_filename, blend_state)) = fs_info {
-			fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(fs_filename))?;
-			pipeline_builder = pipeline_builder.fragment_shader(get_entry_point(&fs, "main")?, ());
+			// load the fragment shader for the opaque pass
+			let fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(fs_filename))?;
+			stages.push(PipelineShaderStageCreateInfo::new(get_entry_point(&fs, "main")?));
 
-			// use a different fragment shader for OIT
+			// use a different fragment shader and pipeline for OIT
 			if let Some((ft, ft_rendering_info)) = fs_transparency_info {
 				let mut wboit_accum_blend = ColorBlendState::new(2);
 				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend {
-					alpha_op: BlendOp::Add,
+					alpha_blend_op: BlendOp::Add,
 					..AttachmentBlend::additive()
 				});
 				wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
-					color_op: BlendOp::Add,
-					color_source: BlendFactor::Zero,
-					color_destination: BlendFactor::OneMinusSrcColor,
+					color_blend_op: BlendOp::Add,
+					src_color_blend_factor: BlendFactor::Zero,
+					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
 					..AttachmentBlend::ignore_source()
 				});
 
-				fs_transparency = load_spirv(vk_dev.clone(), &Path::new("shaders").join(ft))?;
+				let fs_transparency = load_spirv(vk_dev.clone(), &Path::new("shaders").join(ft))?;
 
+				let transparency_stages = vec![
+					PipelineShaderStageCreateInfo::new(get_entry_point(&vs, "main")?),
+					PipelineShaderStageCreateInfo::new(get_entry_point(&fs_transparency, "main")?),
+				];
+
+				let mut transparency_depth_stencil_state = depth_stencil_state.clone();
 				// WBOIT needs depth write to be disabled
-				depth_stencil_state.depth.as_mut().unwrap().write_enable = StateMode::Fixed(false);
+				transparency_depth_stencil_state.depth.as_mut().unwrap().write_enable = false;
 
-				builder_transparency = Some(
-					pipeline_builder
-						.clone()
-						.depth_stencil_state(depth_stencil_state)
-						.fragment_shader(get_entry_point(&fs_transparency, "main")?, ())
-						.color_blend_state(wboit_accum_blend)
-						.render_pass(ft_rendering_info),
-				);
-			} else {
-				// only enable color blending for the basic fragment shader if there isn't a separate transparency shader
-				pipeline_builder = pipeline_builder.color_blend_state(blend_state);
+				let mut transparency_set_layout_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&transparency_stages);
+				pipeline_sampler_setup(transparency_set_layout_info.set_layouts.as_mut_slice(), &samplers);
+				let transparency_layout = PipelineLayout::new(
+					vk_dev.clone(),
+					transparency_set_layout_info.into_pipeline_layout_create_info(vk_dev.clone())?
+				)?;
+				let mut transparency_pipeline_info = GraphicsPipelineCreateInfo {
+					stages: transparency_stages.into(),
+					vertex_input_state: Some(vertex_input_state.clone()),
+					input_assembly_state: Some(input_assembly_state.clone()),
+					viewport_state: Some(ViewportState::default()),
+					rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::Back)),
+					multisample_state: Some(MultisampleState::default()),
+					depth_stencil_state: Some(transparency_depth_stencil_state),
+					color_blend_state: Some(wboit_accum_blend),
+					dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
+					subpass: Some(ft_rendering_info.into()),	
+					..GraphicsPipelineCreateInfo::layout(transparency_layout)
+				};
+
+				let built_transparency_pipeline = GraphicsPipeline::new(vk_dev.clone(), None, transparency_pipeline_info)?;
+				print_pipeline_descriptors_info(built_transparency_pipeline.as_ref());
+				transparency_pipeline = Some(built_transparency_pipeline);
 			}
-		}
 
-		// build pipeline with immutable samplers, if it needs any
-		let pipeline = pipeline_builder.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
-		print_pipeline_descriptors_info(pipeline.as_ref());
+			color_blend_state = Some(blend_state);
+		} 
 
-		/*let transparency_pipeline = builder_transparency
-		.map(|bt| -> Result<Arc<GraphicsPipeline>, GenericEngineError> {
-			let pipeline_ref: &dyn vulkano::pipeline::Pipeline = pipeline.as_ref();
-			let layout = pipeline_ref.layout().clone();
-			Ok(bt.with_pipeline_layout(vk_dev, layout)?)
-		})
-		.transpose()?;*/
-		let transparency_pipeline = if let Some(bt) = builder_transparency {
-			let built_transparency_pipeline =
-				bt.with_auto_layout(vk_dev.clone(), |sets| pipeline_sampler_setup(sets, &samplers))?;
-			print_pipeline_descriptors_info(built_transparency_pipeline.as_ref());
-			Some(built_transparency_pipeline)
-		} else {
-			None
+		let mut pl_set_layout_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages);
+		pipeline_sampler_setup(pl_set_layout_info.set_layouts.as_mut_slice(), &samplers);
+		let pipeline_layout = PipelineLayout::new(
+			vk_dev.clone(), 
+			pl_set_layout_info.into_pipeline_layout_create_info(vk_dev.clone())?
+		)?;
+		let mut pipeline_info = GraphicsPipelineCreateInfo {
+			stages: stages.into(),
+			vertex_input_state: Some(vertex_input_state),
+			input_assembly_state: Some(input_assembly_state),
+			viewport_state: Some(ViewportState::default()),
+			rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::Back)),
+			multisample_state: Some(MultisampleState::default()),
+			depth_stencil_state: Some(depth_stencil_state.clone()),
+			color_blend_state,
+			dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
+			subpass: Some(rendering_info.into()),
+			..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 		};
+	
+		let pipeline = GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?;
+		print_pipeline_descriptors_info(pipeline.as_ref());
 
 		Ok(Pipeline {
 			descriptor_set_allocator,
@@ -197,13 +216,14 @@ impl Pipeline
 		)
 	}
 
-	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>)
+	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), GenericEngineError>
 	{
-		command_buffer.bind_pipeline_graphics(self.pipeline.clone());
+		command_buffer.bind_pipeline_graphics(self.pipeline.clone())?;
+		Ok(())
 	}
-	pub fn bind_transparency<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), TransparencyNotEnabled>
+	pub fn bind_transparency<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), GenericEngineError>
 	{
-		command_buffer.bind_pipeline_graphics(self.transparency_pipeline.clone().ok_or(TransparencyNotEnabled)?);
+		command_buffer.bind_pipeline_graphics(self.transparency_pipeline.clone().ok_or(TransparencyNotEnabled)?)?;
 		Ok(())
 	}
 
@@ -211,6 +231,16 @@ impl Pipeline
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
 		pipeline_ref.layout().clone()
+	}
+
+	pub fn layout_transparency(&self) -> Result<Arc<PipelineLayout>, TransparencyNotEnabled>
+	{
+		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self
+			.transparency_pipeline
+			.as_ref()
+			.ok_or(TransparencyNotEnabled)?
+			.as_ref();
+		Ok(pipeline_ref.layout().clone())
 	}
 
 	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
@@ -226,12 +256,13 @@ impl Pipeline
 			.layout()
 			.set_layouts()
 			.get(set_number)
-			.ok_or("Pipeline::new_descriptor_set: invalid descriptor set index")?
+			.ok_or(format!("Pipeline::new_descriptor_set: invalid descriptor set index {}", set_number))?
 			.clone();
 		Ok(PersistentDescriptorSet::new(
 			&self.descriptor_set_allocator,
 			set_layout,
 			writes,
+			[]
 		)?)
 	}
 }
@@ -295,10 +326,10 @@ enum PrimitiveTopologyDef
 	PatchList,
 }
 
-fn get_entry_point<'a>(
-	shader_module: &'a Arc<ShaderModule>,
+fn get_entry_point(
+	shader_module: &Arc<ShaderModule>,
 	entry_point_name: &str,
-) -> Result<EntryPoint<'a>, GenericEngineError>
+) -> Result<EntryPoint, GenericEngineError>
 {
 	shader_module
 		.entry_point(entry_point_name)
@@ -327,7 +358,8 @@ fn load_spirv_vertex(
 	let vertex_input_state = shader_module
 		.entry_point("main")
 		.ok_or("No valid 'main' entry point in SPIR-V module!")?
-		.input_interface()
+		.info()
+		.input_interface
 		.elements()
 		.iter()
 		.fold(VertexInputState::new(), |accum, input| {
@@ -360,19 +392,19 @@ fn load_spirv_vertex(
 fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 {
 	let possible_formats = match ty.base_type {
-		ShaderScalarType::Float => [
+		NumericType::Float => [
 			Format::R32_SFLOAT,
 			Format::R32G32_SFLOAT,
 			Format::R32G32B32_SFLOAT,
 			Format::R32G32B32A32_SFLOAT,
 		],
-		ShaderScalarType::Sint => [
+		NumericType::Int => [
 			Format::R32_SINT,
 			Format::R32G32_SINT,
 			Format::R32G32B32_SINT,
 			Format::R32G32B32A32_SINT,
 		],
-		ShaderScalarType::Uint => [
+		NumericType::Uint => [
 			Format::R32_UINT,
 			Format::R32G32_UINT,
 			Format::R32G32B32_UINT,

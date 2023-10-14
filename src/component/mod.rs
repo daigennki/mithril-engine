@@ -98,13 +98,9 @@ impl Transform
 		self.model_mat
 	}
 
-	pub fn bind_descriptor_set(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>
+	pub fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>
 	{
-		crate::render::bind_descriptor_set(cb, 0, self.descriptor_set.as_ref().ok_or("transform not loaded")?.clone())?;
-		Ok(())
+		self.descriptor_set.as_ref()
 	}
 
 	/// Show the egui collapsing header for this component.

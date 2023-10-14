@@ -14,7 +14,6 @@ use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::format::Format;
-use vulkano::image::{ImageDimensions, MipmapsCount};
 
 use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
@@ -67,16 +66,7 @@ impl ColorInput
 		match self {
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				Ok(Arc::new(render_ctx.new_texture_from_iter(
-					color.to_array(),
-					Format::R32G32B32A32_SFLOAT,
-					ImageDimensions::Dim2d {
-						width: 1,
-						height: 1,
-						array_layers: 1,
-					},
-					MipmapsCount::One,
-				)?))
+				Ok(Arc::new(render_ctx.new_texture_from_iter(color.to_array(), Format::R32G32B32A32_SFLOAT, [ 1, 1 ], 1)?))
 			}
 			ColorInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
@@ -98,16 +88,7 @@ impl SingleChannelInput
 		match self {
 			SingleChannelInput::Value(value) => {
 				// If the input is a single value, make a 1x1 greyscale texture with just the value.
-				Ok(Arc::new(render_ctx.new_texture_from_iter(
-					[*value],
-					Format::R32_SFLOAT,
-					ImageDimensions::Dim2d {
-						width: 1,
-						height: 1,
-						array_layers: 1,
-					},
-					MipmapsCount::One,
-				)?))
+				Ok(Arc::new(render_ctx.new_texture_from_iter([*value], Format::R32_SFLOAT, [ 1, 1 ], 1)?))
 			}
 			SingleChannelInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}

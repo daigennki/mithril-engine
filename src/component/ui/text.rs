@@ -10,8 +10,8 @@ use image::{DynamicImage, Rgba};
 use rusttype::{point, Font, Scale};
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::format::Format;
-use vulkano::image::{ImageDimensions, MipmapsCount};
 
 use super::mesh::Mesh;
 use crate::render::RenderContext;
@@ -110,15 +110,11 @@ impl Text
 			}
 		}
 
-		let img_dim = ImageDimensions::Dim2d {
-			width: image.width(),
-			height: image.height(),
-			array_layers: 1,
-		};
-		let tex = render_ctx.new_texture_from_iter(image.into_raw(), Format::R8G8B8A8_SRGB, img_dim, MipmapsCount::One)?;
+		let img_dim = [image.width(), image.height()];
+		let tex = render_ctx.new_texture_from_iter(image.into_raw(), Format::R8G8B8A8_SRGB, img_dim, 1)?;
 
-		let mesh_top_left = Vec2::new(img_dim.width() as f32 / -2.0, -v_metrics.ascent - 1.0);
-		let mesh_bottom_right = Vec2::new(img_dim.width() as f32 / 2.0, -v_metrics.descent + 1.0);
+		let mesh_top_left = Vec2::new(img_dim[0] as f32 / -2.0, -v_metrics.ascent - 1.0);
+		let mesh_bottom_right = Vec2::new(img_dim[0] as f32 / 2.0, -v_metrics.descent + 1.0);
 
 		self.quad = Some(Mesh::new_from_corners(
 			render_ctx,
@@ -136,6 +132,10 @@ impl Text
 		self.text_str.clone()
 	}
 
+	pub fn get_descriptor_set(&self) -> Arc<PersistentDescriptorSet>
+	{
+		self.quad.as_ref().unwrap().get_descriptor_set()
+	}
 	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		match self.quad.as_ref() {

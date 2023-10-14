@@ -17,6 +17,10 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use glam::*;
+
+use vulkano::{Validated, VulkanError};
 use vulkano::buffer::{
 	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
 	subbuffer::Subbuffer,
@@ -24,25 +28,23 @@ use vulkano::buffer::{
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferBeginError, CommandBufferInheritanceInfo,
+	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferInheritanceInfo,
 	CommandBufferInheritanceRenderingInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
-	CopyBufferToImageInfo, CopyImageInfo, PipelineExecutionError, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
+	CopyBufferToImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 	RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
+	SecondaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator, DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::image::{
-	view::ImageView, AttachmentImage, ImageAccess, ImageDimensions, ImageUsage, ImageViewAbstract, MipmapsCount, SwapchainImage
-};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
+use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageLayout, ImageUsage};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	graphics::{ render_pass::PipelineRenderingCreateInfo, viewport::Viewport }, Pipeline, PipelineBindPoint,
+	graphics::{ subpass::PipelineRenderingCreateInfo, viewport::Viewport }, Pipeline, PipelineBindPoint,
 };
-use vulkano::render_pass::{ LoadOp, StoreOp };
-use vulkano::sampler::{Sampler, SamplerCreateInfo};
+use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::{GpuFuture, Sharing};
 use winit::window::WindowBuilder;
 
@@ -82,7 +84,7 @@ pub struct RenderContext
 
 	// An sRGB image which the above `main_render_target` will be blitted to, thus converting it to nonlinear.
 	// This will be copied, not blitted, to the swapchain.
-	intermediate_srgb_img: Arc<AttachmentImage>,
+	intermediate_srgb_img: Arc<Image>,
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
@@ -164,15 +166,18 @@ impl RenderContext
 		};
 		let sampler_linear = Sampler::new(vk_dev.clone(), sampler_info)?;
 
-		let main_render_target = RenderTarget::new(&memory_allocator, swapchain.dimensions())?;
-		let intermediate_srgb_img = AttachmentImage::with_usage(
-			&memory_allocator,
-			swapchain.dimensions(),
-			Format::B8G8R8A8_SRGB,
-			ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-		)?;
+		let main_render_target = RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
+		let swapchain_dim = swapchain.dimensions();
+		let intermediate_img_create_info = ImageCreateInfo {
+			format: Format::B8G8R8A8_SRGB,
+			extent: [ swapchain_dim[0], swapchain_dim[1], 1 ],
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		let intermediate_srgb_img = 
+			Image::new(memory_allocator.clone(), intermediate_img_create_info, AllocationCreateInfo::default())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
-			&memory_allocator,
+			memory_allocator.clone(),
 			descriptor_set_allocator.clone(),
 			swapchain.dimensions(),
 			sampler_linear.clone(),
@@ -180,6 +185,8 @@ impl RenderContext
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
 			arena_size: 128 * 1024, // TODO: determine an appropriate arena size based on actual memory usage
+			buffer_usage: BufferUsage::TRANSFER_SRC,
+			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
@@ -270,7 +277,7 @@ impl RenderContext
 				Ok(tex.clone())
 			}
 			None => {
-				let (tex, staging_work) = texture::Texture::new(&self.memory_allocator, path)?;
+				let (tex, staging_work) = texture::Texture::new(self.memory_allocator.clone(), path)?;
 				self.submit_transfer(staging_work.into())?;
 				let tex_arc = Arc::new(tex);
 				self.textures.insert(path.to_path_buf(), tex_arc.clone());
@@ -281,7 +288,7 @@ impl RenderContext
 
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::CubemapTexture::new(&self.memory_allocator, faces)?;
+		let (tex, staging_work) = texture::CubemapTexture::new(self.memory_allocator.clone(), faces)?;
 		self.submit_transfer(staging_work.into())?;
 		Ok(tex)
 	}
@@ -290,8 +297,8 @@ impl RenderContext
 		&mut self,
 		iter: I,
 		vk_fmt: Format,
-		dimensions: ImageDimensions,
-		mip: MipmapsCount,
+		dimensions: [u32; 2],
+		mip: u32,
 	) -> Result<texture::Texture, GenericEngineError>
 	where
 		Px: Send + Sync + bytemuck::Pod,
@@ -299,7 +306,7 @@ impl RenderContext
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let (tex, staging_work) = texture::Texture::new_from_iter(&self.memory_allocator, iter, vk_fmt, dimensions, mip)?;
+		let (tex, staging_work) = texture::Texture::new_from_iter(self.memory_allocator.clone(), iter, vk_fmt, dimensions, mip)?;
 		self.submit_transfer(staging_work.into())?;
 		Ok(tex)
 	}
@@ -321,17 +328,17 @@ impl RenderContext
 			..Default::default()
 		};
 		let staging_allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::Upload,
+			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_iter(&self.memory_allocator, buffer_info, staging_allocation_info, data)?;
+		let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
 
 		let buffer_info = BufferCreateInfo {
 			sharing: Sharing::Concurrent(self.get_queue_families().into()),
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let buf = Buffer::new_slice(&self.memory_allocator, buffer_info, Default::default(), staging_buf.len())?;
+		let buf = Buffer::new_slice(self.memory_allocator.clone(), buffer_info, Default::default(), staging_buf.len())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
@@ -350,17 +357,17 @@ impl RenderContext
 			..Default::default()
 		};
 		let staging_allocation_info = AllocationCreateInfo {
-			usage: MemoryUsage::Upload,
+			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_data(&self.memory_allocator, buffer_info, staging_allocation_info, data)?;
+		let staging_buf = Buffer::from_data(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
 
 		let buffer_info = BufferCreateInfo {
 			sharing: Sharing::Concurrent(self.get_queue_families().into()),
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let buf = Buffer::new_sized(&self.memory_allocator, buffer_info, Default::default())?;
+		let buf = Buffer::new_sized(self.memory_allocator.clone(), buffer_info, Default::default())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
@@ -381,7 +388,7 @@ impl RenderContext
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
-		let gpu_buf = Buffer::new_sized(&self.memory_allocator, buffer_info, Default::default())?;
+		let gpu_buf = Buffer::new_sized(self.memory_allocator.clone(), buffer_info, Default::default())?;
 		self.copy_to_buffer(data, gpu_buf.clone())?;
 		Ok(gpu_buf)
 	}
@@ -428,7 +435,7 @@ impl RenderContext
 		color_attachment_formats: Vec<Option<Format>>,
 		depth_attachment_format: Option<Format>,
 		viewport_dimensions: [u32; 2]
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
 		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRendering(CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats,
@@ -448,15 +455,15 @@ impl RenderContext
 
 		// set viewport state
 		let viewport = Viewport {
-			origin: [0.0, 0.0],
-			dimensions: [viewport_dimensions[0] as f32, viewport_dimensions[1] as f32],
-			depth_range: 0.0..1.0,
+			offset: [0.0, 0.0],
+			extent: [viewport_dimensions[0] as f32, viewport_dimensions[1] as f32],
+			depth_range: 0.0..=1.0,
 		};
-		cb.set_viewport(0, [viewport]);
+		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		Ok(cb)
 	}
-	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
 		self.new_secondary_command_buffer(
 			vec![ Some(self.main_render_target.color_image().image().format()) ], 
@@ -468,8 +475,9 @@ impl RenderContext
 	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
 	/// anything specific to materials (it only reads the alpha channel of each texture).
 	pub fn record_transparency_moments_draws(
-		&self,
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+		&self, 
+		projview: Mat4,
+	) -> Result<(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, &pipeline::Pipeline), GenericEngineError>
 	{
 		let mut cb = self.new_secondary_command_buffer(
 			vec![ 
@@ -480,22 +488,32 @@ impl RenderContext
 			Some(self.main_render_target.depth_image().image().format()),
 			self.swapchain_dimensions()
 		)?;
-		self.transparency_renderer.get_moments_pipeline().bind(&mut cb);
-		Ok(cb)
+		let pl = self.transparency_renderer.get_moments_pipeline();
+		pl.bind(&mut cb)?;
+		cb.push_constants(pl.layout(), 0, projview)?;
+		Ok((cb, pl))
 	}
 	pub fn record_transparency_draws(
 		&self,
 		first_bind_pipeline: &pipeline::Pipeline,
+		projview: Mat4,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
 
 		let mut cb = self.new_secondary_command_buffer(color_formats, Some(Format::D16_UNORM), self.swapchain_dimensions())?;
 		first_bind_pipeline.bind_transparency(&mut cb)?;
-		bind_descriptor_set(&mut cb, 3, vec![self.transparency_renderer.get_stage3_inputs()])?;
+		cb.bind_descriptor_sets(
+			PipelineBindPoint::Graphics,
+			first_bind_pipeline.layout_transparency()?, 
+			2,
+			vec![self.transparency_renderer.get_stage3_inputs()]
+		)?;
+		cb.push_constants(first_bind_pipeline.layout(), 0, projview)?;
+
 		Ok(cb)
 	}
-	pub fn record_ui_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, CommandBufferBeginError>
+	pub fn record_ui_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
 		self.new_secondary_command_buffer(
 			vec![ Some(self.main_render_target.color_image().image().format()) ], 
@@ -509,7 +527,7 @@ impl RenderContext
 	/// This must only be called once per frame.
 	///
 	/// This returns the acquired swapchain image.
-	fn next_swapchain_image(&mut self) -> Result<Arc<SwapchainImage>, GenericEngineError>
+	fn next_swapchain_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
 	{
 		let (image, dimensions_changed) = self.swapchain.get_next_image()?;
 		if dimensions_changed {
@@ -524,18 +542,22 @@ impl RenderContext
 	{
 		// Update images to match the current window size.
 		self.main_render_target
-			.resize(&self.memory_allocator, self.swapchain.dimensions())?;
+			.resize(self.memory_allocator.clone(), self.swapchain.dimensions())?;
 
-		self.intermediate_srgb_img = AttachmentImage::with_usage(
-			&self.memory_allocator,
-			self.swapchain.dimensions(),
-			Format::B8G8R8A8_SRGB,
-			ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-		)?;
+		let swapchain_dim = self.swapchain.dimensions();
+		let intermediate_img_create_info = ImageCreateInfo {
+			format: Format::B8G8R8A8_SRGB,
+			extent: [ swapchain_dim[0], swapchain_dim[1], 1 ],
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		self.intermediate_srgb_img = 
+			Image::new(self.memory_allocator.clone(), intermediate_img_create_info, AllocationCreateInfo::default())?;
 
 		self.transparency_renderer.resize_image(
-			&self.memory_allocator,
-			self.swapchain.dimensions(),
+			self.memory_allocator.clone(), 
+			self.descriptor_set_allocator.clone(), 
+			self.swapchain.dimensions()
 		)?;
 
 		Ok(())
@@ -555,7 +577,7 @@ impl RenderContext
 		&self,
 		work: StagingWork,
 		queue_family: u32,
-	) -> Result<PrimaryAutoCommandBuffer, GenericEngineError>
+	) -> Result<Arc<PrimaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
@@ -605,24 +627,24 @@ impl RenderContext
 		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
-	pub fn add_cb(&self, cb: SecondaryAutoCommandBuffer)
+	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
 		self.trm.lock().unwrap().add_cb(cb);
 	}
-	pub fn add_transparency_moments_cb(&self, cb: SecondaryAutoCommandBuffer)
+	pub fn add_transparency_moments_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
 		self.transparency_renderer.add_transparency_moments_cb(cb);
 	}
-	pub fn add_transparency_cb(&self, cb: SecondaryAutoCommandBuffer)
+	pub fn add_transparency_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
 		self.transparency_renderer.add_transparency_cb(cb);
 	}
-	pub fn add_ui_cb(&self, cb: SecondaryAutoCommandBuffer)
+	pub fn add_ui_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
 		self.trm.lock().unwrap().add_ui_cb(cb);
 	}
 
-	fn submit_commands(&mut self, built_cb: PrimaryAutoCommandBuffer) -> Result<(), GenericEngineError>
+	fn submit_commands(&mut self, built_cb: Arc<PrimaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		self.swapchain
 			.present(built_cb, self.graphics_queue.clone(), self.transfer_future.take())?;
@@ -649,13 +671,13 @@ impl RenderContext
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
 					// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
-					store_op: StoreOp::Store,
+					store_op: AttachmentStoreOp::Store,
 					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
 				}),
 			],
 			depth_attachment: Some(RenderingAttachmentInfo{
 				// `load_op` is `DontCare` here too since the skybox clears it with 1.0
-				store_op: StoreOp::Store, // order-independent transparency needs this to be `Store`
+				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
 				..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
@@ -664,14 +686,14 @@ impl RenderContext
 		let ui_render_info = RenderingInfo {
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
-					load_op: LoadOp::Load,
-					store_op: StoreOp::Store,
+					load_op: AttachmentLoadOp::Load,
+					store_op: AttachmentStoreOp::Store,
 					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
 				}),
 			],
 			depth_attachment: Some(RenderingAttachmentInfo{
-				load_op: LoadOp::Load,
-				store_op: StoreOp::DontCare, 
+				load_op: AttachmentLoadOp::Load,
+				store_op: AttachmentStoreOp::DontCare, 
 				..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
@@ -804,20 +826,19 @@ fn format_video_mode(video_mode: &winit::monitor::VideoMode) -> String
 	)
 }
 
-/// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
+/*/// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
 /// This will fail if there is no pipeline currently bound.
 pub fn bind_descriptor_set<L, S>(
 	cb: &mut AutoCommandBufferBuilder<L>,
+	bound_pipeline: Option<Arc<vulkano::pipeline::Pipeline>>,
 	first_set: u32,
 	descriptor_sets: S,
-) -> Result<(), PipelineExecutionError>
+) -> Result<(), GenericEngineError>
 where
 	S: DescriptorSetsCollection,
 {
-	let pipeline_layout = cb
-		.state()
-		.pipeline_graphics()
-		.ok_or(PipelineExecutionError::PipelineNotBound)?
+	let pipeline_layout = bound_pipeline
+		.ok_or("Attempted to bind descriptor set when no pipeline is bound!")?
 		.layout()
 		.clone();
 	cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
@@ -826,19 +847,24 @@ where
 
 /// Push push constants to the currently bound pipeline on the given command buffer builder.
 /// This will fail if there is no pipeline currently bound.
-pub fn push_constants<L, Pc>(cb: &mut AutoCommandBufferBuilder<L>, offset: u32, data: Pc) -> Result<(), PipelineExecutionError>
+pub fn push_constants<L, Pc>(
+	cb: &mut AutoCommandBufferBuilder<L>,
+	bound_pipeline: Option<Arc<vulkano::pipeline::Pipeline>>,
+	offset: u32, 
+	data: Pc
+) -> Result<(), GenericEngineError>
 where
 	Pc: BufferContents,
 {
 	let pipeline_layout = cb
 		.state()
 		.pipeline_graphics()
-		.ok_or(PipelineExecutionError::PipelineNotBound)?
+		.ok_or("Attempted to push constants when no pipeline is bound!")?
 		.layout()
 		.clone();
 	cb.push_constants(pipeline_layout, offset, data);
 	Ok(())
-}
+}*/
 
 #[derive(Debug)]
 pub struct PipelineNotLoaded;
@@ -873,8 +899,8 @@ impl From<CopyBufferToImageInfo> for StagingWork
 
 struct ThreadedRenderingManager
 {
-	built_command_buffers: Vec<SecondaryAutoCommandBuffer>,
-	ui_cb: Vec<SecondaryAutoCommandBuffer>,
+	built_command_buffers: Vec<Arc<dyn SecondaryCommandBufferAbstract>>,
+	ui_cb: Vec<Arc<dyn SecondaryCommandBufferAbstract>>,
 	default_capacity: usize,
 }
 impl ThreadedRenderingManager
@@ -889,22 +915,22 @@ impl ThreadedRenderingManager
 	}
 
 	/// Add a secondary command buffer that has been built.
-	pub fn add_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	pub fn add_cb(&mut self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
 	{
 		self.built_command_buffers.push(command_buffer);
 	}
 
-	pub fn add_ui_cb(&mut self, command_buffer: SecondaryAutoCommandBuffer)
+	pub fn add_ui_cb(&mut self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
 	{
 		self.ui_cb.push(command_buffer)
 	}
 
 	/// Take all of the secondary command buffers that have been built.
-	pub fn take_built_command_buffers(&mut self) -> Vec<SecondaryAutoCommandBuffer>
+	pub fn take_built_command_buffers(&mut self) -> Vec<Arc<dyn SecondaryCommandBufferAbstract>>
 	{
 		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
 	}
-	pub fn take_ui_cb(&mut self) -> Vec<SecondaryAutoCommandBuffer>
+	pub fn take_ui_cb(&mut self) -> Vec<Arc<dyn SecondaryCommandBufferAbstract>>
 	{
 		std::mem::replace(&mut self.ui_cb, Vec::with_capacity(2))
 	}
@@ -913,20 +939,31 @@ impl ThreadedRenderingManager
 struct RenderTarget
 {
 	// An FP16, linear gamma image which everything will be rendered to.
-	color_image: Arc<ImageView<AttachmentImage>>,
-	depth_image: Arc<ImageView<AttachmentImage>>,
+	color_image: Arc<ImageView>,
+	depth_image: Arc<ImageView>,
 }
 impl RenderTarget
 {
-	pub fn new(memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2]) -> Result<Self, GenericEngineError>
+	pub fn new(memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2]) -> Result<Self, GenericEngineError>
 	{
 		let vk_dev = memory_allocator.device().clone();
 
-		let color_usage = ImageUsage::TRANSFER_SRC;
-		let color_image = AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?;
+		let color_create_info = ImageCreateInfo {
+			format: Format::R16G16B16A16_SFLOAT,
+			extent: [ dimensions[0], dimensions[1], 1 ],
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
 
 		// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
-		let depth_image = AttachmentImage::new(memory_allocator, dimensions, Format::D16_UNORM)?;
+		let depth_create_info = ImageCreateInfo {
+			format: Format::D16_UNORM,
+			extent: [ dimensions[0], dimensions[1], 1 ],
+			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+			..Default::default()
+		};
+		let depth_image = Image::new(memory_allocator, depth_create_info, AllocationCreateInfo::default())?;
 
 		Ok(Self {
 			color_image: ImageView::new_default(color_image)?,
@@ -934,26 +971,36 @@ impl RenderTarget
 		})
 	}
 
-	pub fn resize(&mut self, memory_allocator: &StandardMemoryAllocator, dimensions: [u32; 2])
+	pub fn resize(&mut self, memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2])
 		-> Result<(), GenericEngineError>
 	{
-		let color_usage = ImageUsage::TRANSFER_SRC;
-		self.color_image = ImageView::new_default(
-			AttachmentImage::with_usage(memory_allocator, dimensions, Format::R16G16B16A16_SFLOAT, color_usage)?
-		)?;
+		let color_info = ImageCreateInfo {
+			extent: [ dimensions[0], dimensions[1], 1],
+			format: Format::R16G16B16A16_SFLOAT,
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		self.color_image = ImageView::new_default(Image::new(
+			memory_allocator.clone(), 
+			color_info, 
+			AllocationCreateInfo::default()
+		)?)?;
 
-		let depth_usage = ImageUsage::SAMPLED;
-		self.depth_image = ImageView::new_default(
-			AttachmentImage::with_usage(memory_allocator, dimensions, Format::D16_UNORM, depth_usage)?
-		)?;
+		let depth_info = ImageCreateInfo {
+			extent: [ dimensions[0], dimensions[1], 1],
+			format: Format::D16_UNORM,
+			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
+			..Default::default()
+		};
+		self.depth_image = ImageView::new_default(Image::new(memory_allocator, depth_info, AllocationCreateInfo::default())?)?;
 		Ok(())
 	}
 
-	pub fn color_image(&self) -> &Arc<ImageView<AttachmentImage>>
+	pub fn color_image(&self) -> &Arc<ImageView>
 	{
 		&self.color_image
 	}
-	pub fn depth_image(&self) -> &Arc<ImageView<AttachmentImage>>
+	pub fn depth_image(&self) -> &Arc<ImageView>
 	{
 		&self.depth_image
 	}
