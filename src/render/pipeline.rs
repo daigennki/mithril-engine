@@ -22,7 +22,7 @@ use vulkano::pipeline::{
 	PipelineShaderStageCreateInfo
 };
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
 	multisample::MultisampleState,
@@ -33,7 +33,7 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::image::sampler::Sampler;
-use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule};
+use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderModuleCreateInfo};
 
 use crate::GenericEngineError;
 
@@ -63,12 +63,13 @@ impl Pipeline
 
 		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
 
-		let mut input_assembly_state = InputAssemblyState::new().topology(primitive_topology);
-		if primitive_topology == PrimitiveTopology::TriangleStrip {
-			input_assembly_state = input_assembly_state.primitive_restart_enable();
-		}
-
-		let mut depth_stencil_state = DepthStencilState {
+		let input_assembly_state = InputAssemblyState{
+			topology: primitive_topology,
+			primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
+			..Default::default()
+		};
+		
+		let depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
 				write_enable: depth_write,
 				compare_op: depth_op,
@@ -88,10 +89,12 @@ impl Pipeline
 
 			// use a different fragment shader and pipeline for OIT
 			if let Some((ft, ft_rendering_info)) = fs_transparency_info {
-				let mut wboit_accum_blend = ColorBlendState::new(2);
-				wboit_accum_blend.attachments[0].blend = Some(AttachmentBlend {
-					alpha_blend_op: BlendOp::Add,
-					..AttachmentBlend::additive()
+				let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
+					blend: Some(AttachmentBlend {
+						alpha_blend_op: BlendOp::Add,
+						..AttachmentBlend::additive()
+					}),
+					..Default::default()
 				});
 				wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
 					color_blend_op: BlendOp::Add,
@@ -117,12 +120,12 @@ impl Pipeline
 					vk_dev.clone(),
 					transparency_set_layout_info.into_pipeline_layout_create_info(vk_dev.clone())?
 				)?;
-				let mut transparency_pipeline_info = GraphicsPipelineCreateInfo {
+				let transparency_pipeline_info = GraphicsPipelineCreateInfo {
 					stages: transparency_stages.into(),
 					vertex_input_state: Some(vertex_input_state.clone()),
 					input_assembly_state: Some(input_assembly_state.clone()),
 					viewport_state: Some(ViewportState::default()),
-					rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::Back)),
+					rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
 					multisample_state: Some(MultisampleState::default()),
 					depth_stencil_state: Some(transparency_depth_stencil_state),
 					color_blend_state: Some(wboit_accum_blend),
@@ -145,12 +148,12 @@ impl Pipeline
 			vk_dev.clone(), 
 			pl_set_layout_info.into_pipeline_layout_create_info(vk_dev.clone())?
 		)?;
-		let mut pipeline_info = GraphicsPipelineCreateInfo {
+		let pipeline_info = GraphicsPipelineCreateInfo {
 			stages: stages.into(),
 			vertex_input_state: Some(vertex_input_state),
 			input_assembly_state: Some(input_assembly_state),
 			viewport_state: Some(ViewportState::default()),
-			rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::Back)),
+			rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
 			multisample_state: Some(MultisampleState::default()),
 			depth_stencil_state: Some(depth_stencil_state.clone()),
 			color_blend_state,
@@ -188,10 +191,12 @@ impl Pipeline
 			.map(|sampler_config| (sampler_config.set, sampler_config.binding, tex_sampler.clone()))
 			.collect();
 
-		let mut color_blend_state = ColorBlendState::new(rendering_info.color_attachment_formats.len().try_into().unwrap());
-		if deserialized.alpha_blending {
-			color_blend_state = color_blend_state.blend_alpha();
-		}
+		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
+		let common_blend_attachment_state = ColorBlendAttachmentState {
+			blend: deserialized.alpha_blending.then_some(AttachmentBlend::alpha()),
+			..Default::default()
+		};
+		let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
 
 		let fs_info = deserialized.fragment_shader.map(|fs| (fs, color_blend_state));
 		let fs_transparency_info = deserialized
@@ -343,8 +348,9 @@ fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) -> Result<Arc<S
 		.and_then(|f| f.to_str())
 		.unwrap_or("[invalid file name in path]");
 	log::info!("Loading shader file '{}'...", print_file_name);
-	let spv_data = std::fs::read(path)?;
-	Ok(unsafe { ShaderModule::from_bytes(device, &spv_data) }?)
+	let spv_bytes = std::fs::read(path)?;
+	let spv_words = vulkano::shader::spirv::bytes_to_words(&spv_bytes)?;
+	Ok(unsafe { ShaderModule::new(device, ShaderModuleCreateInfo::new(&spv_words)) }?)
 }
 
 /// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the

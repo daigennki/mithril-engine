@@ -12,9 +12,7 @@ pub mod text;
 use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::BufferUsage;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::descriptor_set::{persistent::PersistentDescriptorSet, WriteDescriptorSet};
 
 use crate::render::RenderContext;
 use crate::GenericEngineError;

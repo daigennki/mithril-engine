@@ -11,7 +11,6 @@ use serde::Deserialize;
 use std::any::TypeId;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 

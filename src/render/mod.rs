@@ -24,25 +24,25 @@ use vulkano::{Validated, VulkanError};
 use vulkano::buffer::{
 	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
 	subbuffer::Subbuffer,
-	Buffer, BufferContents, BufferCreateInfo, BufferUsage,
+	Buffer, BufferCreateInfo, BufferUsage,
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferInheritanceInfo,
 	CommandBufferInheritanceRenderingInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
 	CopyBufferToImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
-	RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
+	SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
 	SecondaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::{
-	allocator::StandardDescriptorSetAllocator, DescriptorSetsCollection, PersistentDescriptorSet, WriteDescriptorSet,
+	allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageLayout, ImageUsage};
+use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	graphics::{ subpass::PipelineRenderingCreateInfo, viewport::Viewport }, Pipeline, PipelineBindPoint,
+	graphics::{ subpass::PipelineRenderingCreateInfo, viewport::Viewport }, PipelineBindPoint,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::{GpuFuture, Sharing};
@@ -946,8 +946,6 @@ impl RenderTarget
 {
 	pub fn new(memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2]) -> Result<Self, GenericEngineError>
 	{
-		let vk_dev = memory_allocator.device().clone();
-
 		let color_create_info = ImageCreateInfo {
 			format: Format::R16G16B16A16_SFLOAT,
 			extent: [ dimensions[0], dimensions[1], 1 ],

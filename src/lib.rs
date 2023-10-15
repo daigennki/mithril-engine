@@ -20,7 +20,7 @@ use shipyard::{
 };
 use simplelog::*;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 

@@ -13,7 +13,7 @@ use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::{ 
-	color_blend::ColorBlendState, depth_stencil::CompareOp, input_assembly::PrimitiveTopology, 
+	color_blend::{ColorBlendState, ColorBlendAttachmentState}, depth_stencil::CompareOp, input_assembly::PrimitiveTopology,
 	subpass::PipelineRenderingCreateInfo
 };
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
@@ -51,7 +51,7 @@ impl Skybox
 		let sky_pipeline = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleStrip,
 			"skybox.vert.spv".into(),
-			Some(("skybox.frag.spv".into(), ColorBlendState::new(1))),
+			Some(("skybox.frag.spv".into(), ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default()))),
 			None,
 			vec![(0, 0, cubemap_sampler)],
 			rendering_info,

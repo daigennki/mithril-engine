@@ -6,7 +6,6 @@
 ----------------------------------------------------------------------------- */
 
 use std::sync::{Arc, Mutex};
-use std::collections::BTreeMap;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, SubpassContents, 
 	RenderingAttachmentInfo, RenderingInfo,
@@ -18,11 +17,11 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::Sampler, view::ImageView, Image, ImageCreateInfo, ImageLayout, ImageUsage};
+use vulkano::image::{sampler::Sampler, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::PipelineBindPoint;
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::CompareOp,
 	input_assembly::PrimitiveTopology,
 	viewport::Viewport,
@@ -225,8 +224,6 @@ impl MomentTransparencyRenderer
 		main_sampler: Arc<Sampler>,
 	) -> Result<Self, GenericEngineError>
 	{
-		let vk_dev = memory_allocator.device().clone();
-
 		// The render pass from back when we didn't use dynamic rendering.
 		// This is left commented out here so we can get an idea of where each image gets used.
 		/*let moments_rp = vulkano::ordered_passes_renderpass!(vk_dev.clone(),
@@ -293,7 +290,10 @@ impl MomentTransparencyRenderer
 			]
 		)?;*/
 
-		let mut moments_blend = ColorBlendState::new(3).blend_additive();
+		let mut moments_blend = ColorBlendState::with_attachment_states(3, ColorBlendAttachmentState { 
+			blend: Some(AttachmentBlend::additive()),
+			..Default::default()
+		});
 		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_blend_op = BlendOp::Add;
 		moments_blend.attachments[2].blend = Some(AttachmentBlend {
 			color_blend_op: BlendOp::Min,
@@ -327,7 +327,10 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
 		};
-		let wboit_compositing_blend = ColorBlendState::new(1).blend_alpha();
+		let wboit_compositing_blend = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
+			blend: Some(AttachmentBlend::alpha()),
+			..Default::default()
+		});
 		let transparency_compositing_pl = super::pipeline::Pipeline::new(
 			PrimitiveTopology::TriangleList,
 			"fill_viewport.vert.spv".into(),

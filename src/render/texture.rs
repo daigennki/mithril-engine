@@ -13,8 +13,7 @@ use vulkano::command_buffer::CopyBufferToImageInfo;
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	view::ImageView, view::ImageViewCreateInfo, view::ImageViewType, Image, ImageCreateFlags, ImageCreateInfo, ImageLayout,
-	ImageUsage,
+	view::{ImageView, ImageViewCreateInfo, ImageViewType}, Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::sync::Sharing;
