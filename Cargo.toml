@@ -23,8 +23,6 @@ image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 #vulkano = "0.33"
 vulkano = { git = "https://github.com/vulkano-rs/vulkano.git" }
-#vulkano-win = "0.33" 
-vulkano-win = { git = "https://github.com/vulkano-rs/vulkano.git" }
 glam = { version = "0.21", features = ["bytemuck", "serde"] }
 msgbox = "0.7"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }

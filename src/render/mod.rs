@@ -101,7 +101,7 @@ impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
-		let (graphics_queue, transfer_queue) = vulkan_init::vulkan_setup(game_name)?;
+		let (graphics_queue, transfer_queue) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 
 		let use_monitor = event_loop 
 			.primary_monitor()

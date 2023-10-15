@@ -37,7 +37,7 @@ impl Swapchain
 	pub fn new(vk_dev: Arc<vulkano::device::Device>, window: Window) -> Result<Self, GenericEngineError>
 	{
 		let window_arc = Arc::new(window);
-		let surface = vulkano_win::create_surface_from_handle(window_arc.clone(), vk_dev.instance().clone())?;
+		let surface = Surface::from_window(vk_dev.instance().clone(), window_arc.clone())?;
 
 		let pd = vk_dev.physical_device();
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;

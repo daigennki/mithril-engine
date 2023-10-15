@@ -10,6 +10,8 @@ use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
+use vulkano::instance::InstanceCreateInfo;
+use vulkano::swapchain::Surface;
 
 use crate::GenericEngineError;
 
@@ -57,40 +59,32 @@ impl std::fmt::Display for DriverVersion
 	}
 }
 
-fn create_vulkan_instance(game_name: &str) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
+fn create_vulkan_instance(
+	game_name: &str, 
+	event_loop: &winit::event_loop::EventLoop<()>
+) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
 {
 	let lib = vulkano::library::VulkanLibrary::new()?;
 
 	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
 	// implementations like MoltenVK. for now, we can go without it.
-	let ideal = vulkano::instance::InstanceExtensions {
-		khr_surface: true,
-		khr_xlib_surface: true,
-		khr_xcb_surface: true,
-		khr_wayland_surface: true,
-		khr_android_surface: true,
-		khr_win32_surface: true,
-		mvk_ios_surface: true,
-		mvk_macos_surface: true,
-		khr_get_physical_device_properties2: true,
-		khr_get_surface_capabilities2: true,
-		..vulkano::instance::InstanceExtensions::empty()
-	};
-	let vk_ext = lib.supported_extensions().intersection(&ideal);
+	let enabled_extensions = Surface::required_extensions(event_loop);
 
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]
-	let vk_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
+	let enabled_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
 	#[cfg(not(debug_assertions))]
-	let vk_layers = Vec::new();
+	let enabled_layers = Vec::new();
 
-	let mut inst_create_info = vulkano::instance::InstanceCreateInfo::application_from_cargo_toml();
-	inst_create_info.application_name = Some(game_name.to_string());
-	inst_create_info.engine_name = Some("MithrilEngine".to_string());
+	let mut inst_create_info = InstanceCreateInfo {
+		application_name: Some(game_name.to_string()),
+		engine_name: Some("MithrilEngine".to_string()),
+		max_api_version: Some(vulkano::Version::V1_3),
+		enabled_layers,
+		enabled_extensions,
+		..InstanceCreateInfo::application_from_cargo_toml()
+	};
 	inst_create_info.engine_version = inst_create_info.application_version.clone();
-	inst_create_info.enabled_extensions = vk_ext;
-	inst_create_info.enabled_layers = vk_layers;
-	inst_create_info.max_api_version = Some(vulkano::Version::V1_3);
 
 	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
 }
@@ -180,9 +174,12 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 
 /// Set up the Vulkan instance, physical device, logical device, and queue.
 /// Returns a graphics queue (which owns the device), and an optional transfer queue.
-pub fn vulkan_setup(game_name: &str) -> Result<(Arc<Queue>, Option<Arc<Queue>>), GenericEngineError>
+pub fn vulkan_setup(
+	game_name: &str,
+	event_loop: &winit::event_loop::EventLoop<()>
+) -> Result<(Arc<Queue>, Option<Arc<Queue>>), GenericEngineError>
 {
-	let vkinst = create_vulkan_instance(game_name)?;
+	let vkinst = create_vulkan_instance(game_name, event_loop)?;
 	let physical_device = get_physical_device(&vkinst)?;
 
 	// The features and extensions enabled here are supported by basically any Vulkan device.

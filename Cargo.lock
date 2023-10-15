@@ -1555,7 +1555,6 @@ dependencies = [
  "simplelog",
  "typetag",
  "vulkano 0.33.0",
- "vulkano-win",
  "winit 0.28.7",
 ]
 
@@ -2891,18 +2890,6 @@ dependencies = [
  "shaderc",
  "syn 1.0.109",
  "vulkano 0.32.3",
-]
-
-[[package]]
-name = "vulkano-win"
-version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#f5c441b076f6459a3eb5db8251be699e8966d3b9"
-dependencies = [
- "core-graphics-types",
- "objc",
- "raw-window-handle 0.5.2",
- "vulkano 0.33.0",
- "winit 0.28.7",
 ]
 
 [[package]]
