@@ -90,6 +90,7 @@ impl GameContext
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(camera_manager);
 		world.add_unique(render_ctx);
+		world.add_unique(component::TransformManager::default());
 
 		Ok(GameContext {
 			//pref_path,
@@ -254,9 +255,6 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 		|mut transforms: ViewMut<component::Transform>,
 		 mut meshes: ViewMut<component::mesh::Mesh>|
 		 -> Result<(), GenericEngineError> {
-			for t in (&mut transforms).iter() {
-				t.finish_loading(render_ctx)?;
-			}
 			for m in (&mut meshes).iter() {
 				m.finish_loading(render_ctx)?;
 			}
@@ -270,6 +268,7 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	cameras: View<Camera>,
+	mut transform_manager: UniqueViewMut<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mut canvas: UniqueViewMut<Canvas>,
 	mut ui_transforms: ViewMut<ui::Transform>,
@@ -289,11 +288,15 @@ fn prepare_primary_render(
 			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
 		}
 	}
+	
+	for (eid, t) in transforms.inserted_or_modified().iter().with_id() {
+		transform_manager.update(&mut render_ctx, eid, t)?;
+	}
 
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok(cam) = cameras.get(active_camera_id) {
 		if let Ok(t) = transforms.get(active_camera_id) {
-			camera_manager.update(&mut render_ctx, t.position(), t.rotation_quat(), cam.fov)?;
+			camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov)?;
 		}
 	}
 
@@ -303,6 +306,7 @@ fn draw_3d(
 	render_ctx: UniqueView<render::RenderContext>,
 	skybox: UniqueView<render::skybox::Skybox>,
 	camera_manager: UniqueView<CameraManager>,
+	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
@@ -327,7 +331,7 @@ fn draw_3d(
 					vulkano::pipeline::PipelineBindPoint::Graphics,
 					pbr_pipeline.layout(),
 					0,
-					transform.get_descriptor_set().ok_or("transform not loaded")?.clone()
+					transform_manager.get_descriptor_set(eid).ok_or("transform not loaded")?.clone()
 				)?;
 
 				let transform_mat = projview * transform.get_matrix();
@@ -342,6 +346,7 @@ fn draw_3d(
 fn draw_transparent_common(
 	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	camera_manager: &CameraManager,
+	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
 	pipeline: &render::pipeline::Pipeline,
@@ -356,7 +361,7 @@ fn draw_transparent_common(
 					vulkano::pipeline::PipelineBindPoint::Graphics,
 					pipeline.layout(),
 					0,
-					transform.get_descriptor_set().ok_or("transform not loaded")?.clone()
+					transform_manager.get_descriptor_set(eid).ok_or("transform not loaded")?.clone()
 				)?;
 
 				let transform_mat = projview * transform.get_matrix();
@@ -369,13 +374,14 @@ fn draw_transparent_common(
 fn draw_3d_transparent_moments(
 	render_ctx: UniqueView<render::RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
+	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let (mut command_buffer, pipeline) = 
 		render_ctx.record_transparency_moments_draws(camera_manager.projview())?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes, pipeline)?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, meshes, pipeline)?;
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -383,6 +389,7 @@ fn draw_3d_transparent_moments(
 fn draw_3d_transparent(
 	render_ctx: UniqueView<render::RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
+	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
@@ -390,7 +397,7 @@ fn draw_3d_transparent(
 	// Draw the transparent objects.
 	let pipeline = render_ctx.get_pipeline("PBR")?;
 	let mut command_buffer = render_ctx.record_transparency_draws(pipeline, camera_manager.projview())?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transforms, meshes, pipeline)?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, meshes, pipeline)?;
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }

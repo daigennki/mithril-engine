@@ -11,7 +11,9 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
+use shipyard::EntityId;
 use std::sync::Arc;
+use std::collections::BTreeMap;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::descriptor_set::{persistent::PersistentDescriptorSet, WriteDescriptorSet};
 
@@ -23,84 +25,31 @@ use crate::GenericEngineError;
 use mithrilengine_derive::{EntityComponent, UniqueComponent};
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
+#[track(All)]
 pub struct Transform
 {
-	// TODO: parent-child relationship
-	#[serde(skip)]
-	buf: Option<Subbuffer<Mat4>>,
-	#[serde(skip)]
-	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
-
-	position: Vec3,
-	scale: Vec3,
-	rotation: Vec3,
-	is_static: Option<bool>,
-
-	#[serde(skip)]
-	rot_quat: Quat,
-	#[serde(skip)]
-	model_mat: Mat4,
+	pub position: Vec3,
+	pub scale: Vec3,
+	pub rotation: Vec3,
 }
 impl Transform
 {
-	fn update_buffer(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
+	/// Calculate the quaternion for the rotation of this `Transform`.
+	pub fn rotation_quat(&self) -> Quat
 	{
-		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-		render_ctx.copy_to_buffer(self.model_mat, self.buf.as_ref().ok_or("transform not loaded")?.clone())?;
-		Ok(())
+		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
+		Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z)
 	}
 
-	pub fn set_pos(&mut self, position: Vec3, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
-	{
-		self.position = position;
-		self.update_buffer(render_ctx)
-	}
-
-	pub fn set_scale(&mut self, scale: Vec3, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
-	{
-		self.scale = scale;
-		self.update_buffer(render_ctx)
-	}
-
-	/// Set the rotation of this object, in terms of X, Y, and Z axis rotations.
-	pub fn set_rotation(&mut self, rotation: Vec3, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
-	{
-		self.rotation = rotation;
-		let rot_rad = rotation * std::f32::consts::PI / 180.0;
-		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
-		self.update_buffer(render_ctx)
-	}
-
-	pub fn is_this_static(&self) -> bool
-	{
-		self.is_static.unwrap_or(false)
-	}
-	pub fn position(&self) -> Vec3
-	{
-		self.position
-	}
-	pub fn scale(&self) -> Vec3
-	{
-		self.scale
-	}
-	pub fn rotation(&self) -> Vec3
-	{
-		self.rotation
-	}
-	pub fn rotation_quat(&self) -> &Quat
-	{
-		&self.rot_quat
-	}
+	/// Calculate the transformation matrix for this `Transform`.
 	pub fn get_matrix(&self) -> Mat4
 	{
-		self.model_mat
+		let rot_quat = self.rotation_quat();
+		Mat4::from_scale_rotation_translation(self.scale, rot_quat, self.position)
 	}
-
-	pub fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>
-	{
-		self.descriptor_set.as_ref()
-	}
-
+}
+/*impl Transform
+{
 	/// Show the egui collapsing header for this component.
 	#[cfg(feature = "egui")]
 	pub fn show_egui(&mut self, ui: &mut egui::Ui, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
@@ -122,8 +71,8 @@ impl Transform
 
 		Ok(())
 	}
-}
-impl DeferGpuResourceLoading for Transform
+}*/
+/*impl DeferGpuResourceLoading for Transform
 {
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
 	{
@@ -137,6 +86,58 @@ impl DeferGpuResourceLoading for Transform
 		self.buf = Some(buf);
 
 		Ok(())
+	}
+}*/
+
+/// A single manager that manages the GPU resources for all `Transform` components.
+#[derive(shipyard::Unique)]
+pub struct TransformManager
+{
+	// TODO: optimize this by combining sets and buffers respectively? (reduce binds and memory fragmentation)
+	sets: BTreeMap<EntityId, (Arc<PersistentDescriptorSet>, Subbuffer<Mat4>)>,
+}
+impl TransformManager
+{
+	pub fn get_descriptor_set(&self, eid: EntityId) -> Option<&Arc<PersistentDescriptorSet>>
+	{
+		self.sets.get(&eid).map(|(set, _)| set)
+	}
+
+	/// Update the GPU resources for the component. 
+	/// This should be called whenever the component is inserted or modified.
+	pub fn update(
+		&mut self, 
+		render_ctx: &mut RenderContext,
+		eid: EntityId, 
+		component: &Transform
+	) -> Result<(), GenericEngineError>
+	{
+		let model_mat = component.get_matrix();
+
+		if let Some((_, buf)) = self.sets.get(&eid) {
+			render_ctx.copy_to_buffer(model_mat, buf.clone())?;
+		} else {
+			// insert a new descriptor set and buffer if they didn't exist already
+			let buf = render_ctx.new_staged_buffer_from_data(model_mat, BufferUsage::UNIFORM_BUFFER)?;
+			let set = render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?;
+
+			self.sets.insert(eid, (set, buf));
+		}
+
+		Ok(())
+	}
+
+	/// Remove the resources for the given entity ID. Invalid IDs are ignored.
+	pub fn remove(&mut self, eid: EntityId)
+	{
+		self.sets.remove(&eid);
+	}
+}
+impl Default for TransformManager
+{
+	fn default() -> Self
+	{
+		TransformManager { sets: Default::default() }
 	}
 }
 
@@ -152,6 +153,8 @@ pub trait UniqueComponent: Send + Sync
 }
 
 /// Trait for components which need `RenderContext` to finish loading their GPU resources after being deserialized.
+/// TODO: this is terrible design! move GPU resources (and anything that the game developer doesn't need to read/write)
+/// out of components, and get rid of this trait!
 pub trait DeferGpuResourceLoading
 {
 	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
