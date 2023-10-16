@@ -7,6 +7,8 @@
 
 use glam::*;
 use serde::Deserialize;
+use shipyard::EntityId;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
@@ -14,80 +16,19 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 #[cfg(feature = "egui")]
 use egui_winit_vulkano::egui;
 
-use crate::component::{DeferGpuResourceLoading, EntityComponent};
+use crate::component::EntityComponent;
 use crate::material::{pbr::PBR, ColorInput, Material};
 use crate::render::{model::Model, RenderContext};
 use crate::GenericEngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
+#[track(All)]
 pub struct Mesh
 {
-	model_path: PathBuf,
-
-	#[serde(skip)]
-	model_data: Option<Arc<Model>>,
-	#[serde(skip)]
-	material_overrides: Vec<Option<Box<dyn Material>>>,
+	pub model_path: PathBuf,
 }
-impl Mesh
+/*impl Mesh
 {
-	/// Get a reference to the original materials of the model.
-	pub fn get_materials(&mut self) -> Option<&Vec<Box<dyn Material>>>
-	{
-		Arc::<Model>::get_mut(self.model_data.as_mut().unwrap()).map(|m| m.get_materials())
-	}
-
-	/// Get the materials that override the model's material.
-	/// If a material slot is `None`, then that material slot will use the model's original material.
-	pub fn get_material_overrides(&mut self) -> &mut Vec<Option<Box<dyn Material>>>
-	{
-		&mut self.material_overrides
-	}
-
-	/// Check if any of the materials are enabled for transparency.
-	/// This will panic if loading hasn't finished yet!
-	pub fn has_transparency(&self) -> bool
-	{
-		let original_materials = self.model_data.as_ref().unwrap().get_materials();
-
-		// substitute the original material if no override was specified,
-		// then look for any materials with transparency enabled
-		self.material_overrides
-			.iter()
-			.enumerate()
-			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
-			.any(|mat| mat.has_transparency())
-	}
-
-	/// Check if there are any materials that are *not* enabled for transparency.
-	/// This will panic if loading hasn't finished yet!
-	pub fn has_opaque_materials(&self) -> bool
-	{
-		let original_materials = self.model_data.as_ref().unwrap().get_materials();
-
-		// substitute the original material if no override was specified,
-		// then look for any materials with transparency disabled
-		self.material_overrides
-			.iter()
-			.enumerate()
-			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
-			.any(|mat| !mat.has_transparency())
-	}
-
-	pub fn draw(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		projviewmodel: &Mat4,
-		transparency_pass: bool,
-	) -> Result<(), GenericEngineError>
-	{
-		// only draw if the model has completed loading
-		if let Some(model_loaded) = self.model_data.as_ref() {
-			model_loaded.draw(cb, projviewmodel, &self.material_overrides, transparency_pass)?
-		}
-		Ok(())
-	}
-
 	/// Show the egui collapsing header for this component.
 	#[cfg(feature = "egui")]
 	pub fn show_egui(&mut self, ui: &mut egui::Ui, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
@@ -112,23 +53,108 @@ impl Mesh
 		}
 		Ok(())
 	}
-}
-impl DeferGpuResourceLoading for Mesh
+}*/
+
+/// A single manager that manages the GPU resources for all `Mesh` components.
+#[derive(shipyard::Unique)]
+pub struct MeshManager
 {
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
+	resources: BTreeMap<EntityId, (Arc<Model>, Vec<Option<Box<dyn Material>>>)>
+}
+impl MeshManager
+{
+	/// Load the model for the given `Mesh`. 
+	pub fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), GenericEngineError>
 	{
 		// model path relative to current directory
-		let model_path_cd_rel = &self.model_path;
+		let model_path_cd_rel = &component.model_path;
 		let model_data = render_ctx.get_model(&model_path_cd_rel)?;
 		let material_count = model_data.get_materials().len();
 
-		self.model_data = Some(model_data);
-
-		self.material_overrides = Vec::with_capacity(material_count);
+		let mut material_overrides = Vec::with_capacity(material_count);
 		for _ in 0..material_count {
-			self.material_overrides.push(None);
+			material_overrides.push(None);
+		}
+
+		let existing = self.resources.insert(eid, (model_data, material_overrides));
+		if existing.is_some() {
+			log::warn!("`MeshManager::load` was called for an entity ID that was already loaded!");
 		}
 
 		Ok(())
 	}
+
+	/// Get a reference to the original materials of the model.
+	/// This will panic if the entity ID is invalid!
+	pub fn get_materials(&mut self, eid: EntityId) -> &Vec<Box<dyn Material>>
+	{
+		self.resources.get(&eid).unwrap().0.get_materials()
+	}
+
+	/// Get the materials that override the model's material.
+	/// If a material slot is `None`, then that material slot will use the model's original material.
+	/// This will panic if the entity ID is invalid!
+	pub fn get_material_overrides(&mut self, eid: EntityId) -> &mut Vec<Option<Box<dyn Material>>>
+	{
+		&mut self.resources.get_mut(&eid).unwrap().1
+	}
+
+	/// Check if any of the materials are enabled for transparency.
+	/// This will panic if the entity ID is invalid!
+	pub fn has_transparency(&self, eid: EntityId) -> bool
+	{
+		let original_materials = self.resources.get(&eid).unwrap().0.get_materials();
+
+		// substitute the original material if no override was specified,
+		// then look for any materials with transparency enabled
+		self.resources
+			.get(&eid)
+			.unwrap()
+			.1
+			.iter()
+			.enumerate()
+			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+			.any(|mat| mat.has_transparency())
+	}
+
+	/// Check if there are any materials that are *not* enabled for transparency.
+	/// This will panic if loading hasn't finished yet!
+	pub fn has_opaque_materials(&self, eid: EntityId) -> bool
+	{
+		let original_materials =  self.resources.get(&eid).unwrap().0.get_materials();
+
+		// substitute the original material if no override was specified,
+		// then look for any materials with transparency disabled
+		self.resources
+			.get(&eid)
+			.unwrap()
+			.1
+			.iter()
+			.enumerate()
+			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+			.any(|mat| !mat.has_transparency())
+	}
+
+	pub fn draw(
+		&self,
+		eid: EntityId, 
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		projviewmodel: &Mat4,
+		transparency_pass: bool
+	) -> Result<(), GenericEngineError>
+	{
+		// only draw if the model has completed loading
+		if let Some((model_loaded, material_overrides)) = self.resources.get(&eid) {
+			model_loaded.draw(cb, projviewmodel, material_overrides, transparency_pass)?
+		}
+		Ok(())
+	}
 }
+impl Default for MeshManager
+{
+	fn default() -> Self
+	{
+		MeshManager { resources: Default::default() }
+	}
+}
+

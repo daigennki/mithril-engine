@@ -72,22 +72,6 @@ impl Transform
 		Ok(())
 	}
 }*/
-/*impl DeferGpuResourceLoading for Transform
-{
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
-	{
-		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
-		self.rot_quat = Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z);
-		self.model_mat = Mat4::from_scale_rotation_translation(self.scale, self.rot_quat, self.position);
-
-		let buf = render_ctx.new_staged_buffer_from_data(self.model_mat, BufferUsage::UNIFORM_BUFFER)?;
-
-		self.descriptor_set = Some(render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?);
-		self.buf = Some(buf);
-
-		Ok(())
-	}
-}*/
 
 /// A single manager that manages the GPU resources for all `Transform` components.
 #[derive(shipyard::Unique)]

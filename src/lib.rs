@@ -91,6 +91,7 @@ impl GameContext
 		world.add_unique(camera_manager);
 		world.add_unique(render_ctx);
 		world.add_unique(component::TransformManager::default());
+		world.add_unique(component::mesh::MeshManager::default());
 
 		Ok(GameContext {
 			//pref_path,
@@ -249,19 +250,6 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 		.after_all(prepare_primary_render)
 		.add_to_world(&world)?;
 
-	// finish loading GPU resources for components
-	// TODO: maybe figure out a way to get trait objects from shipyard
-	world.run(
-		|mut transforms: ViewMut<component::Transform>,
-		 mut meshes: ViewMut<component::mesh::Mesh>|
-		 -> Result<(), GenericEngineError> {
-			for m in (&mut meshes).iter() {
-				m.finish_loading(render_ctx)?;
-			}
-			Ok(())
-		},
-	)?;
-
 	Ok(world)
 }
 
@@ -270,6 +258,8 @@ fn prepare_primary_render(
 	cameras: View<Camera>,
 	mut transform_manager: UniqueViewMut<component::TransformManager>,
 	transforms: View<component::Transform>,
+	mut mesh_manager: UniqueViewMut<component::mesh::MeshManager>,
+	meshes: View<component::mesh::Mesh>,
 	mut canvas: UniqueViewMut<Canvas>,
 	mut ui_transforms: ViewMut<ui::Transform>,
 	mut camera_manager: UniqueViewMut<CameraManager>,
@@ -293,6 +283,10 @@ fn prepare_primary_render(
 		transform_manager.update(&mut render_ctx, eid, t)?;
 	}
 
+	for (eid, mesh) in meshes.inserted().iter().with_id() {
+		mesh_manager.load(&mut render_ctx, eid, mesh)?;
+	}
+
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok(cam) = cameras.get(active_camera_id) {
 		if let Ok(t) = transforms.get(active_camera_id) {
@@ -308,6 +302,7 @@ fn draw_3d(
 	camera_manager: UniqueView<CameraManager>,
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
+	mesh_manager: UniqueView<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
@@ -325,8 +320,8 @@ fn draw_3d(
 
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
-		if let Ok(c) = meshes.get(eid) {
-			if c.has_opaque_materials() {
+		if let Ok(_) = meshes.get(eid) {
+			if mesh_manager.has_opaque_materials(eid) {
 				command_buffer.bind_descriptor_sets(
 					vulkano::pipeline::PipelineBindPoint::Graphics,
 					pbr_pipeline.layout(),
@@ -335,7 +330,7 @@ fn draw_3d(
 				)?;
 
 				let transform_mat = projview * transform.get_matrix();
-				c.draw(&mut command_buffer, &transform_mat, false)?;
+				mesh_manager.draw(eid, &mut command_buffer, &transform_mat, false)?;
 			}
 		}
 	}
@@ -348,6 +343,7 @@ fn draw_transparent_common(
 	camera_manager: &CameraManager,
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
+	mesh_manager: UniqueView<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
 	pipeline: &render::pipeline::Pipeline,
 ) -> Result<(), GenericEngineError>
@@ -355,8 +351,8 @@ fn draw_transparent_common(
 	// Draw the transparent objects.
 	let projview = camera_manager.projview();
 	for (eid, transform) in transforms.iter().with_id() {
-		if let Ok(c) = meshes.get(eid) {
-			if c.has_transparency() {
+		if let Ok(_) = meshes.get(eid) {
+			if mesh_manager.has_transparency(eid) {
 				command_buffer.bind_descriptor_sets(
 					vulkano::pipeline::PipelineBindPoint::Graphics,
 					pipeline.layout(),
@@ -365,7 +361,7 @@ fn draw_transparent_common(
 				)?;
 
 				let transform_mat = projview * transform.get_matrix();
-				c.draw(command_buffer, &transform_mat, true)?;
+				mesh_manager.draw(eid, command_buffer, &transform_mat, true)?;
 			}
 		}
 	}
@@ -376,12 +372,13 @@ fn draw_3d_transparent_moments(
 	camera_manager: UniqueView<CameraManager>,
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
+	mesh_manager: UniqueView<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let (mut command_buffer, pipeline) = 
 		render_ctx.record_transparency_moments_draws(camera_manager.projview())?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, meshes, pipeline)?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, mesh_manager, meshes, pipeline)?;
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -391,13 +388,14 @@ fn draw_3d_transparent(
 	camera_manager: UniqueView<CameraManager>,
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
+	mesh_manager: UniqueView<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
 	let pipeline = render_ctx.get_pipeline("PBR")?;
 	let mut command_buffer = render_ctx.record_transparency_draws(pipeline, camera_manager.projview())?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, meshes, pipeline)?;
+	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, mesh_manager, meshes, pipeline)?;
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
