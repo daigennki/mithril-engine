@@ -70,10 +70,7 @@ pub struct RenderContext
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
 	transfer_future: Option<Box<dyn GpuFuture + Send + Sync>>,
 
-	// Loaded 3D models, with the key being the path relative to the current working directory.
-	models: HashMap<PathBuf, Arc<Model>>,
-
-	// Ditto, but with textures.
+	// Loaded textures, with the key being the path relative to the current working directory
 	textures: HashMap<PathBuf, Arc<Texture>>,
 
 	// User-accessible material pipelines
@@ -201,7 +198,6 @@ impl RenderContext
 			sampler_linear,
 			trm: Mutex::new(ThreadedRenderingManager::new(8)),
 			transfer_future: None,
-			models: HashMap::new(),
 			textures: HashMap::new(),
 			material_pipelines: HashMap::new(),
 			main_render_target,
@@ -249,23 +245,6 @@ impl RenderContext
 			)?,
 		);
 		Ok(())
-	}
-
-	/// Get a 3D model from `path`, relative to the current working directory.
-	/// This attempts loading if it hasn't been loaded into memory yet.
-	pub fn get_model(&mut self, path: &Path) -> Result<Arc<Model>, GenericEngineError>
-	{
-		match self.models.get(path) {
-			Some(model) => {
-				log::info!("Reusing loaded model '{}'", path.display());
-				Ok(model.clone())
-			}
-			None => {
-				let new_model = Arc::new(Model::new(self, path)?);
-				self.models.insert(path.to_path_buf(), new_model.clone());
-				Ok(new_model)
-			}
-		}
 	}
 
 	/// Ditto, but with textures.

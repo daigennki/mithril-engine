@@ -59,6 +59,10 @@ pub struct Mesh
 #[derive(shipyard::Unique)]
 pub struct MeshManager
 {
+	// Loaded 3D models, with the key being the path relative to the current working directory.
+	models: BTreeMap<PathBuf, Arc<Model>>,
+
+	// The models and material overrides for each entity.
 	resources: BTreeMap<EntityId, (Arc<Model>, Vec<Option<Box<dyn Material>>>)>
 }
 impl MeshManager
@@ -66,9 +70,20 @@ impl MeshManager
 	/// Load the model for the given `Mesh`. 
 	pub fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), GenericEngineError>
 	{
-		// model path relative to current directory
-		let model_path_cd_rel = &component.model_path;
-		let model_data = render_ctx.get_model(&model_path_cd_rel)?;
+		// Get a 3D model from `path`, relative to the current working directory.
+		// This attempts loading if it hasn't been loaded into memory yet.
+		let model_data = match self.models.get(&component.model_path) {
+			Some(model) => {
+				log::info!("Reusing loaded model '{}'", component.model_path.display());
+				model.clone()
+			}
+			None => {
+				let new_model = Arc::new(Model::new(render_ctx, &component.model_path)?);
+				self.models.insert(component.model_path.clone(), new_model.clone());
+				new_model
+			}
+		};
+
 		let material_count = model_data.get_materials().len();
 
 		let mut material_overrides = Vec::with_capacity(material_count);
@@ -154,7 +169,10 @@ impl Default for MeshManager
 {
 	fn default() -> Self
 	{
-		MeshManager { resources: Default::default() }
+		MeshManager {
+			models: Default::default(),
+			resources: Default::default(),
+		}
 	}
 }
 
