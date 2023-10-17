@@ -136,16 +136,3 @@ pub trait UniqueComponent: Send + Sync
 	fn add_to_world(self: Box<Self>, world: &mut shipyard::World);
 }
 
-/// Trait for components which need `RenderContext` to finish loading their GPU resources after being deserialized.
-/// TODO: this is terrible design! move GPU resources (and anything that the game developer doesn't need to read/write)
-/// out of components, and get rid of this trait!
-pub trait DeferGpuResourceLoading
-{
-	fn finish_loading(&mut self, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
-}
-
-/*/// Trait for drawable components.
-pub trait Draw
-{
-	fn draw(&self, command_buffer: &mut CommandBuffer<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>;
-}*/

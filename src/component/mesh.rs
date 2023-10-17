@@ -115,39 +115,41 @@ impl MeshManager
 	}
 
 	/// Check if any of the materials are enabled for transparency.
-	/// This will panic if the entity ID is invalid!
+	/// This may also return false if the entity ID is invalid.
 	pub fn has_transparency(&self, eid: EntityId) -> bool
 	{
-		let original_materials = self.resources.get(&eid).unwrap().0.get_materials();
-
 		// substitute the original material if no override was specified,
 		// then look for any materials with transparency enabled
-		self.resources
-			.get(&eid)
-			.unwrap()
-			.1
-			.iter()
-			.enumerate()
-			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
-			.any(|mat| mat.has_transparency())
+		match self.resources.get(&eid) {
+			Some((model, material_overrides)) => {
+				let original_materials = model.get_materials();
+				material_overrides
+					.iter()
+					.enumerate()
+					.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+					.any(|mat| mat.has_transparency())
+			}
+			None => false
+		}
 	}
 
 	/// Check if there are any materials that are *not* enabled for transparency.
-	/// This will panic if loading hasn't finished yet!
+	/// This may also return false if the entity ID is invalid.
 	pub fn has_opaque_materials(&self, eid: EntityId) -> bool
 	{
-		let original_materials =  self.resources.get(&eid).unwrap().0.get_materials();
-
 		// substitute the original material if no override was specified,
 		// then look for any materials with transparency disabled
-		self.resources
-			.get(&eid)
-			.unwrap()
-			.1
-			.iter()
-			.enumerate()
-			.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
-			.any(|mat| !mat.has_transparency())
+		match self.resources.get(&eid) {
+			Some((model, material_overrides)) => {
+				let original_materials = model.get_materials();
+				material_overrides
+					.iter()
+					.enumerate()
+					.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+					.any(|mat| !mat.has_transparency())
+			}
+			None => false
+		}
 	}
 
 	pub fn draw(

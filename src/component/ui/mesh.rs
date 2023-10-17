@@ -5,26 +5,35 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use glam::*;
-use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::descriptor_set::WriteDescriptorSet;
+use std::path::PathBuf;
 
-use crate::render::{texture::Texture, RenderContext};
-use crate::GenericEngineError;
+#[derive(Clone, Copy)]
+pub enum MeshType 
+{
+	Quad,
+	Frame(u32),	// `u32` is border width in logical pixels
+}
+impl Default for MeshType
+{
+	fn default() -> Self
+	{
+		Self::Quad
+	}
+}
+
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
-#[derive(shipyard::Component)]
+#[derive(Default, shipyard::Component)]
+#[track(All)]
 pub struct Mesh
 {
-	// TODO: optimize these buffers?
-	pos_vert_buf: Subbuffer<[Vec2]>,
-	uv_vert_buf: Subbuffer<[Vec2]>,
-	descriptor_set: Arc<PersistentDescriptorSet>,
+	pub mesh_type: MeshType,
+
+	// Leave this empty if the image is set by another component, such as `Text`.
+	// This has no effect (image is overridden) if another component like `Text` sets the image.
+	pub image_path: PathBuf,
 }
-impl Mesh
+/*impl Mesh
 {
 	pub fn new(render_ctx: &mut RenderContext, tex: Arc<Texture>) -> Result<Self, GenericEngineError>
 	{
@@ -33,45 +42,5 @@ impl Mesh
 		let half_dimensions = dimensions * 0.5;
 		Self::new_from_corners(render_ctx, -half_dimensions, half_dimensions, tex)
 	}
+}*/
 
-	pub fn new_from_corners(
-		render_ctx: &mut RenderContext,
-		top_left: Vec2,
-		bottom_right: Vec2,
-		tex: Arc<Texture>,
-	) -> Result<Self, GenericEngineError>
-	{
-		// vertex data
-		let pos_verts = [
-			top_left,
-			Vec2::new(top_left.x, bottom_right.y),
-			Vec2::new(bottom_right.x, top_left.y),
-			bottom_right,
-		];
-		let uv_verts = [
-			Vec2::new(0.0, 0.0),
-			Vec2::new(0.0, 1.0),
-			Vec2::new(1.0, 0.0),
-			Vec2::new(1.0, 1.0),
-		];
-
-		let vbo_usage = BufferUsage::VERTEX_BUFFER;
-		Ok(Mesh {
-			descriptor_set: render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?,
-			pos_vert_buf: render_ctx.new_immutable_buffer_from_iter(pos_verts, vbo_usage)?,
-			uv_vert_buf: render_ctx.new_immutable_buffer_from_iter(uv_verts, vbo_usage)?,
-		})
-	}
-
-	pub fn get_descriptor_set(&self) -> Arc<PersistentDescriptorSet>
-	{
-		self.descriptor_set.clone()
-	}
-
-	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
-	{
-		cb.bind_vertex_buffers(0, (self.pos_vert_buf.clone(), self.uv_vert_buf.clone()))?;
-		cb.draw(4, 1, 0, 0)?;
-		Ok(())
-	}
-}

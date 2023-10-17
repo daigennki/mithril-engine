@@ -247,7 +247,8 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Ditto, but with textures.
+	/// Load an image file as a texture into memory.
+	/// If the image was already loaded, it'll use the corresponding texture.
 	pub fn get_texture(&mut self, path: &Path) -> Result<Arc<Texture>, GenericEngineError>
 	{
 		match self.textures.get(path) {

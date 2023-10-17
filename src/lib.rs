@@ -27,7 +27,6 @@ use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 use component::camera::{Camera, CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
-use component::DeferGpuResourceLoading;
 use render::RenderContext;
 
 #[cfg(feature = "egui")]
@@ -67,7 +66,7 @@ impl GameContext
 		render_ctx.load_material_pipeline("UI.yaml")?;
 		render_ctx.load_material_pipeline("PBR.yaml")?;
 
-		let mut world = load_world(&mut render_ctx, start_map)?;
+		let mut world = load_world(start_map)?;
 
 		#[cfg(feature = "egui")]
 		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
@@ -83,8 +82,8 @@ impl GameContext
 
 		// add some UI entities for testing
 		let dim = render_ctx.swapchain_dimensions();
-		world.add_unique(Canvas::new(1280, 720, dim[0], dim[1])?);
-		let fps_ui_ent = world.add_entity(ui::new_text(&mut render_ctx, "0 fps".to_string(), 32.0, [500, -320].into())?);
+		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
+		let fps_ui_ent = world.add_entity(ui::new_text("0 fps".to_string(), 32.0, [500, -320].into()));
 
 		// TODO: give the user a way to specify a skybox through the YAML map file
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
@@ -187,22 +186,18 @@ impl GameContext
 	/// Draw some debug stuff, mostly GUI overlays.
 	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
 	{
-		self.world.run(
-			|mut render_ctx: UniqueViewMut<RenderContext>,
-			 mut texts: ViewMut<ui::text::Text>|
-			 -> Result<(), GenericEngineError> {
-				// draw the fps counter
-				let delta_time = render_ctx.delta().as_secs_f64();
-				let fps = 1.0 / delta_time.max(0.000001);
-				let delta_ms = 1000.0 * delta_time;
-				(&mut texts)
-					.get(self.fps_ui_ent)
-					.unwrap()
-					.set_text(format!("{:.0} fps ({:.1} ms)", fps, delta_ms), &mut render_ctx)?;
-
-				Ok(())
-			},
-		)?;
+		self.world.run(|render_ctx: UniqueView<RenderContext>, mut texts: ViewMut<ui::text::Text>| {
+			// draw the fps counter
+			// TODO: fix this! this is broken because using `World::run` doesn't count as a "modification";
+			// it needs to be moved into an ECS workload.
+			let delta_time = render_ctx.delta().as_secs_f64();
+			let fps = 1.0 / delta_time.max(0.000001);
+			let delta_ms = 1000.0 * delta_time;
+			(&mut texts)
+				.get(self.fps_ui_ent)
+				.unwrap()
+				.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
+		});
 
 		#[cfg(feature = "egui")]
 		self.egui_renderer.draw(&mut self.world)?;
@@ -234,7 +229,7 @@ impl Into<World> for WorldData
 		world
 	}
 }
-fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<World, GenericEngineError>
+fn load_world(file: &str) -> Result<World, GenericEngineError>
 {
 	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
 	let world: World = world_data.into();
@@ -243,11 +238,13 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 	// > The default workload will automatically be set to the first workload added.
 	Workload::new("Render loop")
 		.with_try_system(prepare_primary_render)
+		.with_try_system(prepare_ui)
 		.with_try_system(draw_3d)
 		.with_try_system(draw_3d_transparent_moments)
 		.with_try_system(draw_3d_transparent)
 		.with_try_system(draw_ui)
 		.after_all(prepare_primary_render)
+		.before_all(draw_ui)
 		.add_to_world(&world)?;
 
 	Ok(world)
@@ -255,30 +252,14 @@ fn load_world(render_ctx: &mut render::RenderContext, file: &str) -> Result<Worl
 
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut camera_manager: UniqueViewMut<CameraManager>,
 	cameras: View<Camera>,
 	mut transform_manager: UniqueViewMut<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mut mesh_manager: UniqueViewMut<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
-	mut canvas: UniqueViewMut<Canvas>,
-	mut ui_transforms: ViewMut<ui::Transform>,
-	mut camera_manager: UniqueViewMut<CameraManager>,
 ) -> Result<(), GenericEngineError>
-{
-	if render_ctx.window_resized() {
-		let d = render_ctx.swapchain_dimensions();
-		canvas.on_screen_resize(d[0], d[1]);
-		for t in (&mut ui_transforms).iter() {
-			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
-		}
-	} else {
-		// Update the projection matrix on UI `Transform` components,
-		// for entities that have been inserted since last time.
-		for t in ui_transforms.inserted_mut().iter() {
-			t.update_projection(render_ctx.as_mut(), canvas.projection())?;
-		}
-	}
-	
+{	
 	for (eid, t) in transforms.inserted_or_modified().iter().with_id() {
 		transform_manager.update(&mut render_ctx, eid, t)?;
 	}
@@ -286,6 +267,8 @@ fn prepare_primary_render(
 	for (eid, mesh) in meshes.inserted().iter().with_id() {
 		mesh_manager.load(&mut render_ctx, eid, mesh)?;
 	}
+
+	// TODO: clean up removed components
 
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok(cam) = cameras.get(active_camera_id) {
@@ -296,6 +279,69 @@ fn prepare_primary_render(
 
 	Ok(())
 }
+fn prepare_ui(
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut canvas: UniqueViewMut<Canvas>,
+	ui_transforms: View<ui::Transform>,
+	ui_meshes: View<ui::mesh::Mesh>,
+	ui_texts: View<ui::text::Text>,
+) -> Result<(), GenericEngineError>
+{
+	if render_ctx.window_resized() {
+		let d = render_ctx.swapchain_dimensions();
+		canvas.on_screen_resize(d[0], d[1]);
+
+		for (eid, t) in (&ui_transforms).iter().with_id() {
+			if let Ok(mesh) = ui_meshes.get(eid) {
+				canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
+			}
+			if let Ok(text) = ui_texts.get(eid) {
+				canvas.update_text(&mut render_ctx, eid, t, text)?;
+			}
+		}
+	} else {
+		// Update inserted or modified components
+		for (eid, t) in (&ui_transforms).inserted_or_modified().iter().with_id() {
+			if let Ok(mesh) = ui_meshes.get(eid) {
+				canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
+			}
+			if let Ok(text) = ui_texts.get(eid) {
+				canvas.update_text(&mut render_ctx, eid, t, text)?;
+			}
+		}
+	}
+
+	Ok(())
+}
+
+fn draw_common(
+	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+	camera_manager: &CameraManager,
+	transform_manager: &component::TransformManager,
+	transforms: View<component::Transform>,
+	mesh_manager: &component::mesh::MeshManager,
+	//meshes: View<component::mesh::Mesh>,
+	pipeline: &render::pipeline::Pipeline,
+	transparency_pass: bool,
+) -> Result<(), GenericEngineError>
+{
+	let projview = camera_manager.projview();
+	for (eid, transform) in transforms.iter().with_id() {
+		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass) 
+			|| (mesh_manager.has_transparency(eid) && transparency_pass) {
+			command_buffer.bind_descriptor_sets(
+				vulkano::pipeline::PipelineBindPoint::Graphics,
+				pipeline.layout(),
+				0,
+				transform_manager.get_descriptor_set(eid).ok_or("transform not loaded")?.clone()
+			)?;
+
+			let transform_mat = projview * transform.get_matrix();
+			mesh_manager.draw(eid, command_buffer, &transform_mat, transparency_pass)?;
+		}
+	}
+	Ok(())
+}
 fn draw_3d(
 	render_ctx: UniqueView<render::RenderContext>,
 	skybox: UniqueView<render::skybox::Skybox>,
@@ -303,7 +349,6 @@ fn draw_3d(
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_main_draws()?;
@@ -318,53 +363,17 @@ fn draw_3d(
 
 	command_buffer.push_constants(pbr_pipeline.layout(), 0, camera_manager.projview())?;
 
-	let projview = camera_manager.projview();
-	for (eid, transform) in transforms.iter().with_id() {
-		if let Ok(_) = meshes.get(eid) {
-			if mesh_manager.has_opaque_materials(eid) {
-				command_buffer.bind_descriptor_sets(
-					vulkano::pipeline::PipelineBindPoint::Graphics,
-					pbr_pipeline.layout(),
-					0,
-					transform_manager.get_descriptor_set(eid).ok_or("transform not loaded")?.clone()
-				)?;
-
-				let transform_mat = projview * transform.get_matrix();
-				mesh_manager.draw(eid, &mut command_buffer, &transform_mat, false)?;
-			}
-		}
-	}
+	draw_common(
+		&mut command_buffer, 
+		&camera_manager, 
+		&transform_manager, 
+		transforms, 
+		&mesh_manager, 
+		pbr_pipeline, 
+		false
+	)?;
 
 	render_ctx.add_cb(command_buffer.build()?);
-	Ok(())
-}
-fn draw_transparent_common(
-	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	camera_manager: &CameraManager,
-	transform_manager: UniqueView<component::TransformManager>,
-	transforms: View<component::Transform>,
-	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	meshes: View<component::mesh::Mesh>,
-	pipeline: &render::pipeline::Pipeline,
-) -> Result<(), GenericEngineError>
-{
-	// Draw the transparent objects.
-	let projview = camera_manager.projview();
-	for (eid, transform) in transforms.iter().with_id() {
-		if let Ok(_) = meshes.get(eid) {
-			if mesh_manager.has_transparency(eid) {
-				command_buffer.bind_descriptor_sets(
-					vulkano::pipeline::PipelineBindPoint::Graphics,
-					pipeline.layout(),
-					0,
-					transform_manager.get_descriptor_set(eid).ok_or("transform not loaded")?.clone()
-				)?;
-
-				let transform_mat = projview * transform.get_matrix();
-				mesh_manager.draw(eid, command_buffer, &transform_mat, true)?;
-			}
-		}
-	}
 	Ok(())
 }
 fn draw_3d_transparent_moments(
@@ -373,12 +382,12 @@ fn draw_3d_transparent_moments(
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
-	let (mut command_buffer, pipeline) = 
-		render_ctx.record_transparency_moments_draws(camera_manager.projview())?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, mesh_manager, meshes, pipeline)?;
+	let (mut command_buffer, pipeline) = render_ctx.record_transparency_moments_draws(camera_manager.projview())?;
+
+	draw_common(&mut command_buffer, &camera_manager, &transform_manager, transforms, &mesh_manager, pipeline, true)?;
+
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
@@ -389,21 +398,23 @@ fn draw_3d_transparent(
 	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
 	let pipeline = render_ctx.get_pipeline("PBR")?;
 	let mut command_buffer = render_ctx.record_transparency_draws(pipeline, camera_manager.projview())?;
-	draw_transparent_common(&mut command_buffer, &camera_manager, transform_manager, transforms, mesh_manager, meshes, pipeline)?;
+
+	draw_common(&mut command_buffer, &camera_manager, &transform_manager, transforms, &mesh_manager, pipeline, true)?;
+
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
 fn draw_ui(
 	render_ctx: UniqueView<render::RenderContext>,
+	canvas: UniqueView<ui::canvas::Canvas>,
 	ui_transforms: View<ui::Transform>,
-	ui_meshes: View<ui::mesh::Mesh>,
-	texts: View<ui::text::Text>,
+	//ui_meshes: View<ui::mesh::Mesh>,
+	//texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.record_ui_draws()?;
@@ -412,34 +423,9 @@ fn draw_ui(
 
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	for (eid, t) in ui_transforms.iter().with_id() {
-		command_buffer.bind_descriptor_sets(
-			vulkano::pipeline::PipelineBindPoint::Graphics,
-			pipeline.layout(),
-			0,
-			t.get_descriptor_set().ok_or("ui::Transform descriptor set bound before it was set up!")?.clone()
-		)?;
-
-		// draw UI meshes
+	for (eid, _) in ui_transforms.iter().with_id() {
 		// TODO: how do we respect the render order?
-		if let Ok(c) = ui_meshes.get(eid) {
-			command_buffer.bind_descriptor_sets(
-				vulkano::pipeline::PipelineBindPoint::Graphics, 
-				pipeline.layout(), 
-				1,
-				vec![ c.get_descriptor_set() ]
-			)?;
-			c.draw(&mut command_buffer)?;
-		}
-		if let Ok(c) = texts.get(eid) {
-			command_buffer.bind_descriptor_sets(
-				vulkano::pipeline::PipelineBindPoint::Graphics, 
-				pipeline.layout(), 
-				1,
-				vec![ c.get_descriptor_set() ]
-			)?;
-			c.draw(&mut command_buffer)?;
-		}
+		canvas.draw(&mut command_buffer, pipeline.layout(), eid)?;
 	}
 
 	render_ctx.add_ui_cb(command_buffer.build()?);
