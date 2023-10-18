@@ -243,8 +243,6 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 		.with_try_system(draw_3d_transparent_moments)
 		.with_try_system(draw_3d_transparent)
 		.with_try_system(draw_ui)
-		.after_all(prepare_primary_render)
-		.before_all(draw_ui)
 		.add_to_world(&world)?;
 
 	Ok(world)
@@ -252,10 +250,10 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
-	mut camera_manager: UniqueViewMut<CameraManager>,
-	cameras: View<Camera>,
 	mut transform_manager: UniqueViewMut<component::TransformManager>,
 	transforms: View<component::Transform>,
+	mut camera_manager: UniqueViewMut<CameraManager>,
+	cameras: View<Camera>,
 	mut mesh_manager: UniqueViewMut<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
@@ -271,10 +269,8 @@ fn prepare_primary_render(
 	// TODO: clean up removed components
 
 	let active_camera_id = camera_manager.active_camera();
-	if let Ok(cam) = cameras.get(active_camera_id) {
-		if let Ok(t) = transforms.get(active_camera_id) {
-			camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov)?;
-		}
+	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
+		camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov)?;
 	}
 
 	Ok(())
@@ -291,23 +287,19 @@ fn prepare_ui(
 		let d = render_ctx.swapchain_dimensions();
 		canvas.on_screen_resize(d[0], d[1]);
 
-		for (eid, t) in (&ui_transforms).iter().with_id() {
-			if let Ok(mesh) = ui_meshes.get(eid) {
-				canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
-			}
-			if let Ok(text) = ui_texts.get(eid) {
-				canvas.update_text(&mut render_ctx, eid, t, text)?;
-			}
+		for (eid, (t, mesh)) in (&ui_transforms, &ui_meshes).iter().with_id() {
+			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
+		}
+		for (eid, (t, text)) in (&ui_transforms, &ui_texts).iter().with_id() {
+			canvas.update_text(&mut render_ctx, eid, t, text)?
 		}
 	} else {
 		// Update inserted or modified components
-		for (eid, t) in (&ui_transforms).inserted_or_modified().iter().with_id() {
-			if let Ok(mesh) = ui_meshes.get(eid) {
-				canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
-			}
-			if let Ok(text) = ui_texts.get(eid) {
-				canvas.update_text(&mut render_ctx, eid, t, text)?;
-			}
+		for (eid, (t, mesh)) in (ui_transforms.inserted_or_modified(), &ui_meshes).iter().with_id() {
+			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
+		}
+		for (eid, (t, text)) in (ui_transforms.inserted_or_modified(), &ui_texts).iter().with_id() {
+			canvas.update_text(&mut render_ctx, eid, t, text)?
 		}
 	}
 
