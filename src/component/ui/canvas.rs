@@ -15,6 +15,7 @@ use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{persistent::PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
+use vulkano::image::view::ImageView;
 use vulkano::pipeline::PipelineLayout;
 
 use crate::render::RenderContext;
@@ -27,8 +28,7 @@ pub struct Canvas
 	base_dimensions: [u32; 2],
 	projection: Mat4,
 
-	// various information for each entity
-	data: BTreeMap<EntityId, (super::mesh::MeshType, Vec<Arc<PersistentDescriptorSet>>)>,
+	gpu_resources: BTreeMap<EntityId, (super::mesh::MeshType, Arc<PersistentDescriptorSet>)>,
 
 	quad_pos_buf: Subbuffer<[Vec2]>,
 	quad_uv_buf: Subbuffer<[Vec2]>,
@@ -64,7 +64,7 @@ impl Canvas
 		Ok(Canvas {
 			base_dimensions: [canvas_width, canvas_height],
 			projection: calculate_projection(canvas_width, canvas_height, screen_width, screen_height),
-			data: Default::default(),
+			gpu_resources: Default::default(),
 			quad_pos_buf,
 			quad_uv_buf,
 			default_font,
@@ -86,6 +86,7 @@ impl Canvas
 		&mut self,
 		render_ctx: &mut RenderContext,
 		transform: &super::Transform,
+		image_view: Arc<ImageView>,
 		image_dimensions: Vec2,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
 	{
@@ -95,7 +96,10 @@ impl Canvas
 			transform.pos.as_vec2().extend(0.0)
 		);
 		let buf = render_ctx.new_immutable_buffer_from_data(projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
-		let set = render_ctx.new_descriptor_set("UI", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?;
+		let set = render_ctx.new_descriptor_set("UI", 0, [
+			WriteDescriptorSet::buffer(0, buf),
+			WriteDescriptorSet::image_view(2, image_view),
+		])?;
 
 		Ok(set)
 	}
@@ -117,10 +121,9 @@ impl Canvas
 			let tex_dimensions = tex.dimensions();
 			let image_dimensions = Vec2::new(tex_dimensions[0] as f32, tex_dimensions[1] as f32);
 
-			let transform_set = self.update_transform(render_ctx, transform, image_dimensions)?;
+			let set = self.update_transform(render_ctx, transform, tex.view(), image_dimensions)?;
 
-			let mesh_set = render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?;
-			self.data.insert(eid, (mesh.mesh_type, vec![ transform_set, mesh_set ]));
+			self.gpu_resources.insert(eid, (mesh.mesh_type, set));
 		}
 
 		Ok(())
@@ -140,12 +143,11 @@ impl Canvas
 		let img_dim = [text_image.width(), text_image.height()];
 		let tex = render_ctx.new_texture_from_iter(text_image.into_raw(), Format::R8G8B8A8_SRGB, img_dim, 1)?;
 
-		let mesh_set = render_ctx.new_descriptor_set("UI", 1, [WriteDescriptorSet::image_view(0, tex.view())])?;
-
 		let img_dim_vec2 = Vec2::new(img_dim[0] as f32, img_dim[1] as f32);
-		let transform_set = self.update_transform(render_ctx, transform, img_dim_vec2)?;
 
-		self.data.insert(eid, (super::mesh::MeshType::Quad, vec![ transform_set, mesh_set ]));
+		let set = self.update_transform(render_ctx, transform, tex.view(), img_dim_vec2)?;
+
+		self.gpu_resources.insert(eid, (super::mesh::MeshType::Quad, set));
 
 		Ok(())
 	}
@@ -157,12 +159,12 @@ impl Canvas
 		eid: EntityId,
 	) -> Result<(), GenericEngineError>
 	{
-		if let Some((mesh_type, descriptor_sets)) = self.data.get(&eid) {
+		if let Some((mesh_type, descriptor_set)) = self.gpu_resources.get(&eid) {
 			cb.bind_descriptor_sets(
 				vulkano::pipeline::PipelineBindPoint::Graphics, 
 				pipeline_layout, 
 				0,
-				descriptor_sets.clone()
+				vec![ descriptor_set.clone() ]
 			)?;
 
 			match mesh_type {
