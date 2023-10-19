@@ -11,38 +11,28 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor_set::{layout::DescriptorSetLayoutCreateInfo, WriteDescriptorSet};
 use vulkano::format::Format;
 
 use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
 
-/// Trait which allows materials to defer loading using `RenderContext` to after deserialization.
-/// This allows each `Material` implementor to define the loading function differently.
-pub trait DeferMaterialLoading
-{
-	/// Finish loading the material's descriptor set.
-	fn update_descriptor_set(&mut self, path_to_this: &Path, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
-
-	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>;
-
-	fn get_base_color(&self) -> Option<Vec4>;
-	fn set_base_color(&mut self, color: Vec4, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>;
-}
-
-/// A material used by meshes to define shader parameters.
-/// Derive from this, then also define a loading function and descriptor set getter by implementing
-/// `DeferMaterialLoading` manually.
+/// A material used by meshes to set shader parameters.
 #[typetag::deserialize]
-pub trait Material: Send + Sync + DeferMaterialLoading
+pub trait Material: Send + Sync
 {
 	fn pipeline_name(&self) -> &'static str;
 
-	fn bind_descriptor_set(
+	/// Generate descriptor set writes for creating a descriptor set.
+	/// Call this when the user (e.g. a `Mesh` component) is created, and when this material is modified.
+	fn gen_descriptor_set_writes(
 		&self,
-		command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>;
+		parent_folder: &Path,
+		render_ctx: &mut RenderContext
+	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
+
+	/// Get the set layout creation info for this material's descriptor set.
+	fn set_layout_info(&self, render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo;
 
 	fn has_transparency(&self) -> bool;
 }

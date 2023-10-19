@@ -8,12 +8,13 @@
 use glam::*;
 use serde::Deserialize;
 use std::path::Path;
-use std::sync::Arc;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
+use vulkano::descriptor_set::{
+	layout::{DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	WriteDescriptorSet,
+};
+use vulkano::shader::ShaderStages;
 
-use super::{ColorInput /*SingleChannelInput*/, DeferMaterialLoading, Material};
+use super::{ColorInput, /*SingleChannelInput,*/ Material};
 use crate::render::RenderContext;
 use crate::GenericEngineError;
 
@@ -21,29 +22,17 @@ use crate::GenericEngineError;
 #[derive(Deserialize)]
 pub struct PBR
 {
-	base_color: ColorInput,
-	//roughness: SingleChannelInput,
-	//specular: SingleChannelInput,
-	#[serde(default)]
-	transparent: bool,
+	pub base_color: ColorInput,
 
-	#[serde(skip)]
-	descriptor_set: Option<Arc<PersistentDescriptorSet>>,
-	#[serde(skip)]
-	pipeline_layout: Option<Arc<PipelineLayout>>,
+	// TODO: roughness and specular textures
+	//pub roughness: SingleChannelInput,
+
+	//pub specular: SingleChannelInput,
+
+	#[serde(default)]
+	pub transparent: bool,
 }
-impl PBR
-{
-	pub fn new(base_color: ColorInput, transparent: bool) -> Self
-	{
-		PBR {
-			base_color,
-			transparent,
-			descriptor_set: None,
-			pipeline_layout: None,
-		}
-	}
-}
+
 #[typetag::deserialize]
 impl Material for PBR
 {
@@ -52,18 +41,37 @@ impl Material for PBR
 		"PBR"
 	}
 
-	fn bind_descriptor_set(
+	// NOTE: the descriptor set is expected to be bound to set 1
+	fn gen_descriptor_set_writes(
 		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	) -> Result<(), GenericEngineError>
+		parent_folder: &Path,
+		render_ctx: &mut RenderContext
+	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>
 	{
-		cb.bind_descriptor_sets(
-			PipelineBindPoint::Graphics,
-			self.pipeline_layout.as_ref().ok_or("material descriptor set not loaded")?.clone(),
-			1,
-			self.get_descriptor_set().ok_or("material descriptor set not loaded")?.clone()
-		)?;
-		Ok(())
+		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
+
+		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view()) ];
+
+		Ok(writes)
+	}
+
+	fn set_layout_info(&self, render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo
+	{
+		let bindings = [
+			(0, DescriptorSetLayoutBinding { // binding 0: sampler0
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![ render_ctx.get_default_sampler().clone() ],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			}),
+			(1, DescriptorSetLayoutBinding { // binding 1: base_color
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			}),
+		];
+		DescriptorSetLayoutCreateInfo {
+			bindings: bindings.into(),
+			..Default::default()
+		}
 	}
 
 	fn has_transparency(&self) -> bool
@@ -71,29 +79,8 @@ impl Material for PBR
 		self.transparent
 	}
 }
-impl DeferMaterialLoading for PBR
+/*impl DeferMaterialLoading for PBR
 {
-	fn update_descriptor_set(&mut self, parent_folder: &Path, render_ctx: &mut RenderContext)
-		-> Result<(), GenericEngineError>
-	{
-		// TODO: roughness and specular textures
-		let base_color_tex = self.base_color.into_texture(parent_folder, render_ctx)?;
-
-		self.descriptor_set = Some(render_ctx.new_descriptor_set(
-			self.pipeline_name(),
-			1,
-			[WriteDescriptorSet::image_view(1, base_color_tex.view())],
-		)?);
-		self.pipeline_layout = Some(render_ctx.get_pipeline(self.pipeline_name())?.layout());
-
-		Ok(())
-	}
-
-	fn get_descriptor_set(&self) -> Option<&Arc<PersistentDescriptorSet>>
-	{
-		self.descriptor_set.as_ref()
-	}
-
 	fn get_base_color(&self) -> Option<Vec4>
 	{
 		match &self.base_color {
@@ -106,4 +93,5 @@ impl DeferMaterialLoading for PBR
 		self.base_color = ColorInput::Color(color);
 		self.update_descriptor_set(Path::new("./"), render_ctx)
 	}
-}
+}*/
+

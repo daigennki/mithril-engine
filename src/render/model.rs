@@ -11,10 +11,13 @@ use serde::Deserialize;
 use std::any::TypeId;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
 
-use crate::material::{pbr::PBR, ColorInput, DeferMaterialLoading, Material};
+use crate::material::{pbr::PBR, ColorInput, Material};
 use crate::render::RenderContext;
 use crate::GenericEngineError;
 
@@ -86,7 +89,7 @@ impl Model
 				Ok(Model {
 					materials: doc
 						.materials()
-						.map(|mat| load_gltf_material(&mat, parent_folder, render_ctx))
+						.map(|mat| load_gltf_material(&mat, parent_folder))
 						.collect::<Result<_, _>>()?,
 					submeshes,
 					vertex_buffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
@@ -129,8 +132,9 @@ impl Model
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_layout: Arc<PipelineLayout>,
 		transform: &Mat4,
-		material_overrides: &Vec<Option<Box<dyn Material>>>,
+		material_overrides_and_sets: &Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>,
 		transparency_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
@@ -143,12 +147,11 @@ impl Model
 			self.index_buffer.bind(cb)?;
 			for submesh in visible_submeshes {
 				// it's okay that we use a panic function here, since the glTF loader validates the index for us
-				let mat = material_overrides[submesh.material_index()]
-					.as_ref()
-					.unwrap_or_else(|| &self.materials[submesh.material_index()]);
+				let (mat_override, set) = &material_overrides_and_sets[submesh.material_index()];
+				let mat = mat_override.as_ref().unwrap_or_else(|| &self.materials[submesh.material_index()]);
 
 				if mat.has_transparency() == transparency_pass {
-					mat.bind_descriptor_set(cb)?;
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, set.clone())?;
 					submesh.draw(cb)?;
 				}
 			}
@@ -180,15 +183,8 @@ struct MaterialExtras
 	external: i32,
 }
 
-fn load_gltf_material(
-	mat: &gltf::Material,
-	search_folder: &Path,
-	render_ctx: &mut RenderContext,
-) -> Result<Box<dyn Material>, GenericEngineError>
+fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<dyn Material>, GenericEngineError>
 {
-	let material_name = mat.name().ok_or("glTF mesh material has no name")?;
-	let mat_path = search_folder.join(material_name).with_extension("yaml");
-
 	// Use an external material file if specified in the extras.
 	// This can be specified in Blender by giving a material a custom property called "external" with an integer value of 1.
 	let use_external = if let Some(extras) = mat.extras() {
@@ -199,21 +195,28 @@ fn load_gltf_material(
 	};
 
 	if use_external {
+		let material_name = mat.name().ok_or("model wants an external material, but the glTF mesh material has no name")?;
+		let mat_path = search_folder.join(material_name).with_extension("yaml");
+
 		log::info!(
 			"External material specified, loading material file '{}'...",
 			mat_path.display()
 		);
+
 		let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
-		deserialized_mat.update_descriptor_set(search_folder, render_ctx)?;
+
 		Ok(deserialized_mat)
 	} else {
-		let base_color = ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor()));
-		let transparency = mat.alpha_mode() == gltf::material::AlphaMode::Blend;
-		if transparency {
+		let transparent = mat.alpha_mode() == gltf::material::AlphaMode::Blend;
+		if transparent {
 			log::debug!("found a transparent glTF material");
 		}
-		let mut loaded_mat = PBR::new(base_color, transparency);
-		loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
+
+		let loaded_mat = PBR {
+			base_color: ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor())),
+			transparent,
+		};
+
 		Ok(Box::new(loaded_mat))
 	}
 }

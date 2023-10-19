@@ -329,7 +329,7 @@ fn draw_common(
 			)?;
 
 			let transform_mat = projview * transform.get_matrix();
-			mesh_manager.draw(eid, command_buffer, &transform_mat, transparency_pass)?;
+			mesh_manager.draw(eid, command_buffer, pipeline.layout(), &transform_mat, transparency_pass)?;
 		}
 	}
 	Ok(())

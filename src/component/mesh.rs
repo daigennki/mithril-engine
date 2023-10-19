@@ -12,12 +12,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::pipeline::PipelineLayout;
 
 #[cfg(feature = "egui")]
 use egui_winit_vulkano::egui;
 
 use crate::component::EntityComponent;
-use crate::material::{pbr::PBR, ColorInput, Material};
+use crate::material::{/*pbr::PBR, ColorInput,*/ Material};
 use crate::render::{model::Model, RenderContext};
 use crate::GenericEngineError;
 
@@ -63,7 +65,7 @@ pub struct MeshManager
 	models: BTreeMap<PathBuf, Arc<Model>>,
 
 	// The models and material overrides for each entity.
-	resources: BTreeMap<EntityId, (Arc<Model>, Vec<Option<Box<dyn Material>>>)>
+	resources: BTreeMap<EntityId, (Arc<Model>, Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>)>
 }
 impl MeshManager
 {
@@ -84,11 +86,17 @@ impl MeshManager
 			}
 		};
 
-		let material_count = model_data.get_materials().len();
+		let orig_materials = model_data.get_materials();
+		let material_count = orig_materials.len();
 
 		let mut material_overrides = Vec::with_capacity(material_count);
-		for _ in 0..material_count {
-			material_overrides.push(None);
+		for mat in orig_materials {
+			// TODO: if there's a material override, use that instead of the original material
+			// to create the descriptor set
+			let writes = mat.gen_descriptor_set_writes(&component.model_path, render_ctx)?;
+			let set = render_ctx.new_descriptor_set(mat.pipeline_name(), 1, writes)?;
+
+			material_overrides.push((None, set));
 		}
 
 		let existing = self.resources.insert(eid, (model_data, material_overrides));
@@ -109,7 +117,7 @@ impl MeshManager
 	/// Get the materials that override the model's material.
 	/// If a material slot is `None`, then that material slot will use the model's original material.
 	/// This will panic if the entity ID is invalid!
-	pub fn get_material_overrides(&mut self, eid: EntityId) -> &mut Vec<Option<Box<dyn Material>>>
+	pub fn get_material_overrides(&mut self, eid: EntityId) -> &mut Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>
 	{
 		&mut self.resources.get_mut(&eid).unwrap().1
 	}
@@ -126,7 +134,7 @@ impl MeshManager
 				material_overrides
 					.iter()
 					.enumerate()
-					.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+					.map(|(i, (override_mat, _))| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
 					.any(|mat| mat.has_transparency())
 			}
 			None => false
@@ -145,7 +153,7 @@ impl MeshManager
 				material_overrides
 					.iter()
 					.enumerate()
-					.map(|(i, override_mat)| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+					.map(|(i, (override_mat, _))| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
 					.any(|mat| !mat.has_transparency())
 			}
 			None => false
@@ -156,13 +164,14 @@ impl MeshManager
 		&self,
 		eid: EntityId, 
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_layout: Arc<PipelineLayout>,
 		projviewmodel: &Mat4,
 		transparency_pass: bool
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
-		if let Some((model_loaded, material_overrides)) = self.resources.get(&eid) {
-			model_loaded.draw(cb, projviewmodel, material_overrides, transparency_pass)?
+		if let Some((model_loaded, material_overrides_and_sets)) = self.resources.get(&eid) {
+			model_loaded.draw(cb, pipeline_layout, projviewmodel, material_overrides_and_sets, transparency_pass)?
 		}
 		Ok(())
 	}

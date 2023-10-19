@@ -49,7 +49,6 @@ use vulkano::sync::{GpuFuture, Sharing};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
-use model::Model;
 use texture::Texture;
 
 #[derive(shipyard::Unique)]
@@ -245,6 +244,11 @@ impl RenderContext
 			)?,
 		);
 		Ok(())
+	}
+
+	pub fn get_default_sampler(&self) -> &Arc<Sampler>
+	{
+		&self.sampler_linear
 	}
 
 	/// Load an image file as a texture into memory.
