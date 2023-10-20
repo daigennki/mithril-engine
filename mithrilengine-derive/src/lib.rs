@@ -19,20 +19,3 @@ pub fn derive_entity_component(input: TokenStream) -> TokenStream
 	output.into()
 }
 
-#[proc_macro_derive(UniqueComponent)]
-pub fn derive_unique_component(input: TokenStream) -> TokenStream 
-{
-	let DeriveInput { ident, .. } = parse_macro_input!(input);
-	let output = quote! {
-		#[typetag::deserialize]
-		impl UniqueComponent for #ident
-		{
-			fn add_to_world(self: Box<Self>, world: &mut shipyard::World)
-			{
-				world.add_unique(*self);
-			}
-		}
-	};
-	output.into()
-}
-

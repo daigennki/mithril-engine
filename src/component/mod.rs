@@ -22,7 +22,7 @@ use egui_winit_vulkano::egui;
 
 use crate::render::RenderContext;
 use crate::GenericEngineError;
-use mithrilengine_derive::{EntityComponent, UniqueComponent};
+use mithrilengine_derive::EntityComponent;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -129,10 +129,5 @@ impl Default for TransformManager
 pub trait EntityComponent: Send + Sync
 {
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
-}
-#[typetag::deserialize]
-pub trait UniqueComponent: Send + Sync
-{
-	fn add_to_world(self: Box<Self>, world: &mut shipyard::World);
 }
 

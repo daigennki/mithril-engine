@@ -209,7 +209,6 @@ impl GameContext
 #[derive(Deserialize)]
 struct WorldData
 {
-	uniques: Vec<Box<dyn component::UniqueComponent>>,
 	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
 impl Into<World> for WorldData
@@ -217,9 +216,6 @@ impl Into<World> for WorldData
 	fn into(self) -> World
 	{
 		let mut world = World::new();
-		for unique in self.uniques {
-			unique.add_to_world(&mut world);
-		}
 		for entity in self.entities {
 			let eid = world.add_entity(());
 			for component in entity {
