@@ -16,7 +16,7 @@ use glam::*;
 use serde::Deserialize;
 use shipyard::{
 	iter::{IntoIter, IntoWithId},
-	EntityId, Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadModificator, World,
+	Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, World,
 };
 use simplelog::*;
 use std::fs::File;
@@ -34,18 +34,19 @@ use egui_renderer::EguiRenderer;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
+#[derive(shipyard::Component)]
+struct FpsCounter;
+
 struct GameContext
 {
 	//pref_path: String,
 	world: World,
 
-	right_mouse_button_pressed: bool,
-	camera_rotation: Vec3,
+	/*right_mouse_button_pressed: bool,
+	camera_rotation: Vec3,*/
 
 	#[cfg(feature = "egui")]
 	egui_renderer: EguiRenderer,
-
-	fps_ui_ent: EntityId,
 }
 impl GameContext
 {
@@ -81,11 +82,21 @@ impl GameContext
 		});
 
 		// add some UI entities for testing
-		let dim = render_ctx.swapchain_dimensions();
-		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
-		let fps_ui_ent = world.add_entity(ui::new_text("0 fps".to_string(), 32.0, [500, -320].into()));
+		world.add_entity((
+				component::ui::Transform { 
+					pos: IVec2::new(500, -320),
+					scale: None
+				},
+				component::ui::text::Text {
+					text_str: "0 fps".to_string(),
+					size: 32.0,
+				},
+				FpsCounter {},
+		));
 
 		// TODO: give the user a way to specify a skybox through the YAML map file
+		let dim = render_ctx.swapchain_dimensions();
+		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
 		world.add_unique(camera_manager);
 		world.add_unique(render_ctx);
@@ -99,9 +110,8 @@ impl GameContext
 			#[cfg(feature = "egui")]
 			egui_renderer,
 
-			right_mouse_button_pressed: false,
-			camera_rotation: Vec3::ZERO,
-			fps_ui_ent,
+			/*right_mouse_button_pressed: false,
+			camera_rotation: Vec3::ZERO,*/
 		})
 	}
 
@@ -138,7 +148,7 @@ impl GameContext
 				#[cfg(feature = "egui")]
 				self.egui_renderer.update(event);
 			}
-			Event::DeviceEvent {
+			/*Event::DeviceEvent {
 				event: DeviceEvent::Button { button: 1, state },
 				..
 			} => {
@@ -151,7 +161,7 @@ impl GameContext
 				event: DeviceEvent::MouseMotion { delta },
 				..
 			} => {
-				/*if self.right_mouse_button_pressed {
+				if self.right_mouse_button_pressed {
 					let sensitivity = 0.05;
 					self.camera_rotation.z += (sensitivity * delta.0) as f32;
 					while self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
@@ -170,8 +180,8 @@ impl GameContext
 						.world
 						.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
 					camera.set_pos_and_target(pos, target, &mut render_ctx)?;
-				}*/
-			}
+				}
+			}*/
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
 				self.draw_debug()?;
@@ -186,19 +196,6 @@ impl GameContext
 	/// Draw some debug stuff, mostly GUI overlays.
 	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
 	{
-		self.world.run(|render_ctx: UniqueView<RenderContext>, mut texts: ViewMut<ui::text::Text>| {
-			// draw the fps counter
-			// TODO: fix this! this is broken because using `World::run` doesn't count as a "modification";
-			// it needs to be moved into an ECS workload.
-			let delta_time = render_ctx.delta().as_secs_f64();
-			let fps = 1.0 / delta_time.max(0.000001);
-			let delta_ms = 1000.0 * delta_time;
-			(&mut texts)
-				.get(self.fps_ui_ent)
-				.unwrap()
-				.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
-		});
-
 		#[cfg(feature = "egui")]
 		self.egui_renderer.draw(&mut self.world)?;
 
@@ -233,6 +230,7 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 	// This will become the default workload, as the docs say:
 	// > The default workload will automatically be set to the first workload added.
 	Workload::new("Render loop")
+		.with_system(update_fps_counter)
 		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
 		.with_try_system(draw_3d)
@@ -244,6 +242,21 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 	Ok(world)
 }
 
+fn update_fps_counter(
+	render_ctx: UniqueView<RenderContext>, 
+	mut texts: ViewMut<ui::text::Text>, 
+	fps_counter: View<FpsCounter>)
+{
+	for (mut text_component, _) in (&mut texts, &fps_counter).iter() {
+		// update the fps counter's text
+		let delta_time = render_ctx.delta().as_secs_f64();
+		let fps = 1.0 / delta_time.max(0.000001);
+		let delta_ms = 1000.0 * delta_time;
+		text_component.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
+	}
+}
+
+
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	mut transform_manager: UniqueViewMut<component::TransformManager>,
@@ -253,7 +266,7 @@ fn prepare_primary_render(
 	mut mesh_manager: UniqueViewMut<component::mesh::MeshManager>,
 	meshes: View<component::mesh::Mesh>,
 ) -> Result<(), GenericEngineError>
-{	
+{
 	for (eid, t) in transforms.inserted_or_modified().iter().with_id() {
 		transform_manager.update(&mut render_ctx, eid, t)?;
 	}
@@ -291,10 +304,18 @@ fn prepare_ui(
 		}
 	} else {
 		// Update inserted or modified components
+		// TODO: this might run `update_mesh` or `update_text` twice when both the `Transform` and
+		// the other component are inserted or modified; make it not run twice in such a case!
 		for (eid, (t, mesh)) in (ui_transforms.inserted_or_modified(), &ui_meshes).iter().with_id() {
 			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
 		}
 		for (eid, (t, text)) in (ui_transforms.inserted_or_modified(), &ui_texts).iter().with_id() {
+			canvas.update_text(&mut render_ctx, eid, t, text)?
+		}
+		for (eid, (t, mesh)) in (&ui_transforms, ui_meshes.inserted_or_modified()).iter().with_id() {
+			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
+		}
+		for (eid, (t, text)) in (&ui_transforms, ui_texts.inserted_or_modified()).iter().with_id() {
 			canvas.update_text(&mut render_ctx, eid, t, text)?
 		}
 	}
