@@ -10,7 +10,7 @@ use gltf::Semantic;
 use serde::Deserialize;
 use std::any::TypeId;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
@@ -28,7 +28,6 @@ pub struct Model
 	submeshes: Vec<SubMesh>,
 	vertex_buffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
-	path: PathBuf,
 }
 impl Model
 {
@@ -94,7 +93,6 @@ impl Model
 					submeshes,
 					vertex_buffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer: IndexBufferVariant::from_u16_and_u32(render_ctx, indices_u16, indices_u32)?,
-					path: path.to_path_buf(),
 				})
 			}
 			/*Some("obj") => {
@@ -121,11 +119,6 @@ impl Model
 	pub fn get_materials(&self) -> &Vec<Box<dyn Material>>
 	{
 		&self.materials
-	}
-
-	pub fn path(&self) -> &Path
-	{
-		&self.path
 	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
@@ -203,7 +196,7 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<
 			mat_path.display()
 		);
 
-		let mut deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
+		let deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
 
 		Ok(deserialized_mat)
 	} else {

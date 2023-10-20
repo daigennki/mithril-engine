@@ -288,7 +288,7 @@ struct PipelineSamplerConfig
 {
 	set: usize,
 	binding: u32,
-	mag_linear: bool,
+	/*mag_linear: bool,*/
 }
 
 #[derive(Deserialize)]

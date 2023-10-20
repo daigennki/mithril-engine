@@ -63,10 +63,10 @@ impl ColorInput
 	}
 }
 
-/// A representation of the possible shader greyscale inputs, like those on the shader nodes in Blender.
+/*/// A representation of the possible shader greyscale inputs, like those on the shader nodes in Blender.
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum SingleChannelInput
+pub enum SingleChannelInput
 {
 	Value(f32),
 	Texture(PathBuf),
@@ -83,4 +83,5 @@ impl SingleChannelInput
 			SingleChannelInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
 	}
-}
+}*/
+
