@@ -22,12 +22,15 @@ use simplelog::*;
 use std::fs::File;
 use std::path::PathBuf;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
+use winit::event::{Event, WindowEvent};
+use winit_input_helper::WinitInputHelper;
 
+use component::EntityComponent;
 use component::camera::{Camera, CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
 use render::RenderContext;
+use mithrilengine_derive::EntityComponent;
 
 #[cfg(feature = "egui")]
 use egui_renderer::EguiRenderer;
@@ -37,13 +40,19 @@ type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 #[derive(shipyard::Component)]
 struct FpsCounter;
 
+#[derive(shipyard::Component, Deserialize, EntityComponent)]
+struct CameraController;
+
+#[derive(shipyard::Unique)]
+struct InputHelperWrapper
+{
+	pub inner: WinitInputHelper,
+}
+
 struct GameContext
 {
 	//pref_path: String,
 	world: World,
-
-	/*right_mouse_button_pressed: bool,
-	camera_rotation: Vec3,*/
 
 	#[cfg(feature = "egui")]
 	egui_renderer: EguiRenderer,
@@ -83,15 +92,15 @@ impl GameContext
 
 		// add some UI entities for testing
 		world.add_entity((
-				component::ui::Transform { 
-					pos: IVec2::new(500, -320),
-					scale: None
-				},
-				component::ui::text::Text {
-					text_str: "0 fps".to_string(),
-					size: 32.0,
-				},
-				FpsCounter {},
+			component::ui::Transform {
+				pos: IVec2::new(500, -320),
+				scale: None
+			},
+			component::ui::text::Text {
+				text_str: "0 fps".to_string(),
+				size: 32.0,
+			},
+			FpsCounter {},
 		));
 
 		// TODO: give the user a way to specify a skybox through the YAML map file
@@ -102,6 +111,7 @@ impl GameContext
 		world.add_unique(render_ctx);
 		world.add_unique(component::TransformManager::default());
 		world.add_unique(component::mesh::MeshManager::default());
+		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
 
 		Ok(GameContext {
 			//pref_path,
@@ -109,14 +119,15 @@ impl GameContext
 
 			#[cfg(feature = "egui")]
 			egui_renderer,
-
-			/*right_mouse_button_pressed: false,
-			camera_rotation: Vec3::ZERO,*/
 		})
 	}
 
 	pub fn handle_event(&mut self, event: &mut Event<()>) -> Result<(), GenericEngineError>
 	{
+		self.world.run(|mut input_helper_wrapper: UniqueViewMut<InputHelperWrapper>| {
+			input_helper_wrapper.inner.update(event);
+		});
+
 		match event {
 			Event::WindowEvent { event, .. } => {
 				match event {
@@ -148,40 +159,6 @@ impl GameContext
 				#[cfg(feature = "egui")]
 				self.egui_renderer.update(event);
 			}
-			/*Event::DeviceEvent {
-				event: DeviceEvent::Button { button: 1, state },
-				..
-			} => {
-				self.right_mouse_button_pressed = match state {
-					ElementState::Pressed => true,
-					ElementState::Released => false,
-				};
-			}
-			Event::DeviceEvent {
-				event: DeviceEvent::MouseMotion { delta },
-				..
-			} => {
-				if self.right_mouse_button_pressed {
-					let sensitivity = 0.05;
-					self.camera_rotation.z += (sensitivity * delta.0) as f32;
-					while self.camera_rotation.z >= 360.0 || self.camera_rotation.z <= -360.0 {
-						self.camera_rotation.z %= 360.0;
-					}
-
-					self.camera_rotation.x += (-sensitivity * delta.1) as f32;
-					self.camera_rotation.x = self.camera_rotation.x.clamp(-80.0, 80.0);
-
-					let rot_rad = self.camera_rotation * std::f32::consts::PI / 180.0;
-					let rot_quat = Quat::from_euler(EulerRot::ZYX, rot_rad.z, rot_rad.y, rot_rad.x);
-					let rotated = rot_quat.mul_vec3(Vec3::new(0.0, 1.0, 0.0));
-					let pos = Vec3::new(0.0, 0.0, 3.0);
-					let target = pos + rotated;
-					let (mut render_ctx, mut camera) = self
-						.world
-						.borrow::<(UniqueViewMut<_>, UniqueViewMut<Camera>)>()?;
-					camera.set_pos_and_target(pos, target, &mut render_ctx)?;
-				}
-			}*/
 			Event::MainEventsCleared => {
 				self.world.run_default()?; // main rendering (build the secondary command buffers)
 				self.draw_debug()?;
@@ -230,6 +207,7 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 	// This will become the default workload, as the docs say:
 	// > The default workload will automatically be set to the first workload added.
 	Workload::new("Render loop")
+		.with_system(update_controllable_camera)
 		.with_system(update_fps_counter)
 		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
@@ -245,7 +223,8 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 fn update_fps_counter(
 	render_ctx: UniqueView<RenderContext>, 
 	mut texts: ViewMut<ui::text::Text>, 
-	fps_counter: View<FpsCounter>)
+	fps_counter: View<FpsCounter>,
+)
 {
 	for (mut text_component, _) in (&mut texts, &fps_counter).iter() {
 		// update the fps counter's text
@@ -253,6 +232,30 @@ fn update_fps_counter(
 		let fps = 1.0 / delta_time.max(0.000001);
 		let delta_ms = 1000.0 * delta_time;
 		text_component.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
+	}
+}
+
+fn update_controllable_camera(
+	input_helper_wrapper: UniqueView<InputHelperWrapper>,
+	mut transforms: ViewMut<component::Transform>,
+	cameras: View<component::camera::Camera>,
+	camera_controller: View<CameraController>,
+)
+{
+	let input_helper = &input_helper_wrapper.inner;
+	if input_helper.mouse_held(1) {
+		let delta = input_helper.mouse_diff();
+
+		for (mut transform, _, _) in (&mut transforms, &cameras, &camera_controller).iter() {
+			let sensitivity = 0.05;
+			transform.rotation.z += (sensitivity * delta.0) as f32;
+			while transform.rotation.z >= 360.0 || transform.rotation.z <= -360.0 {
+				transform.rotation.z %= 360.0;
+			}
+
+			transform.rotation.x += (-sensitivity * delta.1) as f32;
+			transform.rotation.x = transform.rotation.x.clamp(-80.0, 80.0);
+		}
 	}
 }
 

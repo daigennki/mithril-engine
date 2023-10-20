@@ -8,6 +8,8 @@ entities:
       rotation: [0.0, 0.0, -90.0]
   - Camera:
       
+  - CameraController:
+      
 - 
   - Transform:
       position: [0.0, 0.0, 0.0]
