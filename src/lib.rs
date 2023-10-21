@@ -16,16 +16,17 @@ use glam::*;
 use serde::Deserialize;
 use shipyard::{
 	iter::{IntoIter, IntoWithId},
-	Get, UniqueView, UniqueViewMut, View, ViewMut, Workload, World,
+	Get, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadSystem, World,
 };
 use simplelog::*;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
-use component::EntityComponent;
+use component::{EntityComponent, WantsSystemAdded};
 use component::camera::{Camera, CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
@@ -42,6 +43,36 @@ struct FpsCounter;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 struct CameraController;
+impl WantsSystemAdded for CameraController
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		Some((std::any::TypeId::of::<Self>(), update_controllable_camera.into_workload_system().unwrap()))
+	}
+}
+fn update_controllable_camera(
+	input_helper_wrapper: UniqueView<InputHelperWrapper>,
+	mut transforms: ViewMut<component::Transform>,
+	cameras: View<component::camera::Camera>,
+	camera_controller: View<CameraController>,
+) 
+{
+	let input_helper = &input_helper_wrapper.inner;
+	if input_helper.mouse_held(1) {
+		let delta = input_helper.mouse_diff();
+
+		for (mut transform, _, _) in (&mut transforms, &cameras, &camera_controller).iter() {
+			let sensitivity = 0.05;
+			transform.rotation.z += (sensitivity * delta.0) as f32;
+			while transform.rotation.z >= 360.0 || transform.rotation.z <= -360.0 {
+				transform.rotation.z %= 360.0;
+			}
+
+			transform.rotation.x += (-sensitivity * delta.1) as f32;
+			transform.rotation.x = transform.rotation.x.clamp(-80.0, 80.0);
+		}
+	}
+}
 
 #[derive(shipyard::Unique)]
 struct InputHelperWrapper
@@ -160,24 +191,27 @@ impl GameContext
 				self.egui_renderer.update(event);
 			}
 			Event::MainEventsCleared => {
-				self.world.run_default()?; // main rendering (build the secondary command buffers)
-				self.draw_debug()?;
-				self.world
-					.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_frame())?;
+				if self.world.contains_workload("Game logic") {
+					self.world.run_workload("Game logic")?;
+				}
+
+				self.world.run_workload("Render")?; // main rendering (build the secondary command buffers)
+				//self.draw_debug()?;
+				self.world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_frame())?;
 			}
 			_ => (),
 		}
 		Ok(())
 	}
 
-	/// Draw some debug stuff, mostly GUI overlays.
+	/*/// Draw some debug stuff, mostly GUI overlays.
 	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
 	{
 		#[cfg(feature = "egui")]
 		self.egui_renderer.draw(&mut self.world)?;
 
 		Ok(())
-	}
+	}*/
 }
 
 #[derive(Deserialize)]
@@ -185,17 +219,38 @@ struct WorldData
 {
 	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
-impl Into<World> for WorldData
+impl WorldData
 {
 	fn into(self) -> World
 	{
 		let mut world = World::new();
+		let mut systems = BTreeMap::new();
+
 		for entity in self.entities {
 			let eid = world.add_entity(());
 			for component in entity {
+				// add the relevant system if the component returns one
+				if let Some((type_id, add_system)) = component.add_system() {
+					if !systems.contains_key(&type_id) {
+						systems.insert(type_id, add_system);
+						log::debug!("inserted system for {:?}", type_id);
+					}
+				}
+
 				component.add_to_entity(&mut world, eid);
 			}
 		}
+
+		if systems.len() > 0 {
+			let mut workload = Workload::new("Game logic");
+			for (_, system) in systems {
+				workload = workload.with_system(system);
+			}
+			if let Err(e) = workload.add_to_world(&world) {
+				log::error!("Failed to add game logic workload to world: {}", e);
+			}
+		}
+		
 		world
 	}
 }
@@ -204,10 +259,7 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
 	let world: World = world_data.into();
 
-	// This will become the default workload, as the docs say:
-	// > The default workload will automatically be set to the first workload added.
-	Workload::new("Render loop")
-		.with_system(update_controllable_camera)
+	Workload::new("Render")
 		.with_system(update_fps_counter)
 		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
@@ -234,31 +286,6 @@ fn update_fps_counter(
 		text_component.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
 	}
 }
-
-fn update_controllable_camera(
-	input_helper_wrapper: UniqueView<InputHelperWrapper>,
-	mut transforms: ViewMut<component::Transform>,
-	cameras: View<component::camera::Camera>,
-	camera_controller: View<CameraController>,
-)
-{
-	let input_helper = &input_helper_wrapper.inner;
-	if input_helper.mouse_held(1) {
-		let delta = input_helper.mouse_diff();
-
-		for (mut transform, _, _) in (&mut transforms, &cameras, &camera_controller).iter() {
-			let sensitivity = 0.05;
-			transform.rotation.z += (sensitivity * delta.0) as f32;
-			while transform.rotation.z >= 360.0 || transform.rotation.z <= -360.0 {
-				transform.rotation.z %= 360.0;
-			}
-
-			transform.rotation.x += (-sensitivity * delta.1) as f32;
-			transform.rotation.x = transform.rotation.x.clamp(-80.0, 80.0);
-		}
-	}
-}
-
 
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,

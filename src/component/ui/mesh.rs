@@ -5,7 +5,10 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
+use shipyard::WorkloadSystem;
 use std::path::PathBuf;
+
+use crate::component::WantsSystemAdded;
 
 #[derive(Clone, Copy)]
 pub enum MeshType 
@@ -28,10 +31,14 @@ impl Default for MeshType
 pub struct Mesh
 {
 	pub mesh_type: MeshType,
-
-	// Leave this empty if the image is set by another component, such as `Text`.
-	// This has no effect (image is overridden) if another component like `Text` sets the image.
 	pub image_path: PathBuf,
+}
+impl WantsSystemAdded for Mesh
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		None
+	}
 }
 /*impl Mesh
 {

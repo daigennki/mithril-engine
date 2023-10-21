@@ -11,7 +11,7 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::EntityId;
+use shipyard::{EntityId, WorkloadSystem};
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use vulkano::buffer::{BufferUsage, Subbuffer};
@@ -48,6 +48,14 @@ impl Transform
 		Mat4::from_scale_rotation_translation(self.scale, rot_quat, self.position)
 	}
 }
+impl WantsSystemAdded for Transform
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		 None
+	}
+}
+
 /*impl Transform
 {
 	/// Show the egui collapsing header for this component.
@@ -125,9 +133,20 @@ impl Default for TransformManager
 	}
 }
 
+/// The trait that every component to be used in a map file must implement.
+/// This allows a deserialized component to add itself to the world, so that it can be
+/// deserialized as `Box<dyn EntityComponent>` but still keep its concrete type in the world.
 #[typetag::deserialize]
-pub trait EntityComponent: Send + Sync
+pub trait EntityComponent: WantsSystemAdded + Send + Sync
 {
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
+}
+
+/// The trait that allows components to return a system relevant to themselves, which will be run every tick.
+/// It must also return its own `TypeId`, so that the same system doesn't get added multiple times.
+/// Every `EntityComponent` must also have this trait implemented, even if it doesn't need to add any systems.
+pub trait WantsSystemAdded
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>;
 }
 

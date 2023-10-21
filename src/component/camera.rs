@@ -7,9 +7,9 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::EntityId;
+use shipyard::{EntityId, WorkloadSystem};
 
-use crate::component::EntityComponent;
+use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
 use crate::GenericEngineError;
 
@@ -34,6 +34,13 @@ pub struct Camera
 	/// This camera's field of view.
 	/// If this is `None`, then the `CameraManager`'s default FoV will be used instead.
 	pub fov: Option<CameraFov>,
+}
+impl WantsSystemAdded for Camera
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		None
+	}
 }
 
 #[derive(shipyard::Unique)]

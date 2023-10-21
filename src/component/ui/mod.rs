@@ -10,7 +10,10 @@ pub mod mesh;
 pub mod text;
 
 use glam::*;
+use shipyard::WorkloadSystem;
 use std::path::Path;
+
+use crate::component::WantsSystemAdded;
 
 #[derive(Default, shipyard::Component)]
 #[track(All)]
@@ -20,6 +23,13 @@ pub struct Transform
 	pub scale: Option<Vec2>,	// leave as `None` to use scale from image of another component
 
 	// TODO: parent-child relationship
+}
+impl WantsSystemAdded for Transform
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		None
+	}
 }
 
 /// Convenience function: create a tuple of `Transform` and `Mesh` to display an image loaded from a file on the UI.

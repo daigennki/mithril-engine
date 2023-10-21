@@ -7,7 +7,7 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::EntityId;
+use shipyard::{EntityId, WorkloadSystem};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use vulkano::pipeline::PipelineLayout;
 #[cfg(feature = "egui")]
 use egui_winit_vulkano::egui;
 
-use crate::component::EntityComponent;
+use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::material::{/*pbr::PBR, ColorInput,*/ Material};
 use crate::render::{model::Model, RenderContext};
 use crate::GenericEngineError;
@@ -56,6 +56,13 @@ pub struct Mesh
 		Ok(())
 	}
 }*/
+impl WantsSystemAdded for Mesh
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		None
+	}
+}
 
 /// A single manager that manages the GPU resources for all `Mesh` components.
 #[derive(shipyard::Unique)]
