@@ -85,7 +85,7 @@ impl Canvas
 	fn update_transform(
 		&mut self,
 		render_ctx: &mut RenderContext,
-		transform: &super::Transform,
+		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
 		image_dimensions: Vec2,
 	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
@@ -93,7 +93,7 @@ impl Canvas
 		let projected = self.projection * Mat4::from_scale_rotation_translation(
 			transform.scale.unwrap_or(image_dimensions).extend(0.0), 
 			Quat::IDENTITY, 
-			transform.pos.as_vec2().extend(0.0)
+			transform.position.as_vec2().extend(0.0)
 		);
 		let buf = render_ctx.new_immutable_buffer_from_data(projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
 		let set = render_ctx.new_descriptor_set("UI", 0, [
@@ -110,12 +110,12 @@ impl Canvas
 		&mut self, 
 		render_ctx: &mut RenderContext, 
 		eid: EntityId,
-		transform: &super::Transform,
+		transform: &super::UITransform,
 		mesh: &super::mesh::Mesh,
 	) -> Result<(), GenericEngineError>
 	{
 		// Only actually do something if the `Mesh` is supposed to use an image file (path is not empty), 
-		// rather than a texture set by another component like `Text`.
+		// rather than a texture set by another component like `UIText`.
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
 			let tex_dimensions = tex.dimensions();
@@ -129,14 +129,14 @@ impl Canvas
 		Ok(())
 	}
 
-	/// Update the GPU resources for entities with a `Text` component.
+	/// Update the GPU resources for entities with a `UIText` component.
 	/// Call this whenever the component has been inserted or modified.
 	pub fn update_text(
 		&mut self,
 		render_ctx: &mut RenderContext,
 		eid: EntityId,
-		transform: &super::Transform,
-		text: &super::text::Text,
+		transform: &super::UITransform,
+		text: &super::text::UIText,
 	) -> Result<(), GenericEngineError>
 	{
 		let text_image = text_to_image(&text.text_str, &self.default_font, text.size)?;

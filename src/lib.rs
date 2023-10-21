@@ -38,8 +38,29 @@ use egui_renderer::EguiRenderer;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
-#[derive(shipyard::Component)]
+#[derive(shipyard::Component, Deserialize, EntityComponent)]
 struct FpsCounter;
+impl WantsSystemAdded for FpsCounter
+{
+	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	{
+		Some((std::any::TypeId::of::<Self>(), update_fps_counter.into_workload_system().unwrap()))
+	}
+}
+fn update_fps_counter(
+	render_ctx: UniqueView<RenderContext>,
+	mut texts: ViewMut<ui::text::UIText>,
+	fps_counter: View<FpsCounter>,
+)
+{
+	for (mut text_component, _) in (&mut texts, &fps_counter).iter() {
+		// update the fps counter's text
+		let delta_time = render_ctx.delta().as_secs_f64();
+		let fps = 1.0 / delta_time.max(0.000001);
+		let delta_ms = 1000.0 * delta_time;
+		text_component.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
+	}
+}
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 struct CameraController;
@@ -75,7 +96,7 @@ fn update_controllable_camera(
 }
 
 #[derive(shipyard::Unique)]
-struct InputHelperWrapper
+pub struct InputHelperWrapper
 {
 	pub inner: WinitInputHelper,
 }
@@ -107,7 +128,7 @@ impl GameContext
 		render_ctx.load_material_pipeline("UI.yaml")?;
 		render_ctx.load_material_pipeline("PBR.yaml")?;
 
-		let mut world = load_world(start_map)?;
+		let world = load_world(start_map)?;
 
 		#[cfg(feature = "egui")]
 		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
@@ -120,19 +141,6 @@ impl GameContext
 				camera_manager.set_active(eid);
 			}
 		});
-
-		// add some UI entities for testing
-		world.add_entity((
-			component::ui::Transform {
-				pos: IVec2::new(500, -320),
-				scale: None
-			},
-			component::ui::text::Text {
-				text_str: "0 fps".to_string(),
-				size: 32.0,
-			},
-			FpsCounter {},
-		));
 
 		// TODO: give the user a way to specify a skybox through the YAML map file
 		let dim = render_ctx.swapchain_dimensions();
@@ -260,7 +268,6 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 	let world: World = world_data.into();
 
 	Workload::new("Render")
-		.with_system(update_fps_counter)
 		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
 		.with_try_system(draw_3d)
@@ -270,21 +277,6 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 		.add_to_world(&world)?;
 
 	Ok(world)
-}
-
-fn update_fps_counter(
-	render_ctx: UniqueView<RenderContext>, 
-	mut texts: ViewMut<ui::text::Text>, 
-	fps_counter: View<FpsCounter>,
-)
-{
-	for (mut text_component, _) in (&mut texts, &fps_counter).iter() {
-		// update the fps counter's text
-		let delta_time = render_ctx.delta().as_secs_f64();
-		let fps = 1.0 / delta_time.max(0.000001);
-		let delta_ms = 1000.0 * delta_time;
-		text_component.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
-	}
 }
 
 fn prepare_primary_render(
@@ -317,9 +309,9 @@ fn prepare_primary_render(
 fn prepare_ui(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	mut canvas: UniqueViewMut<Canvas>,
-	ui_transforms: View<ui::Transform>,
+	ui_transforms: View<ui::UITransform>,
 	ui_meshes: View<ui::mesh::Mesh>,
-	ui_texts: View<ui::text::Text>,
+	ui_texts: View<ui::text::UIText>,
 ) -> Result<(), GenericEngineError>
 {
 	if render_ctx.window_resized() {
@@ -451,7 +443,7 @@ fn draw_3d_transparent(
 fn draw_ui(
 	render_ctx: UniqueView<render::RenderContext>,
 	canvas: UniqueView<ui::canvas::Canvas>,
-	ui_transforms: View<ui::Transform>,
+	ui_transforms: View<ui::UITransform>,
 	//ui_meshes: View<ui::mesh::Mesh>,
 	//texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>

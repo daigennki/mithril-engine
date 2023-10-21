@@ -1,6 +1,14 @@
 uniques:
 
 entities:
+-
+  - UITransform:
+      position: [500, -320]
+  - UIText:
+      text_str: "0 fps"
+      size: 32.0
+  - FpsCounter:
+      
 - 
   - Transform:
       position: [-13.0, -2.0, 3.0]

@@ -10,21 +10,21 @@ pub mod mesh;
 pub mod text;
 
 use glam::*;
+use serde::Deserialize;
 use shipyard::WorkloadSystem;
-use std::path::Path;
 
-use crate::component::WantsSystemAdded;
+use crate::component::{EntityComponent, WantsSystemAdded};
 
-#[derive(Default, shipyard::Component)]
+#[derive(Default, shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
-pub struct Transform
+pub struct UITransform
 {
-	pub pos: IVec2,
+	pub position: IVec2,
 	pub scale: Option<Vec2>,	// leave as `None` to use scale from image of another component
 
 	// TODO: parent-child relationship
 }
-impl WantsSystemAdded for Transform
+impl WantsSystemAdded for UITransform
 {
 	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
 	{
@@ -32,23 +32,3 @@ impl WantsSystemAdded for Transform
 	}
 }
 
-/// Convenience function: create a tuple of `Transform` and `Mesh` to display an image loaded from a file on the UI.
-pub fn new_image(path: &Path, pos: IVec2) -> (Transform, mesh::Mesh)
-{
-	let img_transform = Transform { pos, scale: None };
-	let img_mesh = mesh::Mesh {
-		image_path: path.to_path_buf(),
-		..Default::default()
-	};
-
-	(img_transform, img_mesh)
-}
-
-/// Convenience function: create a tuple of `Transform` and `Text` to display text.
-pub fn new_text(text_str: String, size: f32, pos: IVec2) -> (Transform, text::Text)
-{
-	let transform = Transform { pos, scale: None };
-	let text_component = text::Text { text_str, size };
-
-	(transform, text_component)
-}
