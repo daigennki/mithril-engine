@@ -140,48 +140,39 @@ impl GameContext
 #[derive(Deserialize)]
 struct WorldData
 {
-	sky: String,
-	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
-}
-impl WorldData
-{
-	fn into_world(self) -> (World, String)
-	{
-		let mut world = World::new();
-		let mut systems = BTreeMap::new();
-
-		for entity in self.entities {
-			let eid = world.add_entity(());
-			for component in entity {
-				// add the relevant system if the component returns one
-				if let Some((type_id, add_system)) = component.add_system() {
-					if !systems.contains_key(&type_id) {
-						systems.insert(type_id, add_system);
-						log::debug!("inserted system for {:?}", type_id);
-					}
-				}
-
-				component.add_to_entity(&mut world, eid);
-			}
-		}
-
-		if systems.len() > 0 {
-			let mut workload = Workload::new("Game logic");
-			for (_, system) in systems {
-				workload = workload.with_system(system);
-			}
-			if let Err(e) = workload.add_to_world(&world) {
-				log::error!("Failed to add game logic workload to world: {}", e);
-			}
-		}
-		
-		(world, self.sky)
-	}
+	pub sky: String,
+	pub entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
 fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 {
 	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
-	let (world, sky) = world_data.into_world();
+	let mut world = World::new();
+	let mut systems = BTreeMap::new();
+
+	for entity in world_data.entities {
+		let eid = world.add_entity(());
+		for component in entity {
+			// add the relevant system if the component returns one
+			if let Some((type_id, add_system)) = component.add_system() {
+				if !systems.contains_key(&type_id) {
+					systems.insert(type_id, add_system);
+					log::debug!("inserted system for {:?}", type_id);
+				}
+			}
+
+			component.add_to_entity(&mut world, eid);
+		}
+	}
+
+	if systems.len() > 0 {
+		let mut workload = Workload::new("Game logic");
+		for (_, system) in systems {
+			workload = workload.with_system(system);
+		}
+		if let Err(e) = workload.add_to_world(&world) {
+			log::error!("Failed to add game logic workload to world: {}", e);
+		}
+	}
 
 	Workload::new("Render")
 		.with_try_system(prepare_primary_render)
@@ -193,7 +184,7 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		.with_try_system(submit_frame)
 		.add_to_world(&world)?;
 
-	Ok((world, sky))
+	Ok((world, world_data.sky))
 }
 
 fn prepare_primary_render(
