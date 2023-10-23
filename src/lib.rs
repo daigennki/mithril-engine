@@ -6,18 +6,15 @@
 ----------------------------------------------------------------------------- */
 
 pub mod component;
-mod material;
-mod render;
+pub mod material;
+pub mod render;
 
 #[cfg(feature = "egui")]
 mod egui_renderer;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{
-	iter::{IntoIter, IntoWithId},
-	Get, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, ViewMut, Workload, WorkloadSystem, World,
-};
+use shipyard::{iter::{IntoIter, IntoWithId}, Get, UniqueView, UniqueViewMut, View, Workload, World};
 use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -26,41 +23,15 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
-use component::{EntityComponent, WantsSystemAdded};
 use component::camera::{Camera, CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
 use render::RenderContext;
-use mithrilengine_derive::EntityComponent;
 
 #[cfg(feature = "egui")]
 use egui_renderer::EguiRenderer;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
-
-#[derive(shipyard::Component, Deserialize, EntityComponent)]
-struct FpsCounter;
-impl WantsSystemAdded for FpsCounter
-{
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
-	{
-		Some((std::any::TypeId::of::<Self>(), update_fps_counter.into_workload_system().unwrap()))
-	}
-}
-fn update_fps_counter(
-	render_ctx: UniqueView<RenderContext>,
-	mut texts: ViewMut<ui::text::UIText>,
-	fps_counter: View<FpsCounter>,
-)
-{
-	for (mut text_component, _) in (&mut texts, &fps_counter).iter() {
-		// update the fps counter's text
-		let delta_time = render_ctx.delta().as_secs_f64();
-		let fps = 1.0 / delta_time.max(0.000001);
-		let delta_ms = 1000.0 * delta_time;
-		text_component.text_str = format!("{:.0} fps ({:.1} ms)", fps, delta_ms);
-	}
-}
 
 #[derive(shipyard::Unique)]
 pub struct InputHelperWrapper
