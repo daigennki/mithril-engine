@@ -43,9 +43,6 @@ struct GameContext
 {
 	//pref_path: String,
 	world: World,
-
-	#[cfg(feature = "egui")]
-	egui_renderer: EguiRenderer,
 }
 impl GameContext
 {
@@ -67,9 +64,6 @@ impl GameContext
 		render_ctx.load_material_pipeline("PBR.yaml")?;
 
 		let world = load_world(start_map)?;
-
-		#[cfg(feature = "egui")]
-		let egui_renderer = EguiRenderer::new(&mut render_ctx, event_loop);
 
 		let mut camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
 		world.run(|cameras: View<Camera>| {
@@ -93,9 +87,6 @@ impl GameContext
 		Ok(GameContext {
 			//pref_path,
 			world,
-
-			#[cfg(feature = "egui")]
-			egui_renderer,
 		})
 	}
 
@@ -132,32 +123,19 @@ impl GameContext
 					}
 					_ => (),
 				}
-
-				#[cfg(feature = "egui")]
-				self.egui_renderer.update(event);
 			}
 			Event::MainEventsCleared => {
 				if self.world.contains_workload("Game logic") {
 					self.world.run_workload("Game logic")?;
 				}
 
-				self.world.run_workload("Render")?; // main rendering (build the secondary command buffers)
-				//self.draw_debug()?;
-				self.world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_frame())?;
+				// main rendering: build the command buffers, then submit them for presentation
+				self.world.run_workload("Render")?;
 			}
 			_ => (),
 		}
 		Ok(())
 	}
-
-	/*/// Draw some debug stuff, mostly GUI overlays.
-	fn draw_debug(&mut self) -> Result<(), GenericEngineError>
-	{
-		#[cfg(feature = "egui")]
-		self.egui_renderer.draw(&mut self.world)?;
-
-		Ok(())
-	}*/
 }
 
 #[derive(Deserialize)]
@@ -212,6 +190,7 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 		.with_try_system(draw_3d_transparent_moments)
 		.with_try_system(draw_3d_transparent)
 		.with_try_system(draw_ui)
+		.with_try_system(submit_frame)
 		.add_to_world(&world)?;
 
 	Ok(world)
@@ -399,6 +378,10 @@ fn draw_ui(
 
 	render_ctx.add_ui_cb(command_buffer.build()?);
 	Ok(())
+}
+fn submit_frame(mut render_ctx: UniqueViewMut<render::RenderContext>) -> Result<(), GenericEngineError>
+{
+	render_ctx.submit_frame()
 }
 
 /// Run the game. This should go in your `main.rs`.
