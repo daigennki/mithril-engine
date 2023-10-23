@@ -1,5 +1,4 @@
-uniques:
-
+sky: "sky/Daylight Box_*.png"
 entities:
 -
   - UITransform:
@@ -25,33 +24,33 @@ entities:
       rotation: [0.0, 0.0, 0.0]
       is_static: true
   - Mesh:
-      model_path: examples/small_island/models/modular_terrain_island.glb
+      model_path: "examples/small_island/models/modular_terrain_island.glb"
 - 
   - Transform:
       position: [-9.7, -2.0, 3.0 ]
       scale: [0.5, 0.5, 0.5]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/small_island/models/cube_blue.glb
+      model_path: "examples/small_island/models/cube_blue.glb"
 - 
   - Transform:
       position: [-10.0, -1.5, 2.25 ]
       scale: [0.5, 0.5, 0.5]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/small_island/models/cube_red.glb
+      model_path: "examples/small_island/models/cube_red.glb"
 - 
   - Transform:
       position: [-8.0, -2.75, 2.5 ]
       scale: [0.5, 0.5, 0.5]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/small_island/models/cube_yellow.glb
+      model_path: "examples/small_island/models/cube_yellow.glb"
 - 
   - Transform:
       position: [-7.0, -1.25, 3.5 ]
       scale: [0.5, 0.5, 0.5]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/small_island/models/cube_green.glb
+      model_path: "examples/small_island/models/cube_green.glb"
 

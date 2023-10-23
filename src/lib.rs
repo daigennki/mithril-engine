@@ -63,7 +63,7 @@ impl GameContext
 		render_ctx.load_material_pipeline("UI.yaml")?;
 		render_ctx.load_material_pipeline("PBR.yaml")?;
 
-		let world = load_world(start_map)?;
+		let (world, sky) = load_world(start_map)?;
 
 		let mut camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
 		world.run(|cameras: View<Camera>| {
@@ -74,10 +74,9 @@ impl GameContext
 			}
 		});
 
-		// TODO: give the user a way to specify a skybox through the YAML map file
 		let dim = render_ctx.swapchain_dimensions();
 		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
-		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, "sky/Daylight Box_*.png".into())?);
+		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 		world.add_unique(camera_manager);
 		world.add_unique(render_ctx);
 		world.add_unique(component::TransformManager::default());
@@ -141,11 +140,12 @@ impl GameContext
 #[derive(Deserialize)]
 struct WorldData
 {
+	sky: String,
 	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
 impl WorldData
 {
-	fn into(self) -> World
+	fn into_world(self) -> (World, String)
 	{
 		let mut world = World::new();
 		let mut systems = BTreeMap::new();
@@ -175,13 +175,13 @@ impl WorldData
 			}
 		}
 		
-		world
+		(world, self.sky)
 	}
 }
-fn load_world(file: &str) -> Result<World, GenericEngineError>
+fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 {
 	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
-	let world: World = world_data.into();
+	let (world, sky) = world_data.into_world();
 
 	Workload::new("Render")
 		.with_try_system(prepare_primary_render)
@@ -193,7 +193,7 @@ fn load_world(file: &str) -> Result<World, GenericEngineError>
 		.with_try_system(submit_frame)
 		.add_to_world(&world)?;
 
-	Ok(world)
+	Ok((world, sky))
 }
 
 fn prepare_primary_render(
