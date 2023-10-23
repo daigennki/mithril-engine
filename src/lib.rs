@@ -153,7 +153,8 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		let eid = world.add_entity(());
 		for component in entity {
 			// add the relevant system if the component returns one
-			if let Some((type_id, add_system)) = component.add_system() {
+			if let Some(add_system) = component.add_system() {
+				let type_id = component.type_id();
 				if !systems.contains_key(&type_id) {
 					systems.insert(type_id, add_system);
 					log::debug!("inserted system for {:?}", type_id);

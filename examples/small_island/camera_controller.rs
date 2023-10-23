@@ -9,9 +9,9 @@ use mithrilengine_derive::EntityComponent;
 struct CameraController;
 impl WantsSystemAdded for CameraController
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
-		Some((std::any::TypeId::of::<Self>(), update_controllable_camera.into_workload_system().unwrap()))
+		Some(update_controllable_camera.into_workload_system().unwrap())
 	}
 }
 fn update_controllable_camera(

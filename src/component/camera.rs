@@ -37,7 +37,7 @@ pub struct Camera
 }
 impl WantsSystemAdded for Camera
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
 		None
 	}

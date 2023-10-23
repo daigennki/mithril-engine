@@ -50,9 +50,9 @@ impl Transform
 }
 impl WantsSystemAdded for Transform
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
-		Some((std::any::TypeId::of::<Self>(), update_transforms.into_workload_system().unwrap()))
+		Some(update_transforms.into_workload_system().unwrap())
 	}
 }
 fn update_transforms(
@@ -152,10 +152,11 @@ impl Default for TransformManager
 pub trait EntityComponent: WantsSystemAdded + Send + Sync
 {
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
+
+	fn type_id(&self) -> std::any::TypeId;
 }
 
 /// The trait that allows components to return a system relevant to themselves, which will be run every tick.
-/// It must also return its own `TypeId`, so that the same system doesn't get added multiple times.
 /// Every `EntityComponent` must also have this trait implemented, even if it doesn't need to add any systems.
 ///
 /// NOTE: The caveat with this is that the system will only be added if the component is specified in the map file!
@@ -163,6 +164,6 @@ pub trait EntityComponent: WantsSystemAdded + Send + Sync
 /// system added even when the component is added through the program)
 pub trait WantsSystemAdded
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>;
+	fn add_system(&self) -> Option<WorkloadSystem>;
 }
 

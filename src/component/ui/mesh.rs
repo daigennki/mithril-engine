@@ -35,7 +35,7 @@ pub struct Mesh
 }
 impl WantsSystemAdded for Mesh
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
 		None
 	}

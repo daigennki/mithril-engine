@@ -58,9 +58,9 @@ pub struct Mesh
 }*/
 impl WantsSystemAdded for Mesh
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
-		Some((std::any::TypeId::of::<Self>(), update_meshes.into_workload_system().unwrap()))
+		Some(update_meshes.into_workload_system().unwrap())
 	}
 }
 fn update_meshes(

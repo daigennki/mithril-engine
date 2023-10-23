@@ -26,7 +26,7 @@ pub struct UITransform
 }
 impl WantsSystemAdded for UITransform
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
 		None
 	}

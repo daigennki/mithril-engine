@@ -10,9 +10,9 @@ use mithrilengine_derive::EntityComponent;
 struct FpsCounter;
 impl WantsSystemAdded for FpsCounter
 {
-	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
+	fn add_system(&self) -> Option<WorkloadSystem>
 	{
-		Some((std::any::TypeId::of::<Self>(), update_fps_counter.into_workload_system().unwrap()))
+		Some(update_fps_counter.into_workload_system().unwrap())
 	}
 }
 fn update_fps_counter(
