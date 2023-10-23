@@ -11,7 +11,7 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{EntityId, WorkloadSystem};
+use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use vulkano::buffer::{BufferUsage, Subbuffer};
@@ -52,7 +52,19 @@ impl WantsSystemAdded for Transform
 {
 	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
 	{
-		 None
+		Some((std::any::TypeId::of::<Self>(), update_transforms.into_workload_system().unwrap()))
+	}
+}
+fn update_transforms(
+	mut render_ctx: UniqueViewMut<RenderContext>,
+	mut transform_manager: UniqueViewMut<TransformManager>,
+	transforms: View<Transform>,
+)
+{
+	for (eid, t) in transforms.inserted_or_modified().iter().with_id() {
+		if let Err(e) = transform_manager.update(&mut render_ctx, eid, t) {
+			log::error!("Failed to run `TransformManager::update`: {}", e);
+		}
 	}
 }
 

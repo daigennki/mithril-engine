@@ -189,28 +189,17 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 
 fn prepare_primary_render(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
-	mut transform_manager: UniqueViewMut<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mut camera_manager: UniqueViewMut<CameraManager>,
 	cameras: View<Camera>,
-	mut mesh_manager: UniqueViewMut<component::mesh::MeshManager>,
-	meshes: View<component::mesh::Mesh>,
-) -> Result<(), GenericEngineError>
+	) -> Result<(), GenericEngineError>
 {
-	for (eid, t) in transforms.inserted_or_modified().iter().with_id() {
-		transform_manager.update(&mut render_ctx, eid, t)?;
-	}
-
-	for (eid, mesh) in meshes.inserted().iter().with_id() {
-		mesh_manager.load(&mut render_ctx, eid, mesh)?;
-	}
-
-	// TODO: clean up removed components
-
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
 		camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov)?;
 	}
+
+	// TODO: clean up removed components
 
 	Ok(())
 }

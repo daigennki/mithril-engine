@@ -7,7 +7,7 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{EntityId, WorkloadSystem};
+use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,7 +60,19 @@ impl WantsSystemAdded for Mesh
 {
 	fn add_system(&self) -> Option<(std::any::TypeId, WorkloadSystem)>
 	{
-		None
+		Some((std::any::TypeId::of::<Self>(), update_meshes.into_workload_system().unwrap()))
+	}
+}
+fn update_meshes(
+	mut render_ctx: UniqueViewMut<RenderContext>,
+	mut mesh_manager: UniqueViewMut<MeshManager>,
+	meshes: View<Mesh>,
+)
+{
+	for (eid, mesh) in meshes.inserted().iter().with_id() {
+		if let Err(e) = mesh_manager.load(&mut render_ctx, eid, mesh) {
+			log::error!("Failed to run `MeshManager::load`: {}", e);
+		}
 	}
 }
 
