@@ -154,6 +154,8 @@ pub trait EntityComponent: WantsSystemAdded + Send + Sync
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
 
 	fn type_id(&self) -> std::any::TypeId;
+
+	fn type_name(&self) -> &'static str;
 }
 
 /// The trait that allows components to return a system relevant to themselves, which will be run every tick.

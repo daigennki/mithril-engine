@@ -19,6 +19,11 @@ pub fn derive_entity_component(input: TokenStream) -> TokenStream
 			{
 				std::any::TypeId::of::<Self>()
 			}
+
+			fn type_name(&self) -> &'static str
+			{
+				stringify!(#ident)
+			}
 		}
 	};
 	output.into()

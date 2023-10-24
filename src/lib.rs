@@ -157,7 +157,7 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 				let type_id = component.type_id();
 				if !systems.contains_key(&type_id) {
 					systems.insert(type_id, add_system);
-					log::debug!("inserted system for {:?}", type_id);
+					log::debug!("inserted system for {}", component.type_name());
 				}
 			}
 
