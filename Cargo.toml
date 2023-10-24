@@ -9,8 +9,8 @@ edition = "2021"
 [profile.dev]
 opt-level = 1   # needed to stop stack overflow in Windows debug build; see https://github.com/vulkano-rs/vulkano/issues/1790#issuecomment-1023222638
 
-[features]
-egui = ["dep:egui_winit_vulkano"]
+#[features]
+#egui = ["dep:egui_winit_vulkano"]
 
 [build-dependencies]
 shaderc = "0.8"
@@ -35,7 +35,7 @@ serde_yaml = "0.9"
 serde_json = { version = "1.0", features = ["raw_value"] }
 typetag = "0.2"
 gltf = { version = "1.0", features = ["extras", "names", "utils", "import"] }
-egui_winit_vulkano = { version = "0.22", optional = true }
+#egui_winit_vulkano = { version = "0.22", optional = true }
 winit_input_helper = "0.14"
 #rapier = "0.16.1"
 #kira = "0.7.1"
