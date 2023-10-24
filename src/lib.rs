@@ -9,8 +9,8 @@ pub mod component;
 pub mod material;
 pub mod render;
 
-#[cfg(feature = "egui")]
-mod egui_renderer;
+//#[cfg(feature = "egui")]
+//mod egui_renderer;
 
 use glam::*;
 use serde::Deserialize;
@@ -28,10 +28,41 @@ use component::ui;
 use component::ui::canvas::Canvas;
 use render::RenderContext;
 
-#[cfg(feature = "egui")]
-use egui_renderer::EguiRenderer;
+//#[cfg(feature = "egui")]
+//use egui_renderer::EguiRenderer;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
+
+/// Run the game. This should go in your `main.rs`.
+/// `org_name` and `game_name` will be used for the data directory.
+/// `game_name` will also be used for the window title.
+/// `start_map` is the first map (level/world) to be loaded.
+pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
+{
+	let event_loop = winit::event_loop::EventLoop::new();
+
+	match GameContext::new(org_name, game_name, start_map, &event_loop) {
+		Ok(mut gctx) => {
+			event_loop.run(move |mut event, _, control_flow| {
+				match event {
+					Event::WindowEvent {
+						event: WindowEvent::CloseRequested,
+						..
+					} => {
+						*control_flow = winit::event_loop::ControlFlow::Exit;
+					}
+					_ => (),
+				};
+
+				if let Err(e) = gctx.handle_event(&mut event) {
+					log_error(e);
+					*control_flow = winit::event_loop::ControlFlow::Exit;
+				}
+			})
+		}
+		Err(e) => log_error(e),
+	}
+}
 
 #[derive(shipyard::Unique)]
 pub struct InputHelperWrapper
@@ -41,12 +72,10 @@ pub struct InputHelperWrapper
 
 struct GameContext
 {
-	//pref_path: String,
 	world: World,
 }
 impl GameContext
 {
-	// game context "constructor"
 	pub fn new(
 		org_name: &str,
 		game_name: &str,
@@ -54,7 +83,6 @@ impl GameContext
 		event_loop: &winit::event_loop::EventLoop<()>,
 	) -> Result<Self, GenericEngineError>
 	{
-		/*let pref_path =*/
 		setup_log(org_name, game_name)?;
 
 		log::info!("--- Initializing MithrilEngine... ---");
@@ -84,7 +112,6 @@ impl GameContext
 		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
 
 		Ok(GameContext {
-			//pref_path,
 			world,
 		})
 	}
@@ -96,32 +123,30 @@ impl GameContext
 		});
 
 		match event {
-			Event::WindowEvent { event, .. } => {
-				match event {
-					WindowEvent::ScaleFactorChanged {
-						scale_factor,
-						new_inner_size,
-					} => {
-						let swapchain_dimensions = self
-							.world
-							.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
-						let desired_physical_size =
-							winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
-						log::info!(
-							"`ScaleFactorChanged` event gave us an inner size of {:?} (scale factor {}), giving back {:?}...",
-							&new_inner_size,
-							scale_factor,
-							desired_physical_size
-						);
-						**new_inner_size = desired_physical_size;
-					}
-					WindowEvent::Resized(new_inner_size) => {
-						log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
-						self.world
-							.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
-					}
-					_ => (),
-				}
+			Event::WindowEvent { 
+				event: WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size },
+				..
+			} => {
+				let swapchain_dimensions = self
+					.world
+					.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
+				let desired_physical_size =
+					winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
+				log::info!(
+					"`ScaleFactorChanged` event gave us an inner size of {:?} (scale factor {}), giving back {:?}...",
+					&new_inner_size,
+					scale_factor,
+					desired_physical_size
+				);
+				**new_inner_size = desired_physical_size;
+			}
+			Event::WindowEvent { 
+				event: WindowEvent::Resized(new_inner_size),
+				..
+			} => {
+				log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
+				self.world
+					.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
 			}
 			Event::MainEventsCleared => {
 				if self.world.contains_workload("Game logic") {
@@ -363,36 +388,6 @@ fn draw_ui(
 fn submit_frame(mut render_ctx: UniqueViewMut<render::RenderContext>) -> Result<(), GenericEngineError>
 {
 	render_ctx.submit_frame()
-}
-
-/// Run the game. This should go in your `main.rs`.
-/// `org_name` and `game_name` will be used for the data directory.
-/// `game_name` will also be used for the window title.
-/// `start_map` is the first map (level/world) to be loaded.
-pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
-{
-	let event_loop = winit::event_loop::EventLoop::new();
-
-	GameContext::new(org_name, game_name, start_map, &event_loop)
-		.and_then(|mut gctx| {
-			event_loop.run(move |mut event, _, control_flow| {
-				match event {
-					Event::WindowEvent {
-						event: WindowEvent::CloseRequested,
-						..
-					} => {
-						*control_flow = winit::event_loop::ControlFlow::Exit; // TODO: show exit confirmation dialog here
-					}
-					_ => (),
-				};
-
-				if let Err(e) = gctx.handle_event(&mut event) {
-					log_error(e);
-					*control_flow = winit::event_loop::ControlFlow::Exit;
-				}
-			})
-		})
-		.unwrap_or_else(|e| log_error(e));
 }
 
 // Get data path, set up logging, and return the data path.
