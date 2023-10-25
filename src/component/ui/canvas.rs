@@ -13,10 +13,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::{persistent::PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	PersistentDescriptorSet, WriteDescriptorSet
+};
+use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::image::view::ImageView;
+use vulkano::image::{sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo}, view::ImageView};
 use vulkano::pipeline::PipelineLayout;
+use vulkano::shader::ShaderStages;
 
 use crate::render::RenderContext;
 use crate::GenericEngineError;
@@ -27,6 +32,8 @@ pub struct Canvas
 {
 	base_dimensions: [u32; 2],
 	projection: Mat4,
+
+	set_layout: Arc<DescriptorSetLayout>,
 
 	gpu_resources: BTreeMap<EntityId, (super::mesh::MeshType, Arc<PersistentDescriptorSet>)>,
 
@@ -40,6 +47,38 @@ impl Canvas
 	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32)
 		-> Result<Self, GenericEngineError>
 	{
+		let device = render_ctx.descriptor_set_allocator().device().clone();
+
+		let sampler_info = SamplerCreateInfo {
+			address_mode: [
+				SamplerAddressMode::ClampToEdge,
+				SamplerAddressMode::ClampToEdge,
+				SamplerAddressMode::ClampToEdge,
+			],
+			..SamplerCreateInfo::simple_repeat_linear_no_mipmap()
+		};
+		let sampler = Sampler::new(device.clone(), sampler_info)?;
+
+		let set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, DescriptorSetLayoutBinding { // binding 0: transformation matrix
+					stages: ShaderStages::VERTEX,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+				}),
+				(1, DescriptorSetLayoutBinding { // binding 1: sampler0
+					stages: ShaderStages::FRAGMENT,
+					immutable_samplers: vec![ sampler ],
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+				}),
+				(2, DescriptorSetLayoutBinding { // binding 2: texture
+					stages: ShaderStages::FRAGMENT,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+				}),
+			].into(),
+			..Default::default()
+		};
+		let set_layout = DescriptorSetLayout::new(device, set_layout_info)?;
+
 		let vbo_usage = BufferUsage::VERTEX_BUFFER;
 
 		let quad_pos_verts = [
@@ -64,11 +103,17 @@ impl Canvas
 		Ok(Canvas {
 			base_dimensions: [canvas_width, canvas_height],
 			projection: calculate_projection(canvas_width, canvas_height, screen_width, screen_height),
+			set_layout,
 			gpu_resources: Default::default(),
 			quad_pos_buf,
 			quad_uv_buf,
 			default_font,
 		})
+	}
+
+	pub fn get_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	{
+		&self.set_layout
 	}
 
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
@@ -96,10 +141,15 @@ impl Canvas
 			transform.position.as_vec2().extend(0.0)
 		);
 		let buf = render_ctx.new_immutable_buffer_from_data(projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
-		let set = render_ctx.new_descriptor_set("UI", 0, [
-			WriteDescriptorSet::buffer(0, buf),
-			WriteDescriptorSet::image_view(2, image_view),
-		])?;
+		let set = PersistentDescriptorSet::new(
+			render_ctx.descriptor_set_allocator(),
+			self.set_layout.clone(),
+			[
+				WriteDescriptorSet::buffer(0, buf),
+				WriteDescriptorSet::image_view(2, image_view),
+			],
+			[],
+		)?;
 
 		Ok(set)
 	}

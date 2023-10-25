@@ -5,6 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
+use glam::*;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer, SubpassContents, 
@@ -13,13 +14,13 @@ use vulkano::command_buffer::{
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator, 
 	layout::{DescriptorSetLayout, DescriptorSetLayoutCreateInfo, DescriptorSetLayoutBinding, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet
+	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{sampler::Sampler, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
-use vulkano::pipeline::PipelineBindPoint;
+use vulkano::pipeline::{layout::PushConstantRange, PipelineBindPoint};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::CompareOp,
@@ -290,6 +291,40 @@ impl MomentTransparencyRenderer
 			]
 		)?;*/
 
+		let device = descriptor_set_allocator.device().clone();
+
+		let input_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+		};
+		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, input_binding.clone()),
+				(1, input_binding.clone()),
+				(2, input_binding.clone()),
+			].into(),
+			..Default::default()
+		};
+		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)?;
+		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, input_binding.clone()),
+				(1, input_binding.clone()),
+				(2, input_binding),
+			].into(),
+			..Default::default()
+		};
+		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(),stage4_inputs_layout_info)?;
+
+		let (images, stage3_inputs, stage4_inputs) = create_mboit_images(
+			memory_allocator,
+			descriptor_set_allocator,
+			dimensions,
+			stage3_inputs_layout,
+			stage4_inputs_layout.clone(),
+		)?;
+
+		/* Stage 2: Calculate moments */
 		let mut moments_blend = ColorBlendState::with_attachment_states(3, ColorBlendAttachmentState { 
 			blend: Some(AttachmentBlend::additive()),
 			..Default::default()
@@ -310,18 +345,51 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
 		};
+		let transform_set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, DescriptorSetLayoutBinding { // binding 0: transformation matrix
+					stages: ShaderStages::VERTEX,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+				}),
+			].into(),
+			..Default::default()
+		};
+		let transform_set_layout = DescriptorSetLayout::new(device.clone(), transform_set_layout_info)?;
+		let base_color_set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
+					stages: ShaderStages::FRAGMENT,
+					immutable_samplers: vec![ main_sampler ],
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+				}),
+				(1, DescriptorSetLayoutBinding { // binding 1: base_color
+					stages: ShaderStages::FRAGMENT,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+				})
+			].into(),
+			..Default::default()
+		};
+		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
 		let moments_pl = super::pipeline::Pipeline::new_from_binary(
+			device.clone(),
 			PrimitiveTopology::TriangleList,
 			include_bytes!("../../shaders/basic_3d_nonorm.vert.spv"),
 			Some((include_bytes!("../../shaders/mboit_moments.frag.spv"), moments_blend)),
 			None,
-			vec![(1, 0, main_sampler)],
+			vec![ transform_set_layout, base_color_set_layout ],
+			vec![ 
+				PushConstantRange { // push constant for projview matrix
+					stages: ShaderStages::VERTEX,
+					offset: 0,
+					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+				}
+			],
 			moments_rendering,
 			CompareOp::Less,
 			false,
-			descriptor_set_allocator.clone(),
 		)?;
 
+		/* Stage 4: Composite transparency image onto opaque image */
 		let compositing_rendering = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
 			depth_attachment_format: Some(Format::D16_UNORM),
@@ -332,22 +400,16 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		});
 		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
+			device,
 			PrimitiveTopology::TriangleList,
 			include_bytes!("../../shaders/fill_viewport.vert.spv"),
 			Some((include_bytes!("../../shaders/mboit_compositing.frag.spv"), wboit_compositing_blend)),
 			None,
+			vec![ stage4_inputs_layout.clone() ],
 			vec![],
 			compositing_rendering,
 			CompareOp::Always,
 			false,
-			descriptor_set_allocator.clone(),
-		)?;
-
-		let (images, stage3_inputs, stage4_inputs) = create_mboit_images(
-			memory_allocator,
-			descriptor_set_allocator,
-			dimensions,
-			&transparency_compositing_pl,
 		)?;
 
 		Ok(MomentTransparencyRenderer {
@@ -373,7 +435,8 @@ impl MomentTransparencyRenderer
 			memory_allocator,
 			descriptor_set_allocator,
 			dimensions,
-			&self.transparency_compositing_pl,
+			self.stage3_inputs.layout().clone(),
+			self.stage4_inputs.layout().clone(),
 		)?;
 
 		self.images = moments_images;
@@ -510,9 +573,9 @@ impl MomentTransparencyRenderer
 		&self.moments_pl
 	}
 
-	pub fn get_stage3_inputs(&self) -> Arc<PersistentDescriptorSet>
+	pub fn get_stage3_inputs(&self) -> &Arc<PersistentDescriptorSet>
 	{
-		self.stage3_inputs.clone()
+		&self.stage3_inputs
 	}
 
 	/*pub fn framebuffer(&self) -> Arc<Framebuffer>
@@ -534,7 +597,8 @@ fn create_mboit_images(
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	extent: [u32; 2],
-	stage4_pl: &super::pipeline::Pipeline,
+	stage3_inputs_layout: Arc<DescriptorSetLayout>,
+	stage4_inputs_layout: Arc<DescriptorSetLayout>,
 ) -> Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), GenericEngineError>
 {
 
@@ -568,23 +632,6 @@ fn create_mboit_images(
 		revealage: revealage_view.clone()
 	};
 
-	// TODO: use a common set layout (not just for these sets, but sets in general)
-	let common_binding = DescriptorSetLayoutBinding {
-		stages: ShaderStages::FRAGMENT,
-		..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-	};
-	let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
-		bindings: [
-			(0, common_binding.clone()),
-			(1, common_binding.clone()),
-			(2, common_binding),
-		].into(),
-		..Default::default()
-	};
-	let stage3_inputs_layout = DescriptorSetLayout::new(
-		descriptor_set_allocator.device().clone(),
-		stage3_inputs_layout_info
-	)?;
 	let stage3_inputs = PersistentDescriptorSet::new(
 		&descriptor_set_allocator,
 		stage3_inputs_layout,
@@ -595,13 +642,16 @@ fn create_mboit_images(
 		],
 		[]
 	)?;
-	let stage4_inputs = stage4_pl.new_descriptor_set(
-		0,
+
+	let stage4_inputs = PersistentDescriptorSet::new(
+		&descriptor_set_allocator,
+		stage4_inputs_layout,
 		[
 			WriteDescriptorSet::image_view(0, accum_view),
 			WriteDescriptorSet::image_view(1, revealage_view),
 			WriteDescriptorSet::image_view(2, min_depth_view),
 		],
+		[]
 	)?;
 
 	Ok((

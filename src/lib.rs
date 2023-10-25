@@ -20,7 +20,10 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
+use vulkano::device::DeviceOwned;
+use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, layout::PushConstantRange};
+use vulkano::shader::ShaderStages;
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
@@ -105,8 +108,28 @@ impl GameContext
 			],
 		};
 
-		render_ctx.load_material_pipeline_config("UI", &ui_pipeline_config)?;
-		render_ctx.load_material_pipeline_config("PBR", &material::pbr::PIPELINE_CONFIG)?;
+		let dim = render_ctx.swapchain_dimensions();
+		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
+		let transform_manager = component::TransformManager::new(&mut render_ctx)?;
+		let pbr_set_layout_info = material::pbr::PBR::set_layout_info_pbr(&render_ctx);
+		let pbr_set_layout = DescriptorSetLayout::new(
+			render_ctx.descriptor_set_allocator().device().clone(),
+			pbr_set_layout_info
+		)?;
+
+		render_ctx.load_material_pipeline_config("UI", &ui_pipeline_config, vec![ canvas.get_set_layout().clone() ], vec![])?;
+		render_ctx.load_material_pipeline_config(
+			"PBR",
+			&material::pbr::PIPELINE_CONFIG,
+			vec![ transform_manager.get_set_layout().clone(), pbr_set_layout ],
+			vec![ 
+				PushConstantRange { // push constant for projview matrix
+					stages: ShaderStages::VERTEX,
+					offset: 0,
+					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+				}
+			]
+		)?;
 
 		let (world, sky) = load_world(start_map)?;
 
@@ -119,14 +142,13 @@ impl GameContext
 			}
 		});
 
-		let dim = render_ctx.swapchain_dimensions();
-		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
+		world.add_unique(canvas);
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 		world.add_unique(camera_manager);
-		world.add_unique(render_ctx);
-		world.add_unique(component::TransformManager::default());
+		world.add_unique(transform_manager);
 		world.add_unique(component::mesh::MeshManager::default());
 		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
+		world.add_unique(render_ctx);
 
 		Ok(GameContext {
 			world,

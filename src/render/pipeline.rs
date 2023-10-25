@@ -8,14 +8,11 @@
 use std::error::Error;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::{
-	allocator::StandardDescriptorSetAllocator, layout::DescriptorSetLayoutCreateInfo, PersistentDescriptorSet,
-	WriteDescriptorSet,
-};
-use vulkano::device::DeviceOwned;
+use vulkano::descriptor_set::{layout::DescriptorSetLayout, DescriptorSet};
+use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
 use vulkano::pipeline::{
-	layout::PipelineDescriptorSetLayoutCreateInfo, DynamicState, GraphicsPipeline, PipelineLayout,
+	layout::{PipelineLayoutCreateInfo, PushConstantRange}, DynamicState, GraphicsPipeline, PipelineLayout,
 	PipelineShaderStageCreateInfo
 };
 use vulkano::pipeline::graphics::{
@@ -29,14 +26,13 @@ use vulkano::pipeline::graphics::{
 	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipelineCreateInfo,
 };
-use vulkano::image::sampler::Sampler;
 use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule, ShaderModuleCreateInfo};
 
 use crate::GenericEngineError;
+use crate::render::transparency::MomentTransparencyRenderer;
 
 pub struct Pipeline
 {
-	descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	pipeline: Arc<GraphicsPipeline>,
 
 	/// similar pipeline, except for the fragment shader being capable of processing Order-Independent Transparency
@@ -45,19 +41,18 @@ pub struct Pipeline
 impl Pipeline
 {
 	pub fn new_from_binary(
+		vk_dev: Arc<Device>,
 		primitive_topology: PrimitiveTopology,
 		vs_bin: &[u8],
 		fs_info: Option<(&[u8], ColorBlendState)>,
-		fs_transparency_info: Option<(&[u8], PipelineRenderingCreateInfo)>,
-		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
+		fs_transparency_info: Option<(&[u8], PipelineRenderingCreateInfo, &MomentTransparencyRenderer)>,
+		set_layouts: Vec<Arc<DescriptorSetLayout>>,
+		push_constant_ranges: Vec<PushConstantRange>,
 		rendering_info: PipelineRenderingCreateInfo,
-		depth_op: CompareOp,
+		depth_op: CompareOp, 
 		depth_write: bool,
-		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
 	) -> Result<Self, GenericEngineError>
 	{
-		let vk_dev = descriptor_set_allocator.device().clone();
-
 		let vs = load_spirv_bytes(vk_dev.clone(), vs_bin)?;
 		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
 
@@ -89,7 +84,7 @@ impl Pipeline
 			stages.push(get_shader_stage(&fs, "main")?);
 
 			// use a different fragment shader and pipeline for OIT
-			if let Some((ft_bin, ft_rendering_info)) = fs_transparency_info {
+			if let Some((ft_bin, ft_rendering_info, transparency_renderer)) = fs_transparency_info {
 				let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
 					blend: Some(AttachmentBlend {
 						alpha_blend_op: BlendOp::Add,
@@ -114,12 +109,14 @@ impl Pipeline
 				// WBOIT needs depth write to be disabled
 				transparency_depth_stencil_state.depth.as_mut().unwrap().write_enable = false;
 
-				let mut transparency_set_layout_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&transparency_stages);
-				pipeline_sampler_setup(transparency_set_layout_info.set_layouts.as_mut_slice(), &samplers);
-				let transparency_layout = PipelineLayout::new(
-					vk_dev.clone(),
-					transparency_set_layout_info.into_pipeline_layout_create_info(vk_dev.clone())?
-				)?;
+				let mut transparency_set_layouts = set_layouts.clone();
+				transparency_set_layouts.push(transparency_renderer.get_stage3_inputs().layout().clone());
+				let layout_info = PipelineLayoutCreateInfo {
+					set_layouts: transparency_set_layouts,
+					push_constant_ranges: push_constant_ranges.clone(),
+					..Default::default()
+				};
+				let transparency_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 				let transparency_pipeline_info = GraphicsPipelineCreateInfo {
 					stages: transparency_stages.into(),
 					vertex_input_state: vertex_input_state.clone(),
@@ -142,12 +139,12 @@ impl Pipeline
 			color_blend_state = Some(blend_state);
 		} 
 
-		let mut pl_set_layout_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages);
-		pipeline_sampler_setup(pl_set_layout_info.set_layouts.as_mut_slice(), &samplers);
-		let pipeline_layout = PipelineLayout::new(
-			vk_dev.clone(), 
-			pl_set_layout_info.into_pipeline_layout_create_info(vk_dev.clone())?
-		)?;
+		let layout_info = PipelineLayoutCreateInfo {
+			set_layouts,
+			push_constant_ranges,
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 		let pipeline_info = GraphicsPipelineCreateInfo {
 			stages: stages.into(),
 			vertex_input_state,
@@ -166,26 +163,21 @@ impl Pipeline
 		print_pipeline_descriptors_info(pipeline.as_ref());
 
 		Ok(Pipeline {
-			descriptor_set_allocator,
 			pipeline,
 			transparency_pipeline,
 		})
 	}
 
 	pub fn new_from_config(
+		vk_dev: Arc<Device>,
 		config: &StaticPipelineConfig,
 		rendering_info: PipelineRenderingCreateInfo,
 		transparency_rendering: Option<PipelineRenderingCreateInfo>,
-		tex_sampler: Arc<Sampler>,
-		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
+		transparency_renderer: Option<&MomentTransparencyRenderer>,
+		set_layouts: Vec<Arc<DescriptorSetLayout>>,
+		push_constant_ranges: Vec<PushConstantRange>,
 	) -> Result<Self, GenericEngineError> 
 	{
-		let generated_samplers = config
-			.samplers
-			.iter()
-			.map(|sampler_config| (sampler_config.set, sampler_config.binding, tex_sampler.clone()))
-			.collect();
-
 		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
 		let common_blend_attachment_state = ColorBlendAttachmentState {
 			blend: config.alpha_blending.then_some(AttachmentBlend::alpha()),
@@ -196,7 +188,7 @@ impl Pipeline
 		let fs_info = config.fragment_shader.map(|fs| (fs, color_blend_state));
 		let fs_transparency_info = config
 			.fragment_shader_transparency
-			.map(|fst| (fst, transparency_rendering.unwrap()));
+			.map(|fst| (fst, transparency_rendering.unwrap(), transparency_renderer.unwrap()));
 
 		let depth_op = config
 			.always_pass_depth_test
@@ -204,15 +196,16 @@ impl Pipeline
 			.unwrap_or(CompareOp::Less);
 
 		Pipeline::new_from_binary(
+			vk_dev,
 			config.primitive_topology,
 			config.vertex_shader,
 			fs_info,
 			fs_transparency_info,
-			generated_samplers,
+			set_layouts,
+			push_constant_ranges,
 			rendering_info,
 			depth_op,
 			true,
-			descriptor_set_allocator,
 		)
 	}
 
@@ -241,29 +234,6 @@ impl Pipeline
 			.ok_or(TransparencyNotEnabled)?
 			.as_ref();
 		Ok(pipeline_ref.layout().clone())
-	}
-
-	/// Create a new persistent descriptor set for use with the descriptor set slot at `set_number`, writing `writes`
-	/// into the descriptor set.
-	pub fn new_descriptor_set(
-		&self,
-		set_number: usize,
-		writes: impl IntoIterator<Item = WriteDescriptorSet>,
-	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
-	{
-		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
-		let set_layout = pipeline_ref
-			.layout()
-			.set_layouts()
-			.get(set_number)
-			.ok_or(format!("Pipeline::new_descriptor_set: invalid descriptor set index {}", set_number))?
-			.clone();
-		Ok(PersistentDescriptorSet::new(
-			&self.descriptor_set_allocator,
-			set_layout,
-			writes,
-			[]
-		)?)
 	}
 }
 
@@ -377,19 +347,6 @@ fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 	};
 	let format_index = (ty.num_components - 1) as usize;
 	possible_formats[format_index]
-}
-
-fn pipeline_sampler_setup(sets: &mut [DescriptorSetLayoutCreateInfo], samplers: &Vec<(usize, u32, Arc<Sampler>)>)
-{
-	for (set_i, binding_i, sampler) in samplers {
-		match sets.get_mut(*set_i) {
-			Some(s) => match s.bindings.get_mut(binding_i) {
-				Some(b) => b.immutable_samplers = vec![sampler.clone()],
-				None => log::warn!("Binding {} doesn't exist in set {}, ignoring!", binding_i, set_i),
-			},
-			None => log::warn!("Set index {} for sampler is out of bounds, ignoring!", set_i),
-		}
-	}
 }
 
 fn print_pipeline_descriptors_info(pipeline: &dyn vulkano::pipeline::Pipeline)

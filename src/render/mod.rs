@@ -34,15 +34,14 @@ use vulkano::command_buffer::{
 	SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
 	SecondaryCommandBufferAbstract,
 };
-use vulkano::descriptor_set::{
-	allocator::StandardDescriptorSetAllocator, PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, layout::DescriptorSetLayout};
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	graphics::{ subpass::PipelineRenderingCreateInfo, viewport::Viewport }, PipelineBindPoint,
+	graphics::{ subpass::PipelineRenderingCreateInfo, viewport::Viewport }, 
+	layout::PushConstantRange, PipelineBindPoint,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::{GpuFuture, Sharing};
@@ -211,7 +210,13 @@ impl RenderContext
 	}
 
 	/// Load a material shader pipeline into memory, using a static struct.
-	pub fn load_material_pipeline_config(&mut self, name: &str, config: &StaticPipelineConfig) -> Result<(), GenericEngineError>
+	pub fn load_material_pipeline_config(
+		&mut self,
+		name: &str, 
+		config: &StaticPipelineConfig,
+		set_layouts: Vec<Arc<DescriptorSetLayout>>,
+		push_constant_ranges: Vec<PushConstantRange>,
+	) -> Result<(), GenericEngineError>
 	{	
 		let rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
@@ -230,11 +235,13 @@ impl RenderContext
 		self.material_pipelines.insert(
 			name.to_string(),
 			pipeline::Pipeline::new_from_config(
+				self.descriptor_set_allocator.device().clone(),
 				config,
 				rendering_info,
 				Some(transparency_weights_rendering),
-				self.sampler_linear.clone(),
-				self.descriptor_set_allocator.clone(),
+				Some(&self.transparency_renderer),
+				set_layouts,
+				push_constant_ranges,
 			)?,
 		);
 		Ok(())
@@ -392,19 +399,6 @@ impl RenderContext
 		self.graphics_queue.device().active_queue_family_indices().into()
 	}
 
-	pub fn new_descriptor_set(
-		&self,
-		pipeline_name: &str,
-		set: usize,
-		writes: impl IntoIterator<Item = WriteDescriptorSet>,
-	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
-	{
-		self.material_pipelines
-			.get(pipeline_name)
-			.ok_or(PipelineNotLoaded)?
-			.new_descriptor_set(set, writes)
-	}
-
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to color and depth images with the given format,
 	/// and with a viewport as large as `viewport_dimensions`.
@@ -485,7 +479,7 @@ impl RenderContext
 			PipelineBindPoint::Graphics,
 			first_bind_pipeline.layout_transparency()?, 
 			2,
-			vec![self.transparency_renderer.get_stage3_inputs()]
+			vec![self.transparency_renderer.get_stage3_inputs().clone()]
 		)?;
 		cb.push_constants(first_bind_pipeline.layout(), 0, projview)?;
 

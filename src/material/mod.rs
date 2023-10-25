@@ -21,7 +21,7 @@ use crate::GenericEngineError;
 #[typetag::deserialize]
 pub trait Material: Send + Sync
 {
-	fn pipeline_name(&self) -> &'static str;
+	fn material_name(&self) -> &'static str;
 
 	/// Generate descriptor set writes for creating a descriptor set.
 	/// Call this when the user (e.g. a `Mesh` component) is created, and when this material is modified.

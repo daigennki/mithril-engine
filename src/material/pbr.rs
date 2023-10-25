@@ -48,11 +48,32 @@ pub struct PBR
 	#[serde(default)]
 	pub transparent: bool,
 }
+impl PBR
+{
+	pub fn set_layout_info_pbr(render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo
+	{
+		let bindings = [
+			(0, DescriptorSetLayoutBinding { // binding 0: sampler0
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![ render_ctx.get_default_sampler().clone() ],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			}),
+			(1, DescriptorSetLayoutBinding { // binding 1: base_color
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			}),
+		];
+		DescriptorSetLayoutCreateInfo {
+			bindings: bindings.into(),
+			..Default::default()
+		}
+	}
+}
 
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn pipeline_name(&self) -> &'static str
+	fn material_name(&self) -> &'static str
 	{
 		"PBR"
 	}
@@ -73,21 +94,7 @@ impl Material for PBR
 
 	fn set_layout_info(&self, render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo
 	{
-		let bindings = [
-			(0, DescriptorSetLayoutBinding { // binding 0: sampler0
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![ render_ctx.get_default_sampler().clone() ],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			}),
-			(1, DescriptorSetLayoutBinding { // binding 1: base_color
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			}),
-		];
-		DescriptorSetLayoutCreateInfo {
-			bindings: bindings.into(),
-			..Default::default()
-		}
+		Self::set_layout_info_pbr(render_ctx)
 	}
 
 	fn has_transparency(&self) -> bool

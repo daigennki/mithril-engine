@@ -15,7 +15,12 @@ use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::descriptor_set::{persistent::PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	PersistentDescriptorSet, WriteDescriptorSet
+};
+use vulkano::device::DeviceOwned;
+use vulkano::shader::ShaderStages;
 
 #[cfg(feature = "egui")]
 use egui_winit_vulkano::egui;
@@ -97,11 +102,39 @@ fn update_transforms(
 #[derive(shipyard::Unique)]
 pub struct TransformManager
 {
+	// Common set layout for creating the descriptor sets
+	set_layout: Arc<DescriptorSetLayout>,
+
 	// TODO: optimize this by combining sets and buffers respectively? (reduce binds and memory fragmentation)
 	sets: BTreeMap<EntityId, (Arc<PersistentDescriptorSet>, Subbuffer<Mat4>)>,
 }
 impl TransformManager
 {
+	pub fn new(render_ctx: &mut RenderContext) -> Result<Self, GenericEngineError>
+	{
+		let set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, DescriptorSetLayoutBinding { // binding 0: transformation matrix
+					stages: ShaderStages::VERTEX,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+				}),
+			].into(),
+			..Default::default()
+		};
+		let device = render_ctx.descriptor_set_allocator().device().clone();
+		let set_layout = DescriptorSetLayout::new(device, set_layout_info)?;
+
+		Ok(TransformManager {
+			set_layout,
+			sets: Default::default(),
+		})
+	}
+
+	pub fn get_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	{
+		&self.set_layout
+	}
+
 	pub fn get_descriptor_set(&self, eid: EntityId) -> Option<&Arc<PersistentDescriptorSet>>
 	{
 		self.sets.get(&eid).map(|(set, _)| set)
@@ -123,7 +156,12 @@ impl TransformManager
 		} else {
 			// insert a new descriptor set and buffer if they didn't exist already
 			let buf = render_ctx.new_staged_buffer_from_data(model_mat, BufferUsage::UNIFORM_BUFFER)?;
-			let set = render_ctx.new_descriptor_set("PBR", 0, [WriteDescriptorSet::buffer(0, buf.clone())])?;
+			let set = PersistentDescriptorSet::new(
+				render_ctx.descriptor_set_allocator(),
+				self.set_layout.clone(),
+				[WriteDescriptorSet::buffer(0, buf.clone())],
+				[],
+			)?;
 
 			self.sets.insert(eid, (set, buf));
 		}
@@ -135,13 +173,6 @@ impl TransformManager
 	pub fn remove(&mut self, eid: EntityId)
 	{
 		self.sets.remove(&eid);
-	}
-}
-impl Default for TransformManager
-{
-	fn default() -> Self
-	{
-		TransformManager { sets: Default::default() }
 	}
 }
 

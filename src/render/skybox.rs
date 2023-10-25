@@ -9,14 +9,19 @@ use std::sync::Arc;
 use glam::*;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	PersistentDescriptorSet, WriteDescriptorSet
+};
+use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::pipeline::PipelineBindPoint;
+use vulkano::pipeline::{layout::PushConstantRange, PipelineBindPoint};
 use vulkano::pipeline::graphics::{ 
 	color_blend::{ColorBlendState, ColorBlendAttachmentState}, depth_stencil::CompareOp, input_assembly::PrimitiveTopology,
 	subpass::PipelineRenderingCreateInfo
 };
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
+use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
 use crate::GenericEngineError;
@@ -48,7 +53,25 @@ impl Skybox
 			..Default::default()
 		};
 
+		let device = render_ctx.descriptor_set_allocator().device().clone();
+		let set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
+					stages: ShaderStages::FRAGMENT,
+					immutable_samplers: vec![ cubemap_sampler ],
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+				}),
+				(1, DescriptorSetLayoutBinding { // binding 1: skybox texture
+					stages: ShaderStages::FRAGMENT,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+				}),
+			].into(),
+			..Default::default()
+		};
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+
 		let sky_pipeline = super::pipeline::Pipeline::new_from_binary(
+			device,
 			PrimitiveTopology::TriangleStrip,
 			include_bytes!("../../shaders/skybox.vert.spv"),
 			Some((
@@ -56,19 +79,30 @@ impl Skybox
 				ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())
 			)),
 			None,
-			vec![(0, 0, cubemap_sampler)],
+			vec![ set_layout.clone() ],
+			vec![ 
+				PushConstantRange { // push constant for view matrix
+					stages: ShaderStages::VERTEX,
+					offset: 0,
+					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+				}
+			],
 			rendering_info,
 			CompareOp::Always,
 			true,
-			render_ctx.descriptor_set_allocator().clone(),
 		)?;
 
 		// sky texture cubemap
 		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = render_ctx.new_cubemap_texture(face_paths)?;
-		let descriptor_set =
-			sky_pipeline.new_descriptor_set(0, [WriteDescriptorSet::image_view(1, sky_cubemap.view().clone())])?;
+
+		let descriptor_set = PersistentDescriptorSet::new(
+			render_ctx.descriptor_set_allocator(),
+			set_layout,
+			[WriteDescriptorSet::image_view(1, sky_cubemap.view().clone())],
+			[],
+		)?;
 
 		// sky cube
 		#[rustfmt::skip]

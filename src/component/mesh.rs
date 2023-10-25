@@ -12,7 +12,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
+use vulkano::device::DeviceOwned;
 use vulkano::pipeline::PipelineLayout;
 
 #[cfg(feature = "egui")]
@@ -77,11 +78,14 @@ fn update_meshes(
 }
 
 /// A single manager that manages the GPU resources for all `Mesh` components.
-#[derive(shipyard::Unique)]
+#[derive(Default, shipyard::Unique)]
 pub struct MeshManager
 {
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: BTreeMap<PathBuf, Arc<Model>>,
+
+	// Set layouts for different materials.
+	set_layouts: BTreeMap<&'static str, Arc<DescriptorSetLayout>>,
 
 	// The models and material overrides for each entity.
 	resources: BTreeMap<EntityId, (Arc<Model>, Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>)>
@@ -112,8 +116,26 @@ impl MeshManager
 		for mat in orig_materials {
 			// TODO: if there's a material override, use that instead of the original material
 			// to create the descriptor set
+			
+			// try to get the set layout for the material, and if it doesn't exist already, create it
+			let set_layout = match self.set_layouts.get(mat.material_name()) {
+				Some(sl) => sl.clone(),
+				None => {
+					let device = render_ctx.descriptor_set_allocator().device().clone();
+					let set_layout_info = mat.set_layout_info(render_ctx);
+					let new_set_layout = DescriptorSetLayout::new(device, set_layout_info)?;
+					self.set_layouts.insert(mat.material_name(), new_set_layout.clone());
+					new_set_layout
+				}
+			};
+
 			let writes = mat.gen_descriptor_set_writes(&component.model_path, render_ctx)?;
-			let set = render_ctx.new_descriptor_set(mat.pipeline_name(), 1, writes)?;
+			let set = PersistentDescriptorSet::new(
+				render_ctx.descriptor_set_allocator(),
+				set_layout,
+				writes,
+				[],
+			)?;
 
 			material_overrides.push((None, set));
 		}
@@ -193,16 +215,6 @@ impl MeshManager
 			model_loaded.draw(cb, pipeline_layout, projviewmodel, material_overrides_and_sets, transparency_pass)?
 		}
 		Ok(())
-	}
-}
-impl Default for MeshManager
-{
-	fn default() -> Self
-	{
-		MeshManager {
-			models: Default::default(),
-			resources: Default::default(),
-		}
 	}
 }
 
