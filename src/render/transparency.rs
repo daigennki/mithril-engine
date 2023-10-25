@@ -220,7 +220,7 @@ impl MomentTransparencyRenderer
 {
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
+		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		dimensions: [u32; 2],
 		main_sampler: Arc<Sampler>,
 	) -> Result<Self, GenericEngineError>
@@ -427,7 +427,7 @@ impl MomentTransparencyRenderer
 	pub fn resize_image(
 		&mut self,
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
+		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		dimensions: [u32; 2],
 	) -> Result<(), GenericEngineError>
 	{
@@ -595,7 +595,7 @@ struct MomentImageBundle
 
 fn create_mboit_images(
 	memory_allocator: Arc<StandardMemoryAllocator>,
-	descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
+	descriptor_set_allocator: &StandardDescriptorSetAllocator,
 	extent: [u32; 2],
 	stage3_inputs_layout: Arc<DescriptorSetLayout>,
 	stage4_inputs_layout: Arc<DescriptorSetLayout>,
@@ -633,7 +633,7 @@ fn create_mboit_images(
 	};
 
 	let stage3_inputs = PersistentDescriptorSet::new(
-		&descriptor_set_allocator,
+		descriptor_set_allocator,
 		stage3_inputs_layout,
 		[
 			WriteDescriptorSet::image_view(0, moments_view),
@@ -644,7 +644,7 @@ fn create_mboit_images(
 	)?;
 
 	let stage4_inputs = PersistentDescriptorSet::new(
-		&descriptor_set_allocator,
+		descriptor_set_allocator,
 		stage4_inputs_layout,
 		[
 			WriteDescriptorSet::image_view(0, accum_view),

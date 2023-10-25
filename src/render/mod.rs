@@ -34,7 +34,10 @@ use vulkano::command_buffer::{
 	SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
 	SecondaryCommandBufferAbstract,
 };
-use vulkano::descriptor_set::{allocator::StandardDescriptorSetAllocator, layout::DescriptorSetLayout};
+use vulkano::descriptor_set::{
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
+	layout::DescriptorSetLayout
+};
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
@@ -57,7 +60,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,         // this also owns the logical device
 	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
-	descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
@@ -149,12 +152,18 @@ impl RenderContext
 		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
 
-		let descriptor_set_allocator = Arc::new(StandardDescriptorSetAllocator::new(vk_dev.clone()));
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(
+			vk_dev.clone(),
+			StandardDescriptorSetAllocatorCreateInfo::default()
+		);
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
-		// TODO: we might not need very many primary command buffers here
-		let command_buffer_allocator =
-			StandardCommandBufferAllocator::new(vk_dev.clone(), StandardCommandBufferAllocatorCreateInfo::default());
+		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
+			primary_buffer_count: 32, // do we need this many?
+			secondary_buffer_count: 32,
+			..Default::default()
+		};
+		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
 		let sampler_info = SamplerCreateInfo {
 			anisotropy: Some(16.0),
@@ -174,7 +183,7 @@ impl RenderContext
 			Image::new(memory_allocator.clone(), intermediate_img_create_info, AllocationCreateInfo::default())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			memory_allocator.clone(),
-			descriptor_set_allocator.clone(),
+			&descriptor_set_allocator,
 			swapchain.dimensions(),
 			sampler_linear.clone(),
 		)?;
@@ -527,8 +536,8 @@ impl RenderContext
 			Image::new(self.memory_allocator.clone(), intermediate_img_create_info, AllocationCreateInfo::default())?;
 
 		self.transparency_renderer.resize_image(
-			self.memory_allocator.clone(), 
-			self.descriptor_set_allocator.clone(), 
+			self.memory_allocator.clone(),
+			&self.descriptor_set_allocator,
 			self.swapchain.dimensions()
 		)?;
 
@@ -701,7 +710,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn descriptor_set_allocator(&self) -> &Arc<StandardDescriptorSetAllocator>
+	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
 	{
 		&self.descriptor_set_allocator
 	}
