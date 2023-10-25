@@ -30,7 +30,7 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::image::sampler::Sampler;
-use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderModuleCreateInfo};
+use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule, ShaderModuleCreateInfo};
 
 use crate::GenericEngineError;
 
@@ -58,13 +58,14 @@ impl Pipeline
 	{
 		let vk_dev = descriptor_set_allocator.device().clone();
 
-		let (vs, vertex_input_state) = load_spirv_vertex_bytes(vk_dev.clone(), vs_bin)?;
+		let vs = load_spirv_bytes(vk_dev.clone(), vs_bin)?;
+		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
 
-		let input_assembly_state = InputAssemblyState{
+		let input_assembly_state = Some(InputAssemblyState{
 			topology: primitive_topology,
 			primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
 			..Default::default()
-		};
+		});
 		
 		let depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
@@ -73,8 +74,11 @@ impl Pipeline
 			}),
 			..Default::default()
 		};
+
+		let rasterization_state = Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() });
+
 		let mut stages = Vec::with_capacity(5);
-		stages.push(PipelineShaderStageCreateInfo::new(get_entry_point(&vs, "main")?));
+		stages.push(get_shader_stage(&vs, "main")?);
 		
 		// load fragment shader (optional)
 		let mut transparency_pipeline = None;
@@ -82,7 +86,7 @@ impl Pipeline
 		if let Some((fs_bin, blend_state)) = fs_info {
 			// load the fragment shader for the opaque pass
 			let fs = load_spirv_bytes(vk_dev.clone(), fs_bin)?;
-			stages.push(PipelineShaderStageCreateInfo::new(get_entry_point(&fs, "main")?));
+			stages.push(get_shader_stage(&fs, "main")?);
 
 			// use a different fragment shader and pipeline for OIT
 			if let Some((ft_bin, ft_rendering_info)) = fs_transparency_info {
@@ -101,10 +105,9 @@ impl Pipeline
 				});
 
 				let fs_transparency = load_spirv_bytes(vk_dev.clone(), ft_bin)?;
-
 				let transparency_stages = vec![
-					PipelineShaderStageCreateInfo::new(get_entry_point(&vs, "main")?),
-					PipelineShaderStageCreateInfo::new(get_entry_point(&fs_transparency, "main")?),
+					get_shader_stage(&vs, "main")?,
+					get_shader_stage(&fs_transparency, "main")?,
 				];
 
 				let mut transparency_depth_stencil_state = depth_stencil_state.clone();
@@ -119,15 +122,15 @@ impl Pipeline
 				)?;
 				let transparency_pipeline_info = GraphicsPipelineCreateInfo {
 					stages: transparency_stages.into(),
-					vertex_input_state: Some(vertex_input_state.clone()),
-					input_assembly_state: Some(input_assembly_state.clone()),
+					vertex_input_state: vertex_input_state.clone(),
+					input_assembly_state: input_assembly_state.clone(),
 					viewport_state: Some(ViewportState::default()),
-					rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
+					rasterization_state: rasterization_state.clone(),
 					multisample_state: Some(MultisampleState::default()),
 					depth_stencil_state: Some(transparency_depth_stencil_state),
 					color_blend_state: Some(wboit_accum_blend),
 					dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
-					subpass: Some(ft_rendering_info.into()),	
+					subpass: Some(ft_rendering_info.into()),
 					..GraphicsPipelineCreateInfo::layout(transparency_layout)
 				};
 
@@ -147,10 +150,10 @@ impl Pipeline
 		)?;
 		let pipeline_info = GraphicsPipelineCreateInfo {
 			stages: stages.into(),
-			vertex_input_state: Some(vertex_input_state),
-			input_assembly_state: Some(input_assembly_state),
+			vertex_input_state,
+			input_assembly_state,
 			viewport_state: Some(ViewportState::default()),
-			rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
+			rasterization_state,
 			multisample_state: Some(MultisampleState::default()),
 			depth_stencil_state: Some(depth_stencil_state.clone()),
 			color_blend_state,
@@ -295,14 +298,16 @@ pub struct StaticPipelineConfig
 	pub samplers: &'static [PipelineSamplerConfig],
 }
 
-fn get_entry_point(
+fn get_shader_stage(
 	shader_module: &Arc<ShaderModule>,
 	entry_point_name: &str,
-) -> Result<EntryPoint, GenericEngineError>
+) -> Result<PipelineShaderStageCreateInfo, GenericEngineError>
 {
-	shader_module
+	let entry_point = shader_module
 		.entry_point(entry_point_name)
-		.ok_or(format!("No entry point called '{}' found in SPIR-V module!", entry_point_name).into())
+		.ok_or(format!("No entry point called '{}' found in SPIR-V module!", entry_point_name))?;
+
+	Ok(PipelineShaderStageCreateInfo::new(entry_point))
 }
 
 fn load_spirv_bytes(device: Arc<vulkano::device::Device>, bytes: &[u8]) -> Result<Arc<ShaderModule>, GenericEngineError>
@@ -311,6 +316,7 @@ fn load_spirv_bytes(device: Arc<vulkano::device::Device>, bytes: &[u8]) -> Resul
 	Ok(unsafe { ShaderModule::new(device, ShaderModuleCreateInfo::new(&spv_words)) }?)
 }
 
+/// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
 fn gen_vertex_input_state(shader_module: Arc<ShaderModule>) -> Result<VertexInputState, GenericEngineError>
 {
 	let vertex_input_state = shader_module
@@ -342,20 +348,9 @@ fn gen_vertex_input_state(shader_module: Arc<ShaderModule>) -> Result<VertexInpu
 				)
 		});
 
-	Ok(vertex_input_state)
-}
+	log::debug!("Automatically generated VertexInputState: {:#?}", &vertex_input_state);
 
-/// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the
-/// SPIR-V data.
-fn load_spirv_vertex_bytes(
-	device: Arc<vulkano::device::Device>,
-	bytes: &[u8]
-) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
-{
-	let shader_module = load_spirv_bytes(device, bytes)?;
-	let vertex_input_state = gen_vertex_input_state(shader_module.clone())?;
-	log::debug!("automatically generated VertexInputState: {:#?}", &vertex_input_state);
-	Ok((shader_module, vertex_input_state))
+	Ok(vertex_input_state)
 }
 
 fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
