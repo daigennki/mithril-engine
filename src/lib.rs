@@ -99,7 +99,7 @@ impl GameContext
 			fragment_shader_transparency: None,
 			always_pass_depth_test: true,
 			alpha_blending: true,
-			primitive_topology: PrimitiveTopology::TriangleList,
+			primitive_topology: PrimitiveTopology::TriangleStrip,
 		};
 
 		let dim = render_ctx.swapchain_dimensions();
