@@ -82,75 +82,22 @@ impl Pipeline
 			// load the fragment shader for the opaque pass
 			let fs = load_spirv_bytes(vk_dev.clone(), fs_bin)?;
 			stages.push(get_shader_stage(&fs, "main")?);
-
-			// use a different fragment shader and pipeline for OIT
-			if let Some((ft_bin, ft_rendering_info, transparency_renderer)) = fs_transparency_info {
-				let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
-					blend: Some(AttachmentBlend {
-						alpha_blend_op: BlendOp::Add,
-						..AttachmentBlend::additive()
-					}),
-					..Default::default()
-				});
-				wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
-					color_blend_op: BlendOp::Add,
-					src_color_blend_factor: BlendFactor::Zero,
-					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-					..AttachmentBlend::ignore_source()
-				});
-
-				let fs_transparency = load_spirv_bytes(vk_dev.clone(), ft_bin)?;
-				let transparency_stages = vec![
-					get_shader_stage(&vs, "main")?,
-					get_shader_stage(&fs_transparency, "main")?,
-				];
-
-				let mut transparency_depth_stencil_state = depth_stencil_state.clone();
-				// WBOIT needs depth write to be disabled
-				transparency_depth_stencil_state.depth.as_mut().unwrap().write_enable = false;
-
-				let mut transparency_set_layouts = set_layouts.clone();
-				transparency_set_layouts.push(transparency_renderer.get_stage3_inputs().layout().clone());
-				let layout_info = PipelineLayoutCreateInfo {
-					set_layouts: transparency_set_layouts,
-					push_constant_ranges: push_constant_ranges.clone(),
-					..Default::default()
-				};
-				let transparency_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
-				let transparency_pipeline_info = GraphicsPipelineCreateInfo {
-					stages: transparency_stages.into(),
-					vertex_input_state: vertex_input_state.clone(),
-					input_assembly_state: input_assembly_state.clone(),
-					viewport_state: Some(ViewportState::default()),
-					rasterization_state: rasterization_state.clone(),
-					multisample_state: Some(MultisampleState::default()),
-					depth_stencil_state: Some(transparency_depth_stencil_state),
-					color_blend_state: Some(wboit_accum_blend),
-					dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
-					subpass: Some(ft_rendering_info.into()),
-					..GraphicsPipelineCreateInfo::layout(transparency_layout)
-				};
-
-				let built_transparency_pipeline = GraphicsPipeline::new(vk_dev.clone(), None, transparency_pipeline_info)?;
-				print_pipeline_descriptors_info(built_transparency_pipeline.as_ref());
-				transparency_pipeline = Some(built_transparency_pipeline);
-			}
-
 			color_blend_state = Some(blend_state);
-		} 
+		}
 
+		// create the pipeline layout
 		let layout_info = PipelineLayoutCreateInfo {
-			set_layouts,
-			push_constant_ranges,
+			set_layouts: set_layouts.clone(),
+			push_constant_ranges: push_constant_ranges.clone(),
 			..Default::default()
 		};
 		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 		let pipeline_info = GraphicsPipelineCreateInfo {
 			stages: stages.into(),
-			vertex_input_state,
-			input_assembly_state,
+			vertex_input_state: vertex_input_state.clone(),
+			input_assembly_state: input_assembly_state.clone(),
 			viewport_state: Some(ViewportState::default()),
-			rasterization_state,
+			rasterization_state: rasterization_state.clone(),
 			multisample_state: Some(MultisampleState::default()),
 			depth_stencil_state: Some(depth_stencil_state.clone()),
 			color_blend_state,
@@ -159,8 +106,62 @@ impl Pipeline
 			..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 		};
 	
+		// create the pipeline
 		let pipeline = GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?;
 		print_pipeline_descriptors_info(pipeline.as_ref());
+
+		// use a different fragment shader and pipeline for OIT
+		if let Some((ft_bin, ft_rendering_info, transparency_renderer)) = fs_transparency_info {
+			let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend {
+					alpha_blend_op: BlendOp::Add,
+					..AttachmentBlend::additive()
+				}),
+				..Default::default()
+			});
+			wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
+				color_blend_op: BlendOp::Add,
+				src_color_blend_factor: BlendFactor::Zero,
+				dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+				..AttachmentBlend::ignore_source()
+			});
+
+			let fs_transparency = load_spirv_bytes(vk_dev.clone(), ft_bin)?;
+			let transparency_stages = vec![
+				get_shader_stage(&vs, "main")?,
+				get_shader_stage(&fs_transparency, "main")?,
+			];
+
+			let mut transparency_depth_stencil_state = depth_stencil_state.clone();
+			// WBOIT needs depth write to be disabled
+			transparency_depth_stencil_state.depth.as_mut().unwrap().write_enable = false;
+
+			let mut transparency_set_layouts = set_layouts.clone();
+			transparency_set_layouts.push(transparency_renderer.get_stage3_inputs().layout().clone());
+			let layout_info = PipelineLayoutCreateInfo {
+				set_layouts: transparency_set_layouts,
+				push_constant_ranges: push_constant_ranges.clone(),
+				..Default::default()
+			};
+			let transparency_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
+			let transparency_pipeline_info = GraphicsPipelineCreateInfo {
+				stages: transparency_stages.into(),
+				vertex_input_state: vertex_input_state,
+				input_assembly_state: input_assembly_state,
+				viewport_state: Some(ViewportState::default()),
+				rasterization_state: rasterization_state,
+				multisample_state: Some(MultisampleState::default()),
+				depth_stencil_state: Some(transparency_depth_stencil_state),
+				color_blend_state: Some(wboit_accum_blend),
+				dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
+				subpass: Some(ft_rendering_info.into()),
+				..GraphicsPipelineCreateInfo::layout(transparency_layout)
+			};
+
+			let built_transparency_pipeline = GraphicsPipeline::new(vk_dev.clone(), None, transparency_pipeline_info)?;
+			print_pipeline_descriptors_info(built_transparency_pipeline.as_ref());
+			transparency_pipeline = Some(built_transparency_pipeline);
+		}
 
 		Ok(Pipeline {
 			pipeline,
