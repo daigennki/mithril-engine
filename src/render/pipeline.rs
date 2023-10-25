@@ -249,14 +249,6 @@ impl std::fmt::Display for TransparencyNotEnabled
 }
 
 #[derive(Default)]
-pub struct PipelineSamplerConfig
-{
-	pub set: usize,
-	pub binding: u32,
-	/*mag_linear: bool,*/
-}
-
-#[derive(Default)]
 pub struct StaticPipelineConfig
 {
 	pub vertex_shader: &'static [u8],
@@ -265,7 +257,6 @@ pub struct StaticPipelineConfig
 	pub always_pass_depth_test: bool,
 	pub alpha_blending: bool,
 	pub primitive_topology: PrimitiveTopology,
-	pub samplers: &'static [PipelineSamplerConfig],
 }
 
 fn get_shader_stage(

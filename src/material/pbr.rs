@@ -16,7 +16,7 @@ use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::{RenderContext, pipeline::{PipelineSamplerConfig, StaticPipelineConfig}};
+use crate::render::{RenderContext, pipeline::StaticPipelineConfig};
 use crate::GenericEngineError;
 
 pub static PIPELINE_CONFIG: StaticPipelineConfig = StaticPipelineConfig {
@@ -26,12 +26,6 @@ pub static PIPELINE_CONFIG: StaticPipelineConfig = StaticPipelineConfig {
 	always_pass_depth_test: false,
 	alpha_blending: false,
 	primitive_topology: PrimitiveTopology::TriangleList,
-	samplers: &[
-		PipelineSamplerConfig {
-			set: 1,
-			binding: 0,
-		}
-	],
 };
 
 /// The standard PBR (Physically Based Rendering) material.

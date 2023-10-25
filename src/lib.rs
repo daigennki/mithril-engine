@@ -100,12 +100,6 @@ impl GameContext
 			always_pass_depth_test: true,
 			alpha_blending: true,
 			primitive_topology: PrimitiveTopology::TriangleList,
-			samplers: &[
-				render::pipeline::PipelineSamplerConfig {
-					set: 0,
-					binding: 1,
-				}
-			],
 		};
 
 		let dim = render_ctx.swapchain_dimensions();
