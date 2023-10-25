@@ -5,10 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use serde::Deserialize;
 use std::error::Error;
-use std::fs::File;
-use std::path::Path;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::{
@@ -47,11 +44,11 @@ pub struct Pipeline
 }
 impl Pipeline
 {
-	pub fn new(
+	pub fn new_from_binary(
 		primitive_topology: PrimitiveTopology,
-		vs_filename: String,
-		fs_info: Option<(String, ColorBlendState)>,
-		fs_transparency_info: Option<(String, PipelineRenderingCreateInfo)>,
+		vs_bin: &[u8],
+		fs_info: Option<(&[u8], ColorBlendState)>,
+		fs_transparency_info: Option<(&[u8], PipelineRenderingCreateInfo)>,
 		samplers: Vec<(usize, u32, Arc<Sampler>)>, // set: usize, binding: u32, sampler: Arc<Sampler>
 		rendering_info: PipelineRenderingCreateInfo,
 		depth_op: CompareOp,
@@ -61,7 +58,7 @@ impl Pipeline
 	{
 		let vk_dev = descriptor_set_allocator.device().clone();
 
-		let (vs, vertex_input_state) = load_spirv_vertex(vk_dev.clone(), &Path::new("shaders").join(vs_filename))?;
+		let (vs, vertex_input_state) = load_spirv_vertex_bytes(vk_dev.clone(), vs_bin)?;
 
 		let input_assembly_state = InputAssemblyState{
 			topology: primitive_topology,
@@ -82,13 +79,13 @@ impl Pipeline
 		// load fragment shader (optional)
 		let mut transparency_pipeline = None;
 		let mut color_blend_state = None;
-		if let Some((fs_filename, blend_state)) = fs_info {
+		if let Some((fs_bin, blend_state)) = fs_info {
 			// load the fragment shader for the opaque pass
-			let fs = load_spirv(vk_dev.clone(), &Path::new("shaders").join(fs_filename))?;
+			let fs = load_spirv_bytes(vk_dev.clone(), fs_bin)?;
 			stages.push(PipelineShaderStageCreateInfo::new(get_entry_point(&fs, "main")?));
 
 			// use a different fragment shader and pipeline for OIT
-			if let Some((ft, ft_rendering_info)) = fs_transparency_info {
+			if let Some((ft_bin, ft_rendering_info)) = fs_transparency_info {
 				let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
 					blend: Some(AttachmentBlend {
 						alpha_blend_op: BlendOp::Add,
@@ -103,7 +100,7 @@ impl Pipeline
 					..AttachmentBlend::ignore_source()
 				});
 
-				let fs_transparency = load_spirv(vk_dev.clone(), &Path::new("shaders").join(ft))?;
+				let fs_transparency = load_spirv_bytes(vk_dev.clone(), ft_bin)?;
 
 				let transparency_stages = vec![
 					PipelineShaderStageCreateInfo::new(get_entry_point(&vs, "main")?),
@@ -172,20 +169,15 @@ impl Pipeline
 		})
 	}
 
-	/// Create a pipeline from a YAML pipeline configuration file.
-	pub fn new_from_yaml(
-		yaml_filename: &str,
+	pub fn new_from_config(
+		config: &StaticPipelineConfig,
 		rendering_info: PipelineRenderingCreateInfo,
 		transparency_rendering: Option<PipelineRenderingCreateInfo>,
 		tex_sampler: Arc<Sampler>,
 		descriptor_set_allocator: Arc<StandardDescriptorSetAllocator>,
-	) -> Result<Self, GenericEngineError>
+	) -> Result<Self, GenericEngineError> 
 	{
-		log::info!("Loading pipeline definition file '{}'...", yaml_filename);
-
-		let yaml_reader = File::open(Path::new("shaders").join(yaml_filename))?;
-		let deserialized: PipelineConfig = serde_yaml::from_reader(yaml_reader)?;
-		let generated_samplers = deserialized
+		let generated_samplers = config
 			.samplers
 			.iter()
 			.map(|sampler_config| (sampler_config.set, sampler_config.binding, tex_sampler.clone()))
@@ -193,24 +185,24 @@ impl Pipeline
 
 		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
 		let common_blend_attachment_state = ColorBlendAttachmentState {
-			blend: deserialized.alpha_blending.then_some(AttachmentBlend::alpha()),
+			blend: config.alpha_blending.then_some(AttachmentBlend::alpha()),
 			..Default::default()
 		};
 		let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
 
-		let fs_info = deserialized.fragment_shader.map(|fs| (fs, color_blend_state));
-		let fs_transparency_info = deserialized
+		let fs_info = config.fragment_shader.map(|fs| (fs, color_blend_state));
+		let fs_transparency_info = config
 			.fragment_shader_transparency
 			.map(|fst| (fst, transparency_rendering.unwrap()));
 
-		let depth_op = deserialized
+		let depth_op = config
 			.always_pass_depth_test
 			.then_some(CompareOp::Always)
 			.unwrap_or(CompareOp::Less);
 
-		Pipeline::new(
-			deserialized.primitive_topology,
-			deserialized.vertex_shader,
+		Pipeline::new_from_binary(
+			config.primitive_topology,
+			config.vertex_shader,
 			fs_info,
 			fs_transparency_info,
 			generated_samplers,
@@ -283,52 +275,24 @@ impl std::fmt::Display for TransparencyNotEnabled
 	}
 }
 
-#[derive(Deserialize)]
-struct PipelineSamplerConfig
+#[derive(Default)]
+pub struct PipelineSamplerConfig
 {
-	set: usize,
-	binding: u32,
+	pub set: usize,
+	pub binding: u32,
 	/*mag_linear: bool,*/
 }
 
-#[derive(Deserialize)]
-struct PipelineConfig
+#[derive(Default)]
+pub struct StaticPipelineConfig
 {
-	vertex_shader: String,
-	fragment_shader: Option<String>,
-	fragment_shader_transparency: Option<String>,
-
-	#[serde(default)]
-	always_pass_depth_test: bool,
-
-	#[serde(default)]
-	alpha_blending: bool,
-
-	#[serde(with = "PrimitiveTopologyDef")]
-	primitive_topology: PrimitiveTopology,
-
-	#[serde(default)]
-	samplers: Vec<PipelineSamplerConfig>,
-	//#[serde(default)]
-	//attachments: Vec<PipelineBlendState>,
-}
-
-// copy of `vulkano::pipeline::graphics::input_assembly::PrimitiveTopology` so we can more directly (de)serialize it
-#[derive(Deserialize)]
-#[serde(remote = "PrimitiveTopology")]
-enum PrimitiveTopologyDef
-{
-	PointList,
-	LineList,
-	LineStrip,
-	TriangleList,
-	TriangleStrip,
-	TriangleFan,
-	LineListWithAdjacency,
-	LineStripWithAdjacency,
-	TriangleListWithAdjacency,
-	TriangleStripWithAdjacency,
-	PatchList,
+	pub vertex_shader: &'static [u8],
+	pub fragment_shader: Option<&'static [u8]>,
+	pub fragment_shader_transparency: Option<&'static [u8]>,
+	pub always_pass_depth_test: bool,
+	pub alpha_blending: bool,
+	pub primitive_topology: PrimitiveTopology,
+	pub samplers: &'static [PipelineSamplerConfig],
 }
 
 fn get_entry_point(
@@ -341,26 +305,14 @@ fn get_entry_point(
 		.ok_or(format!("No entry point called '{}' found in SPIR-V module!", entry_point_name).into())
 }
 
-fn load_spirv(device: Arc<vulkano::device::Device>, path: &Path) -> Result<Arc<ShaderModule>, GenericEngineError>
+fn load_spirv_bytes(device: Arc<vulkano::device::Device>, bytes: &[u8]) -> Result<Arc<ShaderModule>, GenericEngineError>
 {
-	let print_file_name = path
-		.file_name()
-		.and_then(|f| f.to_str())
-		.unwrap_or("[invalid file name in path]");
-	log::info!("Loading shader file '{}'...", print_file_name);
-	let spv_bytes = std::fs::read(path)?;
-	let spv_words = vulkano::shader::spirv::bytes_to_words(&spv_bytes)?;
+	let spv_words = vulkano::shader::spirv::bytes_to_words(&bytes)?;
 	Ok(unsafe { ShaderModule::new(device, ShaderModuleCreateInfo::new(&spv_words)) }?)
 }
 
-/// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the
-/// SPIR-V file.
-fn load_spirv_vertex(
-	device: Arc<vulkano::device::Device>,
-	path: &Path,
-) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
+fn gen_vertex_input_state(shader_module: Arc<ShaderModule>) -> Result<VertexInputState, GenericEngineError>
 {
-	let shader_module = load_spirv(device, path)?;
 	let vertex_input_state = shader_module
 		.entry_point("main")
 		.ok_or("No valid 'main' entry point in SPIR-V module!")?
@@ -390,8 +342,19 @@ fn load_spirv_vertex(
 				)
 		});
 
-	log::debug!("automatically generated VertexInputState: {:#?}", &vertex_input_state);
+	Ok(vertex_input_state)
+}
 
+/// Load the SPIR-V file, and also automatically determine the given vertex shader's vertex inputs using information from the
+/// SPIR-V data.
+fn load_spirv_vertex_bytes(
+	device: Arc<vulkano::device::Device>,
+	bytes: &[u8]
+) -> Result<(Arc<ShaderModule>, VertexInputState), GenericEngineError>
+{
+	let shader_module = load_spirv_bytes(device, bytes)?;
+	let vertex_input_state = gen_vertex_input_state(shader_module.clone())?;
+	log::debug!("automatically generated VertexInputState: {:#?}", &vertex_input_state);
 	Ok((shader_module, vertex_input_state))
 }
 

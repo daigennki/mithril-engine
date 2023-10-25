@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
@@ -88,8 +89,24 @@ impl GameContext
 		log::info!("--- Initializing MithrilEngine... ---");
 
 		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
-		render_ctx.load_material_pipeline("UI.yaml")?;
-		render_ctx.load_material_pipeline("PBR.yaml")?;
+
+		let ui_pipeline_config = render::pipeline::StaticPipelineConfig {
+			vertex_shader: include_bytes!("../shaders/ui.vert.spv"),
+			fragment_shader: Some(include_bytes!("../shaders/ui.frag.spv")),
+			fragment_shader_transparency: None,
+			always_pass_depth_test: true,
+			alpha_blending: true,
+			primitive_topology: PrimitiveTopology::TriangleList,
+			samplers: &[
+				render::pipeline::PipelineSamplerConfig {
+					set: 0,
+					binding: 1,
+				}
+			],
+		};
+
+		render_ctx.load_material_pipeline_config("UI", &ui_pipeline_config)?;
+		render_ctx.load_material_pipeline_config("PBR", &material::pbr::PIPELINE_CONFIG)?;
 
 		let (world, sky) = load_world(start_map)?;
 

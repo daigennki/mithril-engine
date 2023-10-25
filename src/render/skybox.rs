@@ -48,10 +48,13 @@ impl Skybox
 			..Default::default()
 		};
 
-		let sky_pipeline = super::pipeline::Pipeline::new(
+		let sky_pipeline = super::pipeline::Pipeline::new_from_binary(
 			PrimitiveTopology::TriangleStrip,
-			"skybox.vert.spv".into(),
-			Some(("skybox.frag.spv".into(), ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default()))),
+			include_bytes!("../../shaders/skybox.vert.spv"),
+			Some((
+				include_bytes!("../../shaders/skybox.frag.spv"),
+				ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())
+			)),
 			None,
 			vec![(0, 0, cubemap_sampler)],
 			rendering_info,

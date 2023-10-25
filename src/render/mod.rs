@@ -49,6 +49,7 @@ use vulkano::sync::{GpuFuture, Sharing};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
+use pipeline::StaticPipelineConfig;
 use texture::Texture;
 
 #[derive(shipyard::Unique)]
@@ -209,16 +210,9 @@ impl RenderContext
 		})
 	}
 
-	/// Load a material shader pipeline into memory.
-	/// The definition file name must be in the format "[name].yaml" and stored in the "shaders" folder.
-	pub fn load_material_pipeline(&mut self, filename: &str) -> Result<(), GenericEngineError>
-	{
-		let name = filename
-			.split_once('.')
-			.ok_or(format!("Invalid material pipeline definition file name '{}'", filename))?
-			.0
-			.to_string();
-		
+	/// Load a material shader pipeline into memory, using a static struct.
+	pub fn load_material_pipeline_config(&mut self, name: &str, config: &StaticPipelineConfig) -> Result<(), GenericEngineError>
+	{	
 		let rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
 			depth_attachment_format: Some(Format::D16_UNORM),
@@ -234,9 +228,9 @@ impl RenderContext
 			..Default::default()
 		};
 		self.material_pipelines.insert(
-			name,
-			pipeline::Pipeline::new_from_yaml(
-				filename,
+			name.to_string(),
+			pipeline::Pipeline::new_from_config(
+				config,
 				rendering_info,
 				Some(transparency_weights_rendering),
 				self.sampler_linear.clone(),

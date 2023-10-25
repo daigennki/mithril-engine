@@ -310,10 +310,10 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
 		};
-		let moments_pl = super::pipeline::Pipeline::new(
+		let moments_pl = super::pipeline::Pipeline::new_from_binary(
 			PrimitiveTopology::TriangleList,
-			"basic_3d_nonorm.vert.spv".into(),
-			Some(("mboit_moments.frag.spv".into(), moments_blend)),
+			include_bytes!("../../shaders/basic_3d_nonorm.vert.spv"),
+			Some((include_bytes!("../../shaders/mboit_moments.frag.spv"), moments_blend)),
 			None,
 			vec![(1, 0, main_sampler)],
 			moments_rendering,
@@ -331,10 +331,10 @@ impl MomentTransparencyRenderer
 			blend: Some(AttachmentBlend::alpha()),
 			..Default::default()
 		});
-		let transparency_compositing_pl = super::pipeline::Pipeline::new(
+		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
 			PrimitiveTopology::TriangleList,
-			"fill_viewport.vert.spv".into(),
-			Some(("mboit_compositing.frag.spv".into(), wboit_compositing_blend)),
+			include_bytes!("../../shaders/fill_viewport.vert.spv"),
+			Some((include_bytes!("../../shaders/mboit_compositing.frag.spv"), wboit_compositing_blend)),
 			None,
 			vec![],
 			compositing_rendering,

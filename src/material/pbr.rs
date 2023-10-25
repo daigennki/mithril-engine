@@ -12,11 +12,27 @@ use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	WriteDescriptorSet,
 };
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::RenderContext;
+use crate::render::{RenderContext, pipeline::{PipelineSamplerConfig, StaticPipelineConfig}};
 use crate::GenericEngineError;
+
+pub static PIPELINE_CONFIG: StaticPipelineConfig = StaticPipelineConfig {
+	vertex_shader: include_bytes!("../../shaders/basic_3d.vert.spv"),
+	fragment_shader: Some(include_bytes!("../../shaders/pbr.frag.spv")),
+	fragment_shader_transparency: Some(include_bytes!("../../shaders/pbr_mboit_weights.frag.spv")),
+	always_pass_depth_test: false,
+	alpha_blending: false,
+	primitive_topology: PrimitiveTopology::TriangleList,
+	samplers: &[
+		PipelineSamplerConfig {
+			set: 1,
+			binding: 0,
+		}
+	],
+};
 
 /// The standard PBR (Physically Based Rendering) material.
 #[derive(Deserialize)]
