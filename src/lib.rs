@@ -74,6 +74,19 @@ pub struct InputHelperWrapper
 	pub inner: WinitInputHelper,
 }
 
+mod ui_vs {
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		bytes: "shaders/ui.vert.spv",
+	}
+}
+mod ui_fs {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/ui.frag.spv",
+	}
+}
+
 struct GameContext
 {
 	world: World,
@@ -92,31 +105,37 @@ impl GameContext
 		log::info!("--- Initializing MithrilEngine... ---");
 
 		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
+		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
 
-		let ui_pipeline_config = render::pipeline::StaticPipelineConfig {
-			vertex_shader: include_bytes!("../shaders/ui.vert.spv"),
-			fragment_shader: Some(include_bytes!("../shaders/ui.frag.spv")),
+		let ui_pipeline_config = render::pipeline::PipelineConfig {
+			vertex_shader: ui_vs::load(vk_dev.clone())?,
+			fragment_shader: Some(ui_fs::load(vk_dev.clone())?),
 			fragment_shader_transparency: None,
 			always_pass_depth_test: true,
 			alpha_blending: true,
 			primitive_topology: PrimitiveTopology::TriangleStrip,
+		};
+		let pbr_pipeline_config = render::pipeline::PipelineConfig {
+			vertex_shader: material::vs_3d_common::load(vk_dev.clone())?,
+			fragment_shader: Some(material::pbr::fs::load(vk_dev.clone())?),
+			fragment_shader_transparency: Some(material::pbr::fs_oit::load(vk_dev.clone())?),
+			always_pass_depth_test: false,
+			alpha_blending: false,
+			primitive_topology: PrimitiveTopology::TriangleList,
 		};
 
 		let dim = render_ctx.swapchain_dimensions();
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
 		let transform_manager = component::TransformManager::new(&mut render_ctx)?;
 		let pbr_set_layout_info = material::pbr::PBR::set_layout_info_pbr(&render_ctx);
-		let pbr_set_layout = DescriptorSetLayout::new(
-			render_ctx.descriptor_set_allocator().device().clone(),
-			pbr_set_layout_info
-		)?;
+		let pbr_set_layout = DescriptorSetLayout::new(vk_dev, pbr_set_layout_info)?;
 
 		render_ctx.load_material_pipeline_config("UI", &ui_pipeline_config, vec![ canvas.get_set_layout().clone() ], vec![])?;
 		render_ctx.load_material_pipeline_config(
 			"PBR",
-			&material::pbr::PIPELINE_CONFIG,
+			&pbr_pipeline_config,
 			vec![ transform_manager.get_set_layout().clone(), pbr_set_layout ],
-			vec![ 
+			vec![
 				PushConstantRange { // push constant for projview matrix
 					stages: ShaderStages::VERTEX,
 					offset: 0,

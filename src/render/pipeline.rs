@@ -26,7 +26,7 @@ use vulkano::pipeline::graphics::{
 	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipelineCreateInfo,
 };
-use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule, ShaderModuleCreateInfo};
+use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule};
 
 use crate::GenericEngineError;
 
@@ -39,8 +39,8 @@ impl Pipeline
 	pub fn new_from_binary(
 		vk_dev: Arc<Device>,
 		primitive_topology: PrimitiveTopology,
-		vs_bin: &[u8],
-		fs_info: Option<(&[u8], ColorBlendState)>,
+		vs: Arc<ShaderModule>,
+		fs_info: Option<(Arc<ShaderModule>, ColorBlendState)>,
 		set_layouts: Vec<Arc<DescriptorSetLayout>>,
 		push_constant_ranges: Vec<PushConstantRange>,
 		rendering_info: PipelineRenderingCreateInfo,
@@ -56,7 +56,6 @@ impl Pipeline
 			..Default::default()
 		});
 
-		let vs = load_spirv_bytes(vk_dev.clone(), vs_bin)?;
 		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
 		stages.push(get_shader_stage(&vs, "main")?);
 
@@ -70,8 +69,7 @@ impl Pipeline
 		
 		// load fragment shader (optional)
 		let mut color_blend_state = None;
-		if let Some((fs_bin, blend_state)) = fs_info {
-			let fs = load_spirv_bytes(vk_dev.clone(), fs_bin)?;
+		if let Some((fs, blend_state)) = fs_info {
 			stages.push(get_shader_stage(&fs, "main")?);
 			color_blend_state = Some(blend_state);
 		}
@@ -102,7 +100,7 @@ impl Pipeline
 
 	pub fn new_from_config(
 		vk_dev: Arc<Device>,
-		config: &StaticPipelineConfig,
+		config: &PipelineConfig,
 		rendering_info: PipelineRenderingCreateInfo,
 		set_layouts: Vec<Arc<DescriptorSetLayout>>,
 		push_constant_ranges: Vec<PushConstantRange>,
@@ -125,7 +123,7 @@ impl Pipeline
 				..AttachmentBlend::ignore_source()
 			});
 
-			(config.fragment_shader_transparency.unwrap(), wboit_accum_blend)
+			(config.fragment_shader_transparency.clone().unwrap(), wboit_accum_blend)
 		} else {
 			let common_blend_attachment_state = if config.fragment_shader_transparency.is_some() {
 				// Disable blending if this is an opaque rendering pipeline, 
@@ -140,7 +138,7 @@ impl Pipeline
 			let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
 			let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
 
-			(config.fragment_shader.unwrap(), color_blend_state)
+			(config.fragment_shader.clone().unwrap(), color_blend_state)
 		};
 
 		let depth_op = config
@@ -151,7 +149,7 @@ impl Pipeline
 		Pipeline::new_from_binary(
 			vk_dev,
 			config.primitive_topology,
-			config.vertex_shader,
+			config.vertex_shader.clone(),
 			Some(fs_info),
 			set_layouts,
 			push_constant_ranges,
@@ -185,12 +183,11 @@ impl std::fmt::Display for TransparencyNotEnabled
 	}
 }
 
-#[derive(Default)]
-pub struct StaticPipelineConfig
+pub struct PipelineConfig
 {
-	pub vertex_shader: &'static [u8],
-	pub fragment_shader: Option<&'static [u8]>,
-	pub fragment_shader_transparency: Option<&'static [u8]>,
+	pub vertex_shader: Arc<ShaderModule>,
+	pub fragment_shader: Option<Arc<ShaderModule>>,
+	pub fragment_shader_transparency: Option<Arc<ShaderModule>>,
 	pub always_pass_depth_test: bool,
 	pub alpha_blending: bool,
 	pub primitive_topology: PrimitiveTopology,
@@ -206,12 +203,6 @@ fn get_shader_stage(
 		.ok_or(format!("No entry point called '{}' found in SPIR-V module!", entry_point_name))?;
 
 	Ok(PipelineShaderStageCreateInfo::new(entry_point))
-}
-
-fn load_spirv_bytes(device: Arc<vulkano::device::Device>, bytes: &[u8]) -> Result<Arc<ShaderModule>, GenericEngineError>
-{
-	let spv_words = vulkano::shader::spirv::bytes_to_words(&bytes)?;
-	Ok(unsafe { ShaderModule::new(device, ShaderModuleCreateInfo::new(&spv_words)) }?)
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.

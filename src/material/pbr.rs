@@ -12,21 +12,33 @@ use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	WriteDescriptorSet,
 };
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::{RenderContext, pipeline::StaticPipelineConfig};
+use crate::render::RenderContext;
 use crate::GenericEngineError;
 
-pub static PIPELINE_CONFIG: StaticPipelineConfig = StaticPipelineConfig {
+/*pub static PIPELINE_CONFIG: StaticPipelineConfig = StaticPipelineConfig {
 	vertex_shader: include_bytes!("../../shaders/basic_3d.vert.spv"),
 	fragment_shader: Some(include_bytes!("../../shaders/pbr.frag.spv")),
 	fragment_shader_transparency: Some(include_bytes!("../../shaders/pbr_mboit_weights.frag.spv")),
 	always_pass_depth_test: false,
 	alpha_blending: false,
 	primitive_topology: PrimitiveTopology::TriangleList,
-};
+};*/
+
+pub mod fs {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/pbr.frag.spv",
+	}
+}
+pub mod fs_oit {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/pbr_mboit_weights.frag.spv",
+	}
+}
 
 /// The standard PBR (Physically Based Rendering) material.
 #[derive(Deserialize)]
@@ -96,19 +108,4 @@ impl Material for PBR
 		self.transparent
 	}
 }
-/*impl DeferMaterialLoading for PBR
-{
-	fn get_base_color(&self) -> Option<Vec4>
-	{
-		match &self.base_color {
-			ColorInput::Color(c) => Some(*c),
-			_ => None,
-		}
-	}
-	fn set_base_color(&mut self, color: Vec4, render_ctx: &mut RenderContext) -> Result<(), GenericEngineError>
-	{
-		self.base_color = ColorInput::Color(color);
-		self.update_descriptor_set(Path::new("./"), render_ctx)
-	}
-}*/
 

@@ -17,6 +17,13 @@ use vulkano::format::Format;
 use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
 
+pub mod vs_3d_common {
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		bytes: "shaders/basic_3d.vert.spv",
+	}
+}
+
 /// A material used by meshes to set shader parameters.
 #[typetag::deserialize]
 pub trait Material: Send + Sync

@@ -26,6 +26,19 @@ use vulkano::shader::ShaderStages;
 use super::RenderContext;
 use crate::GenericEngineError;
 
+mod vs {
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		bytes: "shaders/skybox.vert.spv",
+	}
+}
+mod fs {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/skybox.frag.spv",
+	}
+}
+
 #[derive(shipyard::Unique)]
 pub struct Skybox
 {
@@ -71,11 +84,11 @@ impl Skybox
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
 		let sky_pipeline = super::pipeline::Pipeline::new_from_binary(
-			device,
+			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			include_bytes!("../../shaders/skybox.vert.spv"),
+			vs::load(device.clone())?,
 			Some((
-				include_bytes!("../../shaders/skybox.frag.spv"),
+				fs::load(device.clone())?,
 				ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())
 			)),
 			vec![ set_layout.clone() ],

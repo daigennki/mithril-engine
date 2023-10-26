@@ -51,7 +51,7 @@ use vulkano::sync::{GpuFuture, Sharing};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
-use pipeline::StaticPipelineConfig;
+use pipeline::PipelineConfig;
 use texture::Texture;
 
 #[derive(shipyard::Unique)]
@@ -222,7 +222,7 @@ impl RenderContext
 	pub fn load_material_pipeline_config(
 		&mut self,
 		name: &str, 
-		config: &StaticPipelineConfig,
+		config: &PipelineConfig,
 		mut set_layouts: Vec<Arc<DescriptorSetLayout>>,
 		push_constant_ranges: Vec<PushConstantRange>,
 	) -> Result<(), GenericEngineError>

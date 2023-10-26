@@ -202,6 +202,31 @@ impl TransparencyRenderer
 	}
 }*/
 
+mod vs_nonorm {
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		bytes: "shaders/basic_3d_nonorm.vert.spv",
+	}
+}
+mod fs_moments {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/mboit_moments.frag.spv",
+	}
+}
+mod vs_fill_viewport {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/fill_viewport.vert.spv",
+	}
+}
+mod fs_oit_compositing {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/mboit_compositing.frag.spv"
+	}
+}
+
 /// A renderer that implements Moment-Based Order-Independent Transparency (MBOIT).
 pub struct MomentTransparencyRenderer
 {
@@ -373,8 +398,8 @@ impl MomentTransparencyRenderer
 		let moments_pl = super::pipeline::Pipeline::new_from_binary(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			include_bytes!("../../shaders/basic_3d_nonorm.vert.spv"),
-			Some((include_bytes!("../../shaders/mboit_moments.frag.spv"), moments_blend)),
+			vs_nonorm::load(device.clone())?,
+			Some((fs_moments::load(device.clone())?, moments_blend)),
 			vec![ transform_set_layout, base_color_set_layout ],
 			vec![ 
 				PushConstantRange { // push constant for projview matrix
@@ -399,10 +424,10 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		});
 		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
-			device,
+			device.clone(),
 			PrimitiveTopology::TriangleList,
-			include_bytes!("../../shaders/fill_viewport.vert.spv"),
-			Some((include_bytes!("../../shaders/mboit_compositing.frag.spv"), wboit_compositing_blend)),
+			vs_fill_viewport::load(device.clone())?,
+			Some((fs_oit_compositing::load(device.clone())?, wboit_compositing_blend)),
 			vec![ stage4_inputs_layout.clone() ],
 			vec![],
 			compositing_rendering,
