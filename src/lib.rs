@@ -134,12 +134,12 @@ impl GameContext
 		render_ctx.load_material_pipeline_config(
 			"PBR",
 			&pbr_pipeline_config,
-			vec![ transform_manager.get_set_layout().clone(), pbr_set_layout ],
+			vec![ pbr_set_layout ],
 			vec![
-				PushConstantRange { // push constant for projview matrix
+				PushConstantRange { // push constant for projviewmodel and transform3 matrix
 					stages: ShaderStages::VERTEX,
 					offset: 0,
-					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+					size: (std::mem::size_of::<Mat4>() * 2).try_into().unwrap(),
 				}
 			]
 		)?;
@@ -323,7 +323,6 @@ fn prepare_ui(
 fn draw_common(
 	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	camera_manager: &CameraManager,
-	transform_manager: &component::TransformManager,
 	transforms: View<component::Transform>,
 	mesh_manager: &component::mesh::MeshManager,
 	//meshes: View<component::mesh::Mesh>,
@@ -335,15 +334,10 @@ fn draw_common(
 	for (eid, transform) in transforms.iter().with_id() {
 		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass) 
 			|| (mesh_manager.has_transparency(eid) && transparency_pass) {
-			command_buffer.bind_descriptor_sets(
-				vulkano::pipeline::PipelineBindPoint::Graphics,
-				pipeline.layout(),
-				0,
-				transform_manager.get_descriptor_set(eid).ok_or("transform not loaded")?.clone()
-			)?;
-
-			let transform_mat = projview * transform.get_matrix();
-			mesh_manager.draw(eid, command_buffer, pipeline.layout(), &transform_mat, transparency_pass)?;
+			let model_matrix = transform.get_matrix();
+			let transform_mat = projview * model_matrix;
+			let model_mat3 = Mat3::from_mat4(model_matrix);
+			mesh_manager.draw(eid, command_buffer, pipeline.layout(), transform_mat, model_mat3, transparency_pass)?;
 		}
 	}
 	Ok(())
@@ -352,7 +346,7 @@ fn draw_3d(
 	render_ctx: UniqueView<render::RenderContext>,
 	skybox: UniqueView<render::skybox::Skybox>,
 	camera_manager: UniqueView<CameraManager>,
-	transform_manager: UniqueView<component::TransformManager>,
+	//transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
@@ -372,7 +366,6 @@ fn draw_3d(
 	draw_common(
 		&mut command_buffer, 
 		&camera_manager, 
-		&transform_manager, 
 		transforms, 
 		&mesh_manager, 
 		pbr_pipeline, 
@@ -385,14 +378,13 @@ fn draw_3d(
 fn draw_3d_transparent_moments(
 	render_ctx: UniqueView<render::RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
-	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let (mut command_buffer, pipeline) = render_ctx.record_transparency_moments_draws(camera_manager.projview())?;
+	let (mut command_buffer, pipeline) = render_ctx.record_transparency_moments_draws()?;
 
-	draw_common(&mut command_buffer, &camera_manager, &transform_manager, transforms, &mesh_manager, pipeline, true)?;
+	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true)?;
 
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
@@ -401,16 +393,15 @@ fn draw_3d_transparent_moments(
 fn draw_3d_transparent(
 	render_ctx: UniqueView<render::RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
-	transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
 	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
-	let mut command_buffer = render_ctx.record_transparency_draws(pipeline, camera_manager.projview())?;
+	let mut command_buffer = render_ctx.record_transparency_draws(pipeline)?;
 
-	draw_common(&mut command_buffer, &camera_manager, &transform_manager, transforms, &mesh_manager, pipeline, true)?;
+	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true)?;
 
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())

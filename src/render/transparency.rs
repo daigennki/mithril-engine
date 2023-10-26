@@ -370,16 +370,7 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
 		};
-		let transform_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(0, DescriptorSetLayoutBinding { // binding 0: transformation matrix
-					stages: ShaderStages::VERTEX,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-				}),
-			].into(),
-			..Default::default()
-		};
-		let transform_set_layout = DescriptorSetLayout::new(device.clone(), transform_set_layout_info)?;
+
 		let base_color_set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
 				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
@@ -400,12 +391,12 @@ impl MomentTransparencyRenderer
 			PrimitiveTopology::TriangleList,
 			vs_nonorm::load(device.clone())?,
 			Some((fs_moments::load(device.clone())?, moments_blend)),
-			vec![ transform_set_layout, base_color_set_layout ],
+			vec![ base_color_set_layout ],
 			vec![ 
 				PushConstantRange { // push constant for projview matrix
 					stages: ShaderStages::VERTEX,
 					offset: 0,
-					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+					size: (std::mem::size_of::<Mat4>() * 2).try_into().unwrap(),
 				}
 			],
 			moments_rendering,

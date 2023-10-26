@@ -2,16 +2,13 @@
 // The shader code used for moment-based OIT moment weight calculation (stage 3), meant to be included by other shaders.
 
 /* sum(rgb * a, a) */
-Texture2D moments_in : register(t0, space2);
-//[[vk::input_attachment_index(0)]] SubpassInput moments_in : register(t0, space3);
+Texture2D moments_in : register(t0, space1);
 
 /* prod(1 - a) */
-Texture2D optical_depth_in : register(t1, space2);
-//[[vk::input_attachment_index(1)]] SubpassInput optical_depth_in : register(t1, space3);
+Texture2D optical_depth_in : register(t1, space1);
 
 /* minimum depth for correction */
-Texture2D min_depth : register(t2, space2);
-//[[vk::input_attachment_index(2)]] SubpassInput min_depth : register(t2, space3);
+Texture2D min_depth : register(t2, space1);
 
 struct PS_OUTPUT
 {

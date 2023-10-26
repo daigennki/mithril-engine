@@ -144,7 +144,7 @@ impl Model
 				let mat = mat_override.as_ref().unwrap_or_else(|| &self.materials[submesh.material_index()]);
 
 				if mat.has_transparency() == transparency_pass {
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, set.clone())?;
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set.clone())?;
 					submesh.draw(cb)?;
 				}
 			}

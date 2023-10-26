@@ -206,15 +206,30 @@ impl MeshManager
 		eid: EntityId, 
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_layout: Arc<PipelineLayout>,
-		projviewmodel: &Mat4,
+		projviewmodel: Mat4,
+		model_notranslate: Mat3,
 		transparency_pass: bool
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
 		if let Some((model_loaded, material_overrides_and_sets)) = self.resources.get(&eid) {
-			model_loaded.draw(cb, pipeline_layout, projviewmodel, material_overrides_and_sets, transparency_pass)?
+			let push_data = ModelMatrixPushConstant {
+				projviewmodel,
+				model_notranslate: Mat4::from_mat3(model_notranslate),
+			};
+			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+
+			model_loaded.draw(cb, pipeline_layout, &projviewmodel, material_overrides_and_sets, transparency_pass)?
 		}
 		Ok(())
 	}
+}
+
+#[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
+struct ModelMatrixPushConstant
+{
+	projviewmodel: Mat4,
+	model_notranslate: Mat4, // must be Mat4 for alignment
 }
 

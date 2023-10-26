@@ -1,7 +1,7 @@
 // The shader code used for moment-based OIT moment writes (stage 2).
 
-SamplerState sampler0 : register(s0, space1);
-Texture2D base_color : register(t1, space1);
+SamplerState sampler0 : register(s0);
+Texture2D base_color : register(t1);
 
 struct PS_INPUT
 {

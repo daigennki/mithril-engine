@@ -474,7 +474,6 @@ impl RenderContext
 	/// anything specific to materials (it only reads the alpha channel of each texture).
 	pub fn record_transparency_moments_draws(
 		&self, 
-		projview: Mat4,
 	) -> Result<(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, &pipeline::Pipeline), GenericEngineError>
 	{
 		let mut cb = self.new_secondary_command_buffer(
@@ -488,13 +487,11 @@ impl RenderContext
 		)?;
 		let pl = self.transparency_renderer.get_moments_pipeline();
 		pl.bind(&mut cb)?;
-		cb.push_constants(pl.layout(), 0, projview)?;
 		Ok((cb, pl))
 	}
 	pub fn record_transparency_draws(
 		&self,
 		transparency_pipeline: &pipeline::Pipeline,
-		projview: Mat4,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
@@ -504,10 +501,9 @@ impl RenderContext
 		cb.bind_descriptor_sets(
 			PipelineBindPoint::Graphics,
 			transparency_pipeline.layout(), 
-			2,
+			1,
 			vec![self.transparency_renderer.get_stage3_inputs().clone()]
 		)?;
-		cb.push_constants(transparency_pipeline.layout(), 0, projview)?;
 
 		Ok(cb)
 	}
