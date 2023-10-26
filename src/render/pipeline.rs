@@ -48,52 +48,45 @@ impl Pipeline
 		depth_write: bool,
 	) -> Result<Self, GenericEngineError>
 	{
-		let vs = load_spirv_bytes(vk_dev.clone(), vs_bin)?;
-		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
+		let mut stages = Vec::with_capacity(5);
 
 		let input_assembly_state = Some(InputAssemblyState{
 			topology: primitive_topology,
 			primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
 			..Default::default()
 		});
-		
-		let depth_stencil_state = DepthStencilState {
+
+		let vs = load_spirv_bytes(vk_dev.clone(), vs_bin)?;
+		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
+		stages.push(get_shader_stage(&vs, "main")?);
+
+		let depth_stencil_state = Some(DepthStencilState {
 			depth: Some(DepthState {
 				write_enable: depth_write,
 				compare_op: depth_op,
 			}),
 			..Default::default()
-		};
-
-		let rasterization_state = Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() });
-
-		let mut stages = Vec::with_capacity(5);
-		stages.push(get_shader_stage(&vs, "main")?);
+		});
 		
 		// load fragment shader (optional)
 		let mut color_blend_state = None;
 		if let Some((fs_bin, blend_state)) = fs_info {
-			// load the fragment shader for the opaque pass
 			let fs = load_spirv_bytes(vk_dev.clone(), fs_bin)?;
 			stages.push(get_shader_stage(&fs, "main")?);
 			color_blend_state = Some(blend_state);
 		}
 
 		// create the pipeline layout
-		let layout_info = PipelineLayoutCreateInfo {
-			set_layouts: set_layouts.clone(),
-			push_constant_ranges: push_constant_ranges.clone(),
-			..Default::default()
-		};
+		let layout_info = PipelineLayoutCreateInfo { set_layouts, push_constant_ranges, ..Default::default() };
 		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 		let pipeline_info = GraphicsPipelineCreateInfo {
 			stages: stages.into(),
-			vertex_input_state: vertex_input_state.clone(),
-			input_assembly_state: input_assembly_state.clone(),
+			vertex_input_state,
+			input_assembly_state,
 			viewport_state: Some(ViewportState::default()),
-			rasterization_state: rasterization_state.clone(),
+			rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
 			multisample_state: Some(MultisampleState::default()),
-			depth_stencil_state: Some(depth_stencil_state.clone()),
+			depth_stencil_state,
 			color_blend_state,
 			dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
 			subpass: Some(rendering_info.into()),
@@ -104,9 +97,7 @@ impl Pipeline
 		let pipeline = GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?;
 		print_pipeline_descriptors_info(pipeline.as_ref());
 
-		Ok(Pipeline {
-			pipeline,
-		})
+		Ok(Pipeline{ pipeline })
 	}
 
 	pub fn new_from_config(
@@ -119,8 +110,6 @@ impl Pipeline
 		is_for_transparency: bool,
 	) -> Result<Self, GenericEngineError> 
 	{
-		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
-
 		let fs_info = if is_for_transparency {
 			let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
 				blend: Some(AttachmentBlend {
@@ -148,6 +137,7 @@ impl Pipeline
 					..Default::default()
 				}
 			};
+			let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
 			let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
 
 			(config.fragment_shader.unwrap(), color_blend_state)
