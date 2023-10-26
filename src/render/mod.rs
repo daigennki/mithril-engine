@@ -36,7 +36,7 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::DescriptorSetLayout
+	layout::DescriptorSetLayout, DescriptorSet,
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
@@ -75,8 +75,8 @@ pub struct RenderContext
 	// Loaded textures, with the key being the path relative to the current working directory
 	textures: HashMap<PathBuf, Arc<Texture>>,
 
-	// User-accessible material pipelines
-	material_pipelines: HashMap<String, pipeline::Pipeline>,
+	// User-accessible material pipelines. Optional transparency pipeline may also be specified.
+	material_pipelines: HashMap<String, (pipeline::Pipeline, Option<pipeline::Pipeline>)>,
 
 	// The final contents of this render target's color image will be blitted to the intermediate sRGB nonlinear image.
 	main_render_target: RenderTarget,
@@ -223,7 +223,7 @@ impl RenderContext
 		&mut self,
 		name: &str, 
 		config: &StaticPipelineConfig,
-		set_layouts: Vec<Arc<DescriptorSetLayout>>,
+		mut set_layouts: Vec<Arc<DescriptorSetLayout>>,
 		push_constant_ranges: Vec<PushConstantRange>,
 	) -> Result<(), GenericEngineError>
 	{	
@@ -232,27 +232,44 @@ impl RenderContext
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
 		};
+		let pipeline = pipeline::Pipeline::new_from_config(
+			self.descriptor_set_allocator.device().clone(),
+			config,
+			rendering_info,
+			set_layouts.clone(),
+			push_constant_ranges.clone(),
+			true,
+			false,
+		)?;
 
-		let transparency_weights_rendering = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![
-				Some(Format::R16G16B16A16_SFLOAT),
-				Some(Format::R8_UNORM),
-			],
-			depth_attachment_format: Some(Format::D16_UNORM),
-			..Default::default()
-		};
-		self.material_pipelines.insert(
-			name.to_string(),
-			pipeline::Pipeline::new_from_config(
+		let transparency_pipeline = if config.fragment_shader_transparency.is_some() {
+			let transparency_weights_rendering = PipelineRenderingCreateInfo {
+				color_attachment_formats: vec![
+					Some(Format::R16G16B16A16_SFLOAT),
+					Some(Format::R8_UNORM),
+				],
+				depth_attachment_format: Some(Format::D16_UNORM),
+				..Default::default()
+			};
+			set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
+			Some(pipeline::Pipeline::new_from_config(
 				self.descriptor_set_allocator.device().clone(),
 				config,
-				rendering_info,
-				Some(transparency_weights_rendering),
-				Some(&self.transparency_renderer),
+				transparency_weights_rendering,
 				set_layouts,
 				push_constant_ranges,
-			)?,
+				false,
+				true,
+			)?)
+		} else {
+			None
+		};
+
+		self.material_pipelines.insert(
+			name.to_string(),
+			(pipeline, transparency_pipeline)
 		);
+
 		Ok(())
 	}
 
@@ -476,21 +493,21 @@ impl RenderContext
 	}
 	pub fn record_transparency_draws(
 		&self,
-		first_bind_pipeline: &pipeline::Pipeline,
+		transparency_pipeline: &pipeline::Pipeline,
 		projview: Mat4,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
 
 		let mut cb = self.new_secondary_command_buffer(color_formats, Some(Format::D16_UNORM), self.swapchain_dimensions())?;
-		first_bind_pipeline.bind_transparency(&mut cb)?;
+		transparency_pipeline.bind(&mut cb)?;
 		cb.bind_descriptor_sets(
 			PipelineBindPoint::Graphics,
-			first_bind_pipeline.layout_transparency()?, 
+			transparency_pipeline.layout(), 
 			2,
 			vec![self.transparency_renderer.get_stage3_inputs().clone()]
 		)?;
-		cb.push_constants(first_bind_pipeline.layout(), 0, projview)?;
+		cb.push_constants(transparency_pipeline.layout(), 0, projview)?;
 
 		Ok(cb)
 	}
@@ -732,7 +749,11 @@ impl RenderContext
 
 	pub fn get_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
 	{
-		Ok(self.material_pipelines.get(name).ok_or(PipelineNotLoaded)?)
+		Ok(self.material_pipelines.get(name).map(|tuple| &tuple.0).ok_or(PipelineNotLoaded)?)
+	}
+	pub fn get_transparency_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
+	{
+		Ok(self.material_pipelines.get(name).and_then(|tuple| tuple.1.as_ref()).ok_or(PipelineNotLoaded)?)
 	}
 
 	pub fn get_queue(&self) -> Arc<Queue>

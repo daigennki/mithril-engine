@@ -375,7 +375,6 @@ impl MomentTransparencyRenderer
 			PrimitiveTopology::TriangleList,
 			include_bytes!("../../shaders/basic_3d_nonorm.vert.spv"),
 			Some((include_bytes!("../../shaders/mboit_moments.frag.spv"), moments_blend)),
-			None,
 			vec![ transform_set_layout, base_color_set_layout ],
 			vec![ 
 				PushConstantRange { // push constant for projview matrix
@@ -404,7 +403,6 @@ impl MomentTransparencyRenderer
 			PrimitiveTopology::TriangleList,
 			include_bytes!("../../shaders/fill_viewport.vert.spv"),
 			Some((include_bytes!("../../shaders/mboit_compositing.frag.spv"), wboit_compositing_blend)),
-			None,
 			vec![ stage4_inputs_layout.clone() ],
 			vec![],
 			compositing_rendering,

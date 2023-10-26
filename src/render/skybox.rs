@@ -78,7 +78,6 @@ impl Skybox
 				include_bytes!("../../shaders/skybox.frag.spv"),
 				ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())
 			)),
-			None,
 			vec![ set_layout.clone() ],
 			vec![ 
 				PushConstantRange { // push constant for view matrix

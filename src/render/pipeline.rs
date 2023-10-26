@@ -8,7 +8,7 @@
 use std::error::Error;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::{layout::DescriptorSetLayout, DescriptorSet};
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
 use vulkano::pipeline::{
@@ -29,14 +29,10 @@ use vulkano::pipeline::graphics::{
 use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule, ShaderModuleCreateInfo};
 
 use crate::GenericEngineError;
-use crate::render::transparency::MomentTransparencyRenderer;
 
 pub struct Pipeline
 {
 	pipeline: Arc<GraphicsPipeline>,
-
-	/// similar pipeline, except for the fragment shader being capable of processing Order-Independent Transparency
-	transparency_pipeline: Option<Arc<GraphicsPipeline>>,
 }
 impl Pipeline
 {
@@ -45,7 +41,6 @@ impl Pipeline
 		primitive_topology: PrimitiveTopology,
 		vs_bin: &[u8],
 		fs_info: Option<(&[u8], ColorBlendState)>,
-		fs_transparency_info: Option<(&[u8], PipelineRenderingCreateInfo, &MomentTransparencyRenderer)>,
 		set_layouts: Vec<Arc<DescriptorSetLayout>>,
 		push_constant_ranges: Vec<PushConstantRange>,
 		rendering_info: PipelineRenderingCreateInfo,
@@ -76,7 +71,6 @@ impl Pipeline
 		stages.push(get_shader_stage(&vs, "main")?);
 		
 		// load fragment shader (optional)
-		let mut transparency_pipeline = None;
 		let mut color_blend_state = None;
 		if let Some((fs_bin, blend_state)) = fs_info {
 			// load the fragment shader for the opaque pass
@@ -110,8 +104,24 @@ impl Pipeline
 		let pipeline = GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?;
 		print_pipeline_descriptors_info(pipeline.as_ref());
 
-		// use a different fragment shader and pipeline for OIT
-		if let Some((ft_bin, ft_rendering_info, transparency_renderer)) = fs_transparency_info {
+		Ok(Pipeline {
+			pipeline,
+		})
+	}
+
+	pub fn new_from_config(
+		vk_dev: Arc<Device>,
+		config: &StaticPipelineConfig,
+		rendering_info: PipelineRenderingCreateInfo,
+		set_layouts: Vec<Arc<DescriptorSetLayout>>,
+		push_constant_ranges: Vec<PushConstantRange>,
+		depth_write: bool,
+		is_for_transparency: bool,
+	) -> Result<Self, GenericEngineError> 
+	{
+		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
+
+		let fs_info = if is_for_transparency {
 			let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
 				blend: Some(AttachmentBlend {
 					alpha_blend_op: BlendOp::Add,
@@ -126,70 +136,22 @@ impl Pipeline
 				..AttachmentBlend::ignore_source()
 			});
 
-			let fs_transparency = load_spirv_bytes(vk_dev.clone(), ft_bin)?;
-			let transparency_stages = vec![
-				get_shader_stage(&vs, "main")?,
-				get_shader_stage(&fs_transparency, "main")?,
-			];
-
-			let mut transparency_depth_stencil_state = depth_stencil_state.clone();
-			// WBOIT needs depth write to be disabled
-			transparency_depth_stencil_state.depth.as_mut().unwrap().write_enable = false;
-
-			let mut transparency_set_layouts = set_layouts.clone();
-			transparency_set_layouts.push(transparency_renderer.get_stage3_inputs().layout().clone());
-			let layout_info = PipelineLayoutCreateInfo {
-				set_layouts: transparency_set_layouts,
-				push_constant_ranges: push_constant_ranges.clone(),
-				..Default::default()
+			(config.fragment_shader_transparency.unwrap(), wboit_accum_blend)
+		} else {
+			let common_blend_attachment_state = if config.fragment_shader_transparency.is_some() {
+				// Disable blending if this is an opaque rendering pipeline, 
+				// and transparency will be handled in a separate pass.
+				ColorBlendAttachmentState::default()
+			} else {
+				ColorBlendAttachmentState {
+					blend: config.alpha_blending.then_some(AttachmentBlend::alpha()),
+					..Default::default()
+				}
 			};
-			let transparency_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
-			let transparency_pipeline_info = GraphicsPipelineCreateInfo {
-				stages: transparency_stages.into(),
-				vertex_input_state: vertex_input_state,
-				input_assembly_state: input_assembly_state,
-				viewport_state: Some(ViewportState::default()),
-				rasterization_state: rasterization_state,
-				multisample_state: Some(MultisampleState::default()),
-				depth_stencil_state: Some(transparency_depth_stencil_state),
-				color_blend_state: Some(wboit_accum_blend),
-				dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
-				subpass: Some(ft_rendering_info.into()),
-				..GraphicsPipelineCreateInfo::layout(transparency_layout)
-			};
+			let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
 
-			let built_transparency_pipeline = GraphicsPipeline::new(vk_dev.clone(), None, transparency_pipeline_info)?;
-			print_pipeline_descriptors_info(built_transparency_pipeline.as_ref());
-			transparency_pipeline = Some(built_transparency_pipeline);
-		}
-
-		Ok(Pipeline {
-			pipeline,
-			transparency_pipeline,
-		})
-	}
-
-	pub fn new_from_config(
-		vk_dev: Arc<Device>,
-		config: &StaticPipelineConfig,
-		rendering_info: PipelineRenderingCreateInfo,
-		transparency_rendering: Option<PipelineRenderingCreateInfo>,
-		transparency_renderer: Option<&MomentTransparencyRenderer>,
-		set_layouts: Vec<Arc<DescriptorSetLayout>>,
-		push_constant_ranges: Vec<PushConstantRange>,
-	) -> Result<Self, GenericEngineError> 
-	{
-		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
-		let common_blend_attachment_state = ColorBlendAttachmentState {
-			blend: config.alpha_blending.then_some(AttachmentBlend::alpha()),
-			..Default::default()
+			(config.fragment_shader.unwrap(), color_blend_state)
 		};
-		let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
-
-		let fs_info = config.fragment_shader.map(|fs| (fs, color_blend_state));
-		let fs_transparency_info = config
-			.fragment_shader_transparency
-			.map(|fst| (fst, transparency_rendering.unwrap(), transparency_renderer.unwrap()));
 
 		let depth_op = config
 			.always_pass_depth_test
@@ -200,13 +162,12 @@ impl Pipeline
 			vk_dev,
 			config.primitive_topology,
 			config.vertex_shader,
-			fs_info,
-			fs_transparency_info,
+			Some(fs_info),
 			set_layouts,
 			push_constant_ranges,
 			rendering_info,
 			depth_op,
-			true,
+			depth_write,
 		)
 	}
 
@@ -215,26 +176,11 @@ impl Pipeline
 		command_buffer.bind_pipeline_graphics(self.pipeline.clone())?;
 		Ok(())
 	}
-	pub fn bind_transparency<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), GenericEngineError>
-	{
-		command_buffer.bind_pipeline_graphics(self.transparency_pipeline.clone().ok_or(TransparencyNotEnabled)?)?;
-		Ok(())
-	}
 
 	pub fn layout(&self) -> Arc<PipelineLayout>
 	{
 		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
 		pipeline_ref.layout().clone()
-	}
-
-	pub fn layout_transparency(&self) -> Result<Arc<PipelineLayout>, TransparencyNotEnabled>
-	{
-		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self
-			.transparency_pipeline
-			.as_ref()
-			.ok_or(TransparencyNotEnabled)?
-			.as_ref();
-		Ok(pipeline_ref.layout().clone())
 	}
 }
 

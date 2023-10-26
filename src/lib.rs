@@ -388,7 +388,7 @@ fn draw_3d_transparent(
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
-	let pipeline = render_ctx.get_pipeline("PBR")?;
+	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
 	let mut command_buffer = render_ctx.record_transparency_draws(pipeline, camera_manager.projview())?;
 
 	draw_common(&mut command_buffer, &camera_manager, &transform_manager, transforms, &mesh_manager, pipeline, true)?;
