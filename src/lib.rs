@@ -126,7 +126,6 @@ impl GameContext
 
 		let dim = render_ctx.swapchain_dimensions();
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
-		let transform_manager = component::TransformManager::new(&mut render_ctx)?;
 		let pbr_set_layout_info = material::pbr::PBR::set_layout_info_pbr(&render_ctx);
 		let pbr_set_layout = DescriptorSetLayout::new(vk_dev, pbr_set_layout_info)?;
 
@@ -158,7 +157,6 @@ impl GameContext
 		world.add_unique(canvas);
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 		world.add_unique(camera_manager);
-		world.add_unique(transform_manager);
 		world.add_unique(component::mesh::MeshManager::default());
 		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
 		world.add_unique(render_ctx);
@@ -346,7 +344,6 @@ fn draw_3d(
 	render_ctx: UniqueView<render::RenderContext>,
 	skybox: UniqueView<render::skybox::Skybox>,
 	camera_manager: UniqueView<CameraManager>,
-	//transform_manager: UniqueView<component::TransformManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
