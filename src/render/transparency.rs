@@ -223,7 +223,7 @@ mod vs_fill_viewport {
 mod fs_oit_compositing {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/mboit_compositing.frag.spv"
+		bytes: "shaders/wboit_compositing.frag.spv"
 	}
 }
 
