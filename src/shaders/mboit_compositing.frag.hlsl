@@ -2,14 +2,9 @@
 
 /* sum(rgb * a, a) */
 Texture2D accum_texture : register(t0);
-//[[vk::input_attachment_index(0)]] SubpassInput accum_in : register(t0, space3);
 
 /* prod(1 - a) */
 Texture2D revealage_texture : register(t1);
-//[[vk::input_attachment_index(1)]] SubpassInput revealage_in : register(t1, space3);
-
-Texture2D placeholder_in : register(t2);
-//[[vk::input_attachment_index(2)]] SubpassInput placeholder_in : register(t2, space3);
 
 float max_component(float4 color)
 {
@@ -29,18 +24,13 @@ float4 main(PS_INPUT input) : SV_Target
 
     int2 tex_coords_int = int2(input.texcoords * texture_dimensions);
     float revealage = revealage_texture.Load(int3(tex_coords_int, 0)).r;
-    //float revealage = revealage_in.SubpassLoad();
 
-	// hack to make sure the placeholder doesn't get optimized out
-	bool force_placeholder_usage = placeholder_in.Load(int3(tex_coords_int, 0)).r < 1.0;
-
-	if (revealage == 1.0 && force_placeholder_usage) {
+	if (revealage == 1.0) {
         // Save the blending and color texture fetch cost
         discard;
     }
 
     float4 accum = accum_texture.Load(int3(tex_coords_int, 0));
-    //float4 accum = accum_in.SubpassLoad();
 	// Suppress overflow
     if (isinf(max_component(abs(accum)))) {
         accum.rgb = float3(accum.a);

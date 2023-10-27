@@ -334,8 +334,7 @@ impl MomentTransparencyRenderer
 		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
 				(0, input_binding.clone()),
-				(1, input_binding.clone()),
-				(2, input_binding),
+				(1, input_binding),
 			].into(),
 			..Default::default()
 		};
@@ -652,7 +651,7 @@ fn create_mboit_images(
 		[
 			WriteDescriptorSet::image_view(0, moments_view),
 			WriteDescriptorSet::image_view(1, od_view),
-			WriteDescriptorSet::image_view(2, min_depth_view.clone()),
+			WriteDescriptorSet::image_view(2, min_depth_view),
 		],
 		[]
 	)?;
@@ -663,7 +662,6 @@ fn create_mboit_images(
 		[
 			WriteDescriptorSet::image_view(0, accum_view),
 			WriteDescriptorSet::image_view(1, revealage_view),
-			WriteDescriptorSet::image_view(2, min_depth_view),
 		],
 		[]
 	)?;
