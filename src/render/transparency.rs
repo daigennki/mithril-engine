@@ -228,6 +228,9 @@ mod fs_oit_compositing {
 }
 
 /// A renderer that implements Moment-Based Order-Independent Transparency (MBOIT).
+///
+/// Seems to be a little broken as of 3eb0200 (2023/10/27). (Overlapping and 
+/// intersecting objects look a little wrong...)
 pub struct MomentTransparencyRenderer
 {
 	images: MomentImageBundle,
@@ -318,58 +321,9 @@ impl MomentTransparencyRenderer
 
 		let device = descriptor_set_allocator.device().clone();
 
-		let input_binding = DescriptorSetLayoutBinding {
-			stages: ShaderStages::FRAGMENT,
-			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-		};
-		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(0, input_binding.clone()),
-				(1, input_binding.clone()),
-				(2, input_binding.clone()),
-			].into(),
-			..Default::default()
-		};
-		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)?;
-		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(0, input_binding.clone()),
-				(1, input_binding),
-			].into(),
-			..Default::default()
-		};
-		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(),stage4_inputs_layout_info)?;
-
-		let (images, stage3_inputs, stage4_inputs) = create_mboit_images(
-			memory_allocator,
-			descriptor_set_allocator,
-			dimensions,
-			stage3_inputs_layout,
-			stage4_inputs_layout.clone(),
-		)?;
-
+		//
 		/* Stage 2: Calculate moments */
-		let mut moments_blend = ColorBlendState::with_attachment_states(3, ColorBlendAttachmentState { 
-			blend: Some(AttachmentBlend::additive()),
-			..Default::default()
-		});
-		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_blend_op = BlendOp::Add;
-		moments_blend.attachments[2].blend = Some(AttachmentBlend {
-			color_blend_op: BlendOp::Min,
-			src_color_blend_factor: BlendFactor::One,
-			dst_color_blend_factor: BlendFactor::One,
-			..AttachmentBlend::ignore_source()
-		});
-		let moments_rendering = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![ 
-				Some(Format::R32G32B32A32_SFLOAT),
-				Some(Format::R32_SFLOAT),
-				Some(Format::R32_SFLOAT),
-			],
-			depth_attachment_format: Some(Format::D16_UNORM),
-			..Default::default()
-		};
-
+		//
 		let base_color_set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
 				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
@@ -385,6 +339,28 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
+
+		let mut moments_blend = ColorBlendState::with_attachment_states(3, ColorBlendAttachmentState { 
+			blend: Some(AttachmentBlend::additive()),
+			..Default::default()
+		});
+		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_blend_op = BlendOp::Add;
+		moments_blend.attachments[2].blend = Some(AttachmentBlend {
+			color_blend_op: BlendOp::Min,
+			src_color_blend_factor: BlendFactor::One,
+			dst_color_blend_factor: BlendFactor::One,
+			..AttachmentBlend::ignore_source()
+		});
+
+		let moments_rendering = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![ 
+				Some(Format::R32G32B32A32_SFLOAT), // moments
+				Some(Format::R32_SFLOAT), // optical_depth
+				Some(Format::R32_SFLOAT), // min_depth
+			],
+			depth_attachment_format: Some(Format::D16_UNORM),
+			..Default::default()
+		};
 		let moments_pl = super::pipeline::Pipeline::new_from_binary(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -403,16 +379,48 @@ impl MomentTransparencyRenderer
 			false,
 		)?;
 
+		//
+		/* Stage 3: Calculate weights */
+		//
+		// The pipeline for stage 3 depends on the material of each mesh, so they're created outside
+		// of this transparency renderer. They'll take the following descriptor set containing images
+		// generated in Stage 2.
+		let input_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+		};
+		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, input_binding.clone()), // moments
+				(1, input_binding.clone()), // optical_depth
+				(2, input_binding.clone()), // min_depth
+			].into(),
+			..Default::default()
+		};
+		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)?;
+
+		//
 		/* Stage 4: Composite transparency image onto opaque image */
+		//
+		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(0, input_binding.clone()), // accum
+				(1, input_binding), // revealage
+			].into(),
+			..Default::default()
+		};
+		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
+
+		let wboit_compositing_blend = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
+			blend: Some(AttachmentBlend::alpha()),
+			..Default::default()
+		});
+
 		let compositing_rendering = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
 		};
-		let wboit_compositing_blend = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
-			blend: Some(AttachmentBlend::alpha()),
-			..Default::default()
-		});
 		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -423,6 +431,15 @@ impl MomentTransparencyRenderer
 			compositing_rendering,
 			CompareOp::Always,
 			false,
+		)?;
+
+		/* Create the images and descriptor sets */
+		let (images, stage3_inputs, stage4_inputs) = create_mboit_images(
+			memory_allocator,
+			descriptor_set_allocator,
+			dimensions,
+			stage3_inputs_layout,
+			stage4_inputs_layout,
 		)?;
 
 		Ok(MomentTransparencyRenderer {
@@ -471,20 +488,20 @@ impl MomentTransparencyRenderer
 		
 		let stage2_rendering_info = RenderingInfo {
 			render_area_extent: img_extent,
-			color_attachments: vec![ //[moments, optical_depth, min_depth]
-				Some(RenderingAttachmentInfo {
+			color_attachments: vec![
+				Some(RenderingAttachmentInfo { // moments
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
-					clear_value: Some(ClearValue::Float([1.0, 1.0, 1.0, 1.0])),
+					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.moments.clone())
 				}),
-				Some(RenderingAttachmentInfo {
+				Some(RenderingAttachmentInfo { // optical_depth
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
-					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
+					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.optical_depth.clone())
 				}),
-				Some(RenderingAttachmentInfo {
+				Some(RenderingAttachmentInfo { // min_depth
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
@@ -493,7 +510,7 @@ impl MomentTransparencyRenderer
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
 				..RenderingAttachmentInfo::image_view(depth_image.clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
@@ -502,14 +519,14 @@ impl MomentTransparencyRenderer
 
 		let stage3_rendering_info = RenderingInfo {
 			render_area_extent: img_extent,
-			color_attachments: vec![ //[accum, revealage]
-				Some(RenderingAttachmentInfo {
+			color_attachments: vec![
+				Some(RenderingAttachmentInfo { // accum
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.accum.clone())
 				}),
-				Some(RenderingAttachmentInfo {
+				Some(RenderingAttachmentInfo { // revealage
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
@@ -518,7 +535,7 @@ impl MomentTransparencyRenderer
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
 				..RenderingAttachmentInfo::image_view(depth_image.clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
@@ -536,7 +553,7 @@ impl MomentTransparencyRenderer
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
 				..RenderingAttachmentInfo::image_view(depth_image.clone())
 			}),
 			contents: SubpassContents::Inline,
@@ -590,11 +607,6 @@ impl MomentTransparencyRenderer
 	{
 		&self.stage3_inputs
 	}
-
-	/*pub fn framebuffer(&self) -> Arc<Framebuffer>
-	{
-		self.moments_fb.clone()
-	}*/
 }
 
 struct MomentImageBundle
@@ -673,25 +685,3 @@ fn create_mboit_images(
 	))
 }
 
-/*fn create_transparency_framebuffer(
-	memory_allocator: &StandardMemoryAllocator,
-	depth_img: Arc<AttachmentImage>, render_pass: Arc<RenderPass>, pipeline: &super::pipeline::Pipeline,
-	attachment1_format: Format, attachment2_format: Format,
-) -> Result<(Arc<Framebuffer>, Arc<PersistentDescriptorSet>), GenericEngineError>
-{
-	let usage = ImageUsage { sampled: true, ..Default::default() };
-
-	let extent = depth_img.dimensions().width_height();
-	let attachment1 = AttachmentImage::with_usage(memory_allocator, extent, attachment1_format, usage)?;
-	let attachment2 = AttachmentImage::with_usage(memory_allocator, extent, attachment2_format, usage)?;
-	let fb_create_info = FramebufferCreateInfo {
-		attachments: vec![
-			ImageView::new_default(attachment1)?,
-			ImageView::new_default(attachment2)?,
-			ImageView::new_default(depth_img.clone())?,
-		],
-		..Default::default()
-	};
-
-	Ok(Framebuffer::new(render_pass.clone(), fb_create_info)?)
-}*/
