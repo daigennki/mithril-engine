@@ -23,7 +23,7 @@ struct PS_OUTPUT
 	float3 color;
 	float _filler2;
 };
-cbuffer directional_light_ubo : register(b0, space3)
+cbuffer directional_light_ubo : register(b0, space1)
 {
 	DirLight dir_light;
 };*/

@@ -1,6 +1,7 @@
-cbuffer model_pvm : register(b0)
+[[vk::push_constant]] cbuffer transformation
 {
-	float4x4 transform;	// rotation, scale, and translation
+    float4x4 projview;	// pre-multiplied projection and view matrices
+	float4x4 model_transform;	// just the model transformation matrix
 };
 struct PointLight 
 {
@@ -9,19 +10,16 @@ struct PointLight
     float3 color;
     float range;
 };
-cbuffer curLightUBO : register(b1, space1)
+cbuffer cur_light : register(b0)
 {
-	PointLight curLight;
+	PointLight light;
 };
-cbuffer projviewmat : register(b0, space1)
-{
-	float4x4 projview;
-};
+
 float4 main(float3 position : POSITION) : SV_POSITION
 {
-	float4 output = mul(transform, float4(position, 1.0));
-	float dist = length(output.xyz - curLight.position.xyz);	// get distance between fragment and light source
+	float4 output = mul(model_transform, float4(position, 1.0));
+	float dist = length(output.xyz - light.position.xyz);	// get distance between fragment and light source
     output = mul(projview, output);
-	output.z = output.w * dist / (curLight.range * 2);	// map to [0;1] range by dividing by far plane
+	output.z = output.w * dist / (light.range * 2);	// map to [0;1] range by dividing by far plane
 	return output;
 }
