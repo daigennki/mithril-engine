@@ -322,8 +322,8 @@ impl RenderContext
 		Ok(tex)
 	}
 
-	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_immutable_buffer_from_iter<I, T>(
+	/// Create a device-local buffer from an iterator, initialized with `data` for `usage`.
+	pub fn new_buffer_from_iter<I, T>(
 		&mut self,
 		data: I,
 		buf_usage: BufferUsage,
@@ -334,10 +334,7 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
 	{
-		let buffer_info = BufferCreateInfo {
-			usage: BufferUsage::TRANSFER_SRC,
-			..Default::default()
-		};
+		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 		let staging_allocation_info = AllocationCreateInfo {
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
@@ -354,8 +351,8 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/// Create an immutable buffer, initialized with `data` for `usage`.
-	pub fn new_immutable_buffer_from_data<T>(
+	/// Create a device-local buffer from data, initialized with `data` for `usage`.
+	pub fn new_buffer_from_data<T>(
 		&mut self,
 		data: T,
 		buf_usage: BufferUsage,
@@ -363,10 +360,7 @@ impl RenderContext
 	where
 		T: vulkano::buffer::BufferContents,
 	{
-		let buffer_info = BufferCreateInfo {
-			usage: BufferUsage::TRANSFER_SRC,
-			..Default::default()
-		};
+		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 		let staging_allocation_info = AllocationCreateInfo {
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
@@ -383,27 +377,6 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/// Create just a device-local buffer. It'll be initialized using the common staging buffer allocator,
-	/// and it can be updated using that as well.
-	pub fn new_staged_buffer_from_data<T>(
-		&mut self,
-		data: T,
-		buf_usage: BufferUsage,
-	) -> Result<Subbuffer<T>, GenericEngineError>
-	where
-		[T]: vulkano::buffer::BufferContents,
-		T: Send + Sync + bytemuck::Pod,
-	{
-		let buffer_info = BufferCreateInfo {
-			sharing: Sharing::Concurrent(self.get_queue_families().into()),
-			usage: buf_usage | BufferUsage::TRANSFER_DST,
-			..Default::default()
-		};
-		let gpu_buf = Buffer::new_sized(self.memory_allocator.clone(), buffer_info, Default::default())?;
-		self.copy_to_buffer(data, gpu_buf.clone())?;
-		Ok(gpu_buf)
-	}
-
 	/// Get a staging buffer from the common staging buffer allocator, and queue an upload using it.
 	pub fn copy_to_buffer<T>(&mut self, data: T, dst_buf: Subbuffer<T>) -> Result<(), GenericEngineError>
 	where
@@ -416,7 +389,57 @@ impl RenderContext
 			.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?
 			.allocate_sized()?;
 		*staging_buf.write()? = data;
-		self.copy_buffer(staging_buf, dst_buf)?;
+		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(staging_buf, dst_buf).into())?;
+		Ok(())
+	}
+
+	/// Create a command buffer for a transfer.
+	/// TODO: should we wait for more work before we build a command buffer? it's probably inefficient to submit a command
+	/// buffer with just a single command...
+	fn create_staging_command_buffer(
+		&self,
+		work: StagingWork,
+		queue_family: u32,
+	) -> Result<Arc<PrimaryAutoCommandBuffer>, GenericEngineError>
+	{
+		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
+			&self.command_buffer_allocator,
+			queue_family,
+			CommandBufferUsage::OneTimeSubmit,
+		)?;
+		match work {
+			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
+			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
+		};
+		Ok(staging_cb_builder.build()?)
+	}
+
+	/// Submit staging work for immutable objects to the transfer queue, or if there is no transfer queue,
+	/// keep it for later when the graphics operations are submitted.
+	fn submit_transfer(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
+	{
+		match self.transfer_queue.as_ref() {
+			Some(q) => {
+				let staging_cb = self.create_staging_command_buffer(work, q.queue_family_index())?;
+				let new_future = match self.transfer_future.take() {
+					Some(f) => staging_cb.execute_after(f, q.clone())?.boxed_send_sync(),
+					None => staging_cb.execute(q.clone())?.boxed_send_sync(),
+				};
+				new_future.flush()?;
+				self.transfer_future = Some(new_future);
+			}
+			None => self.submit_transfer_on_graphics_queue(work)?,
+		}
+		Ok(())
+	}
+
+	/// Submit staging work for *mutable* objects to the graphics queue. Use this instead of `submit_transfer` if
+	/// there's the possibility that the object is in use by a previous submission.
+	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
+	{
+		let staging_cb = self.create_staging_command_buffer(work, self.graphics_queue.queue_family_index())?;
+		self.swapchain
+			.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
 		Ok(())
 	}
 
@@ -562,63 +585,6 @@ impl RenderContext
 		self.resize_this_frame = self.swapchain.fit_window()?;
 		self.resize_everything_else()?;
 		Ok(())
-	}
-
-	/// Create a command buffer for a transfer.
-	/// TODO: should we wait for more work before we build a command buffer? it's probably inefficient to submit a command
-	/// buffer with just a single command...
-	fn create_staging_command_buffer(
-		&self,
-		work: StagingWork,
-		queue_family: u32,
-	) -> Result<Arc<PrimaryAutoCommandBuffer>, GenericEngineError>
-	{
-		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-			&self.command_buffer_allocator,
-			queue_family,
-			CommandBufferUsage::OneTimeSubmit,
-		)?;
-		match work {
-			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
-			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
-		};
-		Ok(staging_cb_builder.build()?)
-	}
-
-	/// Submit staging work for immutable objects to the transfer queue, or if there is no transfer queue,
-	/// keep it for later when the graphics operations are submitted.
-	fn submit_transfer(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
-	{
-		match self.transfer_queue.as_ref() {
-			Some(q) => {
-				let staging_cb = self.create_staging_command_buffer(work, q.queue_family_index())?;
-				let new_future = match self.transfer_future.take() {
-					Some(f) => staging_cb.execute_after(f, q.clone())?.boxed_send_sync(),
-					None => staging_cb.execute(q.clone())?.boxed_send_sync(),
-				};
-				new_future.flush()?;
-				self.transfer_future = Some(new_future);
-			}
-			None => self.submit_transfer_on_graphics_queue(work)?,
-		}
-		Ok(())
-	}
-
-	/// Submit staging work for *mutable* objects to the graphics queue. Use this instead of `submit_transfer` if
-	/// there's the possibility that the object is in use by a previous submission.
-	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
-	{
-		let staging_cb = self.create_staging_command_buffer(work, self.graphics_queue.queue_family_index())?;
-		self.swapchain
-			.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
-		Ok(())
-	}
-
-	/// Queue a buffer copy which will be executed before the next image submission.
-	/// Basically a shortcut for `submit_transfer_on_graphics_queue`.
-	pub fn copy_buffer(&mut self, src: Subbuffer<impl ?Sized>, dst: Subbuffer<impl ?Sized>) -> Result<(), GenericEngineError>
-	{
-		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(src, dst).into())
 	}
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
@@ -823,46 +789,6 @@ fn format_video_mode(video_mode: &winit::monitor::VideoMode) -> String
 		video_mode.bit_depth()
 	)
 }
-
-/*/// Bind the given descriptor sets to the currently bound pipeline on the given command buffer builder.
-/// This will fail if there is no pipeline currently bound.
-pub fn bind_descriptor_set<L, S>(
-	cb: &mut AutoCommandBufferBuilder<L>,
-	bound_pipeline: Option<Arc<vulkano::pipeline::Pipeline>>,
-	first_set: u32,
-	descriptor_sets: S,
-) -> Result<(), GenericEngineError>
-where
-	S: DescriptorSetsCollection,
-{
-	let pipeline_layout = bound_pipeline
-		.ok_or("Attempted to bind descriptor set when no pipeline is bound!")?
-		.layout()
-		.clone();
-	cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, first_set, descriptor_sets);
-	Ok(())
-}
-
-/// Push push constants to the currently bound pipeline on the given command buffer builder.
-/// This will fail if there is no pipeline currently bound.
-pub fn push_constants<L, Pc>(
-	cb: &mut AutoCommandBufferBuilder<L>,
-	bound_pipeline: Option<Arc<vulkano::pipeline::Pipeline>>,
-	offset: u32, 
-	data: Pc
-) -> Result<(), GenericEngineError>
-where
-	Pc: BufferContents,
-{
-	let pipeline_layout = cb
-		.state()
-		.pipeline_graphics()
-		.ok_or("Attempted to push constants when no pipeline is bound!")?
-		.layout()
-		.clone();
-	cb.push_constants(pipeline_layout, offset, data);
-	Ok(())
-}*/
 
 #[derive(Debug)]
 pub struct PipelineNotLoaded;
