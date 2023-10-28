@@ -111,10 +111,10 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 
 		match properties.device_type {
 			PhysicalDeviceType::DiscreteGpu => {
-				dgpu.get_or_insert(pd);
+				dgpu.get_or_insert((i, pd));
 			}
 			PhysicalDeviceType::IntegratedGpu => {
-				igpu.get_or_insert(pd);
+				igpu.get_or_insert((i, pd));
 			}
 			_ => (),
 		}
@@ -123,13 +123,24 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 	// If the "-prefer_igp" argument was provided, prefer the integrated GPU over the discrete GPU.
 	let prefer_igp = std::env::args().find(|arg| arg == "-prefer_igp").is_some();
 
-	let physical_device = if prefer_igp {
+	let (i, physical_device) = if prefer_igp {
 		igpu.or(dgpu).ok_or("No GPUs were found!")?
 	} else {
 		// Try to use a discrete GPU. If there is no discrete GPU, use an integrated GPU instead.
 		dgpu.or(igpu).ok_or("No GPUs were found!")?
 	};
-	log::info!("Using physical device: {}", physical_device.properties().device_name);
+	log::info!("Using physical device {}: {}", i, physical_device.properties().device_name);
+
+	let mem_properties = physical_device.memory_properties();
+	log::info!("Memory heaps and their memory types on physical device:");
+	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
+		let mib = mem_heap.size / (1024 * 1024);
+		log::info!("{}: {} MiB, flags {:?}", i, mib, mem_heap.flags);
+		for mem_type in mem_properties.memory_types.iter().filter(|t| t.heap_index as usize == i) {
+			log::info!("└ {:?}", mem_type.property_flags);
+		}
+	}
+
 	Ok(physical_device)
 }
 
