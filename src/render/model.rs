@@ -95,23 +95,6 @@ impl Model
 					index_buffer: IndexBufferVariant::from_u16_and_u32(render_ctx, indices_u16, indices_u32)?,
 				})
 			}
-			/*Some("obj") => {
-				log::info!("Loading OBJ file '{}'...", path.display());
-				let (obj_models, obj_materials_result) = tobj::load_obj(&path, &tobj::GPU_LOAD_OPTIONS)?;
-				let obj_materials = obj_materials_result?;
-
-				Ok(Model {
-					materials: obj_materials
-						.iter()
-						.map(|obj_mat| load_obj_mtl(&obj_mat, parent_folder, render_ctx))
-						.collect::<Result<_, _>>()?,
-
-					submeshes: obj_models
-						.iter()
-						.map(|obj_model| SubMesh::from_obj_mesh(render_ctx, &obj_model.mesh))
-						.collect::<Result<_, _>>()?,
-				})
-			}*/
 			_ => Err(format!("couldn't determine model file type of {}", path.display()).into()),
 		}
 	}
@@ -152,22 +135,6 @@ impl Model
 		Ok(())
 	}
 }
-
-/*fn load_obj_mtl(
-	obj_mat: &tobj::Material, search_folder: &Path, render_ctx: &mut RenderContext,
-) -> Result<Box<dyn Material>, GenericEngineError>
-{
-	let base_color = if obj_mat.diffuse_texture.is_empty() {
-		ColorInput::Color((Vec3::from(obj_mat.diffuse), obj_mat.dissolve).into())
-	} else {
-		ColorInput::Texture(obj_mat.diffuse_texture.clone().into())
-	};
-
-	let mut loaded_mat = PBR::new(base_color);
-	loaded_mat.update_descriptor_set(search_folder, render_ctx)?;
-
-	Ok(Box::new(loaded_mat))
-}*/
 
 #[derive(Deserialize)]
 struct MaterialExtras
@@ -268,31 +235,6 @@ struct SubMesh
 }
 impl SubMesh
 {
-	/*pub fn from_obj_mesh(render_ctx: &mut RenderContext, mesh: &tobj::Mesh) -> Result<Self, GenericEngineError>
-	{
-		if mesh.positions.is_empty() {
-			return Err("no positions in OBJ mesh".into());
-		}
-		if mesh.texcoords.is_empty() {
-			return Err("no texture coordinates in OBJ mesh".into());
-		}
-		if mesh.indices.is_empty() {
-			return Err("no indices in OBJ mesh".into());
-		}
-
-		let vert_buf_usage = BufferUsage { vertex_buffer: true, ..BufferUsage::empty() };
-		Ok(SubMesh {
-			vertex_buffers: vec![
-				render_ctx.new_buffer_from_iter(mesh.positions.clone(), vert_buf_usage)?,
-				render_ctx.new_buffer_from_iter(mesh.texcoords.clone(), vert_buf_usage)?,
-			],
-			index_buf: IndexBufferVariant::from_obj_u32_vec(render_ctx, mesh.indices.clone())?,
-			vert_count: mesh.indices.len().try_into()?,
-			first_vert_index: 0,
-			mat_index: mesh.material_id.unwrap_or(0),
-		})
-	}*/
-
 	pub fn from_gltf_primitive(prim: &gltf::Primitive, first_index: u32, vertex_offset: i32)
 		-> Result<Self, GenericEngineError>
 	{

@@ -40,7 +40,6 @@ winit_input_helper = "0.14"
 #rapier = "0.16.1"
 #kira = "0.7.1"
 
-#tobj = "3.2.3"
 #ffmpeg-next = { version = "4.4", features = ["codec", "format"] }
 #steamworks = "0.8"
 #mlua = { version = "0.7", features = ["luajit", "vendored"] }     # Configured for standalone mode for improved safety
