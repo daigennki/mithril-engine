@@ -29,7 +29,7 @@ impl Transform
 	pub fn rotation_quat(&self) -> Quat
 	{
 		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
-		Quat::from_euler(EulerRot::XYZ, rot_rad.x, rot_rad.y, rot_rad.z)
+		Quat::from_euler(EulerRot::ZXY, rot_rad.z, rot_rad.x, rot_rad.y)
 	}
 
 	/// Calculate the transformation matrix for this `Transform`.

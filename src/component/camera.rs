@@ -75,7 +75,6 @@ impl CameraManager
 		fov: Option<CameraFov>,
 	) -> Result<(), GenericEngineError>
 	{
-		// TODO: we might need the quaternion to use `from_euler` with a `EulerRot` of `ZYX`, or maybe even some other value
 		let target = *current_rotation * Vec3::Y;
 		let dim = render_ctx.swapchain_dimensions();
 		let (projview, sky_projview) = calculate_projview(current_pos, target, dim[0], dim[1], fov.unwrap_or(self.default_fov));
