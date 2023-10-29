@@ -15,12 +15,13 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::pipeline::{layout::PushConstantRange, PipelineBindPoint};
-use vulkano::pipeline::graphics::{ 
+use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
+use vulkano::pipeline::graphics::{
 	color_blend::{ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::{CompareOp, DepthStencilState, DepthState},
 	input_assembly::PrimitiveTopology,
-	subpass::PipelineRenderingCreateInfo
+	subpass::PipelineRenderingCreateInfo,
+	GraphicsPipeline,
 };
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::shader::ShaderStages;
@@ -44,7 +45,7 @@ mod fs {
 #[derive(shipyard::Unique)]
 pub struct Skybox
 {
-	sky_pipeline: super::pipeline::Pipeline,
+	sky_pipeline: Arc<GraphicsPipeline>,
 	cube_vbo: Subbuffer<[f32]>,
 	cube_ibo: Subbuffer<[u16]>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
@@ -92,7 +93,7 @@ impl Skybox
 			}),
 			..Default::default()
 		};
-		let sky_pipeline = super::pipeline::Pipeline::new_from_binary(
+		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			vs::load(device.clone())?,
@@ -159,9 +160,14 @@ impl Skybox
 		sky_projview: Mat4,
 	) -> Result<(), GenericEngineError>
 	{
-		self.sky_pipeline.bind(cb)?;
-		cb.bind_descriptor_sets(PipelineBindPoint::Graphics, self.sky_pipeline.layout(), 0, vec![self.descriptor_set.clone()])?;
-		cb.push_constants(self.sky_pipeline.layout(), 0, sky_projview)?;
+		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?;
+		cb.bind_descriptor_sets(
+			PipelineBindPoint::Graphics, 
+			self.sky_pipeline.layout().clone(), 
+			0, 
+			vec![self.descriptor_set.clone()]
+		)?;
+		cb.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?;
 		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?;
 		cb.bind_index_buffer(self.cube_ibo.clone())?;
 		cb.draw_indexed(20, 1, 0, 0, 0)?;

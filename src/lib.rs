@@ -19,10 +19,14 @@ use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::DeviceOwned;
-use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, layout::PushConstantRange};
+use vulkano::pipeline::{
+	graphics::{input_assembly::PrimitiveTopology, GraphicsPipeline},
+	layout::PushConstantRange, Pipeline,
+};
 use vulkano::shader::ShaderStages;
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
@@ -324,7 +328,7 @@ fn draw_common(
 	transforms: View<component::Transform>,
 	mesh_manager: &component::mesh::MeshManager,
 	//meshes: View<component::mesh::Mesh>,
-	pipeline: &render::pipeline::Pipeline,
+	pipeline: &Arc<GraphicsPipeline>,
 	transparency_pass: bool,
 ) -> Result<(), GenericEngineError>
 {
@@ -335,7 +339,7 @@ fn draw_common(
 			let model_matrix = transform.get_matrix();
 			let transform_mat = projview * model_matrix;
 			let model_mat3 = Mat3::from_mat4(model_matrix);
-			mesh_manager.draw(eid, command_buffer, pipeline.layout(), transform_mat, model_mat3, transparency_pass)?;
+			mesh_manager.draw(eid, command_buffer, pipeline.layout().clone(), transform_mat, model_mat3, transparency_pass)?;
 		}
 	}
 	Ok(())
@@ -360,9 +364,10 @@ fn draw_3d(
 	// Draw 3D objects.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	let pbr_pipeline = render_ctx.get_pipeline("PBR")?;
-	pbr_pipeline.bind(&mut command_buffer)?;
 
-	command_buffer.push_constants(pbr_pipeline.layout(), 0, camera_manager.projview())?;
+	command_buffer
+		.bind_pipeline_graphics(pbr_pipeline.clone())?
+		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?;
 
 	draw_common(
 		&mut command_buffer, 
@@ -422,13 +427,13 @@ fn draw_ui(
 	)?;
 
 	let pipeline = render_ctx.get_pipeline("UI")?;
-	pipeline.bind(&mut command_buffer)?;
+	command_buffer.bind_pipeline_graphics(pipeline.clone())?;
 
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	for (eid, _) in ui_transforms.iter().with_id() {
 		// TODO: how do we respect the render order?
-		canvas.draw(&mut command_buffer, pipeline.layout(), eid)?;
+		canvas.draw(&mut command_buffer, pipeline.layout().clone(), eid)?;
 	}
 
 	render_ctx.add_ui_cb(command_buffer.build()?);

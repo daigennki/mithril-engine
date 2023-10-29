@@ -7,7 +7,6 @@
 
 use std::error::Error;
 use std::sync::Arc;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
@@ -30,170 +29,151 @@ use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule};
 
 use crate::GenericEngineError;
 
-pub struct Pipeline
+pub fn new(
+	vk_dev: Arc<Device>,
+	primitive_topology: PrimitiveTopology,
+	vs: Arc<ShaderModule>,
+	fs_info: Option<(Arc<ShaderModule>, ColorBlendState)>,
+	set_layouts: Vec<Arc<DescriptorSetLayout>>,
+	push_constant_ranges: Vec<PushConstantRange>,
+	rendering_info: PipelineRenderingCreateInfo,
+	depth_stencil_state: Option<DepthStencilState>,
+) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
-	pipeline: Arc<GraphicsPipeline>,
+	let mut stages = Vec::with_capacity(5);
+
+	let input_assembly_state = Some(InputAssemblyState{
+		topology: primitive_topology,
+		primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
+		..Default::default()
+	});
+
+	let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
+	stages.push(get_shader_stage(&vs, "main")?);
+	
+	// load fragment shader (optional)
+	let mut color_blend_state = None;
+	if let Some((fs, blend_state)) = fs_info {
+		stages.push(get_shader_stage(&fs, "main")?);
+		color_blend_state = Some(blend_state);
+	}
+
+	let layout_info = PipelineLayoutCreateInfo { set_layouts, push_constant_ranges, ..Default::default() };
+	print_pipeline_layout(&layout_info);
+
+	let pipeline_info = GraphicsPipelineCreateInfo {
+		stages: stages.into(),
+		vertex_input_state,
+		input_assembly_state,
+		viewport_state: Some(ViewportState::default()),
+		rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
+		multisample_state: Some(MultisampleState::default()),
+		depth_stencil_state,
+		color_blend_state,
+		dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
+		subpass: Some(rendering_info.into()),
+		..GraphicsPipelineCreateInfo::layout(PipelineLayout::new(vk_dev.clone(), layout_info)?)
+	};
+
+	Ok(GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?)
 }
-impl Pipeline
+
+pub fn new_from_config(
+	vk_dev: Arc<Device>,
+	config: &PipelineConfig,
+	set_layouts: Vec<Arc<DescriptorSetLayout>>,
+	push_constant_ranges: Vec<PushConstantRange>,
+) -> Result<Arc<GraphicsPipeline>, GenericEngineError> 
 {
-	pub fn new_from_binary(
-		vk_dev: Arc<Device>,
-		primitive_topology: PrimitiveTopology,
-		vs: Arc<ShaderModule>,
-		fs_info: Option<(Arc<ShaderModule>, ColorBlendState)>,
-		set_layouts: Vec<Arc<DescriptorSetLayout>>,
-		push_constant_ranges: Vec<PushConstantRange>,
-		rendering_info: PipelineRenderingCreateInfo,
-		depth_stencil_state: Option<DepthStencilState>,
-	) -> Result<Self, GenericEngineError>
-	{
-		let mut stages = Vec::with_capacity(5);
+	let rendering_info = PipelineRenderingCreateInfo {
+		color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
+		depth_attachment_format: config.depth_processing.then_some(super::MAIN_DEPTH_FORMAT),
+		..Default::default()
+	};
 
-		let input_assembly_state = Some(InputAssemblyState{
-			topology: primitive_topology,
-			primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
+	let common_blend_attachment_state = if config.fragment_shader_transparency.is_some() {
+		// Disable blending if this is an opaque rendering pipeline,
+		// and transparency will be handled in a separate pass.
+		ColorBlendAttachmentState::default()
+	} else {
+		ColorBlendAttachmentState {
+			blend: config.alpha_blending.then_some(AttachmentBlend::alpha()),
 			..Default::default()
-		});
-
-		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
-		stages.push(get_shader_stage(&vs, "main")?);
-		
-		// load fragment shader (optional)
-		let mut color_blend_state = None;
-		if let Some((fs, blend_state)) = fs_info {
-			stages.push(get_shader_stage(&fs, "main")?);
-			color_blend_state = Some(blend_state);
 		}
+	};
+	let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
+	let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
 
-		let layout_info = PipelineLayoutCreateInfo { set_layouts, push_constant_ranges, ..Default::default() };
-		print_pipeline_layout(&layout_info);
+	let depth_stencil_state = config.depth_processing.then(|| DepthStencilState {
+		depth: Some(DepthState {
+			write_enable: true,
+			compare_op: CompareOp::Less,
+		}),
+		..Default::default()
+	});
 
-		let pipeline_info = GraphicsPipelineCreateInfo {
-			stages: stages.into(),
-			vertex_input_state,
-			input_assembly_state,
-			viewport_state: Some(ViewportState::default()),
-			rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
-			multisample_state: Some(MultisampleState::default()),
-			depth_stencil_state,
-			color_blend_state,
-			dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
-			subpass: Some(rendering_info.into()),
-			..GraphicsPipelineCreateInfo::layout(PipelineLayout::new(vk_dev.clone(), layout_info)?)
-		};
-		let pipeline = GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?;
-
-		Ok(Pipeline{ pipeline })
-	}
-
-	pub fn new_from_config(
-		vk_dev: Arc<Device>,
-		config: &PipelineConfig,
-		set_layouts: Vec<Arc<DescriptorSetLayout>>,
-		push_constant_ranges: Vec<PushConstantRange>,
-	) -> Result<Self, GenericEngineError> 
-	{
-		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
-			depth_attachment_format: config.depth_processing.then_some(super::MAIN_DEPTH_FORMAT),
-			..Default::default()
-		};
-
-		let common_blend_attachment_state = if config.fragment_shader_transparency.is_some() {
-			// Disable blending if this is an opaque rendering pipeline,
-			// and transparency will be handled in a separate pass.
-			ColorBlendAttachmentState::default()
-		} else {
-			ColorBlendAttachmentState {
-				blend: config.alpha_blending.then_some(AttachmentBlend::alpha()),
-				..Default::default()
-			}
-		};
-		let attachment_count = rendering_info.color_attachment_formats.len().try_into().unwrap();
-		let color_blend_state = ColorBlendState::with_attachment_states(attachment_count, common_blend_attachment_state);
-
-		let depth_stencil_state = config.depth_processing.then(|| DepthStencilState {
-			depth: Some(DepthState {
-				write_enable: true,
-				compare_op: CompareOp::Less,
-			}),
-			..Default::default()
-		});
-
-		Pipeline::new_from_binary(
-			vk_dev,
-			config.primitive_topology,
-			config.vertex_shader.clone(),
-			Some((config.fragment_shader.clone().unwrap(), color_blend_state)),
-			set_layouts,
-			push_constant_ranges,
-			rendering_info,
-			depth_stencil_state,
-		)
-	}
-
-	pub fn new_from_config_transparency(
-		vk_dev: Arc<Device>,
-		config: &PipelineConfig,
-		set_layouts: Vec<Arc<DescriptorSetLayout>>,
-		push_constant_ranges: Vec<PushConstantRange>,
-	) -> Result<Self, GenericEngineError>
-	{
-		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![
-				Some(Format::R16G16B16A16_SFLOAT),
-				Some(Format::R8_UNORM),
-			],
-			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
-			..Default::default()
-		};
-
-		let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
-			blend: Some(AttachmentBlend {
-				alpha_blend_op: BlendOp::Add,
-				..AttachmentBlend::additive()
-			}),
-			..Default::default()
-		});
-		wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
-			color_blend_op: BlendOp::Add,
-			src_color_blend_factor: BlendFactor::Zero,
-			dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-			..AttachmentBlend::ignore_source()
-		});
-
-		let depth_stencil_state = config.depth_processing.then(|| DepthStencilState {
-			depth: Some(DepthState {
-				write_enable: false,
-				compare_op: CompareOp::Less,
-			}),
-			..Default::default()
-		});
-
-		Pipeline::new_from_binary(
-			vk_dev,
-			config.primitive_topology,
-			config.vertex_shader.clone(),
-			Some((config.fragment_shader_transparency.clone().unwrap(), wboit_accum_blend)),
-			set_layouts,
-			push_constant_ranges,
-			rendering_info,
-			depth_stencil_state,
-		)
-	}
-
-	pub fn bind<L>(&self, command_buffer: &mut AutoCommandBufferBuilder<L>) -> Result<(), GenericEngineError>
-	{
-		command_buffer.bind_pipeline_graphics(self.pipeline.clone())?;
-		Ok(())
-	}
-
-	pub fn layout(&self) -> Arc<PipelineLayout>
-	{
-		let pipeline_ref: &dyn vulkano::pipeline::Pipeline = self.pipeline.as_ref();
-		pipeline_ref.layout().clone()
-	}
+	new(
+		vk_dev,
+		config.primitive_topology,
+		config.vertex_shader.clone(),
+		Some((config.fragment_shader.clone().unwrap(), color_blend_state)),
+		set_layouts,
+		push_constant_ranges,
+		rendering_info,
+		depth_stencil_state,
+	)
 }
+
+pub fn new_from_config_transparency(
+	vk_dev: Arc<Device>,
+	config: &PipelineConfig,
+	set_layouts: Vec<Arc<DescriptorSetLayout>>,
+	push_constant_ranges: Vec<PushConstantRange>,
+) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
+{
+	let rendering_info = PipelineRenderingCreateInfo {
+		color_attachment_formats: vec![
+			Some(Format::R16G16B16A16_SFLOAT),
+			Some(Format::R8_UNORM),
+		],
+		depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
+		..Default::default()
+	};
+
+	let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
+		blend: Some(AttachmentBlend {
+			alpha_blend_op: BlendOp::Add,
+			..AttachmentBlend::additive()
+		}),
+		..Default::default()
+	});
+	wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
+		color_blend_op: BlendOp::Add,
+		src_color_blend_factor: BlendFactor::Zero,
+		dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+		..AttachmentBlend::ignore_source()
+	});
+
+	let depth_stencil_state = config.depth_processing.then(|| DepthStencilState {
+		depth: Some(DepthState {
+			write_enable: false,
+			compare_op: CompareOp::Less,
+		}),
+		..Default::default()
+	});
+
+	new(
+		vk_dev,
+		config.primitive_topology,
+		config.vertex_shader.clone(),
+		Some((config.fragment_shader_transparency.clone().unwrap(), wboit_accum_blend)),
+		set_layouts,
+		push_constant_ranges,
+		rendering_info,
+		depth_stencil_state,
+	)
+}
+
 
 #[derive(Debug)]
 pub struct TransparencyNotEnabled;

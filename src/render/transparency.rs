@@ -20,13 +20,14 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{sampler::Sampler, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
-use vulkano::pipeline::{layout::PushConstantRange, PipelineBindPoint};
+use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	viewport::Viewport,
 	subpass::PipelineRenderingCreateInfo,
+	GraphicsPipeline,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
@@ -235,8 +236,8 @@ pub struct MomentTransparencyRenderer
 {
 	images: MomentImageBundle,
 
-	moments_pl: super::pipeline::Pipeline,
-	transparency_compositing_pl: super::pipeline::Pipeline,
+	moments_pl: Arc<GraphicsPipeline>,
+	transparency_compositing_pl: Arc<GraphicsPipeline>,
 
 	stage3_inputs: Arc<PersistentDescriptorSet>,
 	stage4_inputs: Arc<PersistentDescriptorSet>,
@@ -369,7 +370,7 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
-		let moments_pl = super::pipeline::Pipeline::new_from_binary(
+		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			vs_nonorm::load(device.clone())?,
@@ -427,7 +428,7 @@ impl MomentTransparencyRenderer
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
 			..Default::default()
 		};
-		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
+		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			vs_fill_viewport::load(device.clone())?,
@@ -577,15 +578,16 @@ impl MomentTransparencyRenderer
 			.execute_commands(transparency_cb)?
 			.end_rendering()?
 			.begin_rendering(stage4_rendering_info)?
-			.set_viewport(0, [viewport].as_slice().into())?;
-		self.transparency_compositing_pl.bind(cb)?;
-		cb.bind_descriptor_sets(
-			PipelineBindPoint::Graphics, 
-			self.transparency_compositing_pl.layout(), 
-			0, 
-			vec![self.stage4_inputs.clone()]
-		)?;
-		cb.draw(3, 1, 0, 0)?.end_rendering()?;
+			.set_viewport(0, [viewport].as_slice().into())?
+			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
+			.bind_descriptor_sets(
+				PipelineBindPoint::Graphics, 
+				self.transparency_compositing_pl.layout().clone(), 
+				0, 
+				vec![self.stage4_inputs.clone()]
+			)?
+			.draw(3, 1, 0, 0)?
+			.end_rendering()?;
 		Ok(())
 	}
 
@@ -598,7 +600,7 @@ impl MomentTransparencyRenderer
 		*self.transparency_cb.lock().unwrap() = Some(command_buffer)
 	}
 
-	pub fn get_moments_pipeline(&self) -> &super::pipeline::Pipeline
+	pub fn get_moments_pipeline(&self) -> &Arc<GraphicsPipeline>
 	{
 		&self.moments_pl
 	}

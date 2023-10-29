@@ -43,8 +43,8 @@ use vulkano::format::Format;
 use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	graphics::{ subpass::PipelineRenderingCreateInfo, viewport::Viewport }, 
-	layout::PushConstantRange, PipelineBindPoint,
+	graphics::{viewport::Viewport, GraphicsPipeline}, 
+	layout::PushConstantRange, Pipeline, PipelineBindPoint,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::{GpuFuture, Sharing};
@@ -83,7 +83,7 @@ pub struct RenderContext
 	textures: HashMap<PathBuf, Arc<Texture>>,
 
 	// User-accessible material pipelines. Optional transparency pipeline may also be specified.
-	material_pipelines: HashMap<String, (pipeline::Pipeline, Option<pipeline::Pipeline>)>,
+	material_pipelines: HashMap<String, (Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>)>,
 
 	// The final contents of this render target's color image will be blitted to the intermediate sRGB nonlinear image.
 	main_render_target: RenderTarget,
@@ -234,7 +234,7 @@ impl RenderContext
 		push_constant_ranges: Vec<PushConstantRange>,
 	) -> Result<(), GenericEngineError>
 	{
-		let pipeline = pipeline::Pipeline::new_from_config(
+		let pipeline = pipeline::new_from_config(
 			self.descriptor_set_allocator.device().clone(),
 			config,
 			set_layouts.clone(),
@@ -243,7 +243,7 @@ impl RenderContext
 
 		let transparency_pipeline = if config.fragment_shader_transparency.is_some() {
 			set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
-			Some(pipeline::Pipeline::new_from_config_transparency(
+			Some(pipeline::new_from_config_transparency(
 				self.descriptor_set_allocator.device().clone(),
 				config,
 				set_layouts,
@@ -477,7 +477,7 @@ impl RenderContext
 	/// anything specific to materials (it only reads the alpha channel of each texture).
 	pub fn record_transparency_moments_draws(
 		&self, 
-	) -> Result<(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, &pipeline::Pipeline), GenericEngineError>
+	) -> Result<(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, &Arc<GraphicsPipeline>), GenericEngineError>
 	{
 		let mut cb = self.new_secondary_command_buffer(
 			vec![ 
@@ -489,24 +489,25 @@ impl RenderContext
 			self.swapchain_dimensions()
 		)?;
 		let pl = self.transparency_renderer.get_moments_pipeline();
-		pl.bind(&mut cb)?;
+		cb.bind_pipeline_graphics(pl.clone())?;
 		Ok((cb, pl))
 	}
 	pub fn record_transparency_draws(
 		&self,
-		transparency_pipeline: &pipeline::Pipeline,
+		transparency_pipeline: &Arc<GraphicsPipeline>,
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
 
 		let mut cb = self.new_secondary_command_buffer(color_formats, Some(MAIN_DEPTH_FORMAT), self.swapchain_dimensions())?;
-		transparency_pipeline.bind(&mut cb)?;
-		cb.bind_descriptor_sets(
-			PipelineBindPoint::Graphics,
-			transparency_pipeline.layout(),
-			1,
-			vec![self.transparency_renderer.get_stage3_inputs().clone()]
-		)?;
+		cb
+			.bind_pipeline_graphics(transparency_pipeline.clone())?
+			.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				transparency_pipeline.layout().clone(),
+				1,
+				vec![self.transparency_renderer.get_stage3_inputs().clone()]
+			)?;
 
 		Ok(cb)
 	}
@@ -681,11 +682,11 @@ impl RenderContext
 		self.swapchain.dimensions()
 	}
 
-	pub fn get_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
+	pub fn get_pipeline(&self, name: &str) -> Result<&Arc<GraphicsPipeline>, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).map(|tuple| &tuple.0).ok_or(PipelineNotLoaded)?)
 	}
-	pub fn get_transparency_pipeline(&self, name: &str) -> Result<&pipeline::Pipeline, PipelineNotLoaded>
+	pub fn get_transparency_pipeline(&self, name: &str) -> Result<&Arc<GraphicsPipeline>, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).and_then(|tuple| tuple.1.as_ref()).ok_or(PipelineNotLoaded)?)
 	}
