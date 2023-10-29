@@ -24,7 +24,7 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuff
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::DeviceOwned;
 use vulkano::pipeline::{
-	graphics::{input_assembly::PrimitiveTopology, GraphicsPipeline},
+	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, GraphicsPipeline},
 	layout::PushConstantRange, Pipeline,
 };
 use vulkano::shader::ShaderStages;
@@ -111,41 +111,40 @@ impl GameContext
 		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
 
+		let dim = render_ctx.swapchain_dimensions();
+		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
+		let pbr_set_layout_info = material::pbr::PBR::set_layout_info_pbr(&render_ctx);
+		let pbr_set_layout = DescriptorSetLayout::new(vk_dev.clone(), pbr_set_layout_info)?;
+
 		let ui_pipeline_config = render::pipeline::PipelineConfig {
 			vertex_shader: ui_vs::load(vk_dev.clone())?,
 			fragment_shader: Some(ui_fs::load(vk_dev.clone())?),
 			fragment_shader_transparency: None,
-			alpha_blending: true,
+			attachment_blend: Some(AttachmentBlend::alpha()),
 			primitive_topology: PrimitiveTopology::TriangleStrip,
 			depth_processing: false,
+			set_layouts: vec![ canvas.get_set_layout().clone() ],
+			push_constant_ranges: vec![],
 		};
 		let pbr_pipeline_config = render::pipeline::PipelineConfig {
 			vertex_shader: material::vs_3d_common::load(vk_dev.clone())?,
 			fragment_shader: Some(material::pbr::fs::load(vk_dev.clone())?),
 			fragment_shader_transparency: Some(material::pbr::fs_oit::load(vk_dev.clone())?),
-			alpha_blending: false,
+			attachment_blend: None, // transparency will be handled by transparency renderer
 			primitive_topology: PrimitiveTopology::TriangleList,
 			depth_processing: true,
-		};
-
-		let dim = render_ctx.swapchain_dimensions();
-		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
-		let pbr_set_layout_info = material::pbr::PBR::set_layout_info_pbr(&render_ctx);
-		let pbr_set_layout = DescriptorSetLayout::new(vk_dev, pbr_set_layout_info)?;
-
-		render_ctx.load_material_pipeline_config("UI", &ui_pipeline_config, vec![ canvas.get_set_layout().clone() ], vec![])?;
-		render_ctx.load_material_pipeline_config(
-			"PBR",
-			&pbr_pipeline_config,
-			vec![ pbr_set_layout ],
-			vec![
+			set_layouts: vec![ pbr_set_layout ],
+			push_constant_ranges: vec![
 				PushConstantRange { // push constant for projviewmodel and transform3 matrix
 					stages: ShaderStages::VERTEX,
 					offset: 0,
 					size: (std::mem::size_of::<Mat4>() * 2).try_into().unwrap(),
 				}
-			]
-		)?;
+			],
+		};
+
+		render_ctx.load_material_pipeline_config("UI", ui_pipeline_config)?;
+		render_ctx.load_material_pipeline_config("PBR", pbr_pipeline_config)?;
 
 		let (world, sky) = load_world(start_map)?;
 

@@ -35,16 +35,16 @@ use vulkano::command_buffer::{
 	SecondaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::DescriptorSetLayout, DescriptorSet,
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::{
+	sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage
+};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	graphics::{viewport::Viewport, GraphicsPipeline}, 
-	layout::PushConstantRange, Pipeline, PipelineBindPoint,
+	graphics::{viewport::Viewport, GraphicsPipeline}, Pipeline, PipelineBindPoint,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::{GpuFuture, Sharing};
@@ -226,29 +226,13 @@ impl RenderContext
 	}
 
 	/// Load a material shader pipeline into memory, using a configuration.
-	pub fn load_material_pipeline_config(
-		&mut self,
-		name: &str, 
-		config: &PipelineConfig,
-		mut set_layouts: Vec<Arc<DescriptorSetLayout>>,
-		push_constant_ranges: Vec<PushConstantRange>,
-	) -> Result<(), GenericEngineError>
+	pub fn load_material_pipeline_config(&mut self, name: &str, mut config: PipelineConfig) -> Result<(), GenericEngineError>
 	{
-		let pipeline = pipeline::new_from_config(
-			self.descriptor_set_allocator.device().clone(),
-			config,
-			set_layouts.clone(),
-			push_constant_ranges.clone(),
-		)?;
+		let pipeline = pipeline::new_from_config(self.descriptor_set_allocator.device().clone(), config.clone())?;
 
 		let transparency_pipeline = if config.fragment_shader_transparency.is_some() {
-			set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
-			Some(pipeline::new_from_config_transparency(
-				self.descriptor_set_allocator.device().clone(),
-				config,
-				set_layouts,
-				push_constant_ranges,
-			)?)
+			config.set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
+			Some(pipeline::new_from_config_transparency(self.descriptor_set_allocator.device().clone(), config)?)
 		} else {
 			None
 		};
