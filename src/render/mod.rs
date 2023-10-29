@@ -225,7 +225,7 @@ impl RenderContext
 		})
 	}
 
-	/// Load a material shader pipeline into memory, using a static struct.
+	/// Load a material shader pipeline into memory, using a configuration.
 	pub fn load_material_pipeline_config(
 		&mut self,
 		name: &str, 
@@ -234,39 +234,20 @@ impl RenderContext
 		push_constant_ranges: Vec<PushConstantRange>,
 	) -> Result<(), GenericEngineError>
 	{
-		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
-			depth_attachment_format: config.depth_processing.then_some(MAIN_DEPTH_FORMAT),
-			..Default::default()
-		};
 		let pipeline = pipeline::Pipeline::new_from_config(
 			self.descriptor_set_allocator.device().clone(),
 			config,
-			rendering_info,
 			set_layouts.clone(),
 			push_constant_ranges.clone(),
-			true,
-			false,
 		)?;
 
 		let transparency_pipeline = if config.fragment_shader_transparency.is_some() {
-			let transparency_weights_rendering = PipelineRenderingCreateInfo {
-				color_attachment_formats: vec![
-					Some(Format::R16G16B16A16_SFLOAT),
-					Some(Format::R8_UNORM),
-				],
-				depth_attachment_format: Some(MAIN_DEPTH_FORMAT),
-				..Default::default()
-			};
 			set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
-			Some(pipeline::Pipeline::new_from_config(
+			Some(pipeline::Pipeline::new_from_config_transparency(
 				self.descriptor_set_allocator.device().clone(),
 				config,
-				transparency_weights_rendering,
 				set_layouts,
 				push_constant_ranges,
-				false,
-				true,
 			)?)
 		} else {
 			None

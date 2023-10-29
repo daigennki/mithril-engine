@@ -17,7 +17,9 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::{layout::PushConstantRange, PipelineBindPoint};
 use vulkano::pipeline::graphics::{ 
-	color_blend::{ColorBlendState, ColorBlendAttachmentState}, depth_stencil::CompareOp, input_assembly::PrimitiveTopology,
+	color_blend::{ColorBlendState, ColorBlendAttachmentState},
+	depth_stencil::{CompareOp, DepthStencilState, DepthState},
+	input_assembly::PrimitiveTopology,
 	subpass::PipelineRenderingCreateInfo
 };
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
@@ -83,6 +85,13 @@ impl Skybox
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
+		let depth_stencil_state = DepthStencilState {
+			depth: Some(DepthState {
+				write_enable: true,
+				compare_op: CompareOp::Always,
+			}),
+			..Default::default()
+		};
 		let sky_pipeline = super::pipeline::Pipeline::new_from_binary(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
@@ -100,9 +109,7 @@ impl Skybox
 				}
 			],
 			rendering_info,
-			CompareOp::Always,
-			true,
-			true,
+			Some(depth_stencil_state),
 		)?;
 
 		// sky texture cubemap

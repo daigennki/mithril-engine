@@ -23,7 +23,7 @@ use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{layout::PushConstantRange, PipelineBindPoint};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
-	depth_stencil::CompareOp,
+	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	viewport::Viewport,
 	subpass::PipelineRenderingCreateInfo,
@@ -352,6 +352,14 @@ impl MomentTransparencyRenderer
 			..AttachmentBlend::ignore_source()
 		});
 
+		let moments_depth_stencil_state = DepthStencilState {
+			depth: Some(DepthState {
+				write_enable: false,
+				compare_op: CompareOp::Less,
+			}),
+			..Default::default()
+		};
+
 		let moments_rendering = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ 
 				Some(Format::R32G32B32A32_SFLOAT), // moments
@@ -375,9 +383,7 @@ impl MomentTransparencyRenderer
 				}
 			],
 			moments_rendering,
-			CompareOp::Less,
-			false,
-			true,
+			Some(moments_depth_stencil_state),
 		)?;
 
 		//
@@ -419,7 +425,6 @@ impl MomentTransparencyRenderer
 
 		let compositing_rendering = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
-			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
 		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
@@ -430,9 +435,7 @@ impl MomentTransparencyRenderer
 			vec![ stage4_inputs_layout.clone() ],
 			vec![],
 			compositing_rendering,
-			CompareOp::Always,
-			false,
-			true,
+			None,
 		)?;
 
 		/* Create the images and descriptor sets */
@@ -537,7 +540,7 @@ impl MomentTransparencyRenderer
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::Store,
+				store_op: AttachmentStoreOp::DontCare,
 				..RenderingAttachmentInfo::image_view(depth_image.clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
@@ -553,11 +556,6 @@ impl MomentTransparencyRenderer
 					..RenderingAttachmentInfo::image_view(color_image.clone())
 				}),
 			],
-			depth_attachment: Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(depth_image.clone())
-			}),
 			contents: SubpassContents::Inline,
 			..Default::default()
 		};
