@@ -458,7 +458,7 @@ impl RenderContext
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to color and depth images with the given format,
 	/// and with a viewport as large as `viewport_dimensions`.
-	fn new_secondary_command_buffer(
+	pub fn new_secondary_command_buffer(
 		&self,
 		color_attachment_formats: Vec<Option<Format>>,
 		depth_attachment_format: Option<Format>,
@@ -490,14 +490,6 @@ impl RenderContext
 		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		Ok(cb)
-	}
-	pub fn record_main_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
-	{
-		self.new_secondary_command_buffer(
-			vec![ Some(self.main_render_target.color_image().image().format()) ], 
-			Some(self.main_render_target.depth_image().image().format()),
-			self.swapchain_dimensions()
-		)
 	}
 
 	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
@@ -536,14 +528,6 @@ impl RenderContext
 		)?;
 
 		Ok(cb)
-	}
-	pub fn record_ui_draws(&self) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
-	{
-		self.new_secondary_command_buffer(
-			vec![ Some(self.main_render_target.color_image().image().format()) ], 
-			Some(MAIN_DEPTH_FORMAT),
-			self.swapchain_dimensions()
-		)
 	}
 
 	/// Tell the swapchain to go to the next image.

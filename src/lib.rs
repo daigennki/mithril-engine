@@ -348,7 +348,11 @@ fn draw_3d(
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.record_main_draws()?;
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(
+		vec![ Some(vulkano::format::Format::R16G16B16A16_SFLOAT) ], 
+		Some(render::MAIN_DEPTH_FORMAT),
+		render_ctx.swapchain_dimensions()
+	)?;
 
 	// Draw the skybox. This will effectively clear the framebuffer.
 	skybox.draw(&mut command_buffer, camera_manager.sky_projview())?;
@@ -411,7 +415,12 @@ fn draw_ui(
 	//texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.record_ui_draws()?;
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(
+		vec![ Some(vulkano::format::Format::R16G16B16A16_SFLOAT) ], 
+		Some(render::MAIN_DEPTH_FORMAT),
+		render_ctx.swapchain_dimensions()
+	)?;
+
 	let pipeline = render_ctx.get_pipeline("UI")?;
 	pipeline.bind(&mut command_buffer)?;
 
