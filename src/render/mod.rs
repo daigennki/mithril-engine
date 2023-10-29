@@ -233,10 +233,10 @@ impl RenderContext
 		mut set_layouts: Vec<Arc<DescriptorSetLayout>>,
 		push_constant_ranges: Vec<PushConstantRange>,
 	) -> Result<(), GenericEngineError>
-	{	
+	{
 		let rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
-			depth_attachment_format: Some(MAIN_DEPTH_FORMAT),
+			depth_attachment_format: config.depth_processing.then_some(MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
 		let pipeline = pipeline::Pipeline::new_from_config(
@@ -611,13 +611,14 @@ impl RenderContext
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
-		// finalize the rendering for this frame by executing the secondary command buffers
+		// execute the secondary command buffers in the primary command buffer
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
 
+		// 3D
 		let main_render_info = RenderingInfo {
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
@@ -634,6 +635,20 @@ impl RenderContext
 			contents: SubpassContents::SecondaryCommandBuffers,
 			..Default::default()
 		};
+		let command_buffers = self.trm.lock().unwrap().take_built_command_buffers();
+		primary_cb_builder
+			.begin_rendering(main_render_info)?
+			.execute_commands_from_vec(command_buffers)?
+			.end_rendering()?;
+
+		// 3D OIT
+		self.transparency_renderer.process_transparency(
+			&mut primary_cb_builder,
+			self.main_render_target.color_image().clone(),
+			self.main_render_target.depth_image().clone()
+		)?;
+
+		// UI
 		let ui_render_info = RenderingInfo {
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
@@ -642,37 +657,22 @@ impl RenderContext
 					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
 				}),
 			],
-			depth_attachment: Some(RenderingAttachmentInfo{
-				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::DontCare, 
-				..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
-			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
 			..Default::default()
 		};
-
-		let command_buffers = self.trm.lock().unwrap().take_built_command_buffers();
+		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
 		primary_cb_builder
-			.begin_rendering(main_render_info)?
-			.execute_commands_from_vec(command_buffers)?
+			.begin_rendering(ui_render_info)?
+			.execute_commands_from_vec(ui_cb)?
 			.end_rendering()?;
 
-		self.transparency_renderer.process_transparency(
-			&mut primary_cb_builder, 
-			self.main_render_target.color_image().clone(),
-			self.main_render_target.depth_image().clone()
-		)?;
-
-		let ui_cb = self.trm.lock().unwrap().take_ui_cb();	
+		// blit to sRGB image, copy sRGB non-linear image to swapchain image, and present swapchain image
 		let blit_info = BlitImageInfo::images(
 			self.main_render_target.color_image().image().clone(),
 			self.intermediate_srgb_img.clone(),
 		);
 		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), self.next_swapchain_image()?);
 		primary_cb_builder
-			.begin_rendering(ui_render_info)?
-			.execute_commands_from_vec(ui_cb)?
-			.end_rendering()?
 			.blit_image(blit_info)? // convert from linear to non-linear sRGB
 			.copy_image(copy_info)?; // copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
 		self.submit_commands(primary_cb_builder.build()?)?;

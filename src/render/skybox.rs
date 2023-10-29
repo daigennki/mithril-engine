@@ -102,6 +102,7 @@ impl Skybox
 			rendering_info,
 			CompareOp::Always,
 			true,
+			true,
 		)?;
 
 		// sky texture cubemap

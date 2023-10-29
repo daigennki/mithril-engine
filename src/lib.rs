@@ -114,6 +114,7 @@ impl GameContext
 			always_pass_depth_test: true,
 			alpha_blending: true,
 			primitive_topology: PrimitiveTopology::TriangleStrip,
+			depth_processing: false,
 		};
 		let pbr_pipeline_config = render::pipeline::PipelineConfig {
 			vertex_shader: material::vs_3d_common::load(vk_dev.clone())?,
@@ -122,6 +123,7 @@ impl GameContext
 			always_pass_depth_test: false,
 			alpha_blending: false,
 			primitive_topology: PrimitiveTopology::TriangleList,
+			depth_processing: true,
 		};
 
 		let dim = render_ctx.swapchain_dimensions();
@@ -417,7 +419,7 @@ fn draw_ui(
 {
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(
 		vec![ Some(vulkano::format::Format::R16G16B16A16_SFLOAT) ], 
-		Some(render::MAIN_DEPTH_FORMAT),
+		None,
 		render_ctx.swapchain_dimensions()
 	)?;
 

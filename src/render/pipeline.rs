@@ -46,6 +46,7 @@ impl Pipeline
 		rendering_info: PipelineRenderingCreateInfo,
 		depth_op: CompareOp, 
 		depth_write: bool,
+		depth_processing: bool,
 	) -> Result<Self, GenericEngineError>
 	{
 		let mut stages = Vec::with_capacity(5);
@@ -59,7 +60,7 @@ impl Pipeline
 		let vertex_input_state = Some(gen_vertex_input_state(vs.clone())?);
 		stages.push(get_shader_stage(&vs, "main")?);
 
-		let depth_stencil_state = Some(DepthStencilState {
+		let depth_stencil_state = depth_processing.then(|| DepthStencilState {
 			depth: Some(DepthState {
 				write_enable: depth_write,
 				compare_op: depth_op,
@@ -156,6 +157,7 @@ impl Pipeline
 			rendering_info,
 			depth_op,
 			depth_write,
+			config.depth_processing
 		)
 	}
 
@@ -191,6 +193,7 @@ pub struct PipelineConfig
 	pub always_pass_depth_test: bool,
 	pub alpha_blending: bool,
 	pub primitive_topology: PrimitiveTopology,
+	pub depth_processing: bool,
 }
 
 fn get_shader_stage(

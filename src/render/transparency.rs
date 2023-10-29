@@ -187,7 +187,7 @@ impl TransparencyRenderer
 		cb.begin_render_pass(transparency_rp_info, SubpassContents::SecondaryCommandBuffers)?
 			.execute_commands(transparency_cb)?
 			.end_render_pass()?
-			.begin_render_pass(comp_rp_info, SubpassContents::Inline)?
+	)		.begin_render_pass(comp_rp_info, SubpassContents::Inline)?
 			.set_viewport(0, [viewport]);
 		self.transparency_compositing_pl.bind(cb);
 		super::bind_descriptor_set(cb, 3, vec![self.transparency_set.clone()])?;
@@ -377,6 +377,7 @@ impl MomentTransparencyRenderer
 			moments_rendering,
 			CompareOp::Less,
 			false,
+			true,
 		)?;
 
 		//
@@ -431,6 +432,7 @@ impl MomentTransparencyRenderer
 			compositing_rendering,
 			CompareOp::Always,
 			false,
+			true,
 		)?;
 
 		/* Create the images and descriptor sets */
