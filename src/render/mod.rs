@@ -54,6 +54,13 @@ use crate::GenericEngineError;
 use pipeline::PipelineConfig;
 use texture::Texture;
 
+// Format used for main depth buffer.
+// NOTE: While [NVIDIA recommends](https://developer.nvidia.com/blog/vulkan-dos-donts/) using a 24-bit depth format
+// (`D24_UNORM_S8_UINT`), it doesn't seem to be very well-supported outside of NVIDIA GPUs. Only about 70% of GPUs on Windows
+// and 50% of GPUs on Linux seem to support it, while `D16_UNORM` and `D32_SFLOAT` both have 100% support.
+// (https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+pub const MAIN_DEPTH_FORMAT: Format = Format::D16_UNORM;
+
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
@@ -229,7 +236,7 @@ impl RenderContext
 	{	
 		let rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
-			depth_attachment_format: Some(Format::D16_UNORM),
+			depth_attachment_format: Some(MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
 		let pipeline = pipeline::Pipeline::new_from_config(
@@ -248,7 +255,7 @@ impl RenderContext
 					Some(Format::R16G16B16A16_SFLOAT),
 					Some(Format::R8_UNORM),
 				],
-				depth_attachment_format: Some(Format::D16_UNORM),
+				depth_attachment_format: Some(MAIN_DEPTH_FORMAT),
 				..Default::default()
 			};
 			set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
@@ -519,11 +526,11 @@ impl RenderContext
 	{
 		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
 
-		let mut cb = self.new_secondary_command_buffer(color_formats, Some(Format::D16_UNORM), self.swapchain_dimensions())?;
+		let mut cb = self.new_secondary_command_buffer(color_formats, Some(MAIN_DEPTH_FORMAT), self.swapchain_dimensions())?;
 		transparency_pipeline.bind(&mut cb)?;
 		cb.bind_descriptor_sets(
 			PipelineBindPoint::Graphics,
-			transparency_pipeline.layout(), 
+			transparency_pipeline.layout(),
 			1,
 			vec![self.transparency_renderer.get_stage3_inputs().clone()]
 		)?;
@@ -534,7 +541,7 @@ impl RenderContext
 	{
 		self.new_secondary_command_buffer(
 			vec![ Some(self.main_render_target.color_image().image().format()) ], 
-			Some(Format::D16_UNORM), 
+			Some(MAIN_DEPTH_FORMAT),
 			self.swapchain_dimensions()
 		)
 	}
@@ -878,9 +885,8 @@ impl RenderTarget
 		};
 		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
 
-		// NOTE: 24-bit depth formats are unsupported on a significant number of GPUs
 		let depth_create_info = ImageCreateInfo {
-			format: Format::D16_UNORM,
+			format: MAIN_DEPTH_FORMAT,
 			extent: [ dimensions[0], dimensions[1], 1 ],
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 			..Default::default()
@@ -910,7 +916,7 @@ impl RenderTarget
 
 		let depth_info = ImageCreateInfo {
 			extent: [ dimensions[0], dimensions[1], 1],
-			format: Format::D16_UNORM,
+			format: MAIN_DEPTH_FORMAT,
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
 			..Default::default()
 		};

@@ -358,7 +358,7 @@ impl MomentTransparencyRenderer
 				Some(Format::R32_SFLOAT), // optical_depth
 				Some(Format::R32_SFLOAT), // min_depth
 			],
-			depth_attachment_format: Some(Format::D16_UNORM),
+			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
 		let moments_pl = super::pipeline::Pipeline::new_from_binary(
@@ -418,7 +418,7 @@ impl MomentTransparencyRenderer
 
 		let compositing_rendering = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
-			depth_attachment_format: Some(Format::D16_UNORM),
+			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
 		let transparency_compositing_pl = super::pipeline::Pipeline::new_from_binary(
