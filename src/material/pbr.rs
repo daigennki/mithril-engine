@@ -87,7 +87,6 @@ impl PBR
 			fragment_shader_transparency: Some(fs_oit::load(vk_dev)?),
 			attachment_blend: None, // transparency will be handled by transparency renderer
 			primitive_topology: PrimitiveTopology::TriangleList,
-			depth_processing: true,
 			set_layouts: vec![ pbr_set_layout ],
 			push_constant_ranges: vec![
 				PushConstantRange { // push constant for projviewmodel and transform3 matrix

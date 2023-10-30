@@ -77,17 +77,17 @@ pub fn new_from_config(
 {
 	let rendering_info = PipelineRenderingCreateInfo {
 		color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
-		depth_attachment_format: config.depth_processing.then_some(super::MAIN_DEPTH_FORMAT),
+		depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 		..Default::default()
 	};
 
-	let depth_stencil_state = config.depth_processing.then(|| DepthStencilState {
+	let depth_stencil_state = DepthStencilState {
 		depth: Some(DepthState {
 			write_enable: true,
 			compare_op: CompareOp::Less,
 		}),
 		..Default::default()
-	});
+	};
 
 	let color_blend_state = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
 		blend: config.attachment_blend,
@@ -102,7 +102,7 @@ pub fn new_from_config(
 		config.set_layouts,
 		config.push_constant_ranges,
 		rendering_info,
-		depth_stencil_state,
+		Some(depth_stencil_state),
 	)
 }
 
@@ -120,13 +120,13 @@ pub fn new_from_config_transparency(
 		..Default::default()
 	};
 
-	let depth_stencil_state = config.depth_processing.then(|| DepthStencilState {
+	let depth_stencil_state = DepthStencilState {
 		depth: Some(DepthState {
 			write_enable: false,
 			compare_op: CompareOp::Less,
 		}),
 		..Default::default()
-	});
+	};
 
 	let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
 		blend: Some(AttachmentBlend {
@@ -150,7 +150,7 @@ pub fn new_from_config_transparency(
 		config.set_layouts,
 		config.push_constant_ranges,
 		rendering_info,
-		depth_stencil_state,
+		Some(depth_stencil_state),
 	)
 }
 
@@ -163,7 +163,6 @@ pub struct PipelineConfig
 	pub fragment_shader_transparency: Option<Arc<ShaderModule>>,
 	pub attachment_blend: Option<AttachmentBlend>, // AttachmentBlend for when OIT isn't used
 	pub primitive_topology: PrimitiveTopology,
-	pub depth_processing: bool,
 	pub set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	pub push_constant_ranges: Vec<PushConstantRange>,
 }

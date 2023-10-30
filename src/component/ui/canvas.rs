@@ -21,7 +21,11 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo}, view::ImageView};
 use vulkano::pipeline::{
-	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, GraphicsPipeline},
+	graphics::{
+		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
+		input_assembly::PrimitiveTopology, GraphicsPipeline,
+		subpass::PipelineRenderingCreateInfo,
+	},
 	Pipeline,
 };
 use vulkano::shader::ShaderStages;
@@ -96,17 +100,24 @@ impl Canvas
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let ui_pipeline_config = crate::render::pipeline::PipelineConfig {
-			vertex_shader: ui_vs::load(device.clone())?,
-			fragment_shader: ui_fs::load(device.clone())?,
-			fragment_shader_transparency: None,
-			attachment_blend: Some(AttachmentBlend::alpha()),
-			primitive_topology: PrimitiveTopology::TriangleStrip,
-			depth_processing: false,
-			set_layouts: vec![ set_layout.clone() ],
-			push_constant_ranges: vec![],
+		let color_blend_state = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
+			blend: Some(AttachmentBlend::alpha()),
+			..Default::default()
+		});
+		let rendering_info = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
+			..Default::default()
 		};
-		let ui_pipeline = crate::render::pipeline::new_from_config(device, ui_pipeline_config)?;
+		let ui_pipeline = crate::render::pipeline::new(
+			device.clone(),
+			PrimitiveTopology::TriangleStrip,
+			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
+			Some(color_blend_state),
+			vec![ set_layout.clone() ],
+			vec![],
+			rendering_info,
+			None
+		)?;
 
 		let vbo_usage = BufferUsage::VERTEX_BUFFER;
 		let quad_pos_verts = [
