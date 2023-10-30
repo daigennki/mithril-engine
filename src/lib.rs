@@ -123,7 +123,7 @@ impl GameContext
 		};
 
 		render_ctx.load_material_pipeline("UI", ui_pipeline_config)?;
-		render_ctx.load_material_pipeline("PBR", material::pbr::PBR::get_pipeline_config(&render_ctx)?)?;
+		render_ctx.load_material_pipeline("PBR", material::pbr::PBR::get_pipeline_config(vk_dev.clone())?)?;
 
 		let (world, sky) = load_world(start_map)?;
 

@@ -12,6 +12,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, WriteDescriptorSet};
+use vulkano::device::Device;
 use vulkano::format::Format;
 
 use crate::render::{texture::Texture, RenderContext};
@@ -39,7 +40,7 @@ pub trait Material: Send + Sync
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
 
 	/// Get the set layout for this material's descriptor set.
-	fn set_layout(&self, render_ctx: &RenderContext) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>;
+	fn set_layout(&self, vk_dev: Arc<Device>) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
 }

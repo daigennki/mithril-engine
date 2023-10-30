@@ -39,9 +39,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::image::{
-	sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage
-};
+use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::{
 	graphics::{viewport::Viewport, GraphicsPipeline}, Pipeline, PipelineBindPoint,
@@ -71,9 +69,6 @@ pub struct RenderContext
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	// Samplers used for 3D draws. All use linear downscaling and have 16x anisotropic filtering enabled.
-	sampler_linear: Arc<Sampler>, // Linear upscaling (default)
-	//sampler_nearest: Arc<Sampler>, // Nearest neighbor upscaling (possibly useful for pixel art)
 	trm: Mutex<ThreadedRenderingManager>,
 
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
@@ -172,12 +167,6 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let sampler_info = SamplerCreateInfo {
-			anisotropy: Some(16.0),
-			..SamplerCreateInfo::simple_repeat_linear()
-		};
-		let sampler_linear = Sampler::new(vk_dev.clone(), sampler_info)?;
-
 		let main_render_target = RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
 		let swapchain_dim = swapchain.dimensions();
 		let intermediate_img_create_info = ImageCreateInfo {
@@ -192,7 +181,6 @@ impl RenderContext
 			memory_allocator.clone(),
 			&descriptor_set_allocator,
 			swapchain.dimensions(),
-			sampler_linear.clone(),
 		)?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
@@ -210,7 +198,6 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
-			sampler_linear,
 			trm: Mutex::new(ThreadedRenderingManager::new(8)),
 			transfer_future: None,
 			textures: HashMap::new(),
@@ -243,11 +230,6 @@ impl RenderContext
 		);
 
 		Ok(())
-	}
-
-	pub fn get_default_sampler(&self) -> &Arc<Sampler>
-	{
-		&self.sampler_linear
 	}
 
 	/// Load an image file as a texture into memory.

@@ -13,8 +13,9 @@ use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	WriteDescriptorSet,
 };
-use vulkano::device::DeviceOwned;
+use vulkano::device::Device;
 use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, layout::PushConstantRange};
+use vulkano::image::sampler::{SamplerCreateInfo, Sampler};
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
@@ -50,12 +51,18 @@ pub struct PBR
 }
 impl PBR
 {
-	pub fn set_layout_pbr(render_ctx: &RenderContext) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
+	pub fn set_layout_pbr(vk_dev: Arc<Device>) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
 	{
+		let sampler_info = SamplerCreateInfo {
+			anisotropy: Some(16.0),
+			..SamplerCreateInfo::simple_repeat_linear()
+		};
+		let sampler = Sampler::new(vk_dev.clone(), sampler_info)?;
+
 		let bindings = [
 			(0, DescriptorSetLayoutBinding { // binding 0: sampler0
 				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![ render_ctx.get_default_sampler().clone() ],
+				immutable_samplers: vec![ sampler ],
 				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
 			}),
 			(1, DescriptorSetLayoutBinding { // binding 1: base_color
@@ -67,18 +74,17 @@ impl PBR
 			bindings: bindings.into(),
 			..Default::default()
 		};
-		let vk_dev = render_ctx.get_default_sampler().device().clone();
-		Ok(DescriptorSetLayout::new(vk_dev.clone(), layout_info)?)
+
+		Ok(DescriptorSetLayout::new(vk_dev, layout_info)?)
 	}
 
-	pub fn get_pipeline_config(render_ctx: &RenderContext) -> Result<PipelineConfig, GenericEngineError>
+	pub fn get_pipeline_config(vk_dev: Arc<Device>) -> Result<PipelineConfig, GenericEngineError>
 	{
-		let vk_dev = render_ctx.get_default_sampler().device().clone();
-		let pbr_set_layout = Self::set_layout_pbr(render_ctx)?;
+		let pbr_set_layout = Self::set_layout_pbr(vk_dev.clone())?;
 		Ok(crate::render::pipeline::PipelineConfig {
 			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
 			fragment_shader: fs::load(vk_dev.clone())?,
-			fragment_shader_transparency: Some(fs_oit::load(vk_dev.clone())?),
+			fragment_shader_transparency: Some(fs_oit::load(vk_dev)?),
 			attachment_blend: None, // transparency will be handled by transparency renderer
 			primitive_topology: PrimitiveTopology::TriangleList,
 			depth_processing: true,
@@ -115,9 +121,9 @@ impl Material for PBR
 		Ok(writes)
 	}
 
-	fn set_layout(&self, render_ctx: &RenderContext) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
+	fn set_layout(&self, vk_dev: Arc<Device>) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
 	{
-		Self::set_layout_pbr(render_ctx)
+		Self::set_layout_pbr(vk_dev)
 	}
 
 	fn has_transparency(&self) -> bool

@@ -18,7 +18,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::Sampler, view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
 use vulkano::pipeline::graphics::{
@@ -251,7 +251,6 @@ impl MomentTransparencyRenderer
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		dimensions: [u32; 2],
-		main_sampler: Arc<Sampler>,
 	) -> Result<Self, GenericEngineError>
 	{
 		// The render pass from back when we didn't use dynamic rendering.
@@ -325,11 +324,16 @@ impl MomentTransparencyRenderer
 		//
 		/* Stage 2: Calculate moments */
 		//
+		let sampler_info = SamplerCreateInfo {
+			anisotropy: Some(16.0),
+			..SamplerCreateInfo::simple_repeat_linear()
+		};
+		let sampler = Sampler::new(device.clone(), sampler_info)?;
 		let base_color_set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
 				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
 					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![ main_sampler ],
+					immutable_samplers: vec![ sampler ],
 					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
 				}),
 				(1, DescriptorSetLayoutBinding { // binding 1: base_color

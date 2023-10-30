@@ -112,6 +112,8 @@ impl MeshManager
 		let orig_materials = model_data.get_materials();
 		let material_count = orig_materials.len();
 
+		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
+
 		let mut material_overrides = Vec::with_capacity(material_count);
 		for mat in orig_materials {
 			// TODO: if there's a material override, use that instead of the original material
@@ -121,7 +123,7 @@ impl MeshManager
 			let set_layout = match self.set_layouts.get(mat.material_name()) {
 				Some(sl) => sl.clone(),
 				None => {
-					let new_set_layout = mat.set_layout(render_ctx)?;
+					let new_set_layout = mat.set_layout(vk_dev.clone())?;
 					self.set_layouts.insert(mat.material_name(), new_set_layout.clone());
 					new_set_layout
 				}
