@@ -110,8 +110,9 @@ impl Model
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_layout: Arc<PipelineLayout>,
 		transform: &Mat4,
-		material_overrides_and_sets: &Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>,
+		material_resources: &Vec<crate::component::mesh::MaterialResources>,
 		transparency_pass: bool,
+		base_color_only: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
@@ -123,11 +124,16 @@ impl Model
 			self.index_buffer.bind(cb)?;
 			for submesh in visible_submeshes {
 				// it's okay that we use a panic function here, since the glTF loader validates the index for us
-				let (mat_override, set) = &material_overrides_and_sets[submesh.material_index()];
-				let mat = mat_override.as_ref().unwrap_or_else(|| &self.materials[submesh.material_index()]);
+				let mat_res = &material_resources[submesh.material_index()];
+				let mat = mat_res.mat_override.as_ref().unwrap_or_else(|| &self.materials[submesh.material_index()]);
 
 				if mat.has_transparency() == transparency_pass {
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set.clone())?;
+					let set = if base_color_only {
+						mat_res.mat_basecolor_only_set.clone()
+					} else {
+						mat_res.mat_set.clone()
+					};
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
 					submesh.draw(cb)?;
 				}
 			}

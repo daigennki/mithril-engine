@@ -236,6 +236,8 @@ pub struct MomentTransparencyRenderer
 {
 	images: MomentImageBundle,
 
+	base_color_set_layout: Arc<DescriptorSetLayout>,
+
 	moments_pl: Arc<GraphicsPipeline>,
 	transparency_compositing_pl: Arc<GraphicsPipeline>,
 
@@ -379,7 +381,7 @@ impl MomentTransparencyRenderer
 			PrimitiveTopology::TriangleList,
 			&[ vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())? ],
 			Some(moments_blend),
-			vec![ base_color_set_layout ],
+			vec![ base_color_set_layout.clone() ],
 			vec![ 
 				PushConstantRange { // push constant for projview matrix
 					stages: ShaderStages::VERTEX,
@@ -454,6 +456,7 @@ impl MomentTransparencyRenderer
 
 		Ok(MomentTransparencyRenderer {
 			images,
+			base_color_set_layout,
 			moments_pl,
 			transparency_compositing_pl,
 			stage3_inputs,
@@ -607,6 +610,11 @@ impl MomentTransparencyRenderer
 	pub fn get_moments_pipeline(&self) -> &Arc<GraphicsPipeline>
 	{
 		&self.moments_pl
+	}
+
+	pub fn get_base_color_only_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	{
+		&self.base_color_set_layout
 	}
 
 	pub fn get_stage3_inputs(&self) -> &Arc<PersistentDescriptorSet>

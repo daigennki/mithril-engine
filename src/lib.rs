@@ -22,10 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::device::DeviceOwned;
-use vulkano::pipeline::{
-	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, GraphicsPipeline},
-	Pipeline,
-};
+use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline};
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
@@ -76,19 +73,6 @@ pub struct InputHelperWrapper
 	pub inner: WinitInputHelper,
 }
 
-mod ui_vs {
-	vulkano_shaders::shader! {
-		ty: "vertex",
-		bytes: "shaders/ui.vert.spv",
-	}
-}
-mod ui_fs {
-	vulkano_shaders::shader! {
-		ty: "fragment",
-		bytes: "shaders/ui.frag.spv",
-	}
-}
-
 struct GameContext
 {
 	world: World,
@@ -111,19 +95,13 @@ impl GameContext
 
 		let dim = render_ctx.swapchain_dimensions();
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
-		let ui_pipeline_config = render::pipeline::PipelineConfig {
-			vertex_shader: ui_vs::load(vk_dev.clone())?,
-			fragment_shader: ui_fs::load(vk_dev.clone())?,
-			fragment_shader_transparency: None,
-			attachment_blend: Some(AttachmentBlend::alpha()),
-			primitive_topology: PrimitiveTopology::TriangleStrip,
-			depth_processing: false,
-			set_layouts: vec![ canvas.get_set_layout().clone() ],
-			push_constant_ranges: vec![],
-		};
 
-		render_ctx.load_material_pipeline("UI", ui_pipeline_config)?;
-		render_ctx.load_material_pipeline("PBR", material::pbr::PBR::get_pipeline_config(vk_dev.clone())?)?;
+		let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
+		let mut mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
+
+		let pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
+		mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
+		render_ctx.load_material_pipeline("PBR", pbr_pipeline_config)?;
 
 		let (world, sky) = load_world(start_map)?;
 
@@ -139,13 +117,11 @@ impl GameContext
 		world.add_unique(canvas);
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 		world.add_unique(camera_manager);
-		world.add_unique(component::mesh::MeshManager::default());
+		world.add_unique(mesh_manager);
 		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
 		world.add_unique(render_ctx);
 
-		Ok(GameContext {
-			world,
-		})
+		Ok(GameContext { world })
 	}
 
 	pub fn handle_event(&mut self, event: &mut Event<()>) -> Result<(), GenericEngineError>
@@ -308,6 +284,7 @@ fn draw_common(
 	//meshes: View<component::mesh::Mesh>,
 	pipeline: &Arc<GraphicsPipeline>,
 	transparency_pass: bool,
+	base_color_only: bool,
 ) -> Result<(), GenericEngineError>
 {
 	let projview = camera_manager.projview();
@@ -317,7 +294,15 @@ fn draw_common(
 			let model_matrix = transform.get_matrix();
 			let transform_mat = projview * model_matrix;
 			let model_mat3 = Mat3::from_mat4(model_matrix);
-			mesh_manager.draw(eid, command_buffer, pipeline.layout().clone(), transform_mat, model_mat3, transparency_pass)?;
+			mesh_manager.draw(
+				eid,
+				command_buffer,
+				pipeline.layout().clone(),
+				transform_mat,
+				model_mat3,
+				transparency_pass,
+				base_color_only,
+			)?;
 		}
 	}
 	Ok(())
@@ -353,7 +338,8 @@ fn draw_3d(
 		transforms, 
 		&mesh_manager, 
 		pbr_pipeline, 
-		false
+		false,
+		false,
 	)?;
 
 	render_ctx.add_cb(command_buffer.build()?);
@@ -368,7 +354,7 @@ fn draw_3d_transparent_moments(
 {
 	let (mut command_buffer, pipeline) = render_ctx.record_transparency_moments_draws()?;
 
-	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true)?;
+	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
 
 	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
@@ -385,7 +371,7 @@ fn draw_3d_transparent(
 	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
 	let mut command_buffer = render_ctx.record_transparency_draws(pipeline)?;
 
-	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true)?;
+	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
 
 	render_ctx.add_transparency_cb(command_buffer.build()?);
 	Ok(())
@@ -404,14 +390,13 @@ fn draw_ui(
 		render_ctx.swapchain_dimensions()
 	)?;
 
-	let pipeline = render_ctx.get_pipeline("UI")?;
-	command_buffer.bind_pipeline_graphics(pipeline.clone())?;
+	command_buffer.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
 
 	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	for (eid, _) in ui_transforms.iter().with_id() {
 		// TODO: how do we respect the render order?
-		canvas.draw(&mut command_buffer, pipeline.layout().clone(), eid)?;
+		canvas.draw(&mut command_buffer, eid)?;
 	}
 
 	render_ctx.add_ui_cb(command_buffer.build()?);

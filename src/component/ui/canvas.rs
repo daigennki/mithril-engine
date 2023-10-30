@@ -20,12 +20,28 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo}, view::ImageView};
-use vulkano::pipeline::PipelineLayout;
+use vulkano::pipeline::{
+	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, GraphicsPipeline},
+	Pipeline,
+};
 use vulkano::shader::ShaderStages;
 
 use crate::render::RenderContext;
 use crate::GenericEngineError;
 use super::mesh::MeshType;
+
+mod ui_vs {
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		bytes: "shaders/ui.vert.spv",
+	}
+}
+mod ui_fs {
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		bytes: "shaders/ui.frag.spv",
+	}
+}
 
 #[derive(shipyard::Unique)]
 pub struct Canvas
@@ -34,6 +50,7 @@ pub struct Canvas
 	projection: Mat4,
 
 	set_layout: Arc<DescriptorSetLayout>,
+	ui_pipeline: Arc<GraphicsPipeline>,
 
 	gpu_resources: BTreeMap<EntityId, (super::mesh::MeshType, Arc<PersistentDescriptorSet>)>,
 
@@ -77,10 +94,21 @@ impl Canvas
 			].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device, set_layout_info)?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+
+		let ui_pipeline_config = crate::render::pipeline::PipelineConfig {
+			vertex_shader: ui_vs::load(device.clone())?,
+			fragment_shader: ui_fs::load(device.clone())?,
+			fragment_shader_transparency: None,
+			attachment_blend: Some(AttachmentBlend::alpha()),
+			primitive_topology: PrimitiveTopology::TriangleStrip,
+			depth_processing: false,
+			set_layouts: vec![ set_layout.clone() ],
+			push_constant_ranges: vec![],
+		};
+		let ui_pipeline = crate::render::pipeline::new_from_config(device, ui_pipeline_config)?;
 
 		let vbo_usage = BufferUsage::VERTEX_BUFFER;
-
 		let quad_pos_verts = [
 			Vec2::new(-0.5, -0.5),
 			Vec2::new(-0.5, 0.5),
@@ -88,7 +116,6 @@ impl Canvas
 			Vec2::new(0.5, 0.5),
 		];
 		let quad_pos_buf = render_ctx.new_buffer_from_iter(quad_pos_verts, vbo_usage)?;
-
 		let quad_uv_verts = [
 			Vec2::new(0.0, 0.0),
 			Vec2::new(0.0, 1.0),
@@ -104,6 +131,7 @@ impl Canvas
 			base_dimensions: [canvas_width, canvas_height],
 			projection: calculate_projection(canvas_width, canvas_height, screen_width, screen_height),
 			set_layout,
+			ui_pipeline,
 			gpu_resources: Default::default(),
 			quad_pos_buf,
 			quad_uv_buf,
@@ -114,6 +142,11 @@ impl Canvas
 	pub fn get_set_layout(&self) -> &Arc<DescriptorSetLayout>
 	{
 		&self.set_layout
+	}
+
+	pub fn get_pipeline(&self) -> &Arc<GraphicsPipeline>
+	{
+		&self.ui_pipeline
 	}
 
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
@@ -205,14 +238,13 @@ impl Canvas
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_layout: Arc<PipelineLayout>,
 		eid: EntityId,
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some((mesh_type, descriptor_set)) = self.gpu_resources.get(&eid) {
 			cb.bind_descriptor_sets(
 				vulkano::pipeline::PipelineBindPoint::Graphics, 
-				pipeline_layout, 
+				self.ui_pipeline.layout().clone(),
 				0,
 				vec![ descriptor_set.clone() ]
 			)?;

@@ -13,7 +13,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
-use vulkano::device::DeviceOwned;
 use vulkano::pipeline::PipelineLayout;
 
 #[cfg(feature = "egui")]
@@ -77,8 +76,15 @@ fn update_meshes(
 	}
 }
 
+pub struct MaterialResources
+{
+	pub mat_override: Option<Box<dyn Material>>,
+	pub mat_set: Arc<PersistentDescriptorSet>,
+	pub mat_basecolor_only_set: Arc<PersistentDescriptorSet>, // used for OIT when only "base color" texture is needed
+}
+
 /// A single manager that manages the GPU resources for all `Mesh` components.
-#[derive(Default, shipyard::Unique)]
+#[derive(shipyard::Unique)]
 pub struct MeshManager
 {
 	// Loaded 3D models, with the key being the path relative to the current working directory.
@@ -87,12 +93,33 @@ pub struct MeshManager
 	// Set layouts for different materials.
 	set_layouts: BTreeMap<&'static str, Arc<DescriptorSetLayout>>,
 
+	// Set layout for OIT when only "base color" texture is needed
+	basecolor_only_set_layout: Arc<DescriptorSetLayout>,
+
 	// The models and material overrides for each entity.
-	resources: BTreeMap<EntityId, (Arc<Model>, Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>)>
+	resources: BTreeMap<EntityId, (Arc<Model>, Vec<MaterialResources>)>,
 }
 impl MeshManager
 {
-	/// Load the model for the given `Mesh`. 
+	pub fn new(basecolor_only_set_layout: Arc<DescriptorSetLayout>) -> Self
+	{
+		MeshManager {
+			models: Default::default(),
+			set_layouts: Default::default(),
+			basecolor_only_set_layout,
+			resources: Default::default()
+		}
+	}
+
+	pub fn load_set_layout(&mut self, material_name: &'static str, set_layout: Arc<DescriptorSetLayout>)
+	{
+		let existing = self.set_layouts.insert(material_name, set_layout);
+		if existing.is_some() {
+			log::warn!("Replaced existing set layout in `MeshManager` for material '{}'", material_name);
+		}
+	}
+
+	/// Load the model for the given `Mesh`.
 	pub fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), GenericEngineError>
 	{
 		// Get a 3D model from `path`, relative to the current working directory.
@@ -112,35 +139,42 @@ impl MeshManager
 		let orig_materials = model_data.get_materials();
 		let material_count = orig_materials.len();
 
-		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
-
-		let mut material_overrides = Vec::with_capacity(material_count);
+		let mut material_resources = Vec::with_capacity(material_count);
 		for mat in orig_materials {
 			// TODO: if there's a material override, use that instead of the original material
 			// to create the descriptor set
 			
-			// try to get the set layout for the material, and if it doesn't exist already, create it
-			let set_layout = match self.set_layouts.get(mat.material_name()) {
-				Some(sl) => sl.clone(),
-				None => {
-					let new_set_layout = mat.set_layout(vk_dev.clone())?;
-					self.set_layouts.insert(mat.material_name(), new_set_layout.clone());
-					new_set_layout
-				}
-			};
+			// try to get the set layout for the material
+			let set_layout = self
+				.set_layouts
+				.get(mat.material_name())
+				.ok_or(format!("Set layout for material '{}' not loaded into `MeshManager`", mat.material_name()))?
+				.clone();
 
 			let writes = mat.gen_descriptor_set_writes(&component.model_path, render_ctx)?;
-			let set = PersistentDescriptorSet::new(
+			let mat_set = PersistentDescriptorSet::new(
 				render_ctx.descriptor_set_allocator(),
 				set_layout,
 				writes,
 				[],
 			)?;
 
-			material_overrides.push((None, set));
+			let base_color_writes = mat.gen_base_color_descriptor_set_writes(&component.model_path, render_ctx)?;
+			let mat_basecolor_only_set = PersistentDescriptorSet::new(
+				render_ctx.descriptor_set_allocator(),
+				self.basecolor_only_set_layout.clone(),
+				base_color_writes,
+				[],
+			)?;
+
+			material_resources.push(MaterialResources {
+				mat_override: None,
+				mat_set,
+				mat_basecolor_only_set,
+			});
 		}
 
-		let existing = self.resources.insert(eid, (model_data, material_overrides));
+		let existing = self.resources.insert(eid, (model_data, material_resources));
 		if existing.is_some() {
 			log::warn!("`MeshManager::load` was called for an entity ID that was already loaded!");
 		}
@@ -158,10 +192,10 @@ impl MeshManager
 	/// Get the materials that override the model's material.
 	/// If a material slot is `None`, then that material slot will use the model's original material.
 	/// This will panic if the entity ID is invalid!
-	pub fn get_material_overrides(&mut self, eid: EntityId) -> &mut Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>
+	/*pub fn get_material_overrides(&mut self, eid: EntityId) -> &mut Vec<(Option<Box<dyn Material>>, Arc<PersistentDescriptorSet>)>
 	{
 		&mut self.resources.get_mut(&eid).unwrap().1
-	}
+	}*/
 
 	/// Check if any of the materials are enabled for transparency.
 	/// This may also return false if the entity ID is invalid.
@@ -175,7 +209,7 @@ impl MeshManager
 				material_overrides
 					.iter()
 					.enumerate()
-					.map(|(i, (override_mat, _))| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
 					.any(|mat| mat.has_transparency())
 			}
 			None => false
@@ -194,7 +228,7 @@ impl MeshManager
 				material_overrides
 					.iter()
 					.enumerate()
-					.map(|(i, (override_mat, _))| override_mat.as_ref().unwrap_or_else(|| &original_materials[i]))
+					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
 					.any(|mat| !mat.has_transparency())
 			}
 			None => false
@@ -208,18 +242,20 @@ impl MeshManager
 		pipeline_layout: Arc<PipelineLayout>,
 		projviewmodel: Mat4,
 		model_notranslate: Mat3,
-		transparency_pass: bool
+		transparency_pass: bool,
+		base_color_only: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
-		if let Some((model_loaded, material_overrides_and_sets)) = self.resources.get(&eid) {
+		if let Some((model_loaded, mat_resources)) = self.resources.get(&eid) {
 			let push_data = ModelMatrixPushConstant {
 				projviewmodel,
 				model_notranslate: Mat4::from_mat3(model_notranslate),
 			};
 			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 
-			model_loaded.draw(cb, pipeline_layout, &projviewmodel, material_overrides_and_sets, transparency_pass)?
+
+			model_loaded.draw(cb, pipeline_layout, &projviewmodel, mat_resources, transparency_pass, base_color_only)?;
 		}
 		Ok(())
 	}

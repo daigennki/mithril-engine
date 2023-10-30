@@ -648,6 +648,11 @@ impl RenderContext
 		self.swapchain.dimensions()
 	}
 
+	pub fn get_transparency_renderer(&self) -> &transparency::MomentTransparencyRenderer
+	{
+		&self.transparency_renderer
+	}
+
 	pub fn get_pipeline(&self, name: &str) -> Result<&Arc<GraphicsPipeline>, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).map(|tuple| &tuple.0).ok_or(PipelineNotLoaded)?)

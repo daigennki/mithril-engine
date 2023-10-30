@@ -121,9 +121,17 @@ impl Material for PBR
 		Ok(writes)
 	}
 
-	fn set_layout(&self, vk_dev: Arc<Device>) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
+	fn gen_base_color_descriptor_set_writes(
+		&self,
+		parent_folder: &Path,
+		render_ctx: &mut RenderContext
+	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>
 	{
-		Self::set_layout_pbr(vk_dev)
+		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
+
+		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view()) ];
+
+		Ok(writes)
 	}
 
 	fn has_transparency(&self) -> bool
