@@ -20,6 +20,7 @@ use vulkano::pipeline::graphics::{
 	color_blend::{ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::{CompareOp, DepthStencilState, DepthState},
 	input_assembly::PrimitiveTopology,
+	rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipeline,
 };
@@ -97,6 +98,7 @@ impl Skybox
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ vs::load(device.clone())?, fs::load(device.clone())? ],
+			RasterizationState::default(),
 			Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
 			vec![ set_layout.clone() ],
 			vec![ 

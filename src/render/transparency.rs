@@ -25,8 +25,9 @@ use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
-	viewport::Viewport,
+	rasterization::{CullMode, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
+	viewport::Viewport,
 	GraphicsPipeline,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -380,6 +381,7 @@ impl MomentTransparencyRenderer
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[ vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())? ],
+			RasterizationState{ cull_mode: CullMode::Back, ..Default::default() },
 			Some(moments_blend),
 			vec![ base_color_set_layout.clone() ],
 			vec![ 
@@ -438,6 +440,7 @@ impl MomentTransparencyRenderer
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[ vs_fill_viewport::load(device.clone())?, fs_oit_compositing::load(device.clone())? ],
+			RasterizationState::default(),
 			Some(wboit_compositing_blend),
 			vec![ stage4_inputs_layout.clone() ],
 			vec![],

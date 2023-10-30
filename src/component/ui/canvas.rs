@@ -24,6 +24,7 @@ use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
 		input_assembly::PrimitiveTopology, GraphicsPipeline,
+		rasterization::RasterizationState,
 		subpass::PipelineRenderingCreateInfo,
 	},
 	Pipeline,
@@ -112,6 +113,7 @@ impl Canvas
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
+			RasterizationState::default(),
 			Some(color_blend_state),
 			vec![ set_layout.clone() ],
 			vec![],
