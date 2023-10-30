@@ -8,24 +8,18 @@
 use glam::*;
 use serde::Deserialize;
 use std::path::Path;
+use std::sync::Arc;
 use vulkano::descriptor_set::{
-	layout::{DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	WriteDescriptorSet,
 };
+use vulkano::device::DeviceOwned;
+use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, layout::PushConstantRange};
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::RenderContext;
+use crate::render::{RenderContext, pipeline::PipelineConfig};
 use crate::GenericEngineError;
-
-/*pub static PIPELINE_CONFIG: StaticPipelineConfig = StaticPipelineConfig {
-	vertex_shader: include_bytes!("../../shaders/basic_3d.vert.spv"),
-	fragment_shader: Some(include_bytes!("../../shaders/pbr.frag.spv")),
-	fragment_shader_transparency: Some(include_bytes!("../../shaders/pbr_mboit_weights.frag.spv")),
-	always_pass_depth_test: false,
-	alpha_blending: false,
-	primitive_topology: PrimitiveTopology::TriangleList,
-};*/
 
 pub mod fs {
 	vulkano_shaders::shader! {
@@ -56,7 +50,7 @@ pub struct PBR
 }
 impl PBR
 {
-	pub fn set_layout_info_pbr(render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo
+	pub fn set_layout_pbr(render_ctx: &RenderContext) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
 	{
 		let bindings = [
 			(0, DescriptorSetLayoutBinding { // binding 0: sampler0
@@ -69,10 +63,34 @@ impl PBR
 				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
 			}),
 		];
-		DescriptorSetLayoutCreateInfo {
+		let layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: bindings.into(),
 			..Default::default()
-		}
+		};
+		let vk_dev = render_ctx.get_default_sampler().device().clone();
+		Ok(DescriptorSetLayout::new(vk_dev.clone(), layout_info)?)
+	}
+
+	pub fn get_pipeline_config(render_ctx: &RenderContext) -> Result<PipelineConfig, GenericEngineError>
+	{
+		let vk_dev = render_ctx.get_default_sampler().device().clone();
+		let pbr_set_layout = Self::set_layout_pbr(render_ctx)?;
+		Ok(crate::render::pipeline::PipelineConfig {
+			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
+			fragment_shader: fs::load(vk_dev.clone())?,
+			fragment_shader_transparency: Some(fs_oit::load(vk_dev.clone())?),
+			attachment_blend: None, // transparency will be handled by transparency renderer
+			primitive_topology: PrimitiveTopology::TriangleList,
+			depth_processing: true,
+			set_layouts: vec![ pbr_set_layout ],
+			push_constant_ranges: vec![
+				PushConstantRange { // push constant for projviewmodel and transform3 matrix
+					stages: ShaderStages::VERTEX,
+					offset: 0,
+					size: (std::mem::size_of::<Mat4>() * 2).try_into().unwrap(),
+				}
+			],
+		})
 	}
 }
 
@@ -84,7 +102,6 @@ impl Material for PBR
 		"PBR"
 	}
 
-	// NOTE: the descriptor set is expected to be bound to set 1
 	fn gen_descriptor_set_writes(
 		&self,
 		parent_folder: &Path,
@@ -98,9 +115,9 @@ impl Material for PBR
 		Ok(writes)
 	}
 
-	fn set_layout_info(&self, render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo
+	fn set_layout(&self, render_ctx: &RenderContext) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
 	{
-		Self::set_layout_info_pbr(render_ctx)
+		Self::set_layout_pbr(render_ctx)
 	}
 
 	fn has_transparency(&self) -> bool

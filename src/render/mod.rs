@@ -226,7 +226,7 @@ impl RenderContext
 	}
 
 	/// Load a material shader pipeline into memory, using a configuration.
-	pub fn load_material_pipeline_config(&mut self, name: &str, mut config: PipelineConfig) -> Result<(), GenericEngineError>
+	pub fn load_material_pipeline(&mut self, name: &str, mut config: PipelineConfig) -> Result<(), GenericEngineError>
 	{
 		let pipeline = pipeline::new_from_config(self.descriptor_set_allocator.device().clone(), config.clone())?;
 

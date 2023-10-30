@@ -21,13 +21,11 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::DeviceOwned;
 use vulkano::pipeline::{
 	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, GraphicsPipeline},
-	layout::PushConstantRange, Pipeline,
+	Pipeline,
 };
-use vulkano::shader::ShaderStages;
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
@@ -113,12 +111,9 @@ impl GameContext
 
 		let dim = render_ctx.swapchain_dimensions();
 		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
-		let pbr_set_layout_info = material::pbr::PBR::set_layout_info_pbr(&render_ctx);
-		let pbr_set_layout = DescriptorSetLayout::new(vk_dev.clone(), pbr_set_layout_info)?;
-
 		let ui_pipeline_config = render::pipeline::PipelineConfig {
 			vertex_shader: ui_vs::load(vk_dev.clone())?,
-			fragment_shader: Some(ui_fs::load(vk_dev.clone())?),
+			fragment_shader: ui_fs::load(vk_dev.clone())?,
 			fragment_shader_transparency: None,
 			attachment_blend: Some(AttachmentBlend::alpha()),
 			primitive_topology: PrimitiveTopology::TriangleStrip,
@@ -126,25 +121,9 @@ impl GameContext
 			set_layouts: vec![ canvas.get_set_layout().clone() ],
 			push_constant_ranges: vec![],
 		};
-		let pbr_pipeline_config = render::pipeline::PipelineConfig {
-			vertex_shader: material::vs_3d_common::load(vk_dev.clone())?,
-			fragment_shader: Some(material::pbr::fs::load(vk_dev.clone())?),
-			fragment_shader_transparency: Some(material::pbr::fs_oit::load(vk_dev.clone())?),
-			attachment_blend: None, // transparency will be handled by transparency renderer
-			primitive_topology: PrimitiveTopology::TriangleList,
-			depth_processing: true,
-			set_layouts: vec![ pbr_set_layout ],
-			push_constant_ranges: vec![
-				PushConstantRange { // push constant for projviewmodel and transform3 matrix
-					stages: ShaderStages::VERTEX,
-					offset: 0,
-					size: (std::mem::size_of::<Mat4>() * 2).try_into().unwrap(),
-				}
-			],
-		};
 
-		render_ctx.load_material_pipeline_config("UI", ui_pipeline_config)?;
-		render_ctx.load_material_pipeline_config("PBR", pbr_pipeline_config)?;
+		render_ctx.load_material_pipeline("UI", ui_pipeline_config)?;
+		render_ctx.load_material_pipeline("PBR", material::pbr::PBR::get_pipeline_config(&render_ctx)?)?;
 
 		let (world, sky) = load_world(start_map)?;
 

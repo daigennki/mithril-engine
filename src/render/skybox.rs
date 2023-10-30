@@ -96,11 +96,8 @@ impl Skybox
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			vs::load(device.clone())?,
-			Some((
-				fs::load(device.clone())?,
-				ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())
-			)),
+			&[ vs::load(device.clone())?, fs::load(device.clone())? ],
+			Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
 			vec![ set_layout.clone() ],
 			vec![ 
 				PushConstantRange { // push constant for view matrix

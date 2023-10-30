@@ -373,8 +373,8 @@ impl MomentTransparencyRenderer
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			vs_nonorm::load(device.clone())?,
-			Some((fs_moments::load(device.clone())?, moments_blend)),
+			&[ vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())? ],
+			Some(moments_blend),
 			vec![ base_color_set_layout ],
 			vec![ 
 				PushConstantRange { // push constant for projview matrix
@@ -431,8 +431,8 @@ impl MomentTransparencyRenderer
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			vs_fill_viewport::load(device.clone())?,
-			Some((fs_oit_compositing::load(device.clone())?, wboit_compositing_blend)),
+			&[ vs_fill_viewport::load(device.clone())?, fs_oit_compositing::load(device.clone())? ],
+			Some(wboit_compositing_blend),
 			vec![ stage4_inputs_layout.clone() ],
 			vec![],
 			compositing_rendering,

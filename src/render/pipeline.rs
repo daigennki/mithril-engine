@@ -31,38 +31,31 @@ use crate::GenericEngineError;
 pub fn new(
 	vk_dev: Arc<Device>,
 	primitive_topology: PrimitiveTopology,
-	vs: Arc<ShaderModule>,
-	fs_info: Option<(Arc<ShaderModule>, ColorBlendState)>,
+	shader_modules: &[Arc<ShaderModule>],
+	color_blend_state: Option<ColorBlendState>,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	push_constant_ranges: Vec<PushConstantRange>,
 	rendering_info: PipelineRenderingCreateInfo,
 	depth_stencil_state: Option<DepthStencilState>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
-	let mut stages = Vec::with_capacity(5);
-
-	let input_assembly_state = Some(InputAssemblyState{
+	let input_assembly_state = Some(InputAssemblyState {
 		topology: primitive_topology,
 		primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
 		..Default::default()
 	});
 
-	let vertex_input_state = Some(gen_vertex_input_state(&vs)?);
-	stages.push(get_shader_stage(&vs, "main")?);
-	
-	// load fragment shader (optional)
-	let mut color_blend_state = None;
-	if let Some((fs, blend_state)) = fs_info {
-		stages.push(get_shader_stage(&fs, "main")?);
-		color_blend_state = Some(blend_state);
+	let mut stages = smallvec::SmallVec::new();
+	for sm in shader_modules {
+		stages.push(get_shader_stage(&sm, "main")?);
 	}
 
 	let layout_info = PipelineLayoutCreateInfo { set_layouts, push_constant_ranges, ..Default::default() };
 	print_pipeline_layout(&layout_info);
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
-		stages: stages.into(),
-		vertex_input_state,
+		stages,
+		vertex_input_state: Some(gen_vertex_input_state(&shader_modules[0])?),
 		input_assembly_state,
 		viewport_state: Some(ViewportState::default()),
 		rasterization_state: Some(RasterizationState{ cull_mode: CullMode::Back, ..Default::default() }),
@@ -104,8 +97,8 @@ pub fn new_from_config(
 	new(
 		vk_dev,
 		config.primitive_topology,
-		config.vertex_shader,
-		Some((config.fragment_shader.unwrap(), color_blend_state)),
+		&[config.vertex_shader, config.fragment_shader],
+		Some(color_blend_state),
 		config.set_layouts,
 		config.push_constant_ranges,
 		rendering_info,
@@ -152,8 +145,8 @@ pub fn new_from_config_transparency(
 	new(
 		vk_dev,
 		config.primitive_topology,
-		config.vertex_shader,
-		Some((config.fragment_shader_transparency.unwrap(), wboit_accum_blend)),
+		&[config.vertex_shader, config.fragment_shader_transparency.unwrap()],
+		Some(wboit_accum_blend),
 		config.set_layouts,
 		config.push_constant_ranges,
 		rendering_info,
@@ -161,11 +154,12 @@ pub fn new_from_config_transparency(
 	)
 }
 
+/// Pipeline configuration used by materials, hence why the fragment shader is required.
 #[derive(Clone)]
 pub struct PipelineConfig
 {
 	pub vertex_shader: Arc<ShaderModule>,
-	pub fragment_shader: Option<Arc<ShaderModule>>,
+	pub fragment_shader: Arc<ShaderModule>,
 	pub fragment_shader_transparency: Option<Arc<ShaderModule>>,
 	pub attachment_blend: Option<AttachmentBlend>, // AttachmentBlend for when OIT isn't used
 	pub primitive_topology: PrimitiveTopology,

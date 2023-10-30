@@ -1186,6 +1186,7 @@ dependencies = [
  "shaderc",
  "shipyard",
  "simplelog",
+ "smallvec",
  "typetag",
  "vulkano",
  "vulkano-shaders",

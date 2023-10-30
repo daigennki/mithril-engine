@@ -11,7 +11,7 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::descriptor_set::{layout::DescriptorSetLayoutCreateInfo, WriteDescriptorSet};
+use vulkano::descriptor_set::{layout::DescriptorSetLayout, WriteDescriptorSet};
 use vulkano::format::Format;
 
 use crate::render::{texture::Texture, RenderContext};
@@ -38,8 +38,8 @@ pub trait Material: Send + Sync
 		render_ctx: &mut RenderContext
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
 
-	/// Get the set layout creation info for this material's descriptor set.
-	fn set_layout_info(&self, render_ctx: &RenderContext) -> DescriptorSetLayoutCreateInfo;
+	/// Get the set layout for this material's descriptor set.
+	fn set_layout(&self, render_ctx: &RenderContext) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
 }

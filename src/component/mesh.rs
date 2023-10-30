@@ -121,9 +121,7 @@ impl MeshManager
 			let set_layout = match self.set_layouts.get(mat.material_name()) {
 				Some(sl) => sl.clone(),
 				None => {
-					let device = render_ctx.descriptor_set_allocator().device().clone();
-					let set_layout_info = mat.set_layout_info(render_ctx);
-					let new_set_layout = DescriptorSetLayout::new(device, set_layout_info)?;
+					let new_set_layout = mat.set_layout(render_ctx)?;
 					self.set_layouts.insert(mat.material_name(), new_set_layout.clone());
 					new_set_layout
 				}
