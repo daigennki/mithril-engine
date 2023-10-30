@@ -59,18 +59,16 @@ impl Skybox
 	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
 	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, GenericEngineError>
 	{
-		// sky pipeline
-		// TODO: this should be moved out of here so we're not creating it again when the skybox is changed
-		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
-		let cubemap_sampler = Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
-
 		let rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
-			depth_attachment_format: Some(Format::D16_UNORM),
+			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
 
 		let device = render_ctx.descriptor_set_allocator().device().clone();
+
+		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
+		let cubemap_sampler = Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
 				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
@@ -96,7 +94,7 @@ impl Skybox
 		};
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
-			PrimitiveTopology::TriangleStrip,
+			PrimitiveTopology::TriangleFan,
 			&[ vs::load(device.clone())?, fs::load(device.clone())? ],
 			RasterizationState::default(),
 			Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
@@ -124,25 +122,24 @@ impl Skybox
 			[],
 		)?;
 
-		// sky cube
+		// sky cube, consisting of two fans with the "center" being opposite corners of the cube
 		#[rustfmt::skip]
-		let indices: [u16; 20] = [
-			0, 1, 2, 3,				// +Y quad	(+X between +Y and -Y)
-			4, 5, 6, 7,				// -Y quad
-			0, 1, u16::MAX,		// finish -X
-			1, 7, 3, 5, u16::MAX,	// -Z quad
-			0, 2, 6, 4				// +Z quad
+		let indices: [u16; 17] = [
+			0, 1, 2, 3, 4, 5, 6, 1, u16::MAX,
+			7, 1, 2, 3, 4, 5, 6, 1,
 		];
+
+		// relative to camera at default state, -X is left, +Y is forward, and +Z is up
 		#[rustfmt::skip]
 		let position: [f32; 24] = [
-			-1.0, 1.0, 1.0,		// relative to camera at default state, -X is left, +Y is forward, and +Z is up
-			-1.0, 1.0, -1.0,
-			1.0, 1.0, 1.0,
-			1.0, 1.0, -1.0,
+			-1.0, -1.0, -1.0,
+			-1.0, -1.0, 1.0,
 			1.0, -1.0, 1.0,
 			1.0, -1.0, -1.0,
-			-1.0, -1.0, 1.0,
-			-1.0, -1.0, -1.0
+			1.0, 1.0, -1.0,
+			-1.0, 1.0, -1.0,
+			-1.0, 1.0, 1.0,
+			1.0, 1.0, 1.0,
 		];
 
 		Ok(Skybox {
@@ -169,7 +166,7 @@ impl Skybox
 		cb.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?;
 		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?;
 		cb.bind_index_buffer(self.cube_ibo.clone())?;
-		cb.draw_indexed(20, 1, 0, 0, 0)?;
+		cb.draw_indexed(17, 1, 0, 0, 0)?;
 		Ok(())
 	}
 }

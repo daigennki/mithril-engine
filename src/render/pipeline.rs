@@ -40,9 +40,12 @@ pub fn new(
 	depth_stencil_state: Option<DepthStencilState>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
+	let primitive_restart_enable =
+		primitive_topology == PrimitiveTopology::TriangleStrip
+		|| primitive_topology == PrimitiveTopology::TriangleFan;
 	let input_assembly_state = Some(InputAssemblyState {
 		topology: primitive_topology,
-		primitive_restart_enable: primitive_topology == PrimitiveTopology::TriangleStrip,
+		primitive_restart_enable,
 		..Default::default()
 	});
 
