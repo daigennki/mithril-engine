@@ -39,7 +39,10 @@ use vulkano::descriptor_set::{
 use vulkano::device::{Device, DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::memory::{
+	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
+	MemoryPropertyFlags,
+};
 use vulkano::pipeline::{
 	graphics::{viewport::Viewport, GraphicsPipeline}, Pipeline, PipelineBindPoint,
 };
@@ -65,6 +68,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,
 	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
+	rebar_in_use: bool,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
@@ -102,7 +106,7 @@ impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
-		let (graphics_queue, transfer_queue) = vulkan_init::vulkan_setup(game_name, event_loop)?;
+		let (graphics_queue, transfer_queue, rebar_in_use) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
 
 		let use_monitor = event_loop 
@@ -196,6 +200,7 @@ impl RenderContext
 			swapchain,
 			graphics_queue,
 			transfer_queue,
+			rebar_in_use,
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
@@ -290,20 +295,40 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
 	{
-		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-		let staging_allocation_info = AllocationCreateInfo {
-			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-			..Default::default()
-		};
-		let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
+		let buf = if self.rebar_in_use {
+			// If Resizable BAR is in use, upload directly to the new buffer.
+			let buffer_info = BufferCreateInfo { usage: buf_usage, ..Default::default() };
+			let staging_allocation_info = AllocationCreateInfo {
+				memory_type_filter: MemoryTypeFilter {
+					required_flags: MemoryPropertyFlags::DEVICE_LOCAL | MemoryPropertyFlags::HOST_VISIBLE 
+						| MemoryPropertyFlags::HOST_COHERENT,
+					preferred_flags: MemoryPropertyFlags::empty(),
+					not_preferred_flags: MemoryPropertyFlags::HOST_CACHED | MemoryPropertyFlags::DEVICE_COHERENT
+						| MemoryPropertyFlags::DEVICE_UNCACHED,
+				},
+				..Default::default()
+			};
+			Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?
+		} else {
+			// If Resizable BAR is *not* in use, create a staging buffer on the CPU side, 
+			// then submit a transfer command to the new buffer on the GPU side.
+			let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
+			let staging_allocation_info = AllocationCreateInfo {
+				memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+				..Default::default()
+			};
+			let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
 
-		let buffer_info = BufferCreateInfo {
-			sharing: Sharing::Concurrent(self.device.active_queue_family_indices().into()),
-			usage: buf_usage | BufferUsage::TRANSFER_DST,
-			..Default::default()
+			let buffer_info = BufferCreateInfo {
+				sharing: Sharing::Concurrent(self.device.active_queue_family_indices().into()),
+				usage: buf_usage | BufferUsage::TRANSFER_DST,
+				..Default::default()
+			};
+			let new_buf = Buffer::new_slice(self.memory_allocator.clone(), buffer_info, Default::default(), staging_buf.len())?;
+			self.submit_transfer(CopyBufferInfo::buffers(staging_buf, new_buf.clone()).into())?;
+			new_buf
 		};
-		let buf = Buffer::new_slice(self.memory_allocator.clone(), buffer_info, Default::default(), staging_buf.len())?;
-		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
+		
 		Ok(buf)
 	}
 

@@ -11,6 +11,7 @@ use vulkano::device::{
 	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::instance::InstanceCreateInfo;
+use vulkano::memory::{MemoryHeapFlags, MemoryPropertyFlags};
 use vulkano::swapchain::Surface;
 
 use crate::GenericEngineError;
@@ -89,8 +90,10 @@ fn create_vulkan_instance(
 	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
 }
 
-/// Get the most appropriate GPU.
-fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<PhysicalDevice>, GenericEngineError>
+/// Get the most appropriate GPU, along with whether or not Resizable BAR is enabled on its largest `DEVICE_LOCAL` memory heap.
+fn get_physical_device(
+	vkinst: &Arc<vulkano::instance::Instance>
+) -> Result<(Arc<PhysicalDevice>, bool), GenericEngineError>
 {
 	log::info!("Available Vulkan physical devices:");
 	let (mut dgpu, mut igpu) = (None, None);
@@ -132,16 +135,39 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<Arc<
 	log::info!("Using physical device {}: {}", i, physical_device.properties().device_name);
 
 	let mem_properties = physical_device.memory_properties();
+
+	// Query for Resizable BAR support by checking if the largest `DEVICE_LOCAL` heap also has `HOST_VISIBLE`.
+	// If Resizable BAR is enabled, we can initialize buffers directly on the GPU, which may improve performance.
+	let (largest_dev_local_i, _) = mem_properties
+		.memory_heaps
+		.iter()
+		.enumerate()
+		.filter(|(_, heap)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
+		.max_by_key(|(_, heap)| heap.size)
+		.unwrap();
+	let rebar_in_use = mem_properties
+		.memory_types
+		.iter()
+		.filter(|t| t.heap_index as usize == largest_dev_local_i)
+		.find(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE))
+		.is_some();
+
+	// Print all the memory heaps and their types.
 	log::info!("Memory heaps and their memory types on physical device:");
 	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
+		let rebar_text = (i == largest_dev_local_i && rebar_in_use)
+			.then_some("yes")
+			.unwrap_or("no");
+
 		let mib = mem_heap.size / (1024 * 1024);
-		log::info!("{}: {} MiB, flags {:?}", i, mib, mem_heap.flags);
+
+		log::info!("{}: {} MiB, flags {:?} (Resizable BAR: {})", i, mib, mem_heap.flags, rebar_text);
+
 		for mem_type in mem_properties.memory_types.iter().filter(|t| t.heap_index as usize == i) {
 			log::info!("└ {:?}", mem_type.property_flags);
 		}
 	}
-
-	Ok(physical_device)
+	Ok((physical_device, rebar_in_use))
 }
 
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
@@ -184,14 +210,15 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 }
 
 /// Set up the Vulkan instance, physical device, logical device, and queue.
-/// Returns a graphics queue (which owns the device), and an optional transfer queue.
+/// Returns a graphics queue (which owns the device), and an optional transfer queue, 
+/// along with whether or not Resizable BAR is in use.
 pub fn vulkan_setup(
 	game_name: &str,
 	event_loop: &winit::event_loop::EventLoop<()>
-) -> Result<(Arc<Queue>, Option<Arc<Queue>>), GenericEngineError>
+) -> Result<(Arc<Queue>, Option<Arc<Queue>>, bool), GenericEngineError>
 {
 	let vkinst = create_vulkan_instance(game_name, event_loop)?;
-	let physical_device = get_physical_device(&vkinst)?;
+	let (physical_device, rebar_in_use) = get_physical_device(&vkinst)?;
 
 	// The features and extensions enabled here are supported by basically any Vulkan device.
 	let enabled_features = vulkano::device::Features {
@@ -217,5 +244,5 @@ pub fn vulkan_setup(
 	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
 	let graphics_queue = queues.next().unwrap();
 	let transfer_queue = queues.next();
-	Ok((graphics_queue, transfer_queue))
+	Ok((graphics_queue, transfer_queue, rebar_in_use))
 }
