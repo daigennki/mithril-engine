@@ -451,7 +451,7 @@ impl RenderContext
 				Some(Format::R32_SFLOAT),
 				Some(Format::R32_SFLOAT),
 			], 
-			Some(self.main_render_target.depth_image().image().format()),
+			Some(MAIN_DEPTH_FORMAT),
 			self.swapchain_dimensions()
 		)?;
 		let pl = self.transparency_renderer.get_moments_pipeline();
@@ -497,8 +497,7 @@ impl RenderContext
 	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
 	{
 		// Update images to match the current window size.
-		self.main_render_target
-			.resize(self.memory_allocator.clone(), self.swapchain.dimensions())?;
+		self.main_render_target = RenderTarget::new(self.memory_allocator.clone(), self.swapchain.dimensions())?;
 
 		let swapchain_dim = self.swapchain.dimensions();
 		let intermediate_img_create_info = ImageCreateInfo {
@@ -543,19 +542,6 @@ impl RenderContext
 		self.trm.lock().unwrap().add_ui_cb(cb);
 	}
 
-	fn submit_commands(&mut self, built_cb: Arc<PrimaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
-	{
-		self.swapchain
-			.present(built_cb, self.graphics_queue.clone(), self.transfer_future.take())?;
-
-		let now = std::time::Instant::now();
-		let dur = now - self.last_frame_presented;
-		self.last_frame_presented = now;
-		self.frame_time = dur;
-
-		Ok(())
-	}
-
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
 	{
@@ -567,25 +553,9 @@ impl RenderContext
 		)?;
 
 		// 3D
-		let main_render_info = RenderingInfo {
-			color_attachments: vec![
-				Some(RenderingAttachmentInfo {
-					// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-				}),
-			],
-			depth_attachment: Some(RenderingAttachmentInfo{
-				// `load_op` is `DontCare` here too since the skybox clears it with 1.0
-				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
-				..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
-			}),
-			contents: SubpassContents::SecondaryCommandBuffers,
-			..Default::default()
-		};
 		let command_buffers = self.trm.lock().unwrap().take_built_command_buffers();
 		primary_cb_builder
-			.begin_rendering(main_render_info)?
+			.begin_rendering(self.main_render_target.first_rendering_info())?
 			.execute_commands_from_vec(command_buffers)?
 			.end_rendering()?;
 
@@ -614,7 +584,7 @@ impl RenderContext
 			.execute_commands_from_vec(ui_cb)?
 			.end_rendering()?;
 
-		// blit to sRGB image, copy sRGB non-linear image to swapchain image, and present swapchain image
+		// blit to sRGB image, then copy sRGB non-linear image to swapchain image
 		let blit_info = BlitImageInfo::images(
 			self.main_render_target.color_image().image().clone(),
 			self.intermediate_srgb_img.clone(),
@@ -623,7 +593,16 @@ impl RenderContext
 		primary_cb_builder
 			.blit_image(blit_info)? // convert from linear to non-linear sRGB
 			.copy_image(copy_info)?; // copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
-		self.submit_commands(primary_cb_builder.build()?)?;
+		
+		// finish building the command buffer, then present the swapchain image
+		self.swapchain
+			.present(primary_cb_builder.build()?, self.graphics_queue.clone(), self.transfer_future.take())?;
+
+		// set the delta time
+		let now = std::time::Instant::now();
+		let dur = now - self.last_frame_presented;
+		self.last_frame_presented = now;
+		self.frame_time = dur;
 
 		Ok(())
 	}
@@ -806,8 +785,7 @@ impl ThreadedRenderingManager
 
 struct RenderTarget
 {
-	// An FP16, linear gamma image which everything will be rendered to.
-	color_image: Arc<ImageView>,
+	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
 	depth_image: Arc<ImageView>,
 }
 impl RenderTarget
@@ -821,6 +799,7 @@ impl RenderTarget
 			..Default::default()
 		};
 		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
+		let color_image_view = ImageView::new_default(color_image)?;
 
 		let depth_create_info = ImageCreateInfo {
 			format: MAIN_DEPTH_FORMAT,
@@ -829,36 +808,12 @@ impl RenderTarget
 			..Default::default()
 		};
 		let depth_image = Image::new(memory_allocator, depth_create_info, AllocationCreateInfo::default())?;
+		let depth_image_view = ImageView::new_default(depth_image)?;
 
-		Ok(Self {
-			color_image: ImageView::new_default(color_image)?,
-			depth_image: ImageView::new_default(depth_image)?,
+		Ok(Self { 
+			color_image: color_image_view, 
+			depth_image: depth_image_view 
 		})
-	}
-
-	pub fn resize(&mut self, memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2])
-		-> Result<(), GenericEngineError>
-	{
-		let color_info = ImageCreateInfo {
-			extent: [ dimensions[0], dimensions[1], 1],
-			format: Format::R16G16B16A16_SFLOAT,
-			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC,
-			..Default::default()
-		};
-		self.color_image = ImageView::new_default(Image::new(
-			memory_allocator.clone(), 
-			color_info, 
-			AllocationCreateInfo::default()
-		)?)?;
-
-		let depth_info = ImageCreateInfo {
-			extent: [ dimensions[0], dimensions[1], 1],
-			format: MAIN_DEPTH_FORMAT,
-			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
-			..Default::default()
-		};
-		self.depth_image = ImageView::new_default(Image::new(memory_allocator, depth_info, AllocationCreateInfo::default())?)?;
-		Ok(())
 	}
 
 	pub fn color_image(&self) -> &Arc<ImageView>
@@ -868,5 +823,25 @@ impl RenderTarget
 	pub fn depth_image(&self) -> &Arc<ImageView>
 	{
 		&self.depth_image
+	}
+
+	pub fn first_rendering_info(&self) -> RenderingInfo
+	{
+		RenderingInfo {
+			color_attachments: vec![
+				Some(RenderingAttachmentInfo {
+					// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
+					store_op: AttachmentStoreOp::Store,
+					..RenderingAttachmentInfo::image_view(self.color_image.clone())
+				}),
+			],
+			depth_attachment: Some(RenderingAttachmentInfo{
+				// `load_op` is `DontCare` here too since the skybox clears it with 1.0
+				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
+				..RenderingAttachmentInfo::image_view(self.depth_image.clone())
+			}),
+			contents: SubpassContents::SecondaryCommandBuffers,
+			..Default::default()
+		}
 	}
 }

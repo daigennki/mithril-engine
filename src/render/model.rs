@@ -14,7 +14,6 @@ use std::path::Path;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
 
 use crate::material::{pbr::PBR, ColorInput, Material};
