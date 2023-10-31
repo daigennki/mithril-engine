@@ -37,7 +37,7 @@ use vulkano::command_buffer::{
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
 };
-use vulkano::device::{DeviceOwned, Queue};
+use vulkano::device::{Device, DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
@@ -62,8 +62,9 @@ pub const MAIN_DEPTH_FORMAT: Format = Format::D16_UNORM;
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
+	device: Arc<Device>,
 	swapchain: swapchain::Swapchain,
-	graphics_queue: Arc<Queue>,         // this also owns the logical device
+	graphics_queue: Arc<Queue>,
 	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
@@ -103,6 +104,7 @@ impl RenderContext
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
 		let (graphics_queue, transfer_queue) = vulkan_init::vulkan_setup(game_name, event_loop)?;
+		let vk_dev = graphics_queue.device().clone();
 
 		let use_monitor = event_loop 
 			.primary_monitor()
@@ -151,7 +153,6 @@ impl RenderContext
 			.with_fullscreen(fullscreen)
 			.build(&event_loop)?;	
 		
-		let vk_dev = graphics_queue.device().clone();
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), window)?;
 
 		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(
@@ -192,6 +193,7 @@ impl RenderContext
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
 		Ok(RenderContext {
+			device: vk_dev,
 			swapchain,
 			graphics_queue,
 			transfer_queue,
@@ -296,7 +298,7 @@ impl RenderContext
 		let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
 
 		let buffer_info = BufferCreateInfo {
-			sharing: Sharing::Concurrent(self.get_queue_families().into()),
+			sharing: Sharing::Concurrent(self.device.active_queue_family_indices().into()),
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
@@ -322,7 +324,7 @@ impl RenderContext
 		let staging_buf = Buffer::from_data(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
 
 		let buffer_info = BufferCreateInfo {
-			sharing: Sharing::Concurrent(self.get_queue_families().into()),
+			sharing: Sharing::Concurrent(self.device.active_queue_family_indices().into()),
 			usage: buf_usage | BufferUsage::TRANSFER_DST,
 			..Default::default()
 		};
@@ -395,11 +397,6 @@ impl RenderContext
 		self.swapchain
 			.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
 		Ok(())
-	}
-
-	fn get_queue_families(&self) -> Vec<u32>
-	{
-		self.graphics_queue.device().active_queue_family_indices().into()
 	}
 
 	/// Issue a new secondary command buffer builder to begin recording to.
@@ -476,22 +473,6 @@ impl RenderContext
 			)?;
 
 		Ok(cb)
-	}
-
-	/// Tell the swapchain to go to the next image.
-	/// The image size *may* change here.
-	/// This must only be called once per frame.
-	///
-	/// This returns the acquired swapchain image.
-	fn next_swapchain_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
-	{
-		let (image, dimensions_changed) = self.swapchain.get_next_image()?;
-		if dimensions_changed {
-			self.resize_everything_else()?;
-		}
-		self.resize_this_frame = dimensions_changed;
-
-		Ok(image)
 	}
 
 	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
@@ -584,16 +565,22 @@ impl RenderContext
 			.execute_commands_from_vec(ui_cb)?
 			.end_rendering()?;
 
-		// blit to sRGB image, then copy sRGB non-linear image to swapchain image
+		// blit to sRGB image to convert from linear to non-linear sRGB
 		let blit_info = BlitImageInfo::images(
 			self.main_render_target.color_image().image().clone(),
 			self.intermediate_srgb_img.clone(),
 		);
-		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), self.next_swapchain_image()?);
-		primary_cb_builder
-			.blit_image(blit_info)? // convert from linear to non-linear sRGB
-			.copy_image(copy_info)?; // copy non-linear image to swapchain image, the latter expected to be B8G8R8A8_UNORM
-		
+		primary_cb_builder.blit_image(blit_info)?;
+
+		// get the next swapchain image (expected to be B8G8R8A8_UNORM), then copy the non-linear sRGB image to it
+		let (swapchain_image, dimensions_changed) = self.swapchain.get_next_image()?;
+		if dimensions_changed {
+			self.resize_everything_else()?;
+		}
+		self.resize_this_frame = dimensions_changed;
+		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), swapchain_image);
+		primary_cb_builder.copy_image(copy_info)?;
+
 		// finish building the command buffer, then present the swapchain image
 		self.swapchain
 			.present(primary_cb_builder.build()?, self.graphics_queue.clone(), self.transfer_future.take())?;
