@@ -144,8 +144,8 @@ impl Skybox
 
 		Ok(Skybox {
 			sky_pipeline,
-			cube_vbo: render_ctx.new_buffer_from_iter(position, BufferUsage::VERTEX_BUFFER)?,
-			cube_ibo: render_ctx.new_buffer_from_iter(indices, BufferUsage::INDEX_BUFFER)?,
+			cube_vbo: render_ctx.new_buffer(position, BufferUsage::VERTEX_BUFFER)?,
+			cube_ibo: render_ctx.new_buffer(indices, BufferUsage::INDEX_BUFFER)?,
 			descriptor_set,
 		})
 	}

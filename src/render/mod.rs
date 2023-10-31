@@ -279,7 +279,8 @@ impl RenderContext
 	}
 
 	/// Create a device-local buffer from an iterator, initialized with `data` for `usage`.
-	pub fn new_buffer_from_iter<I, T>(
+	/// For stuff that isn't an array, just put the data into a single-element iterator, like `[data]`.
+	pub fn new_buffer<I, T>(
 		&mut self,
 		data: I,
 		buf_usage: BufferUsage,
@@ -303,32 +304,6 @@ impl RenderContext
 			..Default::default()
 		};
 		let buf = Buffer::new_slice(self.memory_allocator.clone(), buffer_info, Default::default(), staging_buf.len())?;
-		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
-		Ok(buf)
-	}
-
-	/// Create a device-local buffer from data, initialized with `data` for `usage`.
-	pub fn new_buffer_from_data<T>(
-		&mut self,
-		data: T,
-		buf_usage: BufferUsage,
-	) -> Result<Subbuffer<T>, GenericEngineError>
-	where
-		T: vulkano::buffer::BufferContents,
-	{
-		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-		let staging_allocation_info = AllocationCreateInfo {
-			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-			..Default::default()
-		};
-		let staging_buf = Buffer::from_data(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
-
-		let buffer_info = BufferCreateInfo {
-			sharing: Sharing::Concurrent(self.device.active_queue_family_indices().into()),
-			usage: buf_usage | BufferUsage::TRANSFER_DST,
-			..Default::default()
-		};
-		let buf = Buffer::new_sized(self.memory_allocator.clone(), buffer_info, Default::default())?;
 		self.submit_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into())?;
 		Ok(buf)
 	}
