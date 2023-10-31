@@ -29,10 +29,9 @@ use vulkano::buffer::{
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferInheritanceInfo,
-	CommandBufferInheritanceRenderingInfo, CommandBufferInheritanceRenderPassType, CommandBufferUsage, CopyBufferInfo,
+	CommandBufferInheritanceRenderingInfo, CommandBufferUsage, CopyBufferInfo,
 	CopyBufferToImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 	SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
-	SecondaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
@@ -70,7 +69,7 @@ pub struct RenderContext
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	trm: Mutex<ThreadedRenderingManager>,
+	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
 	transfer_future: Option<Box<dyn GpuFuture + Send + Sync>>,
@@ -200,7 +199,7 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
-			trm: Mutex::new(ThreadedRenderingManager::new(8)),
+			cb_3d: Mutex::new(None),
 			transfer_future: None,
 			textures: HashMap::new(),
 			material_pipelines: HashMap::new(),
@@ -384,20 +383,16 @@ impl RenderContext
 		viewport_dimensions: [u32; 2]
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
-		let inherit_rp = CommandBufferInheritanceRenderPassType::BeginRendering(CommandBufferInheritanceRenderingInfo {
+		let render_pass = Some(CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats,
 			depth_attachment_format,
 			..Default::default()
-		});
-		let inheritance = CommandBufferInheritanceInfo {
-			render_pass: Some(inherit_rp),
-			..Default::default()
-		};
+		}.into());
 		let mut cb = AutoCommandBufferBuilder::secondary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
-			inheritance,
+			CommandBufferInheritanceInfo { render_pass, ..Default::default() },
 		)?;
 
 		// set viewport state
@@ -483,7 +478,7 @@ impl RenderContext
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
-		self.trm.lock().unwrap().add_cb(cb);
+		*self.cb_3d.lock().unwrap() = Some(cb);
 	}
 	pub fn add_transparency_moments_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
@@ -493,13 +488,9 @@ impl RenderContext
 	{
 		self.transparency_renderer.add_transparency_cb(cb);
 	}
-	pub fn add_ui_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.trm.lock().unwrap().add_ui_cb(cb);
-	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
-	pub fn submit_frame(&mut self) -> Result<(), GenericEngineError>
+	pub fn submit_frame(&mut self, ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>) -> Result<(), GenericEngineError>
 	{
 		// execute the secondary command buffers in the primary command buffer
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
@@ -509,11 +500,12 @@ impl RenderContext
 		)?;
 
 		// 3D
-		let command_buffers = self.trm.lock().unwrap().take_built_command_buffers();
-		primary_cb_builder
-			.begin_rendering(self.main_render_target.first_rendering_info())?
-			.execute_commands_from_vec(command_buffers)?
-			.end_rendering()?;
+		if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
+			primary_cb_builder
+				.begin_rendering(self.main_render_target.first_rendering_info())?
+				.execute_commands(some_cb_3d)?
+				.end_rendering()?;
+		}
 
 		// 3D OIT
 		self.transparency_renderer.process_transparency(
@@ -523,22 +515,23 @@ impl RenderContext
 		)?;
 
 		// UI
-		let ui_render_info = RenderingInfo {
-			color_attachments: vec![
-				Some(RenderingAttachmentInfo {
-					load_op: AttachmentLoadOp::Load,
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-				}),
-			],
-			contents: SubpassContents::SecondaryCommandBuffers,
-			..Default::default()
-		};
-		let ui_cb = self.trm.lock().unwrap().take_ui_cb();
-		primary_cb_builder
-			.begin_rendering(ui_render_info)?
-			.execute_commands_from_vec(ui_cb)?
-			.end_rendering()?;
+		if let Some(some_ui_cb) = ui_cb {
+			let ui_render_info = RenderingInfo {
+				color_attachments: vec![
+					Some(RenderingAttachmentInfo {
+						load_op: AttachmentLoadOp::Load,
+						store_op: AttachmentStoreOp::Store,
+						..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+					}),
+				],
+				contents: SubpassContents::SecondaryCommandBuffers,
+				..Default::default()
+			};
+			primary_cb_builder
+				.begin_rendering(ui_render_info)?
+				.execute_commands(some_ui_cb)?
+				.end_rendering()?;
+		}
 
 		// blit to sRGB image to convert from linear to non-linear sRGB
 		let blit_info = BlitImageInfo::images(
@@ -703,45 +696,6 @@ impl From<CopyBufferToImageInfo> for StagingWork
 	fn from(info: CopyBufferToImageInfo) -> StagingWork
 	{
 		Self::CopyBufferToImage(info)
-	}
-}
-
-struct ThreadedRenderingManager
-{
-	built_command_buffers: Vec<Arc<dyn SecondaryCommandBufferAbstract>>,
-	ui_cb: Vec<Arc<dyn SecondaryCommandBufferAbstract>>,
-	default_capacity: usize,
-}
-impl ThreadedRenderingManager
-{
-	pub fn new(default_capacity: usize) -> Self
-	{
-		ThreadedRenderingManager {
-			built_command_buffers: Vec::with_capacity(default_capacity),
-			ui_cb: Vec::with_capacity(2),
-			default_capacity,
-		}
-	}
-
-	/// Add a secondary command buffer that has been built.
-	pub fn add_cb(&mut self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.built_command_buffers.push(command_buffer);
-	}
-
-	pub fn add_ui_cb(&mut self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.ui_cb.push(command_buffer)
-	}
-
-	/// Take all of the secondary command buffers that have been built.
-	pub fn take_built_command_buffers(&mut self) -> Vec<Arc<dyn SecondaryCommandBufferAbstract>>
-	{
-		std::mem::replace(&mut self.built_command_buffers, Vec::with_capacity(self.default_capacity))
-	}
-	pub fn take_ui_cb(&mut self) -> Vec<Arc<dyn SecondaryCommandBufferAbstract>>
-	{
-		std::mem::replace(&mut self.ui_cb, Vec::with_capacity(2))
 	}
 }
 

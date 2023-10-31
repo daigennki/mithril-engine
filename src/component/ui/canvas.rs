@@ -63,6 +63,8 @@ pub struct Canvas
 	quad_uv_buf: Subbuffer<[Vec2]>,
 
 	default_font: Font<'static>,
+
+	ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
 }
 impl Canvas
 {
@@ -149,6 +151,7 @@ impl Canvas
 			quad_pos_buf,
 			quad_uv_buf,
 			default_font,
+			ui_cb: None,
 		})
 	}
 
@@ -274,6 +277,15 @@ impl Canvas
 		}
 
 		Ok(())
+	}
+
+	pub fn add_cb(&mut self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
+	{
+		self.ui_cb = Some(command_buffer);
+	}
+	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
+	{
+		self.ui_cb.take()
 	}
 }
 

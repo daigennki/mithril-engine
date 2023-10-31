@@ -378,10 +378,8 @@ fn draw_3d_transparent(
 }
 fn draw_ui(
 	render_ctx: UniqueView<render::RenderContext>,
-	canvas: UniqueView<ui::canvas::Canvas>,
+	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	ui_transforms: View<ui::UITransform>,
-	//ui_meshes: View<ui::mesh::Mesh>,
-	//texts: View<ui::text::Text>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(
@@ -399,12 +397,15 @@ fn draw_ui(
 		canvas.draw(&mut command_buffer, eid)?;
 	}
 
-	render_ctx.add_ui_cb(command_buffer.build()?);
+	canvas.add_cb(command_buffer.build()?);
 	Ok(())
 }
-fn submit_frame(mut render_ctx: UniqueViewMut<render::RenderContext>) -> Result<(), GenericEngineError>
+fn submit_frame(
+	mut render_ctx: UniqueViewMut<render::RenderContext>,
+	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
+) -> Result<(), GenericEngineError>
 {
-	render_ctx.submit_frame()
+	render_ctx.submit_frame(canvas.take_cb())
 }
 
 // Get data path, set up logging, and return the data path.
