@@ -213,7 +213,7 @@ mod vs_nonorm {
 mod fs_moments {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/mboit_moments.frag.spv",
+		path: "src/shaders/mboit_moments.frag.glsl",
 	}
 }
 mod vs_fill_viewport {
@@ -225,7 +225,7 @@ mod vs_fill_viewport {
 mod fs_oit_compositing {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/wboit_compositing.frag.spv"
+		path: "src/shaders/wboit_compositing.frag.glsl"
 	}
 }
 
@@ -418,11 +418,18 @@ impl MomentTransparencyRenderer
 		//
 		/* Stage 4: Composite transparency image onto opaque image */
 		//
+		
 		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, input_binding.clone()), // accum
-				(1, input_binding), // revealage
+				(0, DescriptorSetLayoutBinding {
+					stages: ShaderStages::FRAGMENT,
+					immutable_samplers: vec![ Sampler::new(device.clone(), SamplerCreateInfo::default())? ],
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+				}),
+				(1, input_binding.clone()), // accum
+				(2, input_binding), // revealage
 			].into(),
+
 			..Default::default()
 		};
 		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
@@ -689,8 +696,8 @@ fn create_mboit_images(
 		descriptor_set_allocator,
 		stage4_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(0, accum_view),
-			WriteDescriptorSet::image_view(1, revealage_view),
+			WriteDescriptorSet::image_view(1, accum_view),
+			WriteDescriptorSet::image_view(2, revealage_view),
 		],
 		[]
 	)?;
