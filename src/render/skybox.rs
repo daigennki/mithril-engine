@@ -33,13 +33,42 @@ use crate::GenericEngineError;
 mod vs {
 	vulkano_shaders::shader! {
 		ty: "vertex",
-		bytes: "shaders/skybox.vert.spv",
+		src: r"
+			#version 450
+
+			layout(push_constant) uniform pc
+			{
+				mat4 sky_projview;
+			};
+			
+			layout(location = 0) in vec3 position;
+			layout(location = 0) out vec3 cube_pos; // give original vertex position to fragment shader
+
+			void main()
+			{
+				cube_pos = position;
+				vec4 new_pos = sky_projview * vec4(position, 1.0);
+				gl_Position = new_pos.xyww;
+			}
+		",
 	}
 }
 mod fs {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/skybox.frag.spv",
+		src: r"
+			#version 450
+
+			layout(binding = 0) uniform samplerCube sky_tex;
+
+			layout(location = 0) in vec3 cube_pos;
+			layout(location = 0) out vec4 color_out;
+
+			void main()
+			{
+				color_out = texture(sky_tex, cube_pos.xzy);
+			}
+		",
 	}
 }
 
@@ -67,23 +96,26 @@ impl Skybox
 
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
-		let sampler_info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
-		let cubemap_sampler = Sampler::new(render_ctx.get_queue().device().clone(), sampler_info)?;
+		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, DescriptorSetLayoutBinding { // binding 0: sampler0
+				(0, DescriptorSetLayoutBinding { // binding 0: skybox cubemap texture and sampler 
 					stages: ShaderStages::FRAGMENT,
 					immutable_samplers: vec![ cubemap_sampler ],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-				}),
-				(1, DescriptorSetLayoutBinding { // binding 1: skybox texture
-					stages: ShaderStages::FRAGMENT,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
 				}),
 			].into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+
+		let push_constant_range = vec![
+			PushConstantRange { // push constant for projview matrix
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+			}
+		];
 
 		let depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
@@ -99,13 +131,7 @@ impl Skybox
 			RasterizationState::default(),
 			Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
 			vec![ set_layout.clone() ],
-			vec![ 
-				PushConstantRange { // push constant for view matrix
-					stages: ShaderStages::VERTEX,
-					offset: 0,
-					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
-				}
-			],
+			push_constant_range,
 			rendering_info,
 			Some(depth_stencil_state),
 		)?;
@@ -118,7 +144,7 @@ impl Skybox
 		let descriptor_set = PersistentDescriptorSet::new(
 			render_ctx.descriptor_set_allocator(),
 			set_layout,
-			[WriteDescriptorSet::image_view(1, sky_cubemap.view().clone())],
+			[WriteDescriptorSet::image_view(0, sky_cubemap.view().clone())],
 			[],
 		)?;
 
