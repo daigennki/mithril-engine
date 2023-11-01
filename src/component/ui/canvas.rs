@@ -38,13 +38,43 @@ use super::mesh::MeshType;
 mod ui_vs {
 	vulkano_shaders::shader! {
 		ty: "vertex",
-		bytes: "shaders/ui.vert.spv",
+		src: r"
+			#version 450
+
+			layout(binding = 0) uniform transform_ubo
+			{
+				mat4 transformation;
+			};
+
+			layout(location = 0) in vec2 pos;
+			layout(location = 1) in vec2 uv;
+			layout(location = 0) out vec2 texcoord;
+
+			void main()
+			{
+				gl_Position = transformation * vec4(pos, 0.0, 1.0);
+				texcoord = uv;
+			}
+		",
 	}
 }
 mod ui_fs {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/ui.frag.spv",
+		src: r"
+			#version 450
+
+			layout(binding = 1) uniform sampler2D tex;
+
+			layout(location = 0) in vec2 texcoord;
+			layout(location = 0) out vec4 color_out;
+
+			void main()
+			{
+				color_out = texture(tex, texcoord);
+				color_out.rgb *= color_out.a;
+			}
+		",
 	}
 }
 
@@ -89,14 +119,10 @@ impl Canvas
 					stages: ShaderStages::VERTEX,
 					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
 				}),
-				(1, DescriptorSetLayoutBinding { // binding 1: sampler0
+				(1, DescriptorSetLayoutBinding { // binding 1: tex
 					stages: ShaderStages::FRAGMENT,
 					immutable_samplers: vec![ sampler ],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-				}),
-				(2, DescriptorSetLayoutBinding { // binding 2: texture
-					stages: ShaderStages::FRAGMENT,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
 				}),
 			].into(),
 			..Default::default()
@@ -195,7 +221,7 @@ impl Canvas
 			self.set_layout.clone(),
 			[
 				WriteDescriptorSet::buffer(0, buf),
-				WriteDescriptorSet::image_view(2, image_view),
+				WriteDescriptorSet::image_view(1, image_view),
 			],
 			[],
 		)?;
