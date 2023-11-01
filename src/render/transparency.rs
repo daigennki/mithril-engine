@@ -207,7 +207,7 @@ impl TransparencyRenderer
 mod vs_nonorm {
 	vulkano_shaders::shader! {
 		ty: "vertex",
-		bytes: "shaders/basic_3d_nonorm.vert.spv",
+		path: "src/shaders/basic_3d_nonorm.vert.glsl",
 	}
 }
 mod fs_moments {
@@ -218,8 +218,8 @@ mod fs_moments {
 }
 mod vs_fill_viewport {
 	vulkano_shaders::shader! {
-		ty: "fragment",
-		bytes: "shaders/fill_viewport.vert.spv",
+		ty: "vertex",
+		path: "src/shaders/fill_viewport.vert.glsl",
 	}
 }
 mod fs_oit_compositing {

@@ -20,7 +20,7 @@ use crate::GenericEngineError;
 pub mod vs_3d_common {
 	vulkano_shaders::shader! {
 		ty: "vertex",
-		bytes: "shaders/basic_3d.vert.spv",
+		path: "src/shaders/basic_3d.vert.glsl",
 	}
 }
 
