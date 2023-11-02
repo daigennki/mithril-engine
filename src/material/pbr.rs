@@ -25,13 +25,14 @@ use crate::GenericEngineError;
 pub mod fs {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/pbr.frag.spv",
+		path: "src/shaders/pbr.frag.glsl",
 	}
 }
 pub mod fs_oit {
 	vulkano_shaders::shader! {
 		ty: "fragment",
-		bytes: "shaders/pbr_mboit_weights.frag.spv",
+		define: [("TRANSPARENCY_PASS", ""),],
+		path: "src/shaders/pbr.frag.glsl",
 	}
 }
 

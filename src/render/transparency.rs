@@ -405,11 +405,17 @@ impl MomentTransparencyRenderer
 			stages: ShaderStages::FRAGMENT,
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
 		};
+		let oit_sampler_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			immutable_samplers: vec![ Sampler::new(device.clone(), SamplerCreateInfo::default())? ],
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+		};
 		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, input_binding.clone()), // moments
-				(1, input_binding.clone()), // optical_depth
-				(2, input_binding.clone()), // min_depth
+				(0, oit_sampler_binding.clone()),
+				(1, input_binding.clone()), // moments
+				(2, input_binding.clone()), // optical_depth
+				(3, input_binding.clone()), // min_depth
 			].into(),
 			..Default::default()
 		};
@@ -421,11 +427,7 @@ impl MomentTransparencyRenderer
 		
 		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, DescriptorSetLayoutBinding {
-					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![ Sampler::new(device.clone(), SamplerCreateInfo::default())? ],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-				}),
+				(0, oit_sampler_binding),
 				(1, input_binding.clone()), // accum
 				(2, input_binding), // revealage
 			].into(),
@@ -685,9 +687,9 @@ fn create_mboit_images(
 		descriptor_set_allocator,
 		stage3_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(0, moments_view),
-			WriteDescriptorSet::image_view(1, od_view),
-			WriteDescriptorSet::image_view(2, min_depth_view),
+			WriteDescriptorSet::image_view(1, moments_view),
+			WriteDescriptorSet::image_view(2, od_view),
+			WriteDescriptorSet::image_view(3, min_depth_view),
 		],
 		[]
 	)?;
