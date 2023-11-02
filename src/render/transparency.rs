@@ -348,17 +348,34 @@ impl MomentTransparencyRenderer
 		};
 		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
 
-		let mut moments_blend = ColorBlendState::with_attachment_states(3, ColorBlendAttachmentState { 
-			blend: Some(AttachmentBlend::additive()),
+		let moments_blend = ColorBlendState {
+			attachments: vec![
+				ColorBlendAttachmentState {
+					blend: Some(AttachmentBlend {
+						alpha_blend_op: BlendOp::Add,
+						..AttachmentBlend::additive()
+					}),
+					..Default::default()
+				},
+				ColorBlendAttachmentState {
+					blend: Some(AttachmentBlend {
+						alpha_blend_op: BlendOp::Add,
+						..AttachmentBlend::additive()
+					}),
+					..Default::default()
+				},
+				ColorBlendAttachmentState {
+					blend: Some(AttachmentBlend {
+						color_blend_op: BlendOp::Min,
+						src_color_blend_factor: BlendFactor::One,
+						dst_color_blend_factor: BlendFactor::One,
+						..Default::default()
+					}),
+					..Default::default()
+				},
+			],
 			..Default::default()
-		});
-		moments_blend.attachments[0].blend.as_mut().unwrap().alpha_blend_op = BlendOp::Add;
-		moments_blend.attachments[2].blend = Some(AttachmentBlend {
-			color_blend_op: BlendOp::Min,
-			src_color_blend_factor: BlendFactor::One,
-			dst_color_blend_factor: BlendFactor::One,
-			..AttachmentBlend::ignore_source()
-		});
+		};
 
 		let moments_depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {

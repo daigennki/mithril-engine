@@ -111,7 +111,7 @@ float calc_w(float alpha)
 	float min_z = texture(sampler2D(min_depth, oit_sampler), texcoord).r;
 	const float correction_factor = 100.0;
 	if (z > min_z) {
-		w *= clamp((z - min_z) * correction_factor, 0.0, 1.0);
+		//w *= clamp((z - min_z) * correction_factor, 0.0, 1.0);
 	}
 	
 	return w;

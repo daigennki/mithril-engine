@@ -10,7 +10,7 @@ layout(binding = 1) uniform texture2D base_color;
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in vec3 normal;
 
-// If `TRANSPARENCY_PASS` is defined, the outputs in the OIT shader file included along with this shader file will be used.
+// If `TRANSPARENCY_PASS` is defined, the outputs in the OIT shader file included above will be used.
 #ifndef TRANSPARENCY_PASS
 layout(location = 0) out vec4 color_out;
 #endif
@@ -60,7 +60,6 @@ void main()
 	vec3 shaded = calc_dl(tex_color.rgb, normal);
 
 #ifdef TRANSPARENCY_PASS
-	// `write_transparent_pixel` must be defined in the file that defines `TRANSPARENCY_PASS`
 	vec4 with_alpha = vec4(shaded, tex_color.a);
 	write_transparent_pixel(with_alpha);
 #else

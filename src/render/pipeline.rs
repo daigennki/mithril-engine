@@ -133,19 +133,27 @@ pub fn new_from_config_transparency(
 		..Default::default()
 	};
 
-	let mut wboit_accum_blend = ColorBlendState::with_attachment_states(2, ColorBlendAttachmentState {
-		blend: Some(AttachmentBlend {
-			alpha_blend_op: BlendOp::Add,
-			..AttachmentBlend::additive()
-		}),
+	let wboit_accum_blend = ColorBlendState {
+		attachments: vec![
+			ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend {
+					alpha_blend_op: BlendOp::Add,
+					..AttachmentBlend::additive()
+				}),
+				..Default::default()
+			},
+			ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend {
+					color_blend_op: BlendOp::Add,
+					src_color_blend_factor: BlendFactor::Zero,
+					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+					..Default::default()
+				}),
+				..Default::default()
+			},
+		],
 		..Default::default()
-	});
-	wboit_accum_blend.attachments[1].blend = Some(AttachmentBlend {
-		color_blend_op: BlendOp::Add,
-		src_color_blend_factor: BlendFactor::Zero,
-		dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-		..AttachmentBlend::ignore_source()
-	});
+	};
 
 	new(
 		vk_dev,

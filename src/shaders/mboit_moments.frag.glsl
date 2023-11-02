@@ -32,11 +32,12 @@ void main()
 	const float c1 = 1.0 / log(far / near);
 
 	const float k_max_alpha = 1.0 - 0.5 / 256.0;
-	float optical_depth = -log(1.0 - (alpha * k_max_alpha));
-	float unit_pos = depth_to_unit(depth, c0, c1);
 
+	optical_depth = -log(1.0 - (alpha * k_max_alpha));
+
+	float unit_pos = depth_to_unit(depth, c0, c1);
 	moments = make_moments4(unit_pos) * optical_depth;
-	optical_depth = optical_depth;
+
 	min_depth = depth;
 }
 
