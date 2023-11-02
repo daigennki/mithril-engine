@@ -300,8 +300,7 @@ impl RenderContext
 			let buffer_info = BufferCreateInfo { usage: buf_usage, ..Default::default() };
 			let staging_allocation_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
-					required_flags: MemoryPropertyFlags::DEVICE_LOCAL | MemoryPropertyFlags::HOST_VISIBLE 
-						| MemoryPropertyFlags::HOST_COHERENT,
+					required_flags: MemoryPropertyFlags::DEVICE_LOCAL | MemoryPropertyFlags::HOST_VISIBLE,
 					preferred_flags: MemoryPropertyFlags::empty(),
 					not_preferred_flags: MemoryPropertyFlags::HOST_CACHED | MemoryPropertyFlags::DEVICE_COHERENT
 						| MemoryPropertyFlags::DEVICE_UNCACHED,
