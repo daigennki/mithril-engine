@@ -1,12 +1,20 @@
-uniques:
-
+sky: "sky/Daylight Box_*.png"
 entities:
 - 
   - Transform:
-      position: [3.0, -5.0, 1.0]
+      position: [0.0, 0.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
-  - Camera:  
+  - Mesh:
+      model_path: examples/ferris/models/test_floor.glb
+
+- 
+  - Transform:
+      position: [2.0, -3.0, 1.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [0.0, 0.0, 30.0]
+  - Camera:
+
 - 
   - Transform:
       position: [0.0, 0.0, 0.0]
@@ -15,34 +23,3 @@ entities:
   - Mesh:
       model_path: examples/ferris/models/ferris3d.glb
 
-- 
-  - Transform:
-      position: [-2.0, -2.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
-      rotation: [0.0, 0.0, 0.0]
-  - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
-
-- 
-  - Transform:
-      position: [2.0, 2.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
-      rotation: [0.0, 0.0, 0.0]
-  - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
-
-- 
-  - Transform:
-      position: [-2.0, 2.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
-      rotation: [0.0, 0.0, 0.0]
-  - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
-
-- 
-  - Transform:
-      position: [2.0, -2.0, 0.0]
-      scale: [1.0, 1.0, 1.0]
-      rotation: [0.0, 0.0, 0.0]
-  - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb

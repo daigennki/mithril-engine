@@ -144,6 +144,8 @@ impl MeshManager
 			// TODO: if there's a material override, use that instead of the original material
 			// to create the descriptor set
 			
+			let parent_folder = component.model_path.parent().unwrap();
+			
 			// try to get the set layout for the material
 			let set_layout = self
 				.set_layouts
@@ -151,7 +153,8 @@ impl MeshManager
 				.ok_or(format!("Set layout for material '{}' not loaded into `MeshManager`", mat.material_name()))?
 				.clone();
 
-			let writes = mat.gen_descriptor_set_writes(&component.model_path, render_ctx)?;
+			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
+			log::debug!("got {} descriptor set writes for {} material", writes.len(), mat.material_name());
 			let mat_set = PersistentDescriptorSet::new(
 				render_ctx.descriptor_set_allocator(),
 				set_layout,
@@ -159,7 +162,7 @@ impl MeshManager
 				[],
 			)?;
 
-			let base_color_writes = mat.gen_base_color_descriptor_set_writes(&component.model_path, render_ctx)?;
+			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
 			let mat_basecolor_only_set = PersistentDescriptorSet::new(
 				render_ctx.descriptor_set_allocator(),
 				self.basecolor_only_set_layout.clone(),

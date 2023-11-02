@@ -145,16 +145,17 @@ impl Model
 struct MaterialExtras
 {
 	#[serde(default)]
-	external: i32,
+	external: bool,
 }
 
 fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<dyn Material>, GenericEngineError>
 {
 	// Use an external material file if specified in the extras.
-	// This can be specified in Blender by giving a material a custom property called "external" with an integer value of 1.
+	// This can be specified in Blender by giving a material a custom property called "external" 
+	// with a boolean value of `true` (box is checked).
 	let use_external = if let Some(extras) = mat.extras() {
 		let parsed_extras: MaterialExtras = serde_json::from_str(extras.get())?;
-		parsed_extras.external != 0
+		parsed_extras.external
 	} else {
 		false
 	};
