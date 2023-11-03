@@ -9,11 +9,12 @@ use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::CopyBufferToImageInfo;
+use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	view::{ImageView, ImageViewCreateInfo, ImageViewType}, Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
+	view::{ImageView, ImageViewCreateInfo, ImageViewType}, Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers,
+	ImageUsage,
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::sync::Sharing;
@@ -88,12 +89,39 @@ impl Texture
 
 		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
 
-		// TODO: also copy mipmaps
+		// generate copies for every mipmap level
+		let mut regions = Vec::with_capacity(mip_levels as usize);
+		let mut mip_width = dimensions[0];
+		let mut mip_height = dimensions[1];
+		let mut buffer_offset: u64 = 0;
+		for mip_level in 0..mip_levels {
+			regions.push(BufferImageCopy {
+				buffer_offset,
+				image_subresource: ImageSubresourceLayers {
+					mip_level,
+					..ImageSubresourceLayers::from_parameters(vk_fmt, 1)
+				},
+				image_extent: [ mip_width, mip_height, 1],
+				..Default::default()
+			});
+			
+			let block_extent = vk_fmt.block_extent();
+			let block_size = vk_fmt.block_size();
+			let x_blocks = mip_width.div_ceil(block_extent[0]) as u64;
+			let y_blocks = mip_height.div_ceil(block_extent[1]) as u64;
+			let mip_size = x_blocks * y_blocks * block_size;
+			buffer_offset += mip_size;
 
-		Ok((
-			Texture { view, dimensions },
-			CopyBufferToImageInfo::buffer_image(staging_buf, image),
-		))
+			mip_width /= 2;
+			mip_height /= 2;
+		}
+
+		let copy_to_image = CopyBufferToImageInfo{
+			regions: regions.into(),
+			..CopyBufferToImageInfo::buffer_image(staging_buf, image)
+		};
+
+		Ok((Texture { view, dimensions }, copy_to_image))
 	}
 
 	pub fn view(&self) -> Arc<ImageView>
