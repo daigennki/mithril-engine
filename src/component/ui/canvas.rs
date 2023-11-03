@@ -246,7 +246,7 @@ impl Canvas
 			let tex_dimensions = tex.dimensions();
 			let image_dimensions = Vec2::new(tex_dimensions[0] as f32, tex_dimensions[1] as f32);
 
-			let set = self.update_transform(render_ctx, transform, tex.view(), image_dimensions)?;
+			let set = self.update_transform(render_ctx, transform, tex.view().clone(), image_dimensions)?;
 
 			self.gpu_resources.insert(eid, (mesh.mesh_type, set));
 		}
@@ -270,7 +270,7 @@ impl Canvas
 
 		let img_dim_vec2 = Vec2::new(img_dim[0] as f32, img_dim[1] as f32);
 
-		let set = self.update_transform(render_ctx, transform, tex.view(), img_dim_vec2)?;
+		let set = self.update_transform(render_ctx, transform, tex.view().clone(), img_dim_vec2)?;
 
 		self.gpu_resources.insert(eid, (super::mesh::MeshType::Quad, set));
 

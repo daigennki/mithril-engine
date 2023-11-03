@@ -116,7 +116,7 @@ impl Material for PBR
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view()) ];
+		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view().clone()) ];
 
 		Ok(writes)
 	}
@@ -129,7 +129,7 @@ impl Material for PBR
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view()) ];
+		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view().clone()) ];
 
 		Ok(writes)
 	}
