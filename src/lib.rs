@@ -212,6 +212,7 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 	Workload::new("Render")
 		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
+		.with_try_system(submit_async_transfers)
 		.with_try_system(draw_3d)
 		.with_try_system(draw_3d_transparent_moments)
 		.with_try_system(draw_3d_transparent)
@@ -274,6 +275,11 @@ fn prepare_ui(
 		}
 	}
 
+	Ok(())
+}
+fn submit_async_transfers(mut render_ctx: UniqueViewMut<render::RenderContext>) -> Result<(), GenericEngineError>
+{
+	render_ctx.submit_async_transfers()?;
 	Ok(())
 }
 

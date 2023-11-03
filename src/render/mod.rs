@@ -32,6 +32,7 @@ use vulkano::command_buffer::{
 	CommandBufferInheritanceRenderingInfo, CommandBufferUsage, CopyBufferInfo,
 	CopyBufferToImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 	SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
+	CommandBufferExecFuture,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
@@ -45,7 +46,7 @@ use vulkano::memory::{
 };
 use vulkano::pipeline::graphics::{viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
-use vulkano::sync::GpuFuture;
+use vulkano::sync::{future::NowFuture, GpuFuture};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -74,7 +75,7 @@ pub struct RenderContext
 	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 
 	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
-	transfer_future: Option<Box<dyn GpuFuture + Send + Sync>>,
+	transfer_future: Option<CommandBufferExecFuture<NowFuture>>,
 
 	// Loaded textures, with the key being the path relative to the current working directory
 	textures: HashMap<PathBuf, Arc<Texture>>,
@@ -99,6 +100,10 @@ pub struct RenderContext
 	frame_time: std::time::Duration,
 
 	resize_this_frame: bool,
+
+	// Transfers to submit on the asynchronous transfer queue.
+	// These will be performed while the CPU is busy with building the draw command buffers.
+	async_transfers: Vec<StagingWork>,
 
 	// Transfers to submit on the graphics queue, before the next frame submission.
 	transfers: Vec<StagingWork>,
@@ -166,8 +171,12 @@ impl RenderContext
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
-			primary_buffer_count: 32, // do we need this many?
-			secondary_buffer_count: 32,
+			// one for graphics, another for async transfers, each of which are on separate queue families
+			primary_buffer_count: 1,
+
+			// only one secondary command buffer should be created per thread
+			secondary_buffer_count: 1,
+
 			..Default::default()
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
@@ -196,8 +205,9 @@ impl RenderContext
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
-		// TODO: adjust capacity based on number of components that might need to do a transfer
+		// TODO: adjust capacity of these based on number of components that might need to do a transfer
 		let transfers = Vec::with_capacity(200);
+		let async_transfers = Vec::with_capacity(200);
 
 		Ok(RenderContext {
 			device: vk_dev,
@@ -220,6 +230,7 @@ impl RenderContext
 			frame_time: std::time::Duration::ZERO,
 			resize_this_frame: false,
 			transfers,
+			async_transfers,
 		})
 	}
 
@@ -254,7 +265,7 @@ impl RenderContext
 			}
 			None => {
 				let (tex, staging_work) = texture::Texture::new(self.memory_allocator.clone(), path)?;
-				self.submit_transfer(staging_work.into())?;
+				self.add_transfer(staging_work.into());
 				let tex_arc = Arc::new(tex);
 				self.textures.insert(path.to_path_buf(), tex_arc.clone());
 				Ok(tex_arc)
@@ -265,7 +276,7 @@ impl RenderContext
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
 	{
 		let (tex, staging_work) = texture::CubemapTexture::new(self.memory_allocator.clone(), faces)?;
-		self.submit_transfer(staging_work.into())?;
+		self.add_transfer(staging_work.into());
 		Ok(tex)
 	}
 
@@ -283,7 +294,7 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator,
 	{
 		let (tex, staging_work) = texture::Texture::new_from_iter(self.memory_allocator.clone(), iter, vk_fmt, dimensions, mip)?;
-		self.submit_transfer(staging_work.into())?;
+		self.add_transfer(staging_work.into());
 		Ok(tex)
 	}
 
@@ -326,7 +337,7 @@ impl RenderContext
 				AllocationCreateInfo::default(),
 				staging_buf.len()
 			)?;
-			self.submit_transfer(CopyBufferInfo::buffers(staging_buf, new_buf.clone()).into())?;
+			self.add_transfer(CopyBufferInfo::buffers(staging_buf, new_buf.clone()).into());
 			new_buf
 		};
 		
@@ -345,42 +356,31 @@ impl RenderContext
 			.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?
 			.allocate_sized()?;
 		*staging_buf.write()? = data;
-		self.submit_transfer_on_graphics_queue(CopyBufferInfo::buffers(staging_buf, dst_buf).into())?;
+		self.add_transfer_on_graphics_queue(CopyBufferInfo::buffers(staging_buf, dst_buf).into());
 		Ok(())
 	}
 
-	/// Submit staging work for new objects to the transfer queue, or if there is no transfer queue,
-	/// keep it for later when the graphics operations are submitted.
-	fn submit_transfer(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
+	/// Add staging work for new objects.
+	/// This may be performed asynchronously with the CPU building the draw command buffers,
+	/// if there is a separate transfer queue.
+	fn add_transfer(&mut self, work: StagingWork)
 	{
-		match self.transfer_queue.as_ref() {
-			Some(q) => {
-				// Create a command buffer for a transfer.
-				// TODO: should we wait for more work before we build a command buffer?
-				// it's probably inefficient to submit a command buffer with just a single command...
-				let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-					&self.command_buffer_allocator,
-					q.queue_family_index(),
-					CommandBufferUsage::OneTimeSubmit,
-				)?;
-				work.add_command(&mut staging_cb_builder)?;
-				let staging_cb = staging_cb_builder.build()?;
-
-				let new_future = match self.transfer_future.take() {
-					Some(f) => staging_cb.execute_after(f, q.clone())?.boxed_send_sync(),
-					None => staging_cb.execute(q.clone())?.boxed_send_sync(),
-				};
-				new_future.flush()?;
-				self.transfer_future = Some(new_future);
+		if self.transfer_queue.is_some() {
+			if self.async_transfers.len() == self.async_transfers.capacity() {
+				log::warn!(
+					"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
+					self.async_transfers.len() + 1
+				);
 			}
-			None => self.submit_transfer_on_graphics_queue(work)?,
+			self.async_transfers.push(work);
+		} else {
+			self.add_transfer_on_graphics_queue(work);
 		}
-		Ok(())
 	}
 
-	/// Submit a transfer on the graphics queue. Use this instead of `submit_transfer` if
+	/// Submit a transfer on the graphics queue. Use this instead of `add_transfer` if
 	/// there's the possibility that the destination object is in use by a previous submission.
-	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
+	fn add_transfer_on_graphics_queue(&mut self, work: StagingWork)
 	{
 		if self.transfers.len() == self.transfers.capacity() {
 			log::warn!(
@@ -389,6 +389,43 @@ impl RenderContext
 			);
 		}
 		self.transfers.push(work);
+	}
+
+	/// Submit the asynchronous transfers that are waiting.
+	/// Run this just before beginning to build the draw command buffers,
+	/// so that the transfers can be done while the CPU is busy with building the draw command buffers.
+	pub fn submit_async_transfers(&mut self) -> Result<(), GenericEngineError>
+	{
+		if self.async_transfers.len() > 0 {
+			if let Some(q) = self.transfer_queue.as_ref() {
+				let mut cb = AutoCommandBufferBuilder::primary(
+					&self.command_buffer_allocator,
+					q.queue_family_index(),
+					CommandBufferUsage::OneTimeSubmit,
+				)?;
+
+				for work in self.async_transfers.drain(..) {
+					work.add_command(&mut cb)?;
+				}
+
+				let transfer_future = cb.build()?.execute(q.clone())?;
+				transfer_future.flush()?;
+
+				if self.transfer_future.is_some() {
+					// Async transfer futures *must* be used when the draw commands are submitted,
+					// otherwise we can't guarantee that the transfers have finished by the time
+					// the draws that need them are performed.
+					panic!("Unused async transfer future found!");
+				}
+
+				self.transfer_future = Some(transfer_future);
+			} else {
+				// This shouldn't be reached if the check for `transfer_queue`
+				// being `Some` worked properly in `add_transfer`.
+				unreachable!();
+			}
+		}
+
 		Ok(())
 	}
 
@@ -463,7 +500,6 @@ impl RenderContext
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(&mut self, ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>) -> Result<(), GenericEngineError>
 	{
-		// execute the secondary command buffers in the primary command buffer
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
@@ -526,8 +562,8 @@ impl RenderContext
 		primary_cb_builder.copy_image(copy_info)?;
 
 		// finish building the command buffer, then present the swapchain image
-		self.swapchain
-			.present(primary_cb_builder.build()?, self.graphics_queue.clone(), self.transfer_future.take())?;
+		let transfer_future = self.transfer_future.take().map(|f| f.boxed_send_sync());
+		self.swapchain.present(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
 
 		// set the delta time
 		let now = std::time::Instant::now();
