@@ -213,9 +213,4 @@ impl Swapchain
 	{
 		self.swapchain.image_extent()
 	}
-
-	pub fn get_surface(&self) -> Arc<Surface>
-	{
-		self.swapchain.surface().clone()
-	}
 }

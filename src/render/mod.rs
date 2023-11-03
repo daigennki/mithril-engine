@@ -43,9 +43,7 @@ use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::pipeline::{
-	graphics::{viewport::Viewport, GraphicsPipeline}, Pipeline, PipelineBindPoint,
-};
+use vulkano::pipeline::graphics::{viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::sync::GpuFuture;
 use winit::window::WindowBuilder;
@@ -384,7 +382,7 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Submit staging work for *mutable* objects to the graphics queue. Use this instead of `submit_transfer` if
+	/// Submit a transfer on the graphics queue. Use this instead of `submit_transfer` if
 	/// there's the possibility that the object is in use by a previous submission.
 	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
 	{
@@ -416,52 +414,12 @@ impl RenderContext
 			CommandBufferInheritanceInfo { render_pass, ..Default::default() },
 		)?;
 
-		// set viewport state
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [viewport_dimensions[0] as f32, viewport_dimensions[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
 		cb.set_viewport(0, [viewport].as_slice().into())?;
-
-		Ok(cb)
-	}
-
-	/// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
-	/// anything specific to materials (it only reads the alpha channel of each texture).
-	pub fn record_transparency_moments_draws(
-		&self, 
-	) -> Result<(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, &Arc<GraphicsPipeline>), GenericEngineError>
-	{
-		let mut cb = self.new_secondary_command_buffer(
-			vec![ 
-				Some(Format::R32G32B32A32_SFLOAT),
-				Some(Format::R32_SFLOAT),
-				Some(Format::R32_SFLOAT),
-			], 
-			Some(MAIN_DEPTH_FORMAT),
-			self.swapchain_dimensions()
-		)?;
-		let pl = self.transparency_renderer.get_moments_pipeline();
-		cb.bind_pipeline_graphics(pl.clone())?;
-		Ok((cb, pl))
-	}
-	pub fn record_transparency_draws(
-		&self,
-		transparency_pipeline: &Arc<GraphicsPipeline>,
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, GenericEngineError>
-	{
-		let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
-
-		let mut cb = self.new_secondary_command_buffer(color_formats, Some(MAIN_DEPTH_FORMAT), self.swapchain_dimensions())?;
-		cb
-			.bind_pipeline_graphics(transparency_pipeline.clone())?
-			.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				transparency_pipeline.layout().clone(),
-				1,
-				vec![self.transparency_renderer.get_stage3_inputs().clone()]
-			)?;
 
 		Ok(cb)
 	}
@@ -500,14 +458,6 @@ impl RenderContext
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
 		*self.cb_3d.lock().unwrap() = Some(cb);
-	}
-	pub fn add_transparency_moments_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.transparency_renderer.add_transparency_moments_cb(cb);
-	}
-	pub fn add_transparency_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.transparency_renderer.add_transparency_cb(cb);
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
@@ -587,10 +537,6 @@ impl RenderContext
 	{
 		&self.descriptor_set_allocator
 	}
-	pub fn memory_allocator(&self) -> &StandardMemoryAllocator
-	{
-		&self.memory_allocator
-	}
 
 	/// Check if the window has been resized since the last frame submission.
 	pub fn window_resized(&self) -> bool
@@ -615,15 +561,6 @@ impl RenderContext
 	pub fn get_transparency_pipeline(&self, name: &str) -> Result<&Arc<GraphicsPipeline>, PipelineNotLoaded>
 	{
 		Ok(self.material_pipelines.get(name).and_then(|tuple| tuple.1.as_ref()).ok_or(PipelineNotLoaded)?)
-	}
-
-	pub fn get_queue(&self) -> Arc<Queue>
-	{
-		self.graphics_queue.clone()
-	}
-	pub fn get_surface(&self) -> Arc<vulkano::swapchain::Surface>
-	{
-		self.swapchain.get_surface()
 	}
 
 	/// Get the delta time for last frame.

@@ -22,7 +22,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::device::DeviceOwned;
-use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline};
+use vulkano::format::Format;
+use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
 use winit::event::{Event, WindowEvent};
 use winit_input_helper::WinitInputHelper;
 
@@ -352,11 +353,29 @@ fn draw_3d_transparent_moments(
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let (mut command_buffer, pipeline) = render_ctx.record_transparency_moments_draws()?;
+	// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
+	// anything specific to materials (it only reads the alpha channel of each texture).
+	let mut command_buffer = render_ctx.new_secondary_command_buffer(
+		vec![
+			Some(Format::R32G32B32A32_SFLOAT),
+			Some(Format::R32_SFLOAT),
+			Some(Format::R32_SFLOAT),
+		],
+		Some(render::MAIN_DEPTH_FORMAT),
+		render_ctx.swapchain_dimensions()
+	)?;
+
+	let pipeline = render_ctx
+		.get_transparency_renderer()
+		.get_moments_pipeline();
+
+	command_buffer.bind_pipeline_graphics(pipeline.clone())?;
 
 	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
 
-	render_ctx.add_transparency_moments_cb(command_buffer.build()?);
+	render_ctx
+		.get_transparency_renderer()
+		.add_transparency_moments_cb(command_buffer.build()?);
 	Ok(())
 }
 
@@ -369,11 +388,26 @@ fn draw_3d_transparent(
 {
 	// Draw the transparent objects.
 	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
-	let mut command_buffer = render_ctx.record_transparency_draws(pipeline)?;
+
+	let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
+
+	let mut command_buffer = render_ctx
+		.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), render_ctx.swapchain_dimensions())?;
+
+	command_buffer
+		.bind_pipeline_graphics(pipeline.clone())?
+		.bind_descriptor_sets(
+			PipelineBindPoint::Graphics,
+			pipeline.layout().clone(),
+			1,
+			vec![render_ctx.get_transparency_renderer().get_stage3_inputs().clone()]
+		)?;
 
 	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
 
-	render_ctx.add_transparency_cb(command_buffer.build()?);
+	render_ctx
+		.get_transparency_renderer()
+		.add_transparency_cb(command_buffer.build()?);
 	Ok(())
 }
 fn draw_ui(
