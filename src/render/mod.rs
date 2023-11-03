@@ -68,7 +68,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,
 	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
-	rebar_in_use: bool,
+	vram_all_host_visible: bool,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
@@ -106,7 +106,7 @@ impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
-		let (graphics_queue, transfer_queue, rebar_in_use) = vulkan_init::vulkan_setup(game_name, event_loop)?;
+		let (graphics_queue, transfer_queue, vram_all_host_visible) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
 
 		let use_monitor = event_loop 
@@ -200,7 +200,7 @@ impl RenderContext
 			swapchain,
 			graphics_queue,
 			transfer_queue,
-			rebar_in_use,
+			vram_all_host_visible,
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
@@ -291,8 +291,8 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
 	{
-		let buf = if self.rebar_in_use {
-			// If Resizable BAR is in use, upload directly to the new buffer.
+		let buf = if self.vram_all_host_visible {
+			// If the entire VRAM is host-visible, upload directly to the new buffer.
 			let buffer_info = BufferCreateInfo { usage, ..Default::default() };
 			let staging_allocation_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
@@ -305,7 +305,7 @@ impl RenderContext
 			};
 			Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?
 		} else {
-			// If Resizable BAR is *not* in use, create a staging buffer on the CPU side, 
+			// If the above isn't true, create a staging buffer on the CPU side, 
 			// then submit a transfer command to the new buffer on the GPU side.
 			let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 			let staging_alloc_info = AllocationCreateInfo {

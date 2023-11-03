@@ -136,8 +136,9 @@ fn get_physical_device(
 
 	let mem_properties = physical_device.memory_properties();
 
-	// Query for Resizable BAR support by checking if the largest `DEVICE_LOCAL` heap also has `HOST_VISIBLE`.
-	// If Resizable BAR is enabled, we can initialize buffers directly on the GPU, which may improve performance.
+	// Check if the largest `DEVICE_LOCAL` heap also has `HOST_VISIBLE` (the entire VRAM is host-visible).
+	// This is the case for GPUs with Resizable BAR or integrated graphics.
+	// Such a memory heap would allow for initializing buffers directly on the GPU, which may improve performance.
 	let (largest_dev_local_i, _) = mem_properties
 		.memory_heaps
 		.iter()
@@ -145,7 +146,7 @@ fn get_physical_device(
 		.filter(|(_, heap)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
 		.max_by_key(|(_, heap)| heap.size)
 		.unwrap();
-	let rebar_in_use = mem_properties
+	let vram_all_host_visible = mem_properties
 		.memory_types
 		.iter()
 		.filter(|t| t.heap_index as usize == largest_dev_local_i)
@@ -155,7 +156,7 @@ fn get_physical_device(
 	// Print all the memory heaps and their types.
 	log::info!("Memory heaps and their memory types on physical device:");
 	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
-		let rebar_text = (i == largest_dev_local_i && rebar_in_use)
+		let rebar_text = (i == largest_dev_local_i && vram_all_host_visible)
 			.then_some("yes")
 			.unwrap_or("no");
 
@@ -167,7 +168,7 @@ fn get_physical_device(
 			log::info!("└ {:?}", mem_type.property_flags);
 		}
 	}
-	Ok((physical_device, rebar_in_use))
+	Ok((physical_device, vram_all_host_visible))
 }
 
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
