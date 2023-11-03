@@ -10,14 +10,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
-use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType}, Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers,
 	ImageUsage,
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
-use vulkano::sync::Sharing;
 
 use crate::GenericEngineError;
 
@@ -50,7 +48,7 @@ impl Texture
 	pub fn new_from_iter<Px, I>(
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		iter: I,
-		vk_fmt: Format,
+		format: Format,
 		dimensions: [u32; 2],
 		mip_levels: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
@@ -60,29 +58,18 @@ impl Texture
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
-		let device = memory_allocator.device().clone();
-
-		let buffer_info = BufferCreateInfo {
-			usage: BufferUsage::TRANSFER_SRC,
-			..Default::default()
-		};
+		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 		let buf_allocation_info = AllocationCreateInfo {
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
 		let staging_buf = Buffer::from_iter(memory_allocator.clone(), buffer_info, buf_allocation_info, iter)?;
 
-		let sharing = if device.active_queue_family_indices().len() > 1 {
-			Sharing::Concurrent(device.active_queue_family_indices().into())
-		} else {
-			Sharing::Exclusive
-		};
 		let image_info = ImageCreateInfo {
-			format: vk_fmt,
+			format,
 			extent: [ dimensions[0], dimensions[1], 1 ],
 			mip_levels,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-			sharing,
 			..Default::default()
 		};
 		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
@@ -99,14 +86,14 @@ impl Texture
 				buffer_offset,
 				image_subresource: ImageSubresourceLayers {
 					mip_level,
-					..ImageSubresourceLayers::from_parameters(vk_fmt, 1)
+					..ImageSubresourceLayers::from_parameters(format, 1)
 				},
 				image_extent: [ mip_width, mip_height, 1],
 				..Default::default()
 			});
 			
-			let block_extent = vk_fmt.block_extent();
-			let block_size = vk_fmt.block_size();
+			let block_extent = format.block_extent();
+			let block_size = format.block_size();
 			let x_blocks = mip_width.div_ceil(block_extent[0]) as u64;
 			let y_blocks = mip_height.div_ceil(block_extent[1]) as u64;
 			let mip_size = x_blocks * y_blocks * block_size;
@@ -148,8 +135,6 @@ impl CubemapTexture
 		faces: [PathBuf; 6],
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
-		// TODO: animated textures using APNG or multi-layer DDS
-
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt = None;
 		let mut cube_dim = None;
@@ -252,23 +237,13 @@ where
 	I: IntoIterator<Item = Px>,
 	I::IntoIter: ExactSizeIterator,
 {
-	let device = allocator.device().clone();
-
-	let buffer_info = BufferCreateInfo {
-		usage: BufferUsage::TRANSFER_SRC,
-		..Default::default()
-	};
+	let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 	let buf_allocation_info = AllocationCreateInfo {
 		memory_type_filter: MemoryTypeFilter::PREFER_HOST |  MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 		..Default::default()
 	};
 	let src = Buffer::from_iter(allocator.clone(), buffer_info, buf_allocation_info, iter)?;
 
-	let sharing = if device.active_queue_family_indices().len() > 1 {
-		Sharing::Concurrent(device.active_queue_family_indices().into())
-	} else {
-		Sharing::Exclusive
-	};
 	let image_info = ImageCreateInfo {
 		flags: ImageCreateFlags::CUBE_COMPATIBLE,
 		format,
@@ -276,7 +251,6 @@ where
 		array_layers: 6,
 		mip_levels,
 		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-		sharing,
 		..Default::default()
 	};
 	let image = Image::new(allocator, image_info, AllocationCreateInfo::default())?;

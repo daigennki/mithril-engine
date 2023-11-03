@@ -36,7 +36,7 @@ use vulkano::command_buffer::{
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
 };
-use vulkano::device::{Device, DeviceOwned, Queue};
+use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::{
@@ -47,7 +47,7 @@ use vulkano::pipeline::{
 	graphics::{viewport::Viewport, GraphicsPipeline}, Pipeline, PipelineBindPoint,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
-use vulkano::sync::{GpuFuture, Sharing};
+use vulkano::sync::GpuFuture;
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -221,11 +221,11 @@ impl RenderContext
 	/// Load a material shader pipeline into memory, using a configuration.
 	pub fn load_material_pipeline(&mut self, name: &str, mut config: PipelineConfig) -> Result<(), GenericEngineError>
 	{
-		let pipeline = pipeline::new_from_config(self.descriptor_set_allocator.device().clone(), config.clone())?;
+		let pipeline = pipeline::new_from_config(self.device.clone(), config.clone())?;
 
 		let transparency_pipeline = if config.fragment_shader_transparency.is_some() {
 			config.set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
-			Some(pipeline::new_from_config_transparency(self.descriptor_set_allocator.device().clone(), config)?)
+			Some(pipeline::new_from_config_transparency(self.device.clone(), config)?)
 		} else {
 			None
 		};
@@ -284,11 +284,7 @@ impl RenderContext
 
 	/// Create a device-local buffer from an iterator, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element iterator, like `[data]`.
-	pub fn new_buffer<I, T>(
-		&mut self,
-		data: I,
-		buf_usage: BufferUsage,
-	) -> Result<Subbuffer<[T]>, GenericEngineError>
+	pub fn new_buffer<I, T>(&mut self, data: I, usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
 		T: Send + Sync + bytemuck::Pod,
 		I: IntoIterator<Item = T>,
@@ -297,7 +293,7 @@ impl RenderContext
 	{
 		let buf = if self.rebar_in_use {
 			// If Resizable BAR is in use, upload directly to the new buffer.
-			let buffer_info = BufferCreateInfo { usage: buf_usage, ..Default::default() };
+			let buffer_info = BufferCreateInfo { usage, ..Default::default() };
 			let staging_allocation_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
 					required_flags: MemoryPropertyFlags::DEVICE_LOCAL | MemoryPropertyFlags::HOST_VISIBLE,
@@ -312,18 +308,19 @@ impl RenderContext
 			// If Resizable BAR is *not* in use, create a staging buffer on the CPU side, 
 			// then submit a transfer command to the new buffer on the GPU side.
 			let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-			let staging_allocation_info = AllocationCreateInfo {
+			let staging_alloc_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 				..Default::default()
 			};
-			let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?;
+			let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_alloc_info, data)?;
 
-			let buffer_info = BufferCreateInfo {
-				sharing: Sharing::Concurrent(self.device.active_queue_family_indices().into()),
-				usage: buf_usage | BufferUsage::TRANSFER_DST,
-				..Default::default()
-			};
-			let new_buf = Buffer::new_slice(self.memory_allocator.clone(), buffer_info, Default::default(), staging_buf.len())?;
+			let buffer_info = BufferCreateInfo { usage: usage | BufferUsage::TRANSFER_DST, ..Default::default() };
+			let new_buf = Buffer::new_slice(
+				self.memory_allocator.clone(),
+				buffer_info,
+				AllocationCreateInfo::default(),
+				staging_buf.len()
+			)?;
 			self.submit_transfer(CopyBufferInfo::buffers(staging_buf, new_buf.clone()).into())?;
 			new_buf
 		};
