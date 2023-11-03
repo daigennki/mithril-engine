@@ -99,6 +99,9 @@ pub struct RenderContext
 	frame_time: std::time::Duration,
 
 	resize_this_frame: bool,
+
+	// Transfers to submit on the graphics queue, before the next frame submission.
+	transfers: Vec<StagingWork>,
 }
 impl RenderContext
 {
@@ -193,6 +196,9 @@ impl RenderContext
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
+		// TODO: adjust capacity based on number of components that might need to do a transfer
+		let transfers = Vec::with_capacity(200);
+
 		Ok(RenderContext {
 			device: vk_dev,
 			swapchain,
@@ -213,6 +219,7 @@ impl RenderContext
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 			resize_this_frame: false,
+			transfers,
 		})
 	}
 
@@ -342,34 +349,23 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Create a command buffer for a transfer.
-	/// TODO: should we wait for more work before we build a command buffer? it's probably inefficient to submit a command
-	/// buffer with just a single command...
-	fn create_staging_command_buffer(
-		&self,
-		work: StagingWork,
-		queue_family: u32,
-	) -> Result<Arc<PrimaryAutoCommandBuffer>, GenericEngineError>
-	{
-		let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
-			&self.command_buffer_allocator,
-			queue_family,
-			CommandBufferUsage::OneTimeSubmit,
-		)?;
-		match work {
-			StagingWork::CopyBuffer(info) => staging_cb_builder.copy_buffer(info)?,
-			StagingWork::CopyBufferToImage(info) => staging_cb_builder.copy_buffer_to_image(info)?,
-		};
-		Ok(staging_cb_builder.build()?)
-	}
-
-	/// Submit staging work for immutable objects to the transfer queue, or if there is no transfer queue,
+	/// Submit staging work for new objects to the transfer queue, or if there is no transfer queue,
 	/// keep it for later when the graphics operations are submitted.
 	fn submit_transfer(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
 	{
 		match self.transfer_queue.as_ref() {
 			Some(q) => {
-				let staging_cb = self.create_staging_command_buffer(work, q.queue_family_index())?;
+				// Create a command buffer for a transfer.
+				// TODO: should we wait for more work before we build a command buffer?
+				// it's probably inefficient to submit a command buffer with just a single command...
+				let mut staging_cb_builder = AutoCommandBufferBuilder::primary(
+					&self.command_buffer_allocator,
+					q.queue_family_index(),
+					CommandBufferUsage::OneTimeSubmit,
+				)?;
+				work.add_command(&mut staging_cb_builder)?;
+				let staging_cb = staging_cb_builder.build()?;
+
 				let new_future = match self.transfer_future.take() {
 					Some(f) => staging_cb.execute_after(f, q.clone())?.boxed_send_sync(),
 					None => staging_cb.execute(q.clone())?.boxed_send_sync(),
@@ -383,12 +379,16 @@ impl RenderContext
 	}
 
 	/// Submit a transfer on the graphics queue. Use this instead of `submit_transfer` if
-	/// there's the possibility that the object is in use by a previous submission.
+	/// there's the possibility that the destination object is in use by a previous submission.
 	fn submit_transfer_on_graphics_queue(&mut self, work: StagingWork) -> Result<(), GenericEngineError>
 	{
-		let staging_cb = self.create_staging_command_buffer(work, self.graphics_queue.queue_family_index())?;
-		self.swapchain
-			.submit_transfer_on_graphics_queue(staging_cb, self.graphics_queue.clone())?;
+		if self.transfers.len() == self.transfers.capacity() {
+			log::warn!(
+				"Re-allocating `Vec` for transfers to {}! Consider increasing its initial capacity.",
+				self.transfers.len() + 1
+			);
+		}
+		self.transfers.push(work);
 		Ok(())
 	}
 
@@ -469,6 +469,11 @@ impl RenderContext
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
+
+		// transfers
+		for work in self.transfers.drain(..) {
+			work.add_command(&mut primary_cb_builder)?;
+		}
 
 		// 3D
 		if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
@@ -641,6 +646,18 @@ enum StagingWork
 {
 	CopyBuffer(CopyBufferInfo),
 	CopyBufferToImage(CopyBufferToImageInfo),
+}
+impl StagingWork
+{
+	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
+		-> Result<(), Box<vulkano::ValidationError>>
+	{
+		match self {
+			StagingWork::CopyBuffer(info) => cb_builder.copy_buffer(info)?,
+			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info)?,
+		};
+		Ok(())
+	}
 }
 impl From<CopyBufferInfo> for StagingWork
 {
