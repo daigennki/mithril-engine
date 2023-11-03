@@ -66,6 +66,7 @@ impl Swapchain
 			..Default::default()
 		};
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
+		log::debug!("created {} swapchain images", images.len());
 
 		Ok(Swapchain {
 			window: window_arc,
@@ -191,6 +192,11 @@ impl Swapchain
 		}
 
 		Ok(())
+	}
+
+	pub fn image_count(&self) -> usize
+	{
+		self.images.len()
 	}
 
 	pub fn dimensions(&self) -> [u32; 2]

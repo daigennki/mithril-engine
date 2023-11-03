@@ -170,12 +170,13 @@ impl RenderContext
 		);
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
+		// The counts below are multiplied by the number of swapchain images to account for previous submissions.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
-			// one for graphics, another for async transfers, each of which are on separate queue families
-			primary_buffer_count: 1,
+			// One for graphics, another for async transfers, each of which are on separate queue families.
+			primary_buffer_count: swapchain.image_count(),
 
-			// only one secondary command buffer should be created per thread
-			secondary_buffer_count: 1,
+			// Only one secondary command buffer should be created per thread.
+			secondary_buffer_count: swapchain.image_count(),
 
 			..Default::default()
 		};
