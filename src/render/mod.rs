@@ -67,7 +67,7 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,
 	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
-	vram_all_host_visible: bool,
+	allow_direct_buffer_access: bool,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
@@ -112,7 +112,7 @@ impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
 	{
-		let (graphics_queue, transfer_queue, vram_all_host_visible) = vulkan_init::vulkan_setup(game_name, event_loop)?;
+		let (graphics_queue, transfer_queue, allow_direct_buffer_access) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
 
 		let use_monitor = event_loop 
@@ -215,7 +215,7 @@ impl RenderContext
 			swapchain,
 			graphics_queue,
 			transfer_queue,
-			vram_all_host_visible,
+			allow_direct_buffer_access,
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
@@ -308,10 +308,10 @@ impl RenderContext
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
 	{
-		let buf = if self.vram_all_host_visible {
-			// If the entire VRAM is host-visible, upload directly to the new buffer.
+		let buf = if self.allow_direct_buffer_access {
+			// When possible, upload directly to the new buffer memory.
 			let buffer_info = BufferCreateInfo { usage, ..Default::default() };
-			let staging_allocation_info = AllocationCreateInfo {
+			let alloc_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
 					required_flags: MemoryPropertyFlags::HOST_VISIBLE,
 					preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
@@ -320,9 +320,9 @@ impl RenderContext
 				},
 				..Default::default()
 			};
-			Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_allocation_info, data)?
+			Buffer::from_iter(self.memory_allocator.clone(), buffer_info, alloc_info, data)?
 		} else {
-			// If the above isn't true, create a staging buffer on the CPU side, 
+			// If direct uploads aren't possible, create a staging buffer on the CPU side, 
 			// then submit a transfer command to the new buffer on the GPU side.
 			let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 			let staging_alloc_info = AllocationCreateInfo {

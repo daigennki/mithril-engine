@@ -11,7 +11,7 @@ use vulkano::device::{
 	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::instance::InstanceCreateInfo;
-use vulkano::memory::MemoryPropertyFlags;
+use vulkano::memory::{MemoryHeapFlags, MemoryPropertyFlags};
 use vulkano::swapchain::Surface;
 
 use crate::GenericEngineError;
@@ -137,26 +137,40 @@ fn get_physical_device(
 	let mem_properties = physical_device.memory_properties();
 	let device_type = physical_device.properties().device_type;
 
-	// Check if all memory heaps are host-visible. This is the case for GPUs with Resizable BAR,
-	// as well as integrated graphics. This allows for initializing buffers directly on the VRAM,
-	// which may improve performance.
-	let vram_all_host_visible = mem_properties
-		.memory_heaps
-		.iter()
-		.enumerate()
-		.all(|(i, _)| {
-			mem_properties
+	// Check if we can write to buffer memory on VRAM directly, as doing so may improve performance.
+	let allow_direct_buffer_access;
+	match device_type {
+		PhysicalDeviceType::DiscreteGpu => {
+			// For discrete GPUs, check that the largest `DEVICE_LOCAL` memory heap is also `HOST_VISIBLE`.
+			// This is the case when Resizable BAR is enabled.
+			let (largest_heap_i, _) = mem_properties
+				.memory_heaps
+				.iter()
+				.enumerate()
+				.filter(|(_, heap)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
+				.max_by_key(|(_, heap)| heap.size)
+				.ok_or("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!")?;
+
+			allow_direct_buffer_access = mem_properties
 				.memory_types
 				.iter()
-				.filter(|t| t.heap_index as usize == i)
-				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE))
-		});
+				.filter(|t| t.heap_index as usize == largest_heap_i)
+				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE));
 
-	if vram_all_host_visible {
-		if device_type == PhysicalDeviceType::DiscreteGpu {
-			log::info!("Resizable BAR appears to be enabled on this physical device.");
-		} else {
-			log::info!("All VRAM is host-visible on this physical device.");
+			if allow_direct_buffer_access {
+				log::info!(
+					"Resizable BAR appears to be enabled on this physical device. Buffer memory will be directly written to."
+				);
+			}
+		}
+		PhysicalDeviceType::IntegratedGpu => {
+			// For integrated GPUs, assume that writing directly to buffer memory is always possible and fast enough.
+			allow_direct_buffer_access = true;
+			log::info!("The physical device is an `IntegratedGpu`. Buffer memory will be directly written to.");
+		}
+		_ => {
+			// For other physical device types, assume we can't write directly to buffer memory.
+			allow_direct_buffer_access = false;
 		}
 	}
 
@@ -171,7 +185,7 @@ fn get_physical_device(
 			log::info!("└ {:?}", mem_type.property_flags);
 		}
 	}
-	Ok((physical_device, vram_all_host_visible))
+	Ok((physical_device, allow_direct_buffer_access))
 }
 
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
