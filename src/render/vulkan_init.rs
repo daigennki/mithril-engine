@@ -158,15 +158,12 @@ fn get_physical_device(
 				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE));
 
 			if allow_direct_buffer_access {
-				log::info!(
-					"Resizable BAR appears to be enabled on this physical device. Buffer memory will be directly written to."
-				);
+				log::info!("Resizable BAR appears to be enabled on this physical device.");
 			}
 		}
 		PhysicalDeviceType::IntegratedGpu => {
 			// For integrated GPUs, assume that writing directly to buffer memory is always possible and fast enough.
 			allow_direct_buffer_access = true;
-			log::info!("The physical device is an `IntegratedGpu`. Buffer memory will be directly written to.");
 		}
 		_ => {
 			// For other physical device types, assume we can't write directly to buffer memory.
