@@ -405,7 +405,7 @@ impl MomentTransparencyRenderer
 				PushConstantRange { // push constant for projview matrix
 					stages: ShaderStages::VERTEX,
 					offset: 0,
-					size: (std::mem::size_of::<Mat4>() * 2).try_into().unwrap(),
+					size: (std::mem::size_of::<Mat4>() + std::mem::size_of::<Mat3A>()).try_into().unwrap(),
 				}
 			],
 			moments_rendering,

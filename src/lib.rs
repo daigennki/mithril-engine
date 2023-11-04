@@ -300,13 +300,13 @@ fn draw_common(
 			|| (mesh_manager.has_transparency(eid) && transparency_pass) {
 			let model_matrix = transform.get_matrix();
 			let transform_mat = projview * model_matrix;
-			let model_mat3 = Mat3::from_mat4(model_matrix);
+			let model_mat3a = Mat3A::from_mat4(model_matrix);
 			mesh_manager.draw(
 				eid,
 				command_buffer,
 				pipeline.layout().clone(),
 				transform_mat,
-				model_mat3,
+				model_mat3a,
 				transparency_pass,
 				base_color_only,
 			)?;
