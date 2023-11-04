@@ -11,7 +11,7 @@ use vulkano::device::{
 	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::instance::InstanceCreateInfo;
-use vulkano::memory::{MemoryHeapFlags, MemoryPropertyFlags};
+use vulkano::memory::MemoryPropertyFlags;
 use vulkano::swapchain::Surface;
 
 use crate::GenericEngineError;
@@ -115,10 +115,10 @@ fn get_physical_device(
 		match properties.device_type {
 			PhysicalDeviceType::DiscreteGpu => {
 				dgpu.get_or_insert((i, pd));
-			}
+			},
 			PhysicalDeviceType::IntegratedGpu => {
 				igpu.get_or_insert((i, pd));
-			}
+			},
 			_ => (),
 		}
 	}
@@ -135,34 +135,37 @@ fn get_physical_device(
 	log::info!("Using physical device {}: {}", i, physical_device.properties().device_name);
 
 	let mem_properties = physical_device.memory_properties();
+	let device_type = physical_device.properties().device_type;
 
-	// Check if the largest `DEVICE_LOCAL` heap also has `HOST_VISIBLE` (the entire VRAM is host-visible).
-	// This is the case for GPUs with Resizable BAR or integrated graphics.
-	// Such a memory heap would allow for initializing buffers directly on the GPU, which may improve performance.
-	let (largest_dev_local_i, _) = mem_properties
+	// Check if all memory heaps are host-visible. This is the case for GPUs with Resizable BAR,
+	// as well as integrated graphics. This allows for initializing buffers directly on the VRAM,
+	// which may improve performance.
+	let vram_all_host_visible = mem_properties
 		.memory_heaps
 		.iter()
 		.enumerate()
-		.filter(|(_, heap)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
-		.max_by_key(|(_, heap)| heap.size)
-		.unwrap();
-	let vram_all_host_visible = mem_properties
-		.memory_types
-		.iter()
-		.filter(|t| t.heap_index as usize == largest_dev_local_i)
-		.find(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE))
-		.is_some();
+		.all(|(i, _)| {
+			mem_properties
+				.memory_types
+				.iter()
+				.filter(|t| t.heap_index as usize == i)
+				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE))
+		});
+
+	if vram_all_host_visible {
+		if device_type == PhysicalDeviceType::DiscreteGpu {
+			log::info!("Resizable BAR appears to be enabled on this physical device.");
+		} else {
+			log::info!("All VRAM is host-visible on this physical device.");
+		}
+	}
 
 	// Print all the memory heaps and their types.
 	log::info!("Memory heaps and their memory types on physical device:");
 	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
-		let rebar_text = (i == largest_dev_local_i && vram_all_host_visible)
-			.then_some("yes")
-			.unwrap_or("no");
-
 		let mib = mem_heap.size / (1024 * 1024);
 
-		log::info!("{}: {} MiB, flags {:?} (Resizable BAR: {})", i, mib, mem_heap.flags, rebar_text);
+		log::info!("{}: {} MiB, flags {:?}", i, mib, mem_heap.flags);
 
 		for mem_type in mem_properties.memory_types.iter().filter(|t| t.heap_index as usize == i) {
 			log::info!("└ {:?}", mem_type.property_flags);
