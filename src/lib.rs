@@ -25,6 +25,7 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
 use winit::event::{Event, WindowEvent};
+use winit::event_loop::ControlFlow;
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{Camera, CameraFov, CameraManager};
@@ -43,26 +44,34 @@ type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 /// `start_map` is the first map (level/world) to be loaded.
 pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 {
-	let event_loop = winit::event_loop::EventLoop::new();
+	let event_loop = match winit::event_loop::EventLoop::new() {
+		Ok(el) => el,
+		Err(e) => {
+			log_error(Box::new(e));
+			return
+		}
+	};
+
+	event_loop.set_control_flow(ControlFlow::Poll);
 
 	match GameContext::new(org_name, game_name, start_map, &event_loop) {
 		Ok(mut gctx) => {
-			event_loop.run(move |mut event, _, control_flow| {
+			if let Err(e) = event_loop.run(move |mut event, window_target| {
 				match event {
 					Event::WindowEvent {
 						event: WindowEvent::CloseRequested,
 						..
-					} => {
-						*control_flow = winit::event_loop::ControlFlow::Exit;
-					}
+					} => window_target.exit(),
 					_ => (),
 				};
 
 				if let Err(e) = gctx.handle_event(&mut event) {
 					log_error(e);
-					*control_flow = winit::event_loop::ControlFlow::Exit;
+					window_target.exit();
 				}
-			})
+			}) {
+				log_error(Box::new(e));
+			}
 		}
 		Err(e) => log_error(e),
 	}
@@ -133,7 +142,7 @@ impl GameContext
 
 		match event {
 			Event::WindowEvent { 
-				event: WindowEvent::ScaleFactorChanged { scale_factor, new_inner_size },
+				event: WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer },
 				..
 			} => {
 				let swapchain_dimensions = self
@@ -142,12 +151,11 @@ impl GameContext
 				let desired_physical_size =
 					winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
 				log::info!(
-					"`ScaleFactorChanged` event gave us an inner size of {:?} (scale factor {}), giving back {:?}...",
-					&new_inner_size,
+					"`ScaleFactorChanged` event gave us a scale factor of {}, giving back {:?}...",
 					scale_factor,
 					desired_physical_size
 				);
-				**new_inner_size = desired_physical_size;
+				inner_size_writer.request_inner_size(desired_physical_size)?;
 			}
 			Event::WindowEvent { 
 				event: WindowEvent::Resized(new_inner_size),
@@ -157,7 +165,7 @@ impl GameContext
 				self.world
 					.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
 			}
-			Event::MainEventsCleared => {
+			Event::AboutToWait => {
 				if self.world.contains_workload("Game logic") {
 					self.world.run_workload("Game logic")?;
 				}
