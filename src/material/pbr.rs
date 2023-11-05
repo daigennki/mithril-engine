@@ -93,7 +93,7 @@ impl PBR
 				PushConstantRange { // push constant for projviewmodel and transform3 matrix
 					stages: ShaderStages::VERTEX,
 					offset: 0,
-					size: (std::mem::size_of::<Mat4>() + std::mem::size_of::<Mat3A>()).try_into().unwrap(),
+					size: std::mem::size_of::<crate::component::mesh::MeshPushConstant>().try_into().unwrap(),
 				}
 			],
 		})

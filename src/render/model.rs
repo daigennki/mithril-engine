@@ -112,6 +112,7 @@ impl Model
 		material_resources: &Vec<crate::component::mesh::MaterialResources>,
 		transparency_pass: bool,
 		base_color_only: bool,
+		shadow_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// determine which submeshes are visible
@@ -119,20 +120,27 @@ impl Model
 
 		// don't even bother with vertex/index buffer binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
-			cb.bind_vertex_buffers(0, self.vertex_buffers.clone())?;
+			if shadow_pass {
+				cb.bind_vertex_buffers(0, vec![ self.vertex_buffers[0].clone() ])?;
+			} else {
+				cb.bind_vertex_buffers(0, self.vertex_buffers.clone())?;
+			}
 			self.index_buffer.bind(cb)?;
+
 			for submesh in visible_submeshes {
 				// it's okay that we use a panic function here, since the glTF loader validates the index for us
 				let mat_res = &material_resources[submesh.material_index()];
 				let mat = mat_res.mat_override.as_ref().unwrap_or_else(|| &self.materials[submesh.material_index()]);
 
 				if mat.has_transparency() == transparency_pass {
-					let set = if base_color_only {
-						mat_res.mat_basecolor_only_set.clone()
-					} else {
-						mat_res.mat_set.clone()
-					};
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
+					if !shadow_pass {
+						let set = if base_color_only {
+							mat_res.mat_basecolor_only_set.clone()
+						} else {
+							mat_res.mat_set.clone()
+						};
+						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
+					}
 					submesh.draw(cb)?;
 				}
 			}

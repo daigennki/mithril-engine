@@ -245,20 +245,35 @@ impl MeshManager
 		pipeline_layout: Arc<PipelineLayout>,
 		projviewmodel: Mat4,
 		model_notranslate: Mat3A,
+		translation: Vec3,
 		transparency_pass: bool,
 		base_color_only: bool,
+		shadow_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
 		if let Some((model_loaded, mat_resources)) = self.resources.get(&eid) {
-			let push_data = MeshPushConstant {
-				projviewmodel,
-				model_notranslate,
-			};
-			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+			if shadow_pass {
+				// TODO: also consider point lights, which require different matrices
+				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+			} else {
+				let push_data = MeshPushConstant {
+					projviewmodel,
+					model_notranslate,
+					translation,
+				};
+				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+			}
 
-
-			model_loaded.draw(cb, pipeline_layout, &projviewmodel, mat_resources, transparency_pass, base_color_only)?;
+			model_loaded.draw(
+				cb,
+				pipeline_layout,
+				&projviewmodel,
+				mat_resources,
+				transparency_pass,
+				base_color_only,
+				shadow_pass,
+			)?;
 		}
 		Ok(())
 	}
@@ -266,9 +281,10 @@ impl MeshManager
 
 #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
-struct MeshPushConstant
+pub struct MeshPushConstant
 {
 	projviewmodel: Mat4,
 	model_notranslate: Mat3A,
+	translation: Vec3,
 }
 

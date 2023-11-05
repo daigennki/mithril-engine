@@ -226,6 +226,7 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
 		.with_try_system(submit_async_transfers)
+		.with_try_system(draw_shadows)
 		.with_try_system(draw_3d)
 		.with_try_system(draw_3d_transparent_moments)
 		.with_try_system(draw_3d_transparent)
@@ -296,6 +297,50 @@ fn submit_async_transfers(mut render_ctx: UniqueViewMut<render::RenderContext>) 
 	Ok(())
 }
 
+fn draw_shadows(
+	render_ctx: UniqueView<render::RenderContext>,
+	transforms: View<component::Transform>,
+	mesh_manager: UniqueView<component::mesh::MeshManager>,
+	mut light_manager: UniqueViewMut<component::light::LightManager>,
+) -> Result<(), GenericEngineError>
+{
+	let dir_light_image_view = light_manager.get_dir_light_shadow();
+	let dir_light_extent = dir_light_image_view.image().extent();
+
+	let mut dir_light_shadows_cb = render_ctx.new_secondary_command_buffer(
+		vec![], 
+		Some(dir_light_image_view.format()),
+		[ dir_light_extent[0], dir_light_extent[1] ],
+	)?;
+
+	let dir_projview = light_manager.get_dir_light_projview();
+	let shadow_pipeline = light_manager.get_shadow_pipeline();
+
+	dir_light_shadows_cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
+
+	for (eid, transform) in transforms.iter().with_id() {
+		if mesh_manager.has_opaque_materials(eid) {
+			let model_matrix = transform.get_matrix();
+			let transform_mat = dir_projview * model_matrix;
+			let model_mat3a = Mat3A::from_mat4(model_matrix);
+			mesh_manager.draw(
+				eid,
+				&mut dir_light_shadows_cb,
+				shadow_pipeline.layout().clone(),
+				transform_mat,
+				model_mat3a,
+				transform.position,
+				false,
+				false,
+				true,
+			)?;
+		}
+	}
+
+	light_manager.add_dir_light_cb(dir_light_shadows_cb.build()?);
+
+	Ok(())
+}
 fn draw_common(
 	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	camera_manager: &CameraManager,
@@ -320,8 +365,10 @@ fn draw_common(
 				pipeline.layout().clone(),
 				transform_mat,
 				model_mat3a,
+				transform.position,
 				transparency_pass,
 				base_color_only,
+				false,
 			)?;
 		}
 	}
@@ -468,9 +515,13 @@ fn draw_ui(
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
+	mut light_manager: UniqueViewMut<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	render_ctx.submit_frame(canvas.take_cb())
+	render_ctx.submit_frame(
+		canvas.take_cb(), 
+		light_manager.take_dir_light_cb().map(|cb| (cb, light_manager.get_dir_light_shadow().clone()))
+	)
 }
 
 // Get data path, set up logging, and return the data path.

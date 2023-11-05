@@ -38,7 +38,7 @@ use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
 };
 use vulkano::device::{Device, Queue};
-use vulkano::format::Format;
+use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
@@ -506,7 +506,11 @@ impl RenderContext
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
-	pub fn submit_frame(&mut self, ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>) -> Result<(), GenericEngineError>
+	pub fn submit_frame(
+		&mut self,
+		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>, 
+		shadow: Option<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
+	) -> Result<(), GenericEngineError>
 	{
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
@@ -517,6 +521,24 @@ impl RenderContext
 		// transfers
 		for work in self.transfers.drain(..) {
 			work.add_command(&mut primary_cb_builder)?;
+		}
+
+		// shadows
+		if let Some((shadow_cb, shadow_image_view)) = shadow {
+			let shadow_render_info = RenderingInfo {
+				depth_attachment: Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::Clear,
+					store_op: AttachmentStoreOp::Store,
+					clear_value: Some(ClearValue::Depth(1.0)),
+					..RenderingAttachmentInfo::image_view(shadow_image_view)
+				}),
+				contents: SubpassContents::SecondaryCommandBuffers,
+				..Default::default()
+			};
+			primary_cb_builder
+				.begin_rendering(shadow_render_info)?
+				.execute_commands(shadow_cb)?
+				.end_rendering()?;
 		}
 
 		// 3D
@@ -585,6 +607,11 @@ impl RenderContext
 	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
 	{
 		&self.descriptor_set_allocator
+	}
+
+	pub fn memory_allocator(&self) -> &Arc<StandardMemoryAllocator>
+	{
+		&self.memory_allocator
 	}
 
 	/// Check if the window has been resized since the last frame submission.

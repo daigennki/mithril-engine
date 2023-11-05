@@ -7,19 +7,24 @@
 layout(binding = 0) uniform sampler sampler0;
 layout(binding = 1) uniform texture2D base_color;
 
+/* lighting stuff */
+layout(set = 1, binding = 0) uniform samplerShadow shadow_sampler;
 struct DirLight
 {
+	mat4 projview;
 	vec3 direction;
 	float _filler1;
 	vec4 color_intensity;
 };
-layout(set = 1, binding = 0) uniform dir_light_ubo
+layout(set = 1, binding = 1) uniform dir_light_ubo
 {
 	DirLight dir_light;
 };
+layout(set = 1, binding = 2) uniform texture2D dir_light_shadow;
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in vec3 normal;
+layout(location = 2) in vec3 world_pos;
 
 // If `TRANSPARENCY_PASS` is defined, the outputs in the OIT shader file included above will be used.
 #ifndef TRANSPARENCY_PASS
@@ -28,7 +33,12 @@ layout(location = 0) out vec4 color_out;
 
 vec3 calc_diff(vec3 light_direction, vec3 normal, vec3 tex_diffuse)
 {
-	float diff_intensity = max(dot(normal, light_direction), 0.0);
+	vec4 dir_light_relative_pos = dir_light.projview * vec4(world_pos, 1.0);
+	dir_light_relative_pos /= dir_light_relative_pos.w;
+	dir_light_relative_pos.xy = dir_light_relative_pos.xy * 0.5 + 0.5;
+	float shadow = texture(sampler2DShadow(dir_light_shadow, shadow_sampler), dir_light_relative_pos.xyz);
+	
+	float diff_intensity = max(dot(normal, -light_direction), 0.0) * shadow;
 	vec3 diffuse = diff_intensity * tex_diffuse;
 	return diffuse;
 }
