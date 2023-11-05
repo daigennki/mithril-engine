@@ -21,6 +21,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::descriptor_set::DescriptorSet;
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
@@ -109,7 +110,10 @@ impl GameContext
 		let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
 		let mut mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
 
-		let pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
+		let light_manager = component::light::LightManager::new(&mut render_ctx)?;
+
+		let mut pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
+		pbr_pipeline_config.set_layouts.push(light_manager.get_all_lights_set().layout().clone());
 		mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
 		render_ctx.load_material_pipeline("PBR", pbr_pipeline_config)?;
 
@@ -130,6 +134,7 @@ impl GameContext
 		world.add_unique(mesh_manager);
 		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
 		world.add_unique(render_ctx);
+		world.add_unique(light_manager);
 
 		Ok(GameContext { world })
 	}
@@ -328,6 +333,7 @@ fn draw_3d(
 	camera_manager: UniqueView<CameraManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
+	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
 	let mut command_buffer = render_ctx.new_secondary_command_buffer(
@@ -343,16 +349,23 @@ fn draw_3d(
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	let pbr_pipeline = render_ctx.get_pipeline("PBR")?;
 
+	// Bind the descriptor set for the lights
 	command_buffer
 		.bind_pipeline_graphics(pbr_pipeline.clone())?
-		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?;
+		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
+		.bind_descriptor_sets(
+			PipelineBindPoint::Graphics,
+			pbr_pipeline.layout().clone(),
+			1,
+			vec![light_manager.get_all_lights_set().clone()]
+		)?;
 
 	draw_common(
-		&mut command_buffer, 
-		&camera_manager, 
-		transforms, 
-		&mesh_manager, 
-		pbr_pipeline, 
+		&mut command_buffer,
+		&camera_manager,
+		transforms,
+		&mesh_manager,
+		pbr_pipeline,
 		false,
 		false,
 	)?;
@@ -398,6 +411,7 @@ fn draw_3d_transparent(
 	camera_manager: UniqueView<CameraManager>,
 	transforms: View<component::Transform>,
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
+	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
 	// Draw the transparent objects.
@@ -414,7 +428,10 @@ fn draw_3d_transparent(
 			PipelineBindPoint::Graphics,
 			pipeline.layout().clone(),
 			1,
-			vec![render_ctx.get_transparency_renderer().get_stage3_inputs().clone()]
+			vec![
+				light_manager.get_all_lights_set().clone(), 
+				render_ctx.get_transparency_renderer().get_stage3_inputs().clone()
+			]
 		)?;
 
 	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;

@@ -303,7 +303,7 @@ impl RenderContext
 	/// For stuff that isn't an array, just put the data into a single-element iterator, like `[data]`.
 	pub fn new_buffer<I, T>(&mut self, data: I, usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
-		T: Send + Sync + bytemuck::Pod,
+		T: Send + Sync + bytemuck::AnyBitPattern,
 		I: IntoIterator<Item = T>,
 		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,

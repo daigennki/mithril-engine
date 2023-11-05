@@ -1,16 +1,16 @@
 
 // The shader code used for moment-based OIT moment weight calculation (stage 3), meant to be included by other shaders.
 
-layout(set = 1, binding = 0) uniform sampler oit_sampler;
+layout(set = 2, binding = 0) uniform sampler oit_sampler;
 
 /* sum(rgb * a, a) */
-layout(set = 1, binding = 1) uniform texture2D moments_in;
+layout(set = 2, binding = 1) uniform texture2D moments_in;
 
 /* prod(1 - a) */
-layout(set = 1, binding = 2) uniform texture2D optical_depth_in;
+layout(set = 2, binding = 2) uniform texture2D optical_depth_in;
 
 /* minimum depth for correction */
-layout(set = 1, binding = 3) uniform texture2D min_depth;
+layout(set = 2, binding = 3) uniform texture2D min_depth;
 
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
