@@ -346,17 +346,24 @@ impl RenderContext
 	}
 
 	/// Get a staging buffer from the common staging buffer allocator, and queue an upload using it.
-	pub fn copy_to_buffer<T>(&mut self, data: T, dst_buf: Subbuffer<T>) -> Result<(), GenericEngineError>
+	pub fn copy_to_buffer<I, T>(&mut self, data: I, dst_buf: Subbuffer<[T]>) -> Result<(), GenericEngineError>
 	where
+		T: Send + Sync + bytemuck::AnyBitPattern,
+		I: IntoIterator<Item = T>,
+		I::IntoIter: ExactSizeIterator,
 		[T]: vulkano::buffer::BufferContents,
-		T: Send + Sync + bytemuck::Pod,
 	{
+		let iter = data.into_iter();
 		let staging_buf = self
 			.staging_buffer_allocator
 			.lock()
 			.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?
-			.allocate_sized()?;
-		*staging_buf.write()? = data;
+			.allocate_slice(iter.len().try_into()?)?;
+
+		for (o, i) in staging_buf.write()?.iter_mut().zip(iter) {
+			*o = i;
+		}
+
 		self.add_transfer_on_graphics_queue(CopyBufferInfo::buffers(staging_buf, dst_buf).into());
 		Ok(())
 	}

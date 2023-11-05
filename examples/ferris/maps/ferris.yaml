@@ -15,6 +15,15 @@ entities:
   - Mesh:
       model_path: examples/ferris/models/test_floor.glb
 
+-
+  - Transform:
+      position: [0.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [30.0, 0.0, 60.0]
+  - DirectionalLight:
+      color: [1.0, 0.933, 0.833]
+      intensity: 3.5
+
 - 
   - Transform:
       position: [1.5, -3.0, 1.0]
