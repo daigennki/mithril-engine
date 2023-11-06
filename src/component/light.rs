@@ -18,13 +18,13 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	sampler::{SamplerCreateInfo, Sampler}, view::ImageView, Image, ImageCreateInfo, ImageUsage
+	sampler::{Filter, SamplerCreateInfo, Sampler}, view::ImageView, Image, ImageCreateInfo, ImageUsage
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::{
 	graphics::{
 		depth_stencil::{CompareOp, DepthState, DepthStencilState},
-		input_assembly::PrimitiveTopology, rasterization::{RasterizationState, CullMode},
+		input_assembly::PrimitiveTopology, rasterization::{RasterizationState, CullMode, DepthBiasState},
 		subpass::PipelineRenderingCreateInfo, GraphicsPipeline,
 	},
 	layout::PushConstantRange,
@@ -162,6 +162,8 @@ impl LightManager
 
 		/* shadow sampler */
 		let sampler_info = SamplerCreateInfo {
+			mag_filter: Filter::Linear,
+			min_filter: Filter::Linear,
 			compare: Some(CompareOp::LessOrEqual),
 			..Default::default()
 		};
@@ -201,6 +203,11 @@ impl LightManager
 			depth: Some(DepthState::simple()),
 			..Default::default()
 		};
+		let rasterization_state = RasterizationState {
+			cull_mode: CullMode::Back,
+			depth_bias: Some(DepthBiasState::default()),
+			..Default::default()
+		};
 		let shadow_rendering = PipelineRenderingCreateInfo {
 			depth_attachment_format: Some(Format::D16_UNORM),
 			..Default::default()
@@ -209,7 +216,7 @@ impl LightManager
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[ vs_shadow::load(device.clone())? ],
-			RasterizationState{ cull_mode: CullMode::Back, ..Default::default() },
+			rasterization_state,
 			None,
 			vec![],
 			vec![
