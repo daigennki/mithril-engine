@@ -275,7 +275,7 @@ impl LightManager
 
 		let center = frustum_corners.iter().sum::<Vec4>() * (1.0 / 8.0);
 		let center_vec3 = center.truncate();
-		let view = Mat4::look_at_lh(center_vec3 + dir_vec3, center_vec3, Vec3::Y);
+		let view = Mat4::look_to_lh(center_vec3, dir_vec3, Vec3::Y);
 
 		let mut min_x = f32::MAX;
 		let mut max_x = f32::MIN;
@@ -305,9 +305,7 @@ impl LightManager
 			max_z *= z_mul;
 		}
 
-		// `max_z` and `min_z` are intentionally swapped from their typical positions here,
-		// because otherwise the depth gets reversed ("furthest" is 0.0 instead of 1.0) for some reason
-		let proj = Mat4::orthographic_lh(min_x, max_x, min_y, max_y, max_z, min_z);
+		let proj = Mat4::orthographic_lh(min_x, max_x, min_y, max_y, min_z, max_z);
 
 		self.dir_light_projview = proj * view;
 
