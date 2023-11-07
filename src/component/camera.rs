@@ -13,6 +13,9 @@ use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
 use crate::GenericEngineError;
 
+pub const CAMERA_NEAR: f32 = 0.25;
+pub const CAMERA_FAR: f32 = 20.0;
+
 /// Enum for the camera FoV (Field of View), in degrees.
 /// The FoV for the other axis is calculated automatically from the current window aspect ratio.
 #[derive(Copy, Clone, Deserialize)]
@@ -92,6 +95,8 @@ impl CameraManager
 		self.active_camera
 	}
 
+
+
 	/// Get the multiplied projection and view matrix to be used in shaders.
 	pub fn projview(&self) -> Mat4
 	{
@@ -115,9 +120,9 @@ fn calculate_projview(pos: Vec3, dir: Vec3, width: u32, height: u32, fov: Camera
 		CameraFov::X(fov_x_deg) => fov_x_deg / aspect_ratio,
 		CameraFov::Y(fov_y_deg) => fov_y_deg,
 	};
-	let fov_y_rad = fov_y_deg * std::f32::consts::PI / 180.0;
+	let fov_y_rad = fov_y_deg.to_radians();
 
-	let proj = Mat4::perspective_lh(fov_y_rad, aspect_ratio, 0.25, 5000.0);
+	let proj = Mat4::perspective_lh(fov_y_rad, aspect_ratio, CAMERA_NEAR, CAMERA_FAR);
 	let view = Mat4::look_at_lh(pos, pos + dir, Vec3::NEG_Z);
 	let sky_view = Mat4::look_at_lh(Vec3::ZERO, dir, Vec3::NEG_Z);
 

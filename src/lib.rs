@@ -119,7 +119,7 @@ impl GameContext
 
 		let (world, sky) = load_world(start_map)?;
 
-		let mut camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(180.0 / std::f32::consts::PI))?;
+		let mut camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?;
 		world.run(|cameras: View<Camera>| {
 			// for now, just choose the first camera in the world.
 			// TODO: figure out a better way to choose the default camera

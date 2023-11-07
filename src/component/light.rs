@@ -64,7 +64,13 @@ fn update_directional_light(
 	if let Some((dl, t)) = (&dir_lights, &transforms).iter().next() {
 		match transforms.get(camera_manager.active_camera()) {
 			Ok(camera_transform) => {
-				if let Err(e) = light_manager.update_dir_light(&mut render_ctx, dl, t, camera_transform.position) {
+				if let Err(e) = light_manager.update_dir_light(
+					&mut render_ctx,
+					dl,
+					t,
+					camera_transform.position,
+					camera_manager.projview(),
+				) {
 					log::error!("update_directional_light: Failed to update `DirectionalLight` GPU buffer: {}", e);
 				}
 			}
@@ -246,16 +252,62 @@ impl LightManager
 		light: &DirectionalLight,
 		transform: &Transform,
 		camera_pos: Vec3,
+		camera_projview: Mat4,
 	)
 		-> Result<(), GenericEngineError>
 	{
-		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
-		let dir_vec3 = direction.into();
-		let far = 100.0;
-		let proj = Mat4::orthographic_lh(-10.0, 10.0, -10.0, 10.0, 1.0, far);
+		/* fit the light view and projection matrices to the camera frustum */
+		let camera_projview_inv = camera_projview.inverse();
+		let mut frustum_corners = Vec::with_capacity(8);
+		for x in 0..2 {
+			for y in 0..2 {
+				for z in 0..2 {
+					let pt_x = 2 * x - 1;
+					let pt_y = 2 * y - 1;
+					let pt = camera_projview_inv * Vec4::new(pt_x as f32, pt_y as f32, z as f32, 1.0);
+					frustum_corners.push(pt / pt.w);
+				}
+			}
+		}
 
-		// TODO: adjust the eye position here to more efficiently cover the camera frustum
-		let view = Mat4::look_to_lh(camera_pos - dir_vec3 * 50.0, dir_vec3, Vec3::NEG_Y);
+		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
+		let dir_vec3: Vec3 = direction.into();
+
+		let center = frustum_corners.iter().sum::<Vec4>() * (1.0 / 8.0);
+		let center_vec3 = center.truncate();
+		let view = Mat4::look_at_lh(center_vec3 + dir_vec3, center_vec3, Vec3::Y);
+
+		let mut min_x = f32::MAX;
+		let mut max_x = f32::MIN;
+		let mut min_y = f32::MAX;
+		let mut max_y = f32::MIN;
+		let mut min_z = f32::MAX;
+		let mut max_z = f32::MIN;
+		for v in frustum_corners {
+			let trf = view * v;
+			min_x = min_x.min(trf.x);
+			max_x = max_x.max(trf.x);
+			min_y = min_y.min(trf.y);
+			max_y = max_y.max(trf.y);
+			min_z = min_z.min(trf.z);
+			max_z = max_z.max(trf.z);
+		}
+
+		let z_mul = 1.0;
+		if min_z < 0.0 {
+			min_z *= z_mul;
+		} else {
+			min_z /= z_mul;
+		}
+		if max_z < 0.0 {
+			max_z /= z_mul;
+		} else {
+			max_z *= z_mul;
+		}
+
+		// `max_z` and `min_z` are intentionally swapped from their typical positions here,
+		// because otherwise the depth gets reversed ("furthest" is 0.0 instead of 1.0) for some reason
+		let proj = Mat4::orthographic_lh(min_x, max_x, min_y, max_y, max_z, min_z);
 
 		self.dir_light_projview = proj * view;
 
