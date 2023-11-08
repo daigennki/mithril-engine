@@ -11,7 +11,7 @@ layout(binding = 1) uniform texture2D base_color;
 layout(set = 1, binding = 0) uniform samplerShadow shadow_sampler;
 struct DirLight
 {
-	mat4 projview;
+	mat4 projviews[3];
 	vec3 direction;
 	float _filler1;
 	vec4 color_intensity;
@@ -33,7 +33,7 @@ layout(location = 0) out vec4 color_out;
 
 vec3 calc_diff(vec3 light_direction, vec3 normal, vec3 tex_diffuse)
 {
-	vec4 dir_light_relative_pos = dir_light.projview * vec4(world_pos, 1.0);
+	vec4 dir_light_relative_pos = dir_light.projviews[0] * vec4(world_pos, 1.0);
 	dir_light_relative_pos /= dir_light_relative_pos.w;
 	dir_light_relative_pos.xy = dir_light_relative_pos.xy * 0.5 + 0.5;
 	float shadow = texture(sampler2DShadow(dir_light_shadow, shadow_sampler), dir_light_relative_pos.xyz);

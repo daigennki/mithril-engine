@@ -7,7 +7,7 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{Get, IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
+use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -18,7 +18,8 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	sampler::{Filter, SamplerCreateInfo, Sampler}, view::ImageView, Image, ImageCreateInfo, ImageUsage
+	sampler::{BorderColor, Filter, SamplerAddressMode, SamplerCreateInfo, Sampler}, 
+	view::ImageView, Image, ImageCreateInfo, ImageUsage
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::{
@@ -62,19 +63,22 @@ fn update_directional_light(
 	// Only use the first directional light found.
 	// There should really be only one of these in the world anyways.
 	if let Some((dl, t)) = (&dir_lights, &transforms).iter().next() {
-		match transforms.get(camera_manager.active_camera()) {
-			Ok(camera_transform) => {
-				if let Err(e) = light_manager.update_dir_light(
-					&mut render_ctx,
-					dl,
-					t,
-					camera_transform.position,
-					camera_manager.projview(),
-				) {
-					log::error!("update_directional_light: Failed to update `DirectionalLight` GPU buffer: {}", e);
-				}
-			}
-			Err(e) => log::error!("update_directional_light: {} (active camera ID might be invalid or not set)", e),
+		// Cut the camera frustum into different pieces for the light.
+		let fars = [10.0, 30.0, crate::component::camera::CAMERA_FAR];
+		let mut cut_frustums: [Mat4; 3] = Default::default();
+		let mut near = crate::component::camera::CAMERA_NEAR;
+		for (i, far) in fars.into_iter().enumerate() {
+			cut_frustums[i] = camera_manager.proj_with_near_far(near, far);
+			near = fars[i];
+		}
+
+		if let Err(e) = light_manager.update_dir_light(
+			&mut render_ctx,
+			dl,
+			t,
+			cut_frustums,
+		) {
+			log::error!("update_directional_light: Failed to update `DirectionalLight` GPU buffer: {}", e);
 		}
 	}
 }
@@ -98,7 +102,7 @@ pub struct SpotLight
 #[repr(C)]
 struct DirLightData
 {
-	projview: Mat4,
+	projviews: [Mat4; 3],
 	direction: Vec3A,
 	color_intensity: Vec4, // RGB is color, A is intensity
 }
@@ -107,7 +111,7 @@ impl Default for DirLightData
 	fn default() -> Self
 	{
 		DirLightData {
-			projview: Mat4::IDENTITY,
+			projviews: Default::default(),
 			direction: Vec3A::NEG_Z,
 			color_intensity: Vec4::ONE,
 		}
@@ -129,7 +133,7 @@ struct SpotLightData
 #[derive(shipyard::Unique)]
 pub struct LightManager
 {
-	dir_light_projview: Mat4,
+	dir_light_projviews: [Mat4; 3],
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
 	dir_light_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
@@ -170,6 +174,12 @@ impl LightManager
 		let sampler_info = SamplerCreateInfo {
 			mag_filter: Filter::Linear,
 			min_filter: Filter::Linear,
+			address_mode: [
+				SamplerAddressMode::ClampToBorder,
+				SamplerAddressMode::ClampToBorder,
+				SamplerAddressMode::ClampToBorder,
+			],
+			border_color: BorderColor::FloatTransparentBlack,
 			compare: Some(CompareOp::LessOrEqual),
 			..Default::default()
 		};
@@ -237,7 +247,7 @@ impl LightManager
 		)?;
 
 		Ok(LightManager {
-			dir_light_projview: Mat4::IDENTITY,
+			dir_light_projviews: Default::default(),
 			dir_light_buf,
 			dir_light_shadow: dir_light_shadow_view,
 			dir_light_cb: None,
@@ -251,66 +261,68 @@ impl LightManager
 		render_ctx: &mut RenderContext,
 		light: &DirectionalLight,
 		transform: &Transform,
-		camera_pos: Vec3,
-		camera_projview: Mat4,
+		cut_camera_frustums: [Mat4; 3],
 	)
 		-> Result<(), GenericEngineError>
 	{
-		/* fit the light view and projection matrices to the camera frustum */
-		let camera_projview_inv = camera_projview.inverse();
-		let mut frustum_corners = Vec::with_capacity(8);
-		for x in 0..2 {
-			for y in 0..2 {
-				for z in 0..2 {
-					let pt_x = 2 * x - 1;
-					let pt_y = 2 * y - 1;
-					let pt = camera_projview_inv * Vec4::new(pt_x as f32, pt_y as f32, z as f32, 1.0);
-					frustum_corners.push(pt / pt.w);
+		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
+
+		// Fit the light view and projection matrices to different sections of the camera frustum.
+		// Most of this is adapted from here: https://learnopengl.com/Guest-Articles/2021/CSM
+		for (i, cut_frustum) in cut_camera_frustums.iter().enumerate() {
+			let camera_projview_inv = cut_frustum.inverse();
+			let mut frustum_corners: [Vec4; 8] = Default::default();
+			let mut corner_i = 0;
+			for x in 0..2 {
+				for y in 0..2 {
+					for z in 0..2 {
+						let pt_x = 2 * x - 1;
+						let pt_y = 2 * y - 1;
+						let pt = camera_projview_inv * IVec4::new(pt_x, pt_y, z, 1).as_vec4();
+						frustum_corners[corner_i] = pt / pt.w;
+						corner_i += 1;
+					}
 				}
 			}
+
+			let center = frustum_corners.iter().sum::<Vec4>() * (1.0 / 8.0);
+			let view = Mat4::look_to_lh(center.truncate(), direction.into(), Vec3::Y);
+
+			let mut min_x = f32::MAX;
+			let mut max_x = f32::MIN;
+			let mut min_y = f32::MAX;
+			let mut max_y = f32::MIN;
+			let mut min_z = f32::MAX;
+			let mut max_z = f32::MIN;
+			for v in frustum_corners {
+				let trf = view * v;
+				min_x = min_x.min(trf.x);
+				max_x = max_x.max(trf.x);
+				min_y = min_y.min(trf.y);
+				max_y = max_y.max(trf.y);
+				min_z = min_z.min(trf.z);
+				max_z = max_z.max(trf.z);
+			}
+
+			let z_mul = 10.0;
+			if min_z < 0.0 {
+				min_z *= z_mul;
+			} else {
+				min_z /= z_mul;
+			}
+			if max_z < 0.0 {
+				max_z /= z_mul;
+			} else {
+				max_z *= z_mul;
+			}
+
+			let proj = Mat4::orthographic_lh(min_x, max_x, min_y, max_y, min_z, max_z);
+
+			self.dir_light_projviews[i] = proj * view;
 		}
-
-		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
-		let dir_vec3: Vec3 = direction.into();
-
-		let center = frustum_corners.iter().sum::<Vec4>() * (1.0 / 8.0);
-		let center_vec3 = center.truncate();
-		let view = Mat4::look_to_lh(center_vec3, dir_vec3, Vec3::Y);
-
-		let mut min_x = f32::MAX;
-		let mut max_x = f32::MIN;
-		let mut min_y = f32::MAX;
-		let mut max_y = f32::MIN;
-		let mut min_z = f32::MAX;
-		let mut max_z = f32::MIN;
-		for v in frustum_corners {
-			let trf = view * v;
-			min_x = min_x.min(trf.x);
-			max_x = max_x.max(trf.x);
-			min_y = min_y.min(trf.y);
-			max_y = max_y.max(trf.y);
-			min_z = min_z.min(trf.z);
-			max_z = max_z.max(trf.z);
-		}
-
-		let z_mul = 1.0;
-		if min_z < 0.0 {
-			min_z *= z_mul;
-		} else {
-			min_z /= z_mul;
-		}
-		if max_z < 0.0 {
-			max_z /= z_mul;
-		} else {
-			max_z *= z_mul;
-		}
-
-		let proj = Mat4::orthographic_lh(min_x, max_x, min_y, max_y, min_z, max_z);
-
-		self.dir_light_projview = proj * view;
 
 		let dir_light_data = DirLightData {
-			projview: self.dir_light_projview,
+			projviews: self.dir_light_projviews,
 			direction,
 			color_intensity: light.color.extend(light.intensity),
 		};
@@ -333,7 +345,7 @@ impl LightManager
 	}
 	pub fn get_dir_light_projview(&self) -> Mat4
 	{
-		self.dir_light_projview
+		self.dir_light_projviews[0]
 	}
 
 	pub fn get_all_lights_set(&self) -> &Arc<PersistentDescriptorSet>
