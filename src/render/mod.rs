@@ -509,7 +509,7 @@ impl RenderContext
 	pub fn submit_frame(
 		&mut self,
 		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>, 
-		shadow: Option<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
+		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
 	) -> Result<(), GenericEngineError>
 	{
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
@@ -524,13 +524,13 @@ impl RenderContext
 		}
 
 		// shadows
-		if let Some((shadow_cb, shadow_image_view)) = shadow {
+		for (shadow_cb, shadow_layer_image_view) in dir_light_shadows {
 			let shadow_render_info = RenderingInfo {
 				depth_attachment: Some(RenderingAttachmentInfo {
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Depth(1.0)),
-					..RenderingAttachmentInfo::image_view(shadow_image_view)
+					..RenderingAttachmentInfo::image_view(shadow_layer_image_view)
 				}),
 				contents: SubpassContents::SecondaryCommandBuffers,
 				..Default::default()

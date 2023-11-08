@@ -8,10 +8,12 @@ layout(binding = 0) uniform sampler sampler0;
 layout(binding = 1) uniform texture2D base_color;
 
 /* lighting stuff */
+#define CSM_COUNT 3
+
 layout(set = 1, binding = 0) uniform samplerShadow shadow_sampler;
 struct DirLight
 {
-	mat4 projviews[3];
+	mat4 projviews[CSM_COUNT];
 	vec3 direction;
 	float _filler1;
 	vec4 color_intensity;
@@ -20,7 +22,8 @@ layout(set = 1, binding = 1) uniform dir_light_ubo
 {
 	DirLight dir_light;
 };
-layout(set = 1, binding = 2) uniform texture2D dir_light_shadow;
+layout(set = 1, binding = 2) uniform texture2DArray dir_light_shadow;
+
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in vec3 normal;
@@ -33,12 +36,27 @@ layout(location = 0) out vec4 color_out;
 
 vec3 calc_diff(vec3 light_direction, vec3 normal, vec3 tex_diffuse)
 {
-	vec4 dir_light_relative_pos = dir_light.projviews[0] * vec4(world_pos, 1.0);
-	dir_light_relative_pos /= dir_light_relative_pos.w;
-	dir_light_relative_pos.xy = dir_light_relative_pos.xy * 0.5 + 0.5;
-	float shadow = texture(sampler2DShadow(dir_light_shadow, shadow_sampler), dir_light_relative_pos.xyz);
-	
-	float diff_intensity = max(dot(normal, -light_direction), 0.0) * shadow;
+	// Go through all of the shadow maps, and use the closest shadow map for which the point is in view.
+	// If the point is not in view of any of them, fall back to basic shading without shadow mapping.
+	// We go from furthest to closest here so that the closest shadow map takes priority over others 
+	// if the position is inside of it.
+	float shadow_actual = 1.0;
+	for (int i = CSM_COUNT-1; i >= 0; i -= 1) {
+		vec4 dir_light_relative_pos = dir_light.projviews[i] * vec4(world_pos, 1.0);
+		dir_light_relative_pos /= dir_light_relative_pos.w;
+		dir_light_relative_pos.xy = dir_light_relative_pos.xy * 0.5 + 0.5;
+
+		bool in_range =
+			dir_light_relative_pos.x >= 0.0 && dir_light_relative_pos.x < 1.0
+			&& dir_light_relative_pos.y >= 0.0 && dir_light_relative_pos.y < 1.0
+			&& dir_light_relative_pos.z >= 0.0 && dir_light_relative_pos.z < 1.0;
+
+		vec4 shadow_coord = vec4(dir_light_relative_pos.xy, i, dir_light_relative_pos.z);
+		float shadow = texture(sampler2DArrayShadow(dir_light_shadow, shadow_sampler), shadow_coord);
+		shadow_actual = (in_range ? shadow : shadow_actual);
+	}
+
+	float diff_intensity = max(dot(normal, -light_direction), 0.0) * shadow_actual;
 	vec3 diffuse = diff_intensity * tex_diffuse;
 	return diffuse;
 }

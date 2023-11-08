@@ -304,40 +304,39 @@ fn draw_shadows(
 	mut light_manager: UniqueViewMut<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let dir_light_image_view = light_manager.get_dir_light_shadow();
-	let dir_light_extent = dir_light_image_view.image().extent();
+	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
+	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
 
-	let mut dir_light_shadows_cb = render_ctx.new_secondary_command_buffer(
-		vec![], 
-		Some(dir_light_image_view.format()),
-		[ dir_light_extent[0], dir_light_extent[1] ],
-	)?;
+	for layer_projview in light_manager.get_dir_light_projviews() {
+		let mut dir_light_shadows_cb = render_ctx.new_secondary_command_buffer(
+			vec![], 
+			Some(light_manager.get_dir_light_shadow().format()),
+			[ dir_light_extent[0], dir_light_extent[1] ],
+		)?;
 
-	let dir_projview = light_manager.get_dir_light_projview();
-	let shadow_pipeline = light_manager.get_shadow_pipeline();
+		dir_light_shadows_cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
 
-	dir_light_shadows_cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
-
-	for (eid, transform) in transforms.iter().with_id() {
-		if mesh_manager.has_opaque_materials(eid) {
-			let model_matrix = transform.get_matrix();
-			let transform_mat = dir_projview * model_matrix;
-			let model_mat3a = Mat3A::from_mat4(model_matrix);
-			mesh_manager.draw(
-				eid,
-				&mut dir_light_shadows_cb,
-				shadow_pipeline.layout().clone(),
-				transform_mat,
-				model_mat3a,
-				transform.position,
-				false,
-				false,
-				true,
-			)?;
+		for (eid, transform) in transforms.iter().with_id() {
+			if mesh_manager.has_opaque_materials(eid) {
+				let model_matrix = transform.get_matrix();
+				let transform_mat = layer_projview * model_matrix;
+				let model_mat3a = Mat3A::from_mat4(model_matrix);
+				mesh_manager.draw(
+					eid,
+					&mut dir_light_shadows_cb,
+					shadow_pipeline.layout().clone(),
+					transform_mat,
+					model_mat3a,
+					transform.position,
+					false,
+					false,
+					true,
+				)?;
+			}
 		}
-	}
 
-	light_manager.add_dir_light_cb(dir_light_shadows_cb.build()?);
+		light_manager.add_dir_light_cb(dir_light_shadows_cb.build()?);
+	}	
 
 	Ok(())
 }
@@ -518,10 +517,7 @@ fn submit_frame(
 	mut light_manager: UniqueViewMut<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	render_ctx.submit_frame(
-		canvas.take_cb(), 
-		light_manager.take_dir_light_cb().map(|cb| (cb, light_manager.get_dir_light_shadow().clone()))
-	)
+	render_ctx.submit_frame(canvas.take_cb(), light_manager.drain_dir_light_cb())
 }
 
 // Get data path, set up logging, and return the data path.

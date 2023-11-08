@@ -18,8 +18,8 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	sampler::{BorderColor, Filter, SamplerAddressMode, SamplerCreateInfo, Sampler}, 
-	view::ImageView, Image, ImageCreateInfo, ImageUsage
+	sampler::{Filter, SamplerCreateInfo, Sampler}, 
+	view::{ImageView, ImageViewCreateInfo}, Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::{
@@ -64,7 +64,7 @@ fn update_directional_light(
 	// There should really be only one of these in the world anyways.
 	if let Some((dl, t)) = (&dir_lights, &transforms).iter().next() {
 		// Cut the camera frustum into different pieces for the light.
-		let fars = [10.0, 30.0, crate::component::camera::CAMERA_FAR];
+		let fars = [6.0, 12.0, 24.0];
 		let mut cut_frustums: [Mat4; 3] = Default::default();
 		let mut near = crate::component::camera::CAMERA_NEAR;
 		for (i, far) in fars.into_iter().enumerate() {
@@ -136,7 +136,8 @@ pub struct LightManager
 	dir_light_projviews: [Mat4; 3],
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
-	dir_light_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
+	dir_light_shadow_layers: Vec<Arc<ImageView>>,
+	dir_light_cb: Vec<Arc<SecondaryAutoCommandBuffer>>,
 
 	/*point_light_buf: Arc<Subbuffer<[PointLightData]>>,
 	spot_light_buf: Arc<Subbuffer<[SpotLightData]>>,*/
@@ -156,6 +157,7 @@ impl LightManager
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
 			format: Format::D16_UNORM,
 			extent: [ 1024, 1024, 1 ],
+			array_layers: 3,
 			..Default::default()
 		};
 
@@ -168,18 +170,31 @@ impl LightManager
 			image_info.clone(), 
 			AllocationCreateInfo::default()
 		)?;
-		let dir_light_shadow_view = ImageView::new_default(dir_light_shadow_img)?;
+		let dir_light_shadow_view_info = ImageViewCreateInfo {
+			usage: ImageUsage::SAMPLED,
+			..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
+		};
+		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
+
+		let mut dir_light_shadow_layers = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
+		for i in 0..dir_light_shadow_img.array_layers() {
+			let layer_info = ImageViewCreateInfo {
+				subresource_range: ImageSubresourceRange {
+					aspects: ImageAspects::DEPTH,
+					mip_levels: 0..1,
+					array_layers: i..(i+1),
+				},
+				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+				..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
+			};
+			let layer_view = ImageView::new(dir_light_shadow_img.clone(), layer_info)?;
+			dir_light_shadow_layers.push(layer_view);
+		}
 
 		/* shadow sampler */
 		let sampler_info = SamplerCreateInfo {
 			mag_filter: Filter::Linear,
 			min_filter: Filter::Linear,
-			address_mode: [
-				SamplerAddressMode::ClampToBorder,
-				SamplerAddressMode::ClampToBorder,
-				SamplerAddressMode::ClampToBorder,
-			],
-			border_color: BorderColor::FloatTransparentBlack,
 			compare: Some(CompareOp::LessOrEqual),
 			..Default::default()
 		};
@@ -250,7 +265,8 @@ impl LightManager
 			dir_light_projviews: Default::default(),
 			dir_light_buf,
 			dir_light_shadow: dir_light_shadow_view,
-			dir_light_cb: None,
+			dir_light_shadow_layers,
+			dir_light_cb: Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap()),
 			all_lights_set,
 			shadow_pipeline,
 		})
@@ -332,20 +348,23 @@ impl LightManager
 
 	pub fn add_dir_light_cb(&mut self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
-		self.dir_light_cb = Some(cb);
+		if self.dir_light_cb.len() == self.dir_light_cb.capacity() {
+			panic!("attempted to add too many command buffers for directional light rendering");
+		}
+		self.dir_light_cb.push(cb);
 	}
-	pub fn take_dir_light_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
+	pub fn drain_dir_light_cb(&mut self) -> Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>
 	{
-		self.dir_light_cb.take()
+		self.dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter().cloned()).collect()
 	}
 
 	pub fn get_dir_light_shadow(&self) -> &Arc<ImageView>
 	{
 		&self.dir_light_shadow
 	}
-	pub fn get_dir_light_projview(&self) -> Mat4
+	pub fn get_dir_light_projviews(&self) -> [Mat4; 3]
 	{
-		self.dir_light_projviews[0]
+		self.dir_light_projviews
 	}
 
 	pub fn get_all_lights_set(&self) -> &Arc<PersistentDescriptorSet>
