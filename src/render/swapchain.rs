@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 use vulkano::{Validated, VulkanError};
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
@@ -15,7 +15,7 @@ use vulkano::swapchain::{
 	PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{
-	future::{FenceSignalFuture, GpuFuture}
+	future::{FenceSignalFuture, GpuFuture, NowFuture}
 };
 use winit::window::Window;
 
@@ -144,40 +144,37 @@ impl Swapchain
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
 	/// swapchain image, usually blitting to it) and then present the resulting image.
-	/// Optionally, a GpuFuture `after` to wait for (such as for joining submitted transfers on another queue) can be given, so
-	/// that graphics operations don't begin until after the future is reached.
-	/// Note that `after` does not need to be a signalled fence or semaphore, as signalling will be done in this function.
+	/// Optionally, a future `after` to wait for (usually for joining submitted transfers on another queue) can be given, so
+	/// that graphics operations don't begin until after that future is reached.
 	pub fn present(
 		&mut self,
 		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
-		after: Option<Box<dyn GpuFuture + Send + Sync>>,
+		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let acquire_future = self
 			.acquire_future
 			.take()
-			.expect("Command buffer submitted without acquiring an image!");
+			.expect("Command buffer submit attempted without acquiring an image!");
 
-		let present_info =
-			SwapchainPresentInfo::swapchain_image_index(acquire_future.swapchain().clone(), acquire_future.image_index());
+		let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), acquire_future.image_index());
 
 		let mut joined_futures = acquire_future.boxed_send_sync();
-
-		if let Some(f) = after {
-			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
-			let fence_future = f.then_signal_fence();
-			fence_future.wait(None)?;
-			joined_futures = Box::new(joined_futures.join(fence_future));
-		}
 
 		if let Some(f) = self.submission_future.take() {
 			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
+		if let Some(f) = after {
+			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
+			f.wait(None)?;
+			joined_futures = Box::new(joined_futures.join(f));
+		}
+
 		let future_result = joined_futures
-			.then_execute(queue.clone(), Arc::new(cb))?
+			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, present_info)
 			.boxed_send_sync()
 			.then_signal_fence_and_flush();

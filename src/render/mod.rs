@@ -46,7 +46,7 @@ use vulkano::memory::{
 };
 use vulkano::pipeline::graphics::{viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
-use vulkano::sync::{future::NowFuture, GpuFuture};
+use vulkano::sync::{future::{FenceSignalFuture, NowFuture}, GpuFuture};
 use winit::window::WindowBuilder;
 
 use crate::GenericEngineError;
@@ -74,8 +74,8 @@ pub struct RenderContext
 
 	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 
-	// Futures from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
-	transfer_future: Option<CommandBufferExecFuture<NowFuture>>,
+	// Future from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
+	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
 
 	// Loaded textures, with the key being the path relative to the current working directory
 	textures: HashMap<PathBuf, Arc<Texture>>,
@@ -405,32 +405,30 @@ impl RenderContext
 	pub fn submit_async_transfers(&mut self) -> Result<(), GenericEngineError>
 	{
 		if self.async_transfers.len() > 0 {
-			if let Some(q) = self.transfer_queue.as_ref() {
-				let mut cb = AutoCommandBufferBuilder::primary(
-					&self.command_buffer_allocator,
-					q.queue_family_index(),
-					CommandBufferUsage::OneTimeSubmit,
-				)?;
+			// `self.transfer_queue` must be `Some` as long as the check for
+			// `transfer_queue` worked properly in `add_transfer`.
+			let q = self.transfer_queue.as_ref().unwrap();
 
-				for work in self.async_transfers.drain(..) {
-					work.add_command(&mut cb)?;
-				}
+			let mut cb = AutoCommandBufferBuilder::primary(
+				&self.command_buffer_allocator,
+				q.queue_family_index(),
+				CommandBufferUsage::OneTimeSubmit,
+			)?;
 
-				let transfer_future = cb.build()?.execute(q.clone())?;
-				transfer_future.flush()?;
+			for work in self.async_transfers.drain(..) {
+				work.add_command(&mut cb)?;
+			}
 
-				if self.transfer_future.is_some() {
-					// Async transfer futures *must* be used when the draw commands are submitted,
-					// otherwise we can't guarantee that the transfers have finished by the time
-					// the draws that need them are performed.
-					panic!("Unused async transfer future found!");
-				}
+			let transfer_future = cb
+				.build()?
+				.execute(q.clone())?
+				.then_signal_fence_and_flush()?;
 
-				self.transfer_future = Some(transfer_future);
-			} else {
-				// This shouldn't be reached if the check for `transfer_queue`
-				// being `Some` worked properly in `add_transfer`.
-				unreachable!();
+			// This panics here if there's an unused future, because it *must* have been used when
+			// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
+			// have finished by the time the draws that need them are performed.
+			if self.transfer_future.replace(transfer_future).is_some() {
+				panic!("Unused async transfer future found!");
 			}
 		}
 
@@ -592,7 +590,7 @@ impl RenderContext
 		primary_cb_builder.copy_image(copy_info)?;
 
 		// finish building the command buffer, then present the swapchain image
-		let transfer_future = self.transfer_future.take().map(|f| f.boxed_send_sync());
+		let transfer_future = self.transfer_future.take();
 		self.swapchain.present(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
 
 		// set the delta time
