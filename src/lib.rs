@@ -39,7 +39,7 @@ use render::RenderContext;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Run the game. This should go in your `main.rs`.
+/// Run the game. This should be called from your `main.rs`.
 /// `org_name` and `game_name` will be used for the data directory.
 /// `game_name` will also be used for the window title.
 /// `start_map` is the first map (level/world) to be loaded.
@@ -55,26 +55,25 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 
 	event_loop.set_control_flow(ControlFlow::Poll);
 
-	match GameContext::new(org_name, game_name, start_map, &event_loop) {
-		Ok(mut gctx) => {
-			if let Err(e) = event_loop.run(move |mut event, window_target| {
-				match event {
-					Event::WindowEvent {
-						event: WindowEvent::CloseRequested,
-						..
-					} => window_target.exit(),
-					_ => (),
-				};
+	let mut world = match init_world(org_name, game_name, start_map, &event_loop) {
+		Ok(w) => w,
+		Err(e) => {
+			log_error(e);
+			return;
+		}
+	};
 
-				if let Err(e) = gctx.handle_event(&mut event) {
-					log_error(e);
-					window_target.exit();
-				}
-			}) {
-				log_error(Box::new(e));
+	if let Err(e) = event_loop.run(move |mut event, window_target| {
+		match handle_event(&mut world, &mut event) {
+			Ok(true) => window_target.exit(),
+			Ok(false) => (),
+			Err(e) => {
+				log_error(e);
+				window_target.exit();
 			}
 		}
-		Err(e) => log_error(e),
+	}) {
+		log_error(Box::new(e));
 	}
 }
 
@@ -84,98 +83,89 @@ pub struct InputHelperWrapper
 	pub inner: WinitInputHelper,
 }
 
-struct GameContext
+fn init_world(org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>)
+	-> Result<World, GenericEngineError>
 {
-	world: World,
+	setup_log(org_name, game_name)?;
+
+	log::info!("--- Initializing MithrilEngine... ---");
+
+	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
+
+	let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
+	let mut mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
+
+	let light_manager = component::light::LightManager::new(&mut render_ctx)?;
+
+	let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
+	let mut pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
+	pbr_pipeline_config.set_layouts.push(light_manager.get_all_lights_set().layout().clone());
+	mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
+	render_ctx.load_material_pipeline("PBR", pbr_pipeline_config)?;
+
+	let (world, sky) = load_world(start_map)?;
+
+	let dim = render_ctx.swapchain_dimensions();
+
+	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
+	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
+	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
+	world.add_unique(mesh_manager);
+	world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
+	world.add_unique(render_ctx);
+	world.add_unique(light_manager);
+
+	Ok(world)
 }
-impl GameContext
+
+// returns true if the application should exit
+fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, GenericEngineError>
 {
-	pub fn new(
-		org_name: &str,
-		game_name: &str,
-		start_map: &str,
-		event_loop: &winit::event_loop::EventLoop<()>,
-	) -> Result<Self, GenericEngineError>
-	{
-		setup_log(org_name, game_name)?;
+	world.run(|mut input_helper_wrapper: UniqueViewMut<InputHelperWrapper>| {
+		input_helper_wrapper.inner.update(event);
+	});
 
-		log::info!("--- Initializing MithrilEngine... ---");
-
-		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
-
-		let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
-		let mut mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
-
-		let light_manager = component::light::LightManager::new(&mut render_ctx)?;
-
-		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
-		let mut pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
-		pbr_pipeline_config.set_layouts.push(light_manager.get_all_lights_set().layout().clone());
-		mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
-		render_ctx.load_material_pipeline("PBR", pbr_pipeline_config)?;
-
-		let (world, sky) = load_world(start_map)?;
-
-		let dim = render_ctx.swapchain_dimensions();
-
-		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
-		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
-		world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
-		world.add_unique(mesh_manager);
-		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
-		world.add_unique(render_ctx);
-		world.add_unique(light_manager);
-
-		Ok(GameContext { world })
-	}
-
-	pub fn handle_event(&mut self, event: &mut Event<()>) -> Result<(), GenericEngineError>
-	{
-		self.world.run(|mut input_helper_wrapper: UniqueViewMut<InputHelperWrapper>| {
-			input_helper_wrapper.inner.update(event);
-		});
-
-		match event {
-			Event::WindowEvent {
-				event: WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer },
-				..
-			} => {
-				let swapchain_dimensions = self
-					.world
-					.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
-				let desired_physical_size =
-					winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
-				log::info!(
-					"`ScaleFactorChanged` event gave us a scale factor of {}, giving back {:?}...",
-					scale_factor,
-					desired_physical_size
-				);
-				inner_size_writer.request_inner_size(desired_physical_size)?;
-			}
-			Event::WindowEvent {
-				event: WindowEvent::Resized(new_inner_size),
-				..
-			} => {
-				log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
-				self.world
-					.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
-			}
-			Event::AboutToWait => {
-				// Game logic: run systems usually specific to custom components in a project
-				if self.world.contains_workload("Game logic") {
-					self.world.run_workload("Game logic")?;
-				}
-
-				// Pre-render: update GPU resources for various components, to reflect the changes made in game logic systems
-				self.world.run_workload("Pre-render")?;
-
-				// Main rendering: build the command buffers, then submit them for presentation
-				self.world.run_workload("Render")?;
-			}
-			_ => (),
+	match event {
+		Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => return Ok(true),
+		Event::WindowEvent {
+			event: WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer },
+			..
+		} => {
+			let swapchain_dimensions = world
+				.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
+			let desired_physical_size =
+				winit::dpi::PhysicalSize::new(swapchain_dimensions[0], swapchain_dimensions[1]);
+			log::info!(
+				"`ScaleFactorChanged` event gave us a scale factor of {}, giving back {:?}...",
+				scale_factor,
+				desired_physical_size
+			);
+			inner_size_writer.request_inner_size(desired_physical_size)?;
 		}
-		Ok(())
+		Event::WindowEvent {
+			event: WindowEvent::Resized(new_inner_size),
+			..
+		} => {
+			log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
+			world
+				.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
+		}
+		Event::AboutToWait => {
+			// Game logic: run systems usually specific to custom components in a project
+			if world.contains_workload("Game logic") {
+				world.run_workload("Game logic")?;
+			}
+
+			// Pre-render: update GPU resources for various components, to reflect the changes made in game logic systems
+			world.run_workload("Pre-render")?;
+
+			// Main rendering: build the command buffers, then submit them for presentation
+			world.run_workload("Render")?;
+		}
+		_ => (),
 	}
+
+	Ok(false)
 }
 
 #[derive(Deserialize)]
@@ -216,22 +206,16 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 	}
 
 	if systems.len() > 0 {
-		let mut workload = Workload::new("Game logic");
-		for (_, system) in systems {
-			workload = workload.with_system(system);
-		}
-		if let Err(e) = workload.add_to_world(&world) {
-			log::error!("Failed to add game logic workload to world: {}", e);
-		}
+		systems
+			.into_values()
+			.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
+			.add_to_world(&world)?;
 	}
 
-	let mut workload = Workload::new("Pre-render");
-	for (_, system) in prerender_systems {
-		workload = workload.with_system(system);
-	}
-	if let Err(e) = workload.add_to_world(&world) {
-		log::error!("Failed to add pre-render workload to world: {}", e);
-	}
+	prerender_systems
+		.into_values()
+		.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
+		.add_to_world(&world)?;
 
 	// TODO: clean up removed components
 
