@@ -7,7 +7,7 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{EntityId, Get, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
+use shipyard::{iter::{IntoIter, IntoWithId}, EntityId, Get, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
@@ -32,6 +32,7 @@ pub enum CameraFov
 /// The entity must have a `Transform` component.
 /// The `Transform` component's position and rotation will be used for the camera's position and rotation.
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
+#[track(All)]
 pub struct Camera
 {
 	/// This camera's field of view.
@@ -50,13 +51,13 @@ impl WantsSystemAdded for Camera
 	}
 }
 fn select_default_camera(
-	camera_manager: UniqueViewMut<CameraManager>,
+	mut camera_manager: UniqueViewMut<CameraManager>,
 	cameras: View<Camera>,
 )
 {
 	// If an active camera is not set, set the first inserted camera as the active one.
 	if camera_manager.active_camera() == EntityId::dead() {
-		if let Some((eid, _)) = cameras.inserted().with_id().next() {
+		if let Some((eid, _)) = cameras.inserted().iter().with_id().next() {
 			camera_manager.set_active(eid);
 		}
 	}

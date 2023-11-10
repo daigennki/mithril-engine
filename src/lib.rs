@@ -29,7 +29,7 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit_input_helper::WinitInputHelper;
 
-use component::camera::{Camera, CameraFov, CameraManager};
+use component::camera::{CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
 use render::RenderContext;
