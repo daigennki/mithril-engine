@@ -30,5 +30,9 @@ impl WantsSystemAdded for UITransform
 	{
 		None
 	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
+		None
+	}
 }
 

@@ -42,7 +42,23 @@ impl WantsSystemAdded for Camera
 {
 	fn add_system(&self) -> Option<WorkloadSystem>
 	{
+		Some(select_default_camera.into_workload_system().unwrap())
+	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
 		Some(update_camera.into_workload_system().unwrap())
+	}
+}
+fn select_default_camera(
+	camera_manager: UniqueViewMut<CameraManager>,
+	cameras: View<Camera>,
+)
+{
+	// If an active camera is not set, set the first inserted camera as the active one.
+	if camera_manager.active_camera() == EntityId::dead() {
+		if let Some((eid, _)) = cameras.inserted().with_id().next() {
+			camera_manager.set_active(eid);
+		}
 	}
 }
 fn update_camera(

@@ -14,6 +14,10 @@ impl WantsSystemAdded for FpsCounter
 	{
 		Some(update_fps_counter.into_workload_system().unwrap())
 	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
+		None
+	}
 }
 fn update_fps_counter(
 	render_ctx: UniqueView<RenderContext>,

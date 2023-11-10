@@ -49,6 +49,10 @@ impl WantsSystemAdded for DirectionalLight
 {
 	fn add_system(&self) -> Option<WorkloadSystem>
 	{
+		None
+	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
 		Some(update_directional_light.into_workload_system().unwrap())
 	}
 }

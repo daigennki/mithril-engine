@@ -46,6 +46,10 @@ impl WantsSystemAdded for Transform
 	{
 		None
 	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
+		None
+	}
 }
 
 
@@ -75,5 +79,7 @@ pub trait EntityComponent: WantsSystemAdded + Send + Sync
 pub trait WantsSystemAdded
 {
 	fn add_system(&self) -> Option<WorkloadSystem>;
+
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>;
 }
 

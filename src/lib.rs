@@ -102,16 +102,13 @@ impl GameContext
 		log::info!("--- Initializing MithrilEngine... ---");
 
 		let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
-		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
-
-		let dim = render_ctx.swapchain_dimensions();
-		let canvas = Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?;
 
 		let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
 		let mut mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
 
 		let light_manager = component::light::LightManager::new(&mut render_ctx)?;
 
+		let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
 		let mut pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
 		pbr_pipeline_config.set_layouts.push(light_manager.get_all_lights_set().layout().clone());
 		mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
@@ -119,18 +116,11 @@ impl GameContext
 
 		let (world, sky) = load_world(start_map)?;
 
-		let mut camera_manager = CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?;
-		world.run(|cameras: View<Camera>| {
-			// for now, just choose the first camera in the world.
-			// TODO: figure out a better way to choose the default camera
-			if let Some((eid, _)) = cameras.iter().with_id().next() {
-				camera_manager.set_active(eid);
-			}
-		});
+		let dim = render_ctx.swapchain_dimensions();
 
-		world.add_unique(canvas);
+		world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
 		world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
-		world.add_unique(camera_manager);
+		world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
 		world.add_unique(mesh_manager);
 		world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
 		world.add_unique(render_ctx);
@@ -146,7 +136,7 @@ impl GameContext
 		});
 
 		match event {
-			Event::WindowEvent { 
+			Event::WindowEvent {
 				event: WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer },
 				..
 			} => {
@@ -162,7 +152,7 @@ impl GameContext
 				);
 				inner_size_writer.request_inner_size(desired_physical_size)?;
 			}
-			Event::WindowEvent { 
+			Event::WindowEvent {
 				event: WindowEvent::Resized(new_inner_size),
 				..
 			} => {
@@ -171,11 +161,15 @@ impl GameContext
 					.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain())?;
 			}
 			Event::AboutToWait => {
+				// Game logic: run systems usually specific to custom components in a project
 				if self.world.contains_workload("Game logic") {
 					self.world.run_workload("Game logic")?;
 				}
 
-				// main rendering: build the command buffers, then submit them for presentation
+				// Pre-render: update GPU resources for various components, to reflect the changes made in game logic systems
+				self.world.run_workload("Pre-render")?;
+
+				// Main rendering: build the command buffers, then submit them for presentation
 				self.world.run_workload("Render")?;
 			}
 			_ => (),
@@ -195,16 +189,25 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
 	let mut world = World::new();
 	let mut systems = BTreeMap::new();
+	let mut prerender_systems = BTreeMap::new();
 
 	for entity in world_data.entities {
 		let eid = world.add_entity(());
 		for component in entity {
+			let type_id = component.type_id();
+
 			// add the relevant system if the component returns one
 			if let Some(add_system) = component.add_system() {
-				let type_id = component.type_id();
 				if !systems.contains_key(&type_id) {
 					systems.insert(type_id, add_system);
 					log::debug!("inserted system for {}", component.type_name());
+				}
+			}
+
+			if let Some(add_system) = component.add_prerender_system() {
+				if !prerender_systems.contains_key(&type_id) {
+					prerender_systems.insert(type_id, add_system);
+					log::debug!("inserted pre-render system for {}", component.type_name());
 				}
 			}
 
@@ -222,11 +225,18 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		}
 	}
 
+	let mut workload = Workload::new("Pre-render");
+	for (_, system) in prerender_systems {
+		workload = workload.with_system(system);
+	}
+	if let Err(e) = workload.add_to_world(&world) {
+		log::error!("Failed to add pre-render workload to world: {}", e);
+	}
+
 	// TODO: clean up removed components
 
 	Workload::new("Render")
-		.with_try_system(prepare_ui)
-		.with_try_system(submit_async_transfers)
+		.with_try_system(|mut render_ctx: UniqueViewMut<render::RenderContext>| render_ctx.submit_async_transfers())
 		.with_try_system(draw_shadows)
 		.with_try_system(draw_3d)
 		.with_try_system(draw_3d_transparent_moments)
@@ -236,50 +246,6 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		.add_to_world(&world)?;
 
 	Ok((world, world_data.sky))
-}
-
-fn prepare_ui(
-	mut render_ctx: UniqueViewMut<render::RenderContext>,
-	mut canvas: UniqueViewMut<Canvas>,
-	ui_transforms: View<ui::UITransform>,
-	ui_meshes: View<ui::mesh::Mesh>,
-	ui_texts: View<ui::text::UIText>,
-) -> Result<(), GenericEngineError>
-{
-	if render_ctx.window_resized() {
-		let d = render_ctx.swapchain_dimensions();
-		canvas.on_screen_resize(d[0], d[1]);
-
-		for (eid, (t, mesh)) in (&ui_transforms, &ui_meshes).iter().with_id() {
-			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
-		}
-		for (eid, (t, text)) in (&ui_transforms, &ui_texts).iter().with_id() {
-			canvas.update_text(&mut render_ctx, eid, t, text)?
-		}
-	} else {
-		// Update inserted or modified components.
-		for (eid, (t, mesh)) in (ui_transforms.inserted_or_modified(), &ui_meshes).iter().with_id() {
-			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
-		}
-		for (eid, (t, text)) in (ui_transforms.inserted_or_modified(), &ui_texts).iter().with_id() {
-			canvas.update_text(&mut render_ctx, eid, t, text)?
-		}
-
-		// `Not` is used on `inserted_or_modified` here so that we don't run the updates twice.
-		for (eid, (t, mesh)) in (!ui_transforms.inserted_or_modified(), ui_meshes.inserted_or_modified()).iter().with_id() {
-			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
-		}
-		for (eid, (t, text)) in (!ui_transforms.inserted_or_modified(), ui_texts.inserted_or_modified()).iter().with_id() {
-			canvas.update_text(&mut render_ctx, eid, t, text)?
-		}
-	}
-
-	Ok(())
-}
-fn submit_async_transfers(mut render_ctx: UniqueViewMut<render::RenderContext>) -> Result<(), GenericEngineError>
-{
-	render_ctx.submit_async_transfers()?;
-	Ok(())
 }
 
 fn draw_shadows(

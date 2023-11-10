@@ -60,6 +60,10 @@ impl WantsSystemAdded for Mesh
 {
 	fn add_system(&self) -> Option<WorkloadSystem>
 	{
+		None
+	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
 		Some(update_meshes.into_workload_system().unwrap())
 	}
 }
