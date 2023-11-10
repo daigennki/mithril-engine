@@ -14,7 +14,7 @@ pub mod render;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{iter::{IntoIter, IntoWithId}, Get, UniqueView, UniqueViewMut, View, Workload, World};
+use shipyard::{iter::{IntoIter, IntoWithId}, UniqueView, UniqueViewMut, View, Workload, World};
 use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -222,8 +222,9 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		}
 	}
 
+	// TODO: clean up removed components
+
 	Workload::new("Render")
-		.with_try_system(prepare_primary_render)
 		.with_try_system(prepare_ui)
 		.with_try_system(submit_async_transfers)
 		.with_try_system(draw_shadows)
@@ -237,22 +238,6 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 	Ok((world, world_data.sky))
 }
 
-fn prepare_primary_render(
-	mut render_ctx: UniqueViewMut<render::RenderContext>,
-	transforms: View<component::Transform>,
-	mut camera_manager: UniqueViewMut<CameraManager>,
-	cameras: View<Camera>,
-	) -> Result<(), GenericEngineError>
-{
-	let active_camera_id = camera_manager.active_camera();
-	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
-		camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov)?;
-	}
-
-	// TODO: clean up removed components
-
-	Ok(())
-}
 fn prepare_ui(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	mut canvas: UniqueViewMut<Canvas>,
@@ -272,19 +257,19 @@ fn prepare_ui(
 			canvas.update_text(&mut render_ctx, eid, t, text)?
 		}
 	} else {
-		// Update inserted or modified components
-		// TODO: this might run `update_mesh` or `update_text` twice when both the `Transform` and
-		// the other component are inserted or modified; make it not run twice in such a case!
+		// Update inserted or modified components.
 		for (eid, (t, mesh)) in (ui_transforms.inserted_or_modified(), &ui_meshes).iter().with_id() {
 			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
 		}
 		for (eid, (t, text)) in (ui_transforms.inserted_or_modified(), &ui_texts).iter().with_id() {
 			canvas.update_text(&mut render_ctx, eid, t, text)?
 		}
-		for (eid, (t, mesh)) in (&ui_transforms, ui_meshes.inserted_or_modified()).iter().with_id() {
+
+		// `Not` is used on `inserted_or_modified` here so that we don't run the updates twice.
+		for (eid, (t, mesh)) in (!ui_transforms.inserted_or_modified(), ui_meshes.inserted_or_modified()).iter().with_id() {
 			canvas.update_mesh(&mut render_ctx, eid, t, mesh)?;
 		}
-		for (eid, (t, text)) in (&ui_transforms, ui_texts.inserted_or_modified()).iter().with_id() {
+		for (eid, (t, text)) in (!ui_transforms.inserted_or_modified(), ui_texts.inserted_or_modified()).iter().with_id() {
 			canvas.update_text(&mut render_ctx, eid, t, text)?
 		}
 	}

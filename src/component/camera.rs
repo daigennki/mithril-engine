@@ -7,7 +7,7 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{EntityId, WorkloadSystem};
+use shipyard::{EntityId, Get, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
@@ -42,7 +42,21 @@ impl WantsSystemAdded for Camera
 {
 	fn add_system(&self) -> Option<WorkloadSystem>
 	{
-		None
+		Some(update_camera.into_workload_system().unwrap())
+	}
+}
+fn update_camera(
+	mut render_ctx: UniqueViewMut<RenderContext>,
+	transforms: View<super::Transform>,
+	mut camera_manager: UniqueViewMut<CameraManager>,
+	cameras: View<Camera>,
+)
+{
+	let active_camera_id = camera_manager.active_camera();
+	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
+		if let Err(e) = camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov) {
+			log::error!("Failed to update camera: {}", e);
+		}
 	}
 }
 

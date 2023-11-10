@@ -68,6 +68,10 @@ pub trait EntityComponent: WantsSystemAdded + Send + Sync
 /// NOTE: The caveat with this is that the system will only be added if the component is specified in the map file!
 /// The system won't be added if you insert the component through the program. (TODO: figure out a way to get the
 /// system added even when the component is added through the program)
+///
+/// NOTE: This might also have some issues with changes made to components from other components not becoming visible
+/// until the next frame. (TODO: add a " update" system for components that need to make changes earlier, or instead
+/// make some components update later than others)
 pub trait WantsSystemAdded
 {
 	fn add_system(&self) -> Option<WorkloadSystem>;
