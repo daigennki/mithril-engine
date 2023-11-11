@@ -88,8 +88,6 @@ fn init_world(org_name: &str, game_name: &str, start_map: &str, event_loop: &win
 {
 	setup_log(org_name, game_name)?;
 
-	log::info!("--- Initializing MithrilEngine... ---");
-
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 
 	let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
@@ -105,9 +103,7 @@ fn init_world(org_name: &str, game_name: &str, start_map: &str, event_loop: &win
 
 	let (world, sky) = load_world(start_map)?;
 
-	let dim = render_ctx.swapchain_dimensions();
-
-	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720, dim[0], dim[1])?);
+	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
 	world.add_unique(mesh_manager);
@@ -491,6 +487,8 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 	);
 	let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
 	CombinedLogger::init(vec![term_logger, write_logger])?;
+
+	log::info!("--- Initializing MithrilEngine... ---");
 
 	Ok(data_path)
 }

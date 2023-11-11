@@ -98,7 +98,7 @@ pub struct Canvas
 }
 impl Canvas
 {
-	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32)
+	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32)
 		-> Result<Self, GenericEngineError>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
@@ -168,9 +168,11 @@ impl Canvas
 		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
 
+		let dim = render_ctx.swapchain_dimensions();
+
 		Ok(Canvas {
 			base_dimensions: [canvas_width, canvas_height],
-			projection: calculate_projection(canvas_width, canvas_height, screen_width, screen_height),
+			projection: calculate_projection(canvas_width, canvas_height, dim[0], dim[1]),
 			set_layout,
 			ui_pipeline,
 			gpu_resources: Default::default(),
