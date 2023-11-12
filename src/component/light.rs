@@ -346,7 +346,7 @@ impl LightManager
 			direction,
 			color_intensity: light.color.extend(light.intensity),
 		};
-		render_ctx.copy_to_buffer([dir_light_data], self.dir_light_buf.clone())?;
+		render_ctx.update_buffer(dir_light_data, self.dir_light_buf.clone().index(0))?;
 		Ok(())
 	}
 

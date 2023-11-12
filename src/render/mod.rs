@@ -24,7 +24,7 @@ use vulkano::{Validated, VulkanError};
 use vulkano::buffer::{
 	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
 	subbuffer::Subbuffer,
-	Buffer, BufferCreateInfo, BufferUsage,
+	Buffer, BufferContents, BufferCreateInfo, BufferUsage,
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
@@ -94,6 +94,10 @@ pub struct RenderContext
 
 	// A common `SubbufferAllocator` for high-frequency staging buffers.
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
+
+	// Keep track of maximum usage for the staging buffer allocator.
+	staging_buf_usage_frame: usize, // Maximum usage for just this frame.
+	staging_buf_max_size: usize, // Maximum usage for the entire duration of the program.
 
 	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
@@ -199,15 +203,15 @@ impl RenderContext
 		)?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: 128 * 1024, // TODO: determine an appropriate arena size based on actual memory usage
+			arena_size: 4096, // adjust this based on actual memory usage
 			buffer_usage: BufferUsage::TRANSFER_SRC,
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
-		// TODO: adjust capacity of these based on number of components that might need to do a transfer
-		let transfers = Vec::with_capacity(200);
+		// adjust capacity of these based on number of transfers that might be done in one frame
+		let transfers = Vec::with_capacity(16);
 		let async_transfers = Vec::with_capacity(200);
 
 		Ok(RenderContext {
@@ -227,6 +231,8 @@ impl RenderContext
 			intermediate_srgb_img,
 			transparency_renderer,
 			staging_buffer_allocator,
+			staging_buf_max_size: 0,
+			staging_buf_usage_frame: 0,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 			resize_this_frame: false,
@@ -290,7 +296,7 @@ impl RenderContext
 	) -> Result<texture::Texture, GenericEngineError>
 	where
 		Px: Send + Sync + bytemuck::Pod,
-		[Px]: vulkano::buffer::BufferContents,
+		[Px]: BufferContents,
 		I: IntoIterator<Item = Px>,
 		I::IntoIter: ExactSizeIterator,
 	{
@@ -306,7 +312,7 @@ impl RenderContext
 		T: Send + Sync + bytemuck::AnyBitPattern,
 		I: IntoIterator<Item = T>,
 		I::IntoIter: ExactSizeIterator,
-		[T]: vulkano::buffer::BufferContents,
+		[T]: BufferContents,
 	{
 		let buf = if self.allow_direct_buffer_access {
 			// When possible, upload directly to the new buffer memory.
@@ -346,92 +352,75 @@ impl RenderContext
 	}
 
 	/// Get a staging buffer from the common staging buffer allocator, and queue an upload using it.
-	pub fn copy_to_buffer<I, T>(&mut self, data: I, dst_buf: Subbuffer<[T]>) -> Result<(), GenericEngineError>
+	pub fn update_buffer<T>(&mut self, data: T, dst_buf: Subbuffer<T>) -> Result<(), GenericEngineError>
 	where
-		T: Send + Sync + bytemuck::AnyBitPattern,
-		I: IntoIterator<Item = T>,
-		I::IntoIter: ExactSizeIterator,
-		[T]: vulkano::buffer::BufferContents,
+		T: BufferContents + Copy,
 	{
-		let iter = data.into_iter();
-		let staging_buf = self
-			.staging_buffer_allocator
-			.lock()
-			.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?
-			.allocate_slice(iter.len().try_into()?)?;
+		self.staging_buf_usage_frame += std::mem::size_of::<T>();
 
-		for (o, i) in staging_buf.write()?.iter_mut().zip(iter) {
-			*o = i;
-		}
-
-		self.add_transfer_on_graphics_queue(CopyBufferInfo::buffers(staging_buf, dst_buf).into());
-		Ok(())
-	}
-
-	/// Add staging work for new objects.
-	/// This may be performed asynchronously with the CPU building the draw command buffers,
-	/// if there is a separate transfer queue.
-	fn add_transfer(&mut self, work: StagingWork)
-	{
-		if self.transfer_queue.is_some() {
-			if self.async_transfers.len() == self.async_transfers.capacity() {
-				log::warn!(
-					"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
-					self.async_transfers.len() + 1
-				);
-			}
-			self.async_transfers.push(work);
-		} else {
-			self.add_transfer_on_graphics_queue(work);
-		}
-	}
-
-	/// Submit a transfer on the graphics queue. Use this instead of `add_transfer` if
-	/// there's the possibility that the destination object is in use by a previous submission.
-	fn add_transfer_on_graphics_queue(&mut self, work: StagingWork)
-	{
+		// This will be submitted to the graphics queue since we're copying to an existing buffer,
+		// which might be in use by a previous submission.
 		if self.transfers.len() == self.transfers.capacity() {
 			log::warn!(
 				"Re-allocating `Vec` for transfers to {}! Consider increasing its initial capacity.",
 				self.transfers.len() + 1
 			);
 		}
-		self.transfers.push(work);
+		self.transfers.push(StagingWork::UpdateBuffer(Box::new(UpdateBufferData { dst_buf, data })));
+
+		Ok(())
+	}
+
+	/// Add staging work for new objects.
+	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
+	/// building the draw command buffers.
+	fn add_transfer(&mut self, work: StagingWork)
+	{
+		if self.async_transfers.len() == self.async_transfers.capacity() {
+			log::warn!(
+				"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
+				self.async_transfers.len() + 1
+			);
+		}
+		self.async_transfers.push(work);
 	}
 
 	/// Submit the asynchronous transfers that are waiting.
 	/// Run this just before beginning to build the draw command buffers,
 	/// so that the transfers can be done while the CPU is busy with building the draw command buffers.
+	///
+	/// This does nothing if there is no asynchronous transfer queue. In such a case, the transfers will
+	/// instead be done at the beginning of the graphics submission on the graphics queue.
 	pub fn submit_async_transfers(&mut self) -> Result<(), GenericEngineError>
 	{
-		if self.async_transfers.len() > 0 {
-			// `self.transfer_queue` must be `Some` as long as the check for
-			// `transfer_queue` worked properly in `add_transfer`.
-			let q = self.transfer_queue.as_ref().unwrap();
+		if let Some(q) = self.transfer_queue.as_ref() {
+			if self.async_transfers.len() > 0 {
+				let mut cb = AutoCommandBufferBuilder::primary(
+					&self.command_buffer_allocator,
+					q.queue_family_index(),
+					CommandBufferUsage::OneTimeSubmit,
+				)?;
 
-			let mut cb = AutoCommandBufferBuilder::primary(
-				&self.command_buffer_allocator,
-				q.queue_family_index(),
-				CommandBufferUsage::OneTimeSubmit,
-			)?;
+				let mut staging_buf_alloc_guard = self.staging_buffer_allocator
+					.lock()
+					.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?;
 
-			for work in self.async_transfers.drain(..) {
-				work.add_command(&mut cb)?;
-			}
+				for work in self.async_transfers.drain(..) {
+					work.add_command(&mut cb, &mut staging_buf_alloc_guard)?;
+				}
 
-			let transfer_future = cb
-				.build()?
-				.execute(q.clone())?
-				.then_signal_fence_and_flush()?;
+				let transfer_future = cb
+					.build()?
+					.execute(q.clone())?
+					.then_signal_fence_and_flush()?;
 
-			// This panics here if there's an unused future, because it *must* have been used when
-			// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
-			// have finished by the time the draws that need them are performed.
-			if self.transfer_future.replace(transfer_future).is_some() {
-				panic!("Unused async transfer future found!");
+				// This panics here if there's an unused future, because it *must* have been used when
+				// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
+				// have finished by the time the draws that need them are performed.
+				assert!(self.transfer_future.replace(transfer_future).is_none());
 			}
 		}
-
+		
 		Ok(())
 	}
 
@@ -516,9 +505,14 @@ impl RenderContext
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
 
-		// transfers
-		for work in self.transfers.drain(..) {
-			work.add_command(&mut primary_cb_builder)?;
+		// transfers (includes any async transfers that couldn't be submitted earlier)
+		{
+			let mut staging_buf_alloc_guard = self.staging_buffer_allocator
+				.lock()
+				.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?;
+			for work in self.async_transfers.drain(..).chain(self.transfers.drain(..)) {
+				work.add_command(&mut primary_cb_builder, &mut staging_buf_alloc_guard)?;
+			}
 		}
 
 		// shadows
@@ -598,6 +592,13 @@ impl RenderContext
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
 		self.frame_time = dur;
+
+		// gather stats on staging buffer usage
+		if self.staging_buf_usage_frame > self.staging_buf_max_size {
+			self.staging_buf_max_size = self.staging_buf_usage_frame;
+			log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
+		}
+		self.staging_buf_usage_frame = 0;
 
 		Ok(())
 	}
@@ -711,19 +712,57 @@ impl std::fmt::Display for PipelineNotLoaded
 	}
 }
 
+struct UpdateBufferData<T>
+	where T: BufferContents + Copy
+{
+	pub dst_buf: Subbuffer<T>,
+	pub data: T,
+}
+impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
+{
+	fn add_command(
+		&self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		subbuffer_allocator: &mut SubbufferAllocator
+	) -> Result<(), GenericEngineError>
+	{
+		let staging_buf = subbuffer_allocator.allocate_sized()?;
+		*staging_buf.write()? = self.data.clone();
+
+		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data
+		cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf.clone()))?;
+
+		Ok(())
+	}
+}
+trait UpdateBufferDataTrait: Send + Sync
+{
+	fn add_command(
+		&self,
+		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, 
+		_: &mut SubbufferAllocator
+	) -> Result<(), GenericEngineError>;
+}
+
 enum StagingWork
 {
 	CopyBuffer(CopyBufferInfo),
 	CopyBufferToImage(CopyBufferToImageInfo),
+	UpdateBuffer(Box<dyn UpdateBufferDataTrait>),
 }
 impl StagingWork
 {
-	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
-		-> Result<(), Box<vulkano::ValidationError>>
+	fn add_command(
+		self, 
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		subbuffer_allocator: &mut SubbufferAllocator,
+	)
+		-> Result<(), GenericEngineError>
 	{
 		match self {
-			StagingWork::CopyBuffer(info) => cb_builder.copy_buffer(info)?,
-			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info)?,
+			StagingWork::CopyBuffer(info) => { cb_builder.copy_buffer(info)?; },
+			StagingWork::CopyBufferToImage(info) => { cb_builder.copy_buffer_to_image(info)?; },
+			StagingWork::UpdateBuffer(update_data) => update_data.add_command(cb_builder, subbuffer_allocator)?,
 		};
 		Ok(())
 	}
