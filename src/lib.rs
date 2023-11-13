@@ -228,6 +228,7 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 	Ok((world, world_data.sky))
 }
 
+// Render shadow maps.
 fn draw_shadows(
 	render_ctx: UniqueView<render::RenderContext>,
 	transforms: View<component::Transform>,
@@ -236,25 +237,24 @@ fn draw_shadows(
 ) -> Result<(), GenericEngineError>
 {
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
+	let viewport_extent = [ dir_light_extent[0], dir_light_extent[1] ];
 	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
+	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
 
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		let mut dir_light_shadows_cb = render_ctx.new_secondary_command_buffer(
-			vec![], 
-			Some(light_manager.get_dir_light_shadow().format()),
-			[ dir_light_extent[0], dir_light_extent[1] ],
-		)?;
+		let mut cb = render_ctx.new_secondary_command_buffer(vec![], shadow_format, viewport_extent)?;
 
-		dir_light_shadows_cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
+		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
 
 		for (eid, transform) in transforms.iter().with_id() {
 			if mesh_manager.has_opaque_materials(eid) {
 				let model_matrix = transform.get_matrix();
 				let transform_mat = layer_projview * model_matrix;
 				let model_mat3a = Mat3A::from_mat4(model_matrix);
+
 				mesh_manager.draw(
 					eid,
-					&mut dir_light_shadows_cb,
+					&mut cb,
 					shadow_pipeline.layout().clone(),
 					transform_mat,
 					model_mat3a,
@@ -266,23 +266,26 @@ fn draw_shadows(
 			}
 		}
 
-		light_manager.add_dir_light_cb(dir_light_shadows_cb.build()?);
+		light_manager.add_dir_light_cb(cb.build()?);
 	}	
 
 	Ok(())
 }
+
+// Draw 3D objects.
+// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 fn draw_common(
 	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 	camera_manager: &CameraManager,
 	transforms: View<component::Transform>,
 	mesh_manager: &component::mesh::MeshManager,
-	//meshes: View<component::mesh::Mesh>,
 	pipeline: &Arc<GraphicsPipeline>,
 	transparency_pass: bool,
 	base_color_only: bool,
 ) -> Result<(), GenericEngineError>
 {
 	let projview = camera_manager.projview();
+
 	for (eid, transform) in transforms.iter().with_id() {
 		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass) 
 			|| (mesh_manager.has_transparency(eid) && transparency_pass) {
@@ -304,6 +307,8 @@ fn draw_common(
 	}
 	Ok(())
 }
+
+// Draw opaque 3D objects
 fn draw_3d(
 	render_ctx: UniqueView<render::RenderContext>,
 	skybox: UniqueView<render::skybox::Skybox>,
@@ -313,32 +318,24 @@ fn draw_3d(
 	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(
-		vec![ Some(vulkano::format::Format::R16G16B16A16_SFLOAT) ], 
-		Some(render::MAIN_DEPTH_FORMAT),
-		render_ctx.swapchain_dimensions()
-	)?;
+	let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT) ];
+	let vp_extent = render_ctx.swapchain_dimensions();
+	let light_set = vec![ light_manager.get_all_lights_set().clone() ];
+
+	let mut cb = render_ctx.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
 	// Draw the skybox. This will effectively clear the color image.
-	skybox.draw(&mut command_buffer, camera_manager.sky_projview())?;
-
-	// Draw 3D objects.
-	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
+	skybox.draw(&mut cb, camera_manager.sky_projview())?;
+	
 	let pbr_pipeline = render_ctx.get_pipeline("PBR")?;
 
-	// Bind the descriptor set for the lights
-	command_buffer
+	cb
 		.bind_pipeline_graphics(pbr_pipeline.clone())?
 		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
-		.bind_descriptor_sets(
-			PipelineBindPoint::Graphics,
-			pbr_pipeline.layout().clone(),
-			1,
-			vec![light_manager.get_all_lights_set().clone()]
-		)?;
+		.bind_descriptor_sets(PipelineBindPoint::Graphics, pbr_pipeline.layout().clone(), 1, light_set)?;
 
 	draw_common(
-		&mut command_buffer,
+		&mut cb,
 		&camera_manager,
 		transforms,
 		&mesh_manager,
@@ -347,9 +344,11 @@ fn draw_3d(
 		false,
 	)?;
 
-	render_ctx.add_cb(command_buffer.build()?);
+	render_ctx.add_cb(cb.build()?);
 	Ok(())
 }
+
+// Start recording commands for moment-based OIT.
 fn draw_3d_transparent_moments(
 	render_ctx: UniqueView<render::RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
@@ -357,32 +356,32 @@ fn draw_3d_transparent_moments(
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	// Start recording commands for moment-based OIT. This will bind the pipeline for you, since it doesn't need to do
-	// anything specific to materials (it only reads the alpha channel of each texture).
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(
-		vec![
-			Some(Format::R32G32B32A32_SFLOAT),
-			Some(Format::R32_SFLOAT),
-			Some(Format::R32_SFLOAT),
-		],
-		Some(render::MAIN_DEPTH_FORMAT),
-		render_ctx.swapchain_dimensions()
-	)?;
+	let color_formats = vec![
+		Some(Format::R32G32B32A32_SFLOAT),
+		Some(Format::R32_SFLOAT),
+		Some(Format::R32_SFLOAT),
+	];
+	let vp_extent = render_ctx.swapchain_dimensions();
+	let mut cb = render_ctx.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
+	// This will bind the pipeline for you, since it doesn't need to do anything 
+	// specific to materials (it only reads the alpha channel of each texture).
 	let pipeline = render_ctx
 		.get_transparency_renderer()
 		.get_moments_pipeline();
 
-	command_buffer.bind_pipeline_graphics(pipeline.clone())?;
+	cb.bind_pipeline_graphics(pipeline.clone())?;
 
-	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
+	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
 
 	render_ctx
 		.get_transparency_renderer()
-		.add_transparency_moments_cb(command_buffer.build()?);
+		.add_transparency_moments_cb(cb.build()?);
+
 	Ok(())
 }
 
+// Draw the transparent objects.
 fn draw_3d_transparent(
 	render_ctx: UniqueView<render::RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
@@ -391,57 +390,51 @@ fn draw_3d_transparent(
 	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	// Draw the transparent objects.
-	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
-
 	let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
+	let vp_extent = render_ctx.swapchain_dimensions();
+	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
+	let common_sets = vec![
+		light_manager.get_all_lights_set().clone(), 
+		render_ctx.get_transparency_renderer().get_stage3_inputs().clone()
+	];
 
-	let mut command_buffer = render_ctx
-		.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), render_ctx.swapchain_dimensions())?;
+	let mut cb = render_ctx.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
-	command_buffer
+	cb
 		.bind_pipeline_graphics(pipeline.clone())?
-		.bind_descriptor_sets(
-			PipelineBindPoint::Graphics,
-			pipeline.layout().clone(),
-			1,
-			vec![
-				light_manager.get_all_lights_set().clone(), 
-				render_ctx.get_transparency_renderer().get_stage3_inputs().clone()
-			]
-		)?;
+		.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline.layout().clone(), 1, common_sets)?;
 
-	draw_common(&mut command_buffer, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
+	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
 
 	render_ctx
 		.get_transparency_renderer()
-		.add_transparency_cb(command_buffer.build()?);
+		.add_transparency_cb(cb.build()?);
+
 	Ok(())
 }
+
+// Draw UI elements.
 fn draw_ui(
 	render_ctx: UniqueView<render::RenderContext>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	ui_transforms: View<ui::UITransform>,
 ) -> Result<(), GenericEngineError>
 {
-	let mut command_buffer = render_ctx.new_secondary_command_buffer(
-		vec![ Some(vulkano::format::Format::R16G16B16A16_SFLOAT) ], 
-		None,
-		render_ctx.swapchain_dimensions()
-	)?;
+	let vp_extent = render_ctx.swapchain_dimensions();
+	let mut cb = render_ctx.new_secondary_command_buffer(vec![ Some(Format::R16G16B16A16_SFLOAT) ], None, vp_extent)?;
 
-	command_buffer.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
+	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
 
-	// Draw UI elements.
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	for (eid, _) in ui_transforms.iter().with_id() {
 		// TODO: how do we respect the render order?
-		canvas.draw(&mut command_buffer, eid)?;
+		canvas.draw(&mut cb, eid)?;
 	}
 
-	canvas.add_cb(command_buffer.build()?);
+	canvas.add_cb(cb.build()?);
 	Ok(())
 }
+
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<render::RenderContext>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
