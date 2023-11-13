@@ -18,7 +18,7 @@ use vulkano::format::Format;
 use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
 use vulkano::pipeline::graphics::{
 	color_blend::{ColorBlendState, ColorBlendAttachmentState},
-	depth_stencil::{CompareOp, DepthStencilState, DepthState},
+	depth_stencil::DepthStencilState,
 	input_assembly::PrimitiveTopology,
 	rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo,
@@ -109,21 +109,12 @@ impl Skybox
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let push_constant_range = vec![
-			PushConstantRange { // push constant for projview matrix
-				stages: ShaderStages::VERTEX,
-				offset: 0,
-				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
-			}
-		];
-
-		let depth_stencil_state = DepthStencilState {
-			depth: Some(DepthState {
-				write_enable: true,
-				compare_op: CompareOp::Always,
-			}),
-			..Default::default()
+		let push_constant_range = PushConstantRange { // push constant for projview matrix
+			stages: ShaderStages::VERTEX,
+			offset: 0,
+			size: std::mem::size_of::<Mat4>().try_into().unwrap(),
 		};
+
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
@@ -131,9 +122,9 @@ impl Skybox
 			RasterizationState::default(),
 			Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
 			vec![ set_layout.clone() ],
-			push_constant_range,
+			vec![ push_constant_range ],
 			rendering_info,
-			Some(depth_stencil_state),
+			Some(DepthStencilState::default()),
 		)?;
 
 		// sky texture cubemap
@@ -182,17 +173,18 @@ impl Skybox
 		sky_projview: Mat4,
 	) -> Result<(), GenericEngineError>
 	{
-		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?;
-		cb.bind_descriptor_sets(
-			PipelineBindPoint::Graphics, 
-			self.sky_pipeline.layout().clone(), 
-			0, 
-			vec![self.descriptor_set.clone()]
-		)?;
-		cb.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?;
-		cb.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?;
-		cb.bind_index_buffer(self.cube_ibo.clone())?;
-		cb.draw_indexed(17, 1, 0, 0, 0)?;
+		cb
+			.bind_pipeline_graphics(self.sky_pipeline.clone())?
+			.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				self.sky_pipeline.layout().clone(),
+				0,
+				vec![self.descriptor_set.clone()]
+			)?
+			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?
+			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?
+			.bind_index_buffer(self.cube_ibo.clone())?
+			.draw_indexed(17, 1, 0, 0, 0)?;
 		Ok(())
 	}
 }

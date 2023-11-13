@@ -812,8 +812,9 @@ impl RenderTarget
 				}),
 			],
 			depth_attachment: Some(RenderingAttachmentInfo{
-				// `load_op` is `DontCare` here too since the skybox clears it with 1.0
+				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
+				clear_value: Some(ClearValue::Depth(1.0)),
 				..RenderingAttachmentInfo::image_view(self.depth_image.clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,

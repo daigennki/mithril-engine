@@ -319,7 +319,7 @@ fn draw_3d(
 		render_ctx.swapchain_dimensions()
 	)?;
 
-	// Draw the skybox. This will effectively clear the framebuffer.
+	// Draw the skybox. This will effectively clear the color image.
 	skybox.draw(&mut command_buffer, camera_manager.sky_projview())?;
 
 	// Draw 3D objects.
