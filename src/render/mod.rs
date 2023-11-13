@@ -92,25 +92,25 @@ pub struct RenderContext
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
-	// A common `SubbufferAllocator` for high-frequency staging buffers.
+	// The subbuffer allocator for buffer updates.
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
 
 	// Keep track of maximum usage for the staging buffer allocator.
 	staging_buf_usage_frame: usize, // Maximum usage for just this frame.
 	staging_buf_max_size: usize, // Maximum usage for the entire duration of the program.
 
-	// TODO: put non-material shaders (shadow filtering, post processing) into different containers
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
 
 	resize_this_frame: bool,
 
-	// Transfers to submit on the asynchronous transfer queue.
-	// These will be performed while the CPU is busy with building the draw command buffers.
+	// Transfers to initialize buffers and images. If there is an asynchronous transfer queue,
+	// these will be performed while the CPU is busy with building the draw command buffers.
+	// Otherwise, these will be run at the beginning of the next graphics submission, before draws are performed.
 	async_transfers: Vec<StagingWork>,
 
-	// Transfers to submit on the graphics queue, before the next frame submission.
-	transfers: Vec<StagingWork>,
+	// Buffer updates to run at the beginning of the next graphics submission.
+	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
 }
 impl RenderContext
 {
@@ -203,15 +203,15 @@ impl RenderContext
 		)?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: 4096, // adjust this based on actual memory usage
+			arena_size: 4096, // this should be adjusted based on actual memory usage
 			buffer_usage: BufferUsage::TRANSFER_SRC,
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
-		// adjust capacity of these based on number of transfers that might be done in one frame
-		let transfers = Vec::with_capacity(16);
+		// the capacity of these should be adjusted based on number of transfers that might be done in one frame
+		let buffer_updates = Vec::with_capacity(16);
 		let async_transfers = Vec::with_capacity(200);
 
 		Ok(RenderContext {
@@ -236,7 +236,7 @@ impl RenderContext
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 			resize_this_frame: false,
-			transfers,
+			buffer_updates,
 			async_transfers,
 		})
 	}
@@ -351,7 +351,7 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/// Get a staging buffer from the common staging buffer allocator, and queue an upload using it.
+	/// Update a buffer at the begninning of the next graphics submission.
 	pub fn update_buffer<T>(&mut self, data: T, dst_buf: Subbuffer<T>) -> Result<(), GenericEngineError>
 	where
 		T: BufferContents + Copy,
@@ -360,13 +360,13 @@ impl RenderContext
 
 		// This will be submitted to the graphics queue since we're copying to an existing buffer,
 		// which might be in use by a previous submission.
-		if self.transfers.len() == self.transfers.capacity() {
+		if self.buffer_updates.len() == self.buffer_updates.capacity() {
 			log::warn!(
-				"Re-allocating `Vec` for transfers to {}! Consider increasing its initial capacity.",
-				self.transfers.len() + 1
+				"Re-allocating `Vec` for buffer updates to {}! Consider increasing its initial capacity.",
+				self.buffer_updates.len() + 1
 			);
 		}
-		self.transfers.push(StagingWork::UpdateBuffer(Box::new(UpdateBufferData { dst_buf, data })));
+		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data }));
 
 		Ok(())
 	}
@@ -401,12 +401,8 @@ impl RenderContext
 					CommandBufferUsage::OneTimeSubmit,
 				)?;
 
-				let mut staging_buf_alloc_guard = self.staging_buffer_allocator
-					.lock()
-					.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?;
-
 				for work in self.async_transfers.drain(..) {
-					work.add_command(&mut cb, &mut staging_buf_alloc_guard)?;
+					work.add_command(&mut cb)?;
 				}
 
 				let transfer_future = cb
@@ -505,14 +501,19 @@ impl RenderContext
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
 
-		// transfers (includes any async transfers that couldn't be submitted earlier)
-		{
-			let mut staging_buf_alloc_guard = self.staging_buffer_allocator
-				.lock()
-				.or_else(|_| Err("Staging buffer allocator mutex is poisoned!"))?;
-			for work in self.async_transfers.drain(..).chain(self.transfers.drain(..)) {
-				work.add_command(&mut primary_cb_builder, &mut staging_buf_alloc_guard)?;
+		// buffer updates
+		if self.buffer_updates.len() > 0 {
+			// this `Mutex` should never be poisoned since it's only used here
+			let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
+
+			for buf_update in self.buffer_updates.drain(..) {
+				buf_update.add_command(&mut primary_cb_builder, &mut staging_buf_alloc_guard)?;
 			}
+		}
+
+		// do async transfers that couldn't be submitted earlier
+		for work in self.async_transfers.drain(..) {
+			work.add_command(&mut primary_cb_builder)?;
 		}
 
 		// shadows
@@ -712,8 +713,7 @@ impl std::fmt::Display for PipelineNotLoaded
 	}
 }
 
-struct UpdateBufferData<T>
-	where T: BufferContents + Copy
+struct UpdateBufferData<T: BufferContents + Copy>
 {
 	pub dst_buf: Subbuffer<T>,
 	pub data: T,
@@ -748,21 +748,15 @@ enum StagingWork
 {
 	CopyBuffer(CopyBufferInfo),
 	CopyBufferToImage(CopyBufferToImageInfo),
-	UpdateBuffer(Box<dyn UpdateBufferDataTrait>),
 }
 impl StagingWork
 {
-	fn add_command(
-		self, 
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		subbuffer_allocator: &mut SubbufferAllocator,
-	)
+	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 		-> Result<(), GenericEngineError>
 	{
 		match self {
-			StagingWork::CopyBuffer(info) => { cb_builder.copy_buffer(info)?; },
-			StagingWork::CopyBufferToImage(info) => { cb_builder.copy_buffer_to_image(info)?; },
-			StagingWork::UpdateBuffer(update_data) => update_data.add_command(cb_builder, subbuffer_allocator)?,
+			StagingWork::CopyBuffer(info) => cb_builder.copy_buffer(info)?,
+			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info)?,
 		};
 		Ok(())
 	}
