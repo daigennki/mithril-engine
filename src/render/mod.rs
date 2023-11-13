@@ -83,12 +83,7 @@ pub struct RenderContext
 	// User-accessible material pipelines. Optional transparency pipeline may also be specified.
 	material_pipelines: HashMap<String, (Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>)>,
 
-	// The final contents of this render target's color image will be blitted to the intermediate sRGB nonlinear image.
 	main_render_target: RenderTarget,
-
-	// An sRGB image which the above `main_render_target` will be blitted to, thus converting it to nonlinear.
-	// This will be copied, not blitted, to the swapchain.
-	intermediate_srgb_img: Arc<Image>,
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
@@ -184,15 +179,6 @@ impl RenderContext
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
 		let main_render_target = RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
-		let swapchain_dim = swapchain.dimensions();
-		let intermediate_img_create_info = ImageCreateInfo {
-			format: Format::B8G8R8A8_SRGB,
-			extent: [ swapchain_dim[0], swapchain_dim[1], 1 ],
-			usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-			..Default::default()
-		};
-		let intermediate_srgb_img = 
-			Image::new(memory_allocator.clone(), intermediate_img_create_info, AllocationCreateInfo::default())?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			memory_allocator.clone(),
 			&descriptor_set_allocator,
@@ -225,7 +211,6 @@ impl RenderContext
 			textures: HashMap::new(),
 			material_pipelines: HashMap::new(),
 			main_render_target,
-			intermediate_srgb_img,
 			transparency_renderer,
 			staging_buffer_allocator,
 			staging_buf_max_size: 0,
@@ -450,17 +435,6 @@ impl RenderContext
 	{
 		// Update images to match the current window size.
 		self.main_render_target = RenderTarget::new(self.memory_allocator.clone(), self.swapchain.dimensions())?;
-
-		let swapchain_dim = self.swapchain.dimensions();
-		let intermediate_img_create_info = ImageCreateInfo {
-			format: Format::B8G8R8A8_SRGB,
-			extent: [ swapchain_dim[0], swapchain_dim[1], 1 ],
-			usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-			..Default::default()
-		};
-		self.intermediate_srgb_img = 
-			Image::new(self.memory_allocator.clone(), intermediate_img_create_info, AllocationCreateInfo::default())?;
-
 		self.transparency_renderer.resize_image(
 			self.memory_allocator.clone(),
 			&self.descriptor_set_allocator,
@@ -536,6 +510,13 @@ impl RenderContext
 				.end_rendering()?;
 		}
 
+		// get the next swapchain image (expected to be B8G8R8A8_UNORM)
+		let (swapchain_image, dimensions_changed) = self.swapchain.get_next_image()?;
+		if dimensions_changed {
+			self.resize_everything_else()?;
+		}
+		self.resize_this_frame = dimensions_changed;
+
 		// 3D
 		if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
 			primary_cb_builder
@@ -570,21 +551,8 @@ impl RenderContext
 				.end_rendering()?;
 		}
 
-		// blit to sRGB image to convert from linear to non-linear sRGB
-		let blit_info = BlitImageInfo::images(
-			self.main_render_target.color_image().image().clone(),
-			self.intermediate_srgb_img.clone(),
-		);
-		primary_cb_builder.blit_image(blit_info)?;
-
-		// get the next swapchain image (expected to be B8G8R8A8_UNORM), then copy the non-linear sRGB image to it
-		let (swapchain_image, dimensions_changed) = self.swapchain.get_next_image()?;
-		if dimensions_changed {
-			self.resize_everything_else()?;
-		}
-		self.resize_this_frame = dimensions_changed;
-		let copy_info = CopyImageInfo::images(self.intermediate_srgb_img.clone(), swapchain_image);
-		primary_cb_builder.copy_image(copy_info)?;
+		// copy the non-linear sRGB image to the swapchain image
+		self.main_render_target.copy_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
 
 		// finish building the command buffer, then present the swapchain image
 		let transfer_future = self.transfer_future.take();
@@ -782,6 +750,10 @@ struct RenderTarget
 {
 	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
 	depth_image: Arc<ImageView>,
+
+	// An sRGB image which the above `color_image` will be blitted to, thus converting it to nonlinear.
+	// This will be copied, not blitted, to the swapchain.
+	srgb_image: Arc<Image>,
 }
 impl RenderTarget
 {
@@ -802,12 +774,21 @@ impl RenderTarget
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 			..Default::default()
 		};
-		let depth_image = Image::new(memory_allocator, depth_create_info, AllocationCreateInfo::default())?;
+		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
 		let depth_image_view = ImageView::new_default(depth_image)?;
+
+		let srgb_img_create_info = ImageCreateInfo {
+			format: Format::B8G8R8A8_SRGB,
+			extent: [ dimensions[0], dimensions[1], 1 ],
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		let srgb_image = Image::new(memory_allocator, srgb_img_create_info, AllocationCreateInfo::default())?;
 
 		Ok(Self { 
 			color_image: color_image_view, 
-			depth_image: depth_image_view 
+			depth_image: depth_image_view,
+			srgb_image,
 		})
 	}
 
@@ -838,5 +819,20 @@ impl RenderTarget
 			contents: SubpassContents::SecondaryCommandBuffers,
 			..Default::default()
 		}
+	}
+
+	pub fn copy_to_swapchain(
+		&self,
+		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		swapchain_image: Arc<Image>
+	) -> Result<(), GenericEngineError>
+	{
+		// blit to sRGB image to convert from linear to non-linear sRGB,
+		// then copy the non-linear image to the swapchain
+		cb
+			.blit_image(BlitImageInfo::images(self.color_image.image().clone(), self.srgb_image.clone()))?
+			.copy_image(CopyImageInfo::images(self.srgb_image.clone(), swapchain_image))?;
+
+		Ok(())
 	}
 }
