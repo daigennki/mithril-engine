@@ -94,10 +94,7 @@ pub struct RenderContext
 
 	// The subbuffer allocator for buffer updates.
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
-
-	// Keep track of maximum usage for the staging buffer allocator.
-	staging_buf_usage_frame: usize, // Maximum usage for just this frame.
-	staging_buf_max_size: usize, // Maximum usage for the entire duration of the program.
+	staging_buf_max_size: usize, // Maximum staging buffer usage for the entire duration of the program.
 
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
@@ -232,7 +229,6 @@ impl RenderContext
 			transparency_renderer,
 			staging_buffer_allocator,
 			staging_buf_max_size: 0,
-			staging_buf_usage_frame: 0,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 			resize_this_frame: false,
@@ -356,8 +352,6 @@ impl RenderContext
 	where
 		T: BufferContents + Copy,
 	{
-		self.staging_buf_usage_frame += std::mem::size_of::<T>();
-
 		// This will be submitted to the graphics queue since we're copying to an existing buffer,
 		// which might be in use by a previous submission.
 		if self.buffer_updates.len() == self.buffer_updates.capacity() {
@@ -505,9 +499,17 @@ impl RenderContext
 		if self.buffer_updates.len() > 0 {
 			// this `Mutex` should never be poisoned since it's only used here
 			let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
+			let mut staging_buf_usage_frame = 0;
 
 			for buf_update in self.buffer_updates.drain(..) {
 				buf_update.add_command(&mut primary_cb_builder, &mut staging_buf_alloc_guard)?;
+				staging_buf_usage_frame += buf_update.data_size();
+			}
+
+			// gather stats on staging buffer usage
+			if staging_buf_usage_frame > self.staging_buf_max_size {
+				self.staging_buf_max_size = staging_buf_usage_frame;
+				log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
 			}
 		}
 
@@ -593,13 +595,6 @@ impl RenderContext
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
 		self.frame_time = dur;
-
-		// gather stats on staging buffer usage
-		if self.staging_buf_usage_frame > self.staging_buf_max_size {
-			self.staging_buf_max_size = self.staging_buf_usage_frame;
-			log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
-		}
-		self.staging_buf_usage_frame = 0;
 
 		Ok(())
 	}
@@ -720,6 +715,11 @@ struct UpdateBufferData<T: BufferContents + Copy>
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {
+	fn data_size(&self) -> usize
+	{
+		std::mem::size_of::<T>()
+	}
+
 	fn add_command(
 		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -737,6 +737,8 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 }
 trait UpdateBufferDataTrait: Send + Sync
 {
+	fn data_size(&self) -> usize;
+
 	fn add_command(
 		&self,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, 
