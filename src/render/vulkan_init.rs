@@ -143,18 +143,18 @@ fn get_physical_device(
 		PhysicalDeviceType::DiscreteGpu => {
 			// For discrete GPUs, check that the largest `DEVICE_LOCAL` memory heap is also `HOST_VISIBLE`.
 			// This is the case when Resizable BAR is enabled.
-			let (largest_heap_i, _) = mem_properties
+			let (_, largest_heap_i) = mem_properties
 				.memory_heaps
 				.iter()
-				.enumerate()
-				.filter(|(_, heap)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
-				.max_by_key(|(_, heap)| heap.size)
+				.zip(0_u32..)
+				.filter(|(heap, _)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
+				.max_by_key(|(heap, _)| heap.size)
 				.ok_or("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!")?;
 
 			allow_direct_buffer_access = mem_properties
 				.memory_types
 				.iter()
-				.filter(|t| t.heap_index as usize == largest_heap_i)
+				.filter(|t| t.heap_index == largest_heap_i)
 				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE));
 
 			if allow_direct_buffer_access {
@@ -188,39 +188,39 @@ fn get_physical_device(
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
 fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCreateInfo>, GenericEngineError>
 {
-	let mut graphics = None; // required
-	let mut transfer_only = None; // optional; optimized specifically for transfers
-	let mut transfer = None; // optional; not transfer-specific, but still works for async transfers
+	let queue_family_properties = physical_device.queue_family_properties();
+
+	log::info!("Available physical device queue families:");
+	for (i, q) in queue_family_properties.iter().enumerate() {
+		log::info!("{}: {} queue(s), {:?}", i, q.queue_count, q.queue_flags);
+	}
 
 	// Get the required graphics queue family, and try to get an optional one for async transfers.
-	// For transfers, try to get one that is specifically optimized for async transfers (supports netiher graphics nor compute),
-	// then if such a queue family doesn't exist, use one that just doesn't support graphics.
-	log::info!("Available physical device queue families:");
-	for (i, q) in physical_device.queue_family_properties().iter().enumerate() {
-		log::info!("{}: {} queue(s), {:?}", i, q.queue_count, q.queue_flags);
+	let graphics = queue_family_properties
+		.iter()
+		.zip(0_u32..)
+		.find_map(|(q, i)| q.queue_flags.contains(QueueFlags::GRAPHICS).then_some(i))
+		.ok_or("No graphics queue family found!")?;
 
-		if q.queue_flags.intersects(QueueFlags::GRAPHICS) {
-			graphics.get_or_insert(i);
-		} else if !q.queue_flags.intersects(QueueFlags::COMPUTE) && q.queue_flags.intersects(QueueFlags::TRANSFER) {
-			transfer_only.get_or_insert(i);
-		} else if q.queue_flags.intersects(QueueFlags::TRANSFER) {
-			transfer.get_or_insert(i);
-		}
-	}
+	// Get another queue family that is ideally specifically optimized for async transfers, 
+	// by means of finding one with the TRANSFER flag set and least number of flags set.
+	let transfer = queue_family_properties
+		.iter()
+		.zip(0_u32..)
+		.filter(|(q, i)| *i != graphics && q.queue_flags.contains(QueueFlags::TRANSFER))
+		.min_by_key(|(q, _)| q.queue_flags.count())
+		.map(|(_, i)| i);
 
-	let mut use_queue_families = vec![graphics.ok_or("No graphics queue family found!")?];
-	if let Some(tq) = transfer_only.or(transfer) {
+	if let Some(tq) = transfer {
 		log::info!("Using queue family {} for transfers", tq);
-		use_queue_families.push(tq);
 	}
 
-	let infos = use_queue_families
+	let infos = [graphics]
 		.into_iter()
-		.map(|i| QueueCreateInfo {
-			queue_family_index: i as u32,
-			..Default::default()
-		})
+		.chain(transfer.into_iter())
+		.map(|queue_family_index| QueueCreateInfo { queue_family_index, ..Default::default() })
 		.collect();
+
 	Ok(infos)
 }
 
@@ -242,7 +242,6 @@ pub fn vulkan_setup(
 		independent_blend: true,
 		sampler_anisotropy: true,
 		texture_compression_bc: true,
-		geometry_shader: true,
 		..Default::default()
 	};
 
