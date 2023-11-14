@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use vulkano::{Validated, VulkanError};
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
-use vulkano::device::Queue;
+use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
@@ -17,7 +17,8 @@ use vulkano::swapchain::{
 use vulkano::sync::{
 	future::{FenceSignalFuture, GpuFuture, NowFuture}
 };
-use winit::window::Window;
+use winit::window::{Window, WindowBuilder};
+use winit::monitor::{MonitorHandle, VideoMode};
 
 use crate::GenericEngineError;
 
@@ -34,37 +35,63 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<vulkano::device::Device>, window: Window) -> Result<Self, GenericEngineError>
+	pub fn new(
+		vk_dev: Arc<Device>, 
+		event_loop: &winit::event_loop::EventLoop<()>,
+		window_title: &str
+	) -> Result<Self, GenericEngineError>
 	{
+		let use_monitor = event_loop 
+			.primary_monitor()
+			.or(event_loop.available_monitors().next())
+			.ok_or("The primary monitor could not be detected.")?;
+		
+		let (_current_video_mode, fullscreen_mode) = get_video_modes(use_monitor.clone());
+
+		let window_size = if let Some(fs_mode) = &fullscreen_mode {
+			match fs_mode {
+				winit::window::Fullscreen::Exclusive(video_mode) => video_mode.size(),
+				winit::window::Fullscreen::Borderless(_) => use_monitor.size()
+			}
+		} else {
+			// TODO: load this from config
+			winit::dpi::PhysicalSize::new(1280, 720)
+		};
+
+		// create window
+		let window = WindowBuilder::new()
+			.with_inner_size(window_size)
+			.with_title(window_title)
+			.with_decorations(std::env::args().find(|arg| arg == "-borderless").is_none())
+			.with_fullscreen(fullscreen_mode)
+			.build(&event_loop)?;
 		let window_arc = Arc::new(window);
+
 		let surface = Surface::from_window(vk_dev.instance().clone(), window_arc.clone())?;
 
 		let pd = vk_dev.physical_device();
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
-
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
+		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
+
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
 
-		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
-
-		// Explicitly set `image_extent` since some environments, such as Wayland, require it to not cause a panic.
-		let image_extent: [u32; 2] = window_arc.inner_size().into();
 
 		// NVIDIA on Linux (possibly only when using Wayland with PRIME?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it
 		// would be a safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
 		// https://vulkan.gpuinfo.org/listsurfaceformats.php?platform=linux
-		// This means we need to be sure to convert from linear to nonlinear sRGB beforehand. See `RenderContext::submit_frame`
-		// for that conversion.
+		// This means we must convert to non-linear sRGB beforehand. See `RenderTarget::copy_to_swapchain` for that conversion.
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
-			image_extent,
+			image_extent: window_size.into(),
 			image_format: Format::B8G8R8A8_UNORM,
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Fifo,
 			..Default::default()
 		};
+
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
 		log::debug!("created {} swapchain images", images.len());
 
@@ -86,8 +113,11 @@ impl Swapchain
 		self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
 
 		let prev_dimensions = self.swapchain.image_extent();
-		let mut create_info = self.swapchain.create_info();
-		create_info.image_extent = self.window.inner_size().into();
+		let create_info = SwapchainCreateInfo {
+			image_extent: self.window.inner_size().into(),
+			..self.swapchain.create_info()
+		};
+
 		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 		self.swapchain = new_swapchain;
 		self.images = new_images;
@@ -199,5 +229,90 @@ impl Swapchain
 	pub fn dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.image_extent()
+	}
+}
+
+// Get and print the video modes supported by the given monitor, and return the monitor's current video mode.
+// This may return `None` if the monitor is currently using a video mode that it really doesn't support,
+// although that should be rare.
+fn get_video_modes(mon: MonitorHandle) -> (Option<VideoMode>, Option<winit::window::Fullscreen>)
+{
+	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
+
+	let current_video_mode = mon
+		.video_modes()
+		.find(|vm| vm.size() == mon.size() && vm.refresh_rate_millihertz() == mon.refresh_rate_millihertz().unwrap_or(0));
+
+	let mut video_modes: Vec<_> = mon.video_modes().collect();
+	log::info!("All video modes supported by current monitor (\"{mon_name}\"):");
+
+	// filter the video modes to those with >=1280 width, >=720 height, and not vertical (width <= height)
+	video_modes.retain(|video_mode| {
+		// print unfiltered video modes while we're at it
+		let video_mode_suffix = match &current_video_mode {
+			Some(cur_vm) if video_mode == cur_vm  => " <- likely current primary monitor video mode",
+			_ => "",
+		};
+		log::info!("{}{}", format_video_mode(video_mode), video_mode_suffix);
+
+		let size = video_mode.size();
+		size.width >= 1280 && size.height >= 720 && size.width >= size.height
+	});
+
+	// filter the video modes to the highest refresh rate for each size
+	// (sort beforehand so that highest refresh rate for each size comes first,
+	// then remove duplicates with the same size and bit depth)
+	video_modes.sort();
+	video_modes.dedup_by_key(|video_mode| (video_mode.size(), video_mode.bit_depth()));
+
+	log::info!("Filtered video modes:");
+	for vm in &video_modes {
+		log::info!("{}", format_video_mode(vm))
+	}
+
+	// attempt to use fullscreen window if requested
+	// TODO: load this from config
+	let fullscreen_mode = get_fullscreen_mode(mon, &current_video_mode);
+
+	//(video_modes, current_video_mode)
+	(current_video_mode, fullscreen_mode)
+}
+fn format_video_mode(video_mode: &VideoMode) -> String
+{
+	let size = video_mode.size();
+	let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
+	let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
+	format!(
+		"{} x {} @ {}.{:0>3} Hz {}-bit",
+		size.width,
+		size.height,
+		refresh_rate_hz,
+		refresh_rate_thousandths,
+		video_mode.bit_depth()
+	)
+}
+
+// Determine the appropriate fullscreen mode depending on the arguments given to the executable.
+// Returns `Some` if some kind of fullscreen mode is enabled, or `None` if the window should simply be in windowed mode.
+fn get_fullscreen_mode(use_monitor: MonitorHandle, current_video_mode: &Option<VideoMode>) -> Option<winit::window::Fullscreen>
+{
+	if std::env::args().find(|arg| arg == "-fullscreen").is_some() {
+		if std::env::args().find(|arg| arg == "-borderless").is_some() {
+			// If "-fullscreen" and "-borderless" were both specified, make a borderless window filling the entire monitor
+			// instead of exclusive fullscreen.
+			Some(winit::window::Fullscreen::Borderless(Some(use_monitor)))
+		} else {
+			// NOTE: This is specifically *exclusive* fullscreen, which gets ignored on Wayland.
+			// Therefore, it might be a good idea to hide such an option in UI from the end user on Wayland.
+			// TODO: Use VK_EXT_full_screen_exclusive to minimize latency (usually only available on Windows)
+			if let Some(fullscreen_video_mode) = current_video_mode {
+				Some(winit::window::Fullscreen::Exclusive(fullscreen_video_mode.clone()))
+			} else {
+				log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
+				None
+			}
+		}
+	} else {
+		None
 	}
 }
