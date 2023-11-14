@@ -401,16 +401,16 @@ impl RenderContext
 
 	/// Issue a new secondary command buffer builder to begin recording to.
 	/// It will be set up for drawing to color and depth images with the given format,
-	/// and with a viewport as large as `viewport_dimensions`.
-	pub fn new_secondary_command_buffer(
+	/// and with a viewport as large as `viewport_extent`.
+	pub fn gather_commands(
 		&self,
-		color_attachment_formats: Vec<Option<Format>>,
+		color_attachment_formats: &[Format],
 		depth_attachment_format: Option<Format>,
-		viewport_dimensions: [u32; 2]
+		viewport_extent: [u32; 2]
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
 		let render_pass = Some(CommandBufferInheritanceRenderingInfo {
-			color_attachment_formats,
+			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
 			depth_attachment_format,
 			..Default::default()
 		}.into());
@@ -423,7 +423,7 @@ impl RenderContext
 
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
-			extent: [viewport_dimensions[0] as f32, viewport_dimensions[1] as f32],
+			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
 		cb.set_viewport(0, [viewport].as_slice().into())?;

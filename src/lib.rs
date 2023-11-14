@@ -242,7 +242,7 @@ fn draw_shadows(
 	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
 
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		let mut cb = render_ctx.new_secondary_command_buffer(vec![], shadow_format, viewport_extent)?;
+		let mut cb = render_ctx.gather_commands(&[], shadow_format, viewport_extent)?;
 
 		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
 
@@ -318,11 +318,11 @@ fn draw_3d(
 	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT) ];
+	let color_formats = [ Format::R16G16B16A16_SFLOAT ];
 	let vp_extent = render_ctx.swapchain_dimensions();
 	let light_set = vec![ light_manager.get_all_lights_set().clone() ];
 
-	let mut cb = render_ctx.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
+	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
 	// Draw the skybox. This will effectively clear the color image.
 	skybox.draw(&mut cb, camera_manager.sky_projview())?;
@@ -356,13 +356,9 @@ fn draw_3d_transparent_moments(
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = vec![
-		Some(Format::R32G32B32A32_SFLOAT),
-		Some(Format::R32_SFLOAT),
-		Some(Format::R32_SFLOAT),
-	];
+	let color_formats = [ Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT ];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
+	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
 	// This will bind the pipeline for you, since it doesn't need to do anything 
 	// specific to materials (it only reads the alpha channel of each texture).
@@ -390,7 +386,7 @@ fn draw_3d_transparent(
 	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = vec![ Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM) ];
+	let color_formats = [ Format::R16G16B16A16_SFLOAT, Format::R8_UNORM ];
 	let vp_extent = render_ctx.swapchain_dimensions();
 	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
 	let common_sets = vec![
@@ -398,7 +394,7 @@ fn draw_3d_transparent(
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone()
 	];
 
-	let mut cb = render_ctx.new_secondary_command_buffer(color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
+	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
 	cb
 		.bind_pipeline_graphics(pipeline.clone())?
@@ -421,7 +417,7 @@ fn draw_ui(
 ) -> Result<(), GenericEngineError>
 {
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.new_secondary_command_buffer(vec![ Some(Format::R16G16B16A16_SFLOAT) ], None, vp_extent)?;
+	let mut cb = render_ctx.gather_commands(&[ Format::R16G16B16A16_SFLOAT ], None, vp_extent)?;
 
 	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
 
