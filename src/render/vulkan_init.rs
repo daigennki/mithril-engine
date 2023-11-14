@@ -173,12 +173,12 @@ fn get_physical_device(
 
 	// Print all the memory heaps and their types.
 	log::info!("Memory heaps and their memory types on physical device:");
-	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
+	for (mem_heap, i) in mem_properties.memory_heaps.iter().zip(0_u32..) {
 		let mib = mem_heap.size / (1024 * 1024);
 
 		log::info!("{}: {} MiB, flags {:?}", i, mib, mem_heap.flags);
 
-		for mem_type in mem_properties.memory_types.iter().filter(|t| t.heap_index as usize == i) {
+		for mem_type in mem_properties.memory_types.iter().filter(|t| t.heap_index == i) {
 			log::info!("└ {:?}", mem_type.property_flags);
 		}
 	}
