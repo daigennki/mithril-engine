@@ -327,7 +327,7 @@ fn draw_3d(
 	// Draw the skybox. This will effectively clear the color image.
 	skybox.draw(&mut cb, camera_manager.sky_projview())?;
 	
-	let pbr_pipeline = render_ctx.get_pipeline("PBR")?;
+	let pbr_pipeline = render_ctx.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
 
 	cb
 		.bind_pipeline_graphics(pbr_pipeline.clone())?
@@ -388,7 +388,7 @@ fn draw_3d_transparent(
 {
 	let color_formats = [ Format::R16G16B16A16_SFLOAT, Format::R8_UNORM ];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let pipeline = render_ctx.get_transparency_pipeline("PBR")?;
+	let pipeline = render_ctx.get_transparency_pipeline("PBR").ok_or("PBR transparency pipeline not loaded!")?;
 	let common_sets = vec![
 		light_manager.get_all_lights_set().clone(), 
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone()

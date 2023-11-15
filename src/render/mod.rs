@@ -14,7 +14,6 @@ pub mod transparency;
 mod vulkan_init;
 
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -543,30 +542,19 @@ impl RenderContext
 		&self.transparency_renderer
 	}
 
-	pub fn get_pipeline(&self, name: &str) -> Result<&Arc<GraphicsPipeline>, PipelineNotLoaded>
+	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
 	{
-		Ok(self.material_pipelines.get(name).map(|tuple| &tuple.0).ok_or(PipelineNotLoaded)?)
+		self.material_pipelines.get(name).map(|(pl, _)| pl)
 	}
-	pub fn get_transparency_pipeline(&self, name: &str) -> Result<&Arc<GraphicsPipeline>, PipelineNotLoaded>
+	pub fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
 	{
-		Ok(self.material_pipelines.get(name).and_then(|tuple| tuple.1.as_ref()).ok_or(PipelineNotLoaded)?)
+		self.material_pipelines.get(name).and_then(|(_, pl)| pl.as_ref())
 	}
 
 	/// Get the delta time for last frame.
 	pub fn delta(&self) -> std::time::Duration
 	{
 		self.frame_time
-	}
-}
-
-#[derive(Debug)]
-pub struct PipelineNotLoaded;
-impl std::error::Error for PipelineNotLoaded {}
-impl std::fmt::Display for PipelineNotLoaded
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
-	{
-		write!(f, "the specified pipeline is not loaded")
 	}
 }
 
