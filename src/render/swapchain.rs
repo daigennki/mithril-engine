@@ -11,7 +11,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
-	PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
+	FullScreenExclusive, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{
 	future::{FenceSignalFuture, GpuFuture, NowFuture}
@@ -71,10 +71,19 @@ impl Swapchain
 
 		let surface = Surface::from_window(vk_dev.instance().clone(), window_arc.clone())?;
 
+		// Enable exclusive fullscreen using VK_EXT_full_screen_exclusive when possible
+		let full_screen_exclusive = if vk_dev.enabled_extensions().ext_full_screen_exclusive {
+			FullScreenExclusive::Allowed
+		} else {
+			FullScreenExclusive::Default
+		};
+
+		let surface_info = SurfaceInfo::default();
+
 		let pd = vk_dev.physical_device();
-		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
-		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
-		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
+		let surface_caps = pd.surface_capabilities(&surface, surface_info.clone())?;
+		let surface_formats = pd.surface_formats(&surface, surface_info.clone())?;
+		let surface_present_modes = pd.surface_present_modes(&surface, surface_info)?;
 
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
@@ -91,6 +100,7 @@ impl Swapchain
 			image_format: Format::B8G8R8A8_UNORM,
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Fifo,
+			full_screen_exclusive,
 			..Default::default()
 		};
 
@@ -136,6 +146,7 @@ impl Swapchain
 				image_extent: new_inner_size,
 				..self.swapchain.create_info()
 			};
+
 			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 			self.swapchain = new_swapchain;
 			self.images = new_images;

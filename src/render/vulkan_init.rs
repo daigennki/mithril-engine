@@ -242,7 +242,7 @@ pub fn vulkan_setup(
 	let (physical_device, rebar_in_use) = get_physical_device(&vkinst)?;
 
 	let wanted_extensions = DeviceExtensions {
-		ext_full_screen_exclusive: true,
+		//ext_full_screen_exclusive: true,
 		..Default::default()
 	};
 	let enabled_extensions = DeviceExtensions {
