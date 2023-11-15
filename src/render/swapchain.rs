@@ -118,37 +118,7 @@ impl Swapchain
 		self.recreate_pending = true;
 	}
 
-	/// Recreate the swapchain to fit the window's requirements (e.g., window size changed).
-	/// Returns `Ok(true)` if the image extent has changed.
-	fn fit_window(&mut self) -> Result<bool, GenericEngineError>
-	{
-		// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
-		self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
-
-		let prev_dimensions = self.swapchain.image_extent();
-		let create_info = SwapchainCreateInfo {
-			image_extent: self.window.inner_size().into(),
-			..self.swapchain.create_info()
-		};
-
-		let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
-		self.swapchain = new_swapchain;
-		self.images = new_images;
-
-		let extent_changed = self.swapchain.image_extent() != prev_dimensions;
-		if extent_changed {
-			log::info!(
-				"Swapchain resized: {:?} -> {:?}",
-				prev_dimensions,
-				self.swapchain.image_extent()
-			);
-		}
-		Ok(extent_changed)
-	}
-
 	/// Get the next swapchain image.
-	/// Subsequent command buffer commands will fail with `vulkano::sync::AccessError::AlreadyInUse`
-	/// if this isn't run after every swapchain command submission.
 	pub fn get_next_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
@@ -159,27 +129,36 @@ impl Swapchain
 			f.cleanup_finished();
 		}
 
-		self.extent_changed = if self.recreate_pending {
-			self.fit_window()? // recreate the swapchain
-		} else {
-			false
-		};
+		// Recreate the swapchain if the surface's properties changed (e.g. window size changed).
+		if self.recreate_pending {
+			// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
+			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
 
-		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
-			Ok((image_num, suboptimal, acquire_future)) => {
-				if suboptimal {
-					log::warn!("Swapchain image is suboptimal!");
-				}
-				self.acquire_future = Some(acquire_future);
-				Ok(self.images[image_num as usize].clone())
+			let prev_dimensions = self.swapchain.image_extent();
+			let create_info = SwapchainCreateInfo {
+				image_extent: self.window.inner_size().into(),
+				..self.swapchain.create_info()
+			};
+
+			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
+			self.swapchain = new_swapchain;
+			self.images = new_images;
+
+			self.extent_changed = self.swapchain.image_extent() != prev_dimensions;
+			if self.extent_changed {
+				log::info!("Swapchain resized: {:?} -> {:?}", prev_dimensions, self.swapchain.image_extent());
 			}
-			Err(Validated::Error(VulkanError::OutOfDate)) => {
-				log::warn!("Swapchain out of date, recreating...");
-				self.recreate_pending = true;
-				self.get_next_image()
-			}
-			Err(e) => Err(Box::new(e)),
+		} else {
+			self.extent_changed = false;
 		}
+
+		let (image_num, suboptimal, acquire_future) = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None)?;
+		if suboptimal {
+			log::warn!("Swapchain is suboptimal!");
+		}
+		self.acquire_future = Some(acquire_future);
+
+		Ok(self.images[image_num as usize].clone())
 	}
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
