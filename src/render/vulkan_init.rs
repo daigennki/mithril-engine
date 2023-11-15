@@ -71,11 +71,18 @@ fn create_vulkan_instance(
 	// implementations like MoltenVK. For now, we can go without it.
 	let wanted_extensions = InstanceExtensions {
 		khr_get_surface_capabilities2: true,
+		ext_swapchain_colorspace: true,
 		..Default::default()
 	};
 	let enabled_extensions = wanted_extensions
 		.intersection(lib.supported_extensions())
 		.union(&Surface::required_extensions(event_loop));
+
+	log::info!("Enabling instance extensions:");
+	enabled_extensions
+		.into_iter()
+		.filter_map(|(name, enabled)| enabled.then_some(name))
+		.for_each(|ext| log::info!("- {}", ext));
 
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]
@@ -249,9 +256,11 @@ pub fn vulkan_setup(
 		khr_swapchain: true,
 		..wanted_extensions.intersection(physical_device.supported_extensions())
 	};
-	if enabled_extensions.ext_full_screen_exclusive {
-		log::info!("VK_EXT_full_screen_exclusive is supported, enabling it.");
-	}
+	log::info!("Enabling device extensions:");
+	enabled_extensions
+		.into_iter()
+		.filter_map(|(name, enabled)| enabled.then_some(name))
+		.for_each(|ext| log::info!("- {}", ext));
 
 	// The features enabled here are supported by basically any Vulkan device.
 	let enabled_features = vulkano::device::Features {

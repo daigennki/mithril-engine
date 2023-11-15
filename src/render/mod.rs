@@ -45,6 +45,7 @@ use vulkano::memory::{
 };
 use vulkano::pipeline::graphics::{viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
+use vulkano::swapchain::ColorSpace;
 use vulkano::sync::{future::{FenceSignalFuture, NowFuture}, GpuFuture};
 
 use crate::GenericEngineError;
@@ -118,7 +119,12 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let main_render_target = RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
+		let main_render_target = RenderTarget::new(
+			memory_allocator.clone(),
+			swapchain.dimensions(),
+			swapchain.format(),
+			swapchain.color_space(),
+		)?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			memory_allocator.clone(),
 			&descriptor_set_allocator,
@@ -371,7 +377,12 @@ impl RenderContext
 	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
 	{
 		// Update images to match the current swapchain image extent.
-		self.main_render_target = RenderTarget::new(self.memory_allocator.clone(), self.swapchain.dimensions())?;
+		self.main_render_target = RenderTarget::new(
+			self.memory_allocator.clone(),
+			self.swapchain.dimensions(),
+			self.swapchain.format(),
+			self.swapchain.color_space(),
+		)?;
 		self.transparency_renderer.resize_image(
 			self.memory_allocator.clone(),
 			&self.descriptor_set_allocator,
@@ -491,7 +502,7 @@ impl RenderContext
 				.end_rendering()?;
 		}
 
-		// copy the non-linear sRGB image to the swapchain image
+		// blit or copy the image to the swapchain image, converting it to the swapchain's color space if necessary
 		self.main_render_target.copy_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
 
 		// finish building the command buffer, then present the swapchain image
@@ -619,11 +630,17 @@ struct RenderTarget
 
 	// An sRGB image which the above `color_image` will be blitted to, thus converting it to nonlinear.
 	// This will be copied, not blitted, to the swapchain.
-	srgb_image: Arc<Image>,
+	// Only used if the swapchain image and color space is (B8G8R8A8_UNORM, SrgbNonLinear).
+	srgb_image: Option<Arc<Image>>,
 }
 impl RenderTarget
 {
-	pub fn new(memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2]) -> Result<Self, GenericEngineError>
+	pub fn new(
+		memory_allocator: Arc<StandardMemoryAllocator>,
+		dimensions: [u32; 2],
+		swapchain_format: Format,
+		swapchain_color_space: ColorSpace,
+	) -> Result<Self, GenericEngineError>
 	{
 		let color_create_info = ImageCreateInfo {
 			format: Format::R16G16B16A16_SFLOAT,
@@ -643,13 +660,19 @@ impl RenderTarget
 		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
 		let depth_image_view = ImageView::new_default(depth_image)?;
 
-		let srgb_img_create_info = ImageCreateInfo {
-			format: Format::B8G8R8A8_SRGB,
-			extent: [ dimensions[0], dimensions[1], 1 ],
-			usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-			..Default::default()
+		let srgb_image = if swapchain_format == Format::B8G8R8A8_UNORM && swapchain_color_space == ColorSpace::SrgbNonLinear {
+			log::info!("Using intermediate sRGB image");
+			let srgb_img_create_info = ImageCreateInfo {
+				format: Format::B8G8R8A8_SRGB,
+				extent: [ dimensions[0], dimensions[1], 1 ],
+				usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
+				..Default::default()
+			};
+			Some(Image::new(memory_allocator, srgb_img_create_info, AllocationCreateInfo::default())?)
+		} else {
+			log::info!("Blitting directly to swapchain image");
+			None
 		};
-		let srgb_image = Image::new(memory_allocator, srgb_img_create_info, AllocationCreateInfo::default())?;
 
 		Ok(Self { 
 			color_image: color_image_view, 
@@ -694,11 +717,16 @@ impl RenderTarget
 		swapchain_image: Arc<Image>
 	) -> Result<(), GenericEngineError>
 	{
-		// blit to sRGB image to convert from linear to non-linear sRGB,
-		// then copy the non-linear image to the swapchain
-		cb
-			.blit_image(BlitImageInfo::images(self.color_image.image().clone(), self.srgb_image.clone()))?
-			.copy_image(CopyImageInfo::images(self.srgb_image.clone(), swapchain_image))?;
+		if let Some(srgb_image) = self.srgb_image.clone() {
+			// blit to sRGB image to convert from linear to non-linear sRGB,
+			// then copy the non-linear image to the swapchain
+			cb
+				.blit_image(BlitImageInfo::images(self.color_image.image().clone(), srgb_image.clone()))?
+				.copy_image(CopyImageInfo::images(srgb_image, swapchain_image))?;
+		} else {
+			// blit directly to the swapchain image when possible
+			cb.blit_image(BlitImageInfo::images(self.color_image.image().clone(), swapchain_image))?;
+		}
 
 		Ok(())
 	}

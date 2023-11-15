@@ -11,7 +11,8 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
-	FullScreenExclusive, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
+	ColorSpace, FullScreenExclusive, PresentMode,
+	Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{
 	future::{FenceSignalFuture, GpuFuture, NowFuture}
@@ -90,22 +91,41 @@ impl Swapchain
 
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 
-		// NVIDIA on Linux (possibly only when using Wayland with PRIME?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it
-		// would be a safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
-		// https://vulkan.gpuinfo.org/listsurfaceformats.php?platform=linux
-		// This means we must convert to non-linear sRGB beforehand. See `RenderTarget::copy_to_swapchain` for that conversion.
+		// Pairs of format and color space we can support
+		let mut format_candidates = vec![
+			// HDR via extended sRGB linear image
+			(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
+
+			// sRGB image automatically converts from linear to non-linear
+			(Format::B8G8R8A8_SRGB, ColorSpace::SrgbNonLinear),
+
+			// Requires separate conversion from linear to non-linear, but is supported on practically any GPU,
+			// so at least this pair must be retained. See `RenderTarget::copy_to_swapchain` for the conversion.
+			(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
+		];
+
+		// Find the intersection between the format candidates and the formats supported by the physical device,
+		// then get the first one remaining.
+		format_candidates.retain(|candidate| surface_formats.contains(candidate));
+		let (image_format, image_color_space) = format_candidates[0];
+
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
 			image_extent: window_size.into(),
-			image_format: Format::B8G8R8A8_UNORM,
+			image_format,
+			image_color_space,
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Fifo,
 			full_screen_exclusive,
 			..Default::default()
 		};
-
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
-		log::debug!("created {} swapchain images", images.len());
+		log::info!(
+			"Created a swapchain with {} images (format {:?}, color space {:?})",
+			images.len(),
+			image_format,
+			image_color_space
+		);
 
 		Ok(Swapchain {
 			window: window_arc,
@@ -252,6 +272,15 @@ impl Swapchain
 	pub fn image_count(&self) -> usize
 	{
 		self.images.len()
+	}
+
+	pub fn format(&self) -> Format
+	{
+		self.swapchain.image_format()
+	}
+	pub fn color_space(&self) -> ColorSpace
+	{
+		self.swapchain.image_color_space()
 	}
 
 	pub fn dimensions(&self) -> [u32; 2]
