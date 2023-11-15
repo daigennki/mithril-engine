@@ -10,7 +10,7 @@ use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
-use vulkano::instance::InstanceCreateInfo;
+use vulkano::instance::{InstanceCreateInfo, InstanceExtensions};
 use vulkano::memory::{MemoryHeapFlags, MemoryPropertyFlags};
 use vulkano::swapchain::Surface;
 
@@ -67,9 +67,15 @@ fn create_vulkan_instance(
 {
 	let lib = vulkano::library::VulkanLibrary::new()?;
 
-	// we'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
-	// implementations like MoltenVK. for now, we can go without it.
-	let enabled_extensions = Surface::required_extensions(event_loop);
+	// We'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
+	// implementations like MoltenVK. For now, we can go without it.
+	let wanted_extensions = InstanceExtensions {
+		khr_get_surface_capabilities2: true,
+		..Default::default()
+	};
+	let enabled_extensions = wanted_extensions
+		.intersection(lib.supported_extensions())
+		.union(&Surface::required_extensions(event_loop));
 
 	// only use the validation layer in debug builds
 	#[cfg(debug_assertions)]
@@ -235,7 +241,19 @@ pub fn vulkan_setup(
 	let vkinst = create_vulkan_instance(game_name, event_loop)?;
 	let (physical_device, rebar_in_use) = get_physical_device(&vkinst)?;
 
-	// The features and extensions enabled here are supported by basically any Vulkan device.
+	let wanted_extensions = DeviceExtensions {
+		ext_full_screen_exclusive: true,
+		..Default::default()
+	};
+	let enabled_extensions = DeviceExtensions {
+		khr_swapchain: true,
+		..wanted_extensions.intersection(physical_device.supported_extensions())
+	};
+	if enabled_extensions.ext_full_screen_exclusive {
+		log::info!("VK_EXT_full_screen_exclusive is supported, enabling it.");
+	}
+
+	// The features enabled here are supported by basically any Vulkan device.
 	let enabled_features = vulkano::device::Features {
 		dynamic_rendering: true,
 		image_cube_array: true,
@@ -246,10 +264,7 @@ pub fn vulkan_setup(
 	};
 
 	let dev_create_info = DeviceCreateInfo {
-		enabled_extensions: DeviceExtensions {
-			khr_swapchain: true,
-			..Default::default()
-		},
+		enabled_extensions,
 		enabled_features,
 		queue_create_infos: get_queue_infos(physical_device.clone())?,
 		..Default::default()
