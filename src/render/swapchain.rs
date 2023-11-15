@@ -203,13 +203,51 @@ impl Swapchain
 			Err(e) => return Err(Box::new(e)),
 		}
 
-		// set the delta time
+		self.calculate_delta();
+
+		Ok(())
+	}
+
+	/// Submit a command buffer without presenting a swapchain image.
+	/// Only call this if `present` wasn't called for a frame, which may be the case when the window is minimized.
+	pub fn submit_without_present(
+		&mut self,
+		cb: Arc<PrimaryAutoCommandBuffer>,
+		queue: Arc<Queue>,
+		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
+	) -> Result<(), GenericEngineError>
+	{
+		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
+
+		if let Some(f) = self.submission_future.take() {
+			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
+			joined_futures = Box::new(joined_futures.join(f));
+		}
+
+		if let Some(f) = after {
+			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
+			f.wait(None)?;
+			joined_futures = Box::new(joined_futures.join(f));
+		}
+
+		self.submission_future = Some(
+			joined_futures
+				.then_execute(queue.clone(), cb)?
+				.boxed_send_sync()
+				.then_signal_fence_and_flush()?
+		);
+
+		self.calculate_delta();
+
+		Ok(())
+	}
+
+	fn calculate_delta(&mut self)
+	{
 		let now = std::time::Instant::now();
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
 		self.frame_time = dur;
-
-		Ok(())
 	}
 
 	pub fn image_count(&self) -> usize
@@ -226,6 +264,12 @@ impl Swapchain
 	pub fn extent_changed(&self) -> bool
 	{
 		self.extent_changed
+	}
+
+	/// Check if the window is currently minimized.
+	pub fn window_minimized(&self) -> bool
+	{
+		self.window.is_minimized().unwrap_or(false)
 	}
 
 	/// Get the delta time for last frame.

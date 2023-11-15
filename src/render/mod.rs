@@ -422,6 +422,14 @@ impl RenderContext
 			work.add_command(&mut primary_cb_builder)?;
 		}
 
+		let transfer_future = self.transfer_future.take();
+
+		// if the window is minimized, don't proceed any further; only complete the transfers.
+		if self.swapchain.window_minimized() {
+			self.swapchain.submit_without_present(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
+			return Ok(())
+		}
+
 		// shadows
 		for (shadow_cb, shadow_layer_image_view) in dir_light_shadows {
 			let shadow_render_info = RenderingInfo {
@@ -484,7 +492,6 @@ impl RenderContext
 		self.main_render_target.copy_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
 
 		// finish building the command buffer, then present the swapchain image
-		let transfer_future = self.transfer_future.take();
 		self.swapchain.present(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
 
 		Ok(())
