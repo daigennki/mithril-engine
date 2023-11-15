@@ -6,7 +6,6 @@
 ----------------------------------------------------------------------------- */
 
 use std::sync::Arc;
-use vulkano::{Validated, VulkanError};
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
@@ -28,7 +27,6 @@ pub struct Swapchain
 	swapchain: Arc<vulkano::swapchain::Swapchain>,
 	images: Vec<Arc<Image>>,
 
-	recreate_pending: bool,
 	extent_changed: bool, // `true` if image extent changed since the last presentation
 
 	acquire_future: Option<SwapchainAcquireFuture>,
@@ -103,7 +101,6 @@ impl Swapchain
 			window: window_arc,
 			swapchain,
 			images,
-			recreate_pending: false,
 			extent_changed: false,
 			acquire_future: None,
 			submission_future: None,
@@ -188,20 +185,12 @@ impl Swapchain
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		let future_result = joined_futures
+		let submission_future = joined_futures
 			.then_execute(queue.clone(), cb)?
 			.then_swapchain_present(queue, present_info)
 			.boxed_send_sync()
-			.then_signal_fence_and_flush();
-
-		match future_result {
-			Ok(future) => self.submission_future = Some(future),
-			Err(Validated::Error(VulkanError::OutOfDate)) => {
-				log::warn!("Swapchain out of date, recreating...");
-				self.recreate_pending = true;
-			}
-			Err(e) => return Err(Box::new(e)),
-		}
+			.then_signal_fence_and_flush()?;
+		self.submission_future = Some(submission_future);
 
 		self.calculate_delta();
 
@@ -230,12 +219,11 @@ impl Swapchain
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		self.submission_future = Some(
-			joined_futures
-				.then_execute(queue.clone(), cb)?
-				.boxed_send_sync()
-				.then_signal_fence_and_flush()?
-		);
+		let submission_future = joined_futures
+			.then_execute(queue.clone(), cb)?
+			.boxed_send_sync()
+			.then_signal_fence_and_flush()?;
+		self.submission_future = Some(submission_future);
 
 		self.calculate_delta();
 

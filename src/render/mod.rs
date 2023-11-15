@@ -424,7 +424,10 @@ impl RenderContext
 
 		let transfer_future = self.transfer_future.take();
 
-		// if the window is minimized, don't proceed any further; only complete the transfers.
+		// If the window is minimized, don't proceed any further; only submit the transfers.
+		// We have to do this because sometimes (often on Windows) the window may report an inner width or height of 0,
+		// which we can't resize the swapchain to. We can't keep presenting swapchain images without causing an "out of date"
+		// error either, so we just have to not present any images.
 		if self.swapchain.window_minimized() {
 			self.swapchain.submit_without_present(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
 			return Ok(())
