@@ -112,12 +112,6 @@ impl Swapchain
 		})
 	}
 
-	/// Tell the swapchain to recreate itself before the next image is acquired.
-	pub fn set_recreate_pending(&mut self)
-	{
-		self.recreate_pending = true;
-	}
-
 	/// Get the next swapchain image.
 	pub fn get_next_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
 	{
@@ -130,24 +124,26 @@ impl Swapchain
 		}
 
 		// Recreate the swapchain if the surface's properties changed (e.g. window size changed).
-		if self.recreate_pending {
+		let new_inner_size = self.window.inner_size().into();
+		if self.swapchain.image_extent() != new_inner_size {
+			log::info!(
+				"Window resized from {:?} to {:?}, recreating swapchain...",
+				self.swapchain.image_extent(),
+				new_inner_size
+			);
+
 			// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
 			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
 
-			let prev_dimensions = self.swapchain.image_extent();
 			let create_info = SwapchainCreateInfo {
-				image_extent: self.window.inner_size().into(),
+				image_extent: new_inner_size,
 				..self.swapchain.create_info()
 			};
-
 			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 			self.swapchain = new_swapchain;
 			self.images = new_images;
 
-			self.extent_changed = self.swapchain.image_extent() != prev_dimensions;
-			if self.extent_changed {
-				log::info!("Swapchain resized: {:?} -> {:?}", prev_dimensions, self.swapchain.image_extent());
-			}
+			self.extent_changed = true;
 		} else {
 			self.extent_changed = false;
 		}

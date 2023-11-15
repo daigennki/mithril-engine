@@ -123,25 +123,12 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Generi
 
 	match event {
 		Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => return Ok(true),
-		Event::WindowEvent {
-			event: WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer },
-			..
-		} => {
+		Event::WindowEvent { event: WindowEvent::ScaleFactorChanged { inner_size_writer, .. }, .. } => {
+			// We don't want the image to be upscaled by the OS, so we tell it here that that the inner size of the
+			// window in physical pixels should be exactly the same (dot-by-dot) as the swapchain's image extent.
+			// It would look blurry if we don't do this.
 			let extent = world.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
-			let desired_size = winit::dpi::PhysicalSize::new(extent[0], extent[1]);
-			log::info!(
-				"`ScaleFactorChanged` event gave us a scale factor of {}, giving back {:?}...",
-				scale_factor,
-				desired_size
-			);
-			inner_size_writer.request_inner_size(desired_size)?;
-		}
-		Event::WindowEvent {
-			event: WindowEvent::Resized(new_inner_size),
-			..
-		} => {
-			log::info!("Window resized to {:?}, changing swapchain dimensions...", new_inner_size);
-			world.run(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.resize_swapchain());
+			inner_size_writer.request_inner_size(extent.into())?;
 		}
 		Event::AboutToWait => {
 			// Game logic: run systems usually specific to custom components in a project

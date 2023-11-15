@@ -370,7 +370,7 @@ impl RenderContext
 
 	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
 	{
-		// Update images to match the current window size.
+		// Update images to match the current swapchain image extent.
 		self.main_render_target = RenderTarget::new(self.memory_allocator.clone(), self.swapchain.dimensions())?;
 		self.transparency_renderer.resize_image(
 			self.memory_allocator.clone(),
@@ -379,11 +379,6 @@ impl RenderContext
 		)?;
 
 		Ok(())
-	}
-
-	pub fn resize_swapchain(&mut self)
-	{
-		self.swapchain.set_recreate_pending();
 	}
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
