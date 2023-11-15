@@ -62,45 +62,36 @@ pub const MAIN_DEPTH_FORMAT: Format = Format::D16_UNORM;
 pub struct RenderContext
 {
 	device: Arc<Device>,
-	swapchain: swapchain::Swapchain,
 	graphics_queue: Arc<Queue>,
-	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
-	allow_direct_buffer_access: bool,
+	swapchain: swapchain::Swapchain,
+	main_render_target: RenderTarget,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
 	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 
-	// Future from submitted immutable buffer/image transfers. Only used if a separate transfer queue exists.
-	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
-
-	// Loaded textures, with the key being the path relative to the current working directory
-	textures: HashMap<PathBuf, Arc<Texture>>,
+	transparency_renderer: transparency::MomentTransparencyRenderer,
 
 	// User-accessible material pipelines. Optional transparency pipeline may also be specified.
 	material_pipelines: HashMap<String, (Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>)>,
 
-	main_render_target: RenderTarget,
+	// Loaded textures, with the key being the path relative to the current working directory
+	textures: HashMap<PathBuf, Arc<Texture>>,
 
-	transparency_renderer: transparency::MomentTransparencyRenderer,
-
-	// The subbuffer allocator for buffer updates.
-	staging_buffer_allocator: Mutex<SubbufferAllocator>,
-	staging_buf_max_size: usize, // Maximum staging buffer usage for the entire duration of the program.
-
-	last_frame_presented: std::time::Instant,
-	frame_time: std::time::Duration,
-
-	resize_this_frame: bool,
+	allow_direct_buffer_access: bool,
 
 	// Transfers to initialize buffers and images. If there is an asynchronous transfer queue,
 	// these will be performed while the CPU is busy with building the draw command buffers.
 	// Otherwise, these will be run at the beginning of the next graphics submission, before draws are performed.
 	async_transfers: Vec<StagingWork>,
+	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
+	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
 
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
+	staging_buffer_allocator: Mutex<SubbufferAllocator>, // Used for the buffer updates.
+	staging_buf_max_size: usize, // Maximum staging buffer usage for the entire duration of the program.
 }
 impl RenderContext
 {
@@ -150,24 +141,21 @@ impl RenderContext
 			device: vk_dev,
 			swapchain,
 			graphics_queue,
-			transfer_queue,
-			allow_direct_buffer_access,
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
 			cb_3d: Mutex::new(None),
-			transfer_future: None,
-			textures: HashMap::new(),
 			material_pipelines: HashMap::new(),
 			main_render_target,
 			transparency_renderer,
+			textures: HashMap::new(),
+			allow_direct_buffer_access,
+			async_transfers,
+			transfer_queue,
+			transfer_future: None,
+			buffer_updates,
 			staging_buffer_allocator,
 			staging_buf_max_size: 0,
-			last_frame_presented: std::time::Instant::now(),
-			frame_time: std::time::Duration::ZERO,
-			resize_this_frame: false,
-			buffer_updates,
-			async_transfers,
 		})
 	}
 
@@ -393,11 +381,9 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn resize_swapchain(&mut self) -> Result<(), GenericEngineError>
+	pub fn resize_swapchain(&mut self)
 	{
-		self.resize_this_frame = self.swapchain.fit_window()?;
-		self.resize_everything_else()?;
-		Ok(())
+		self.swapchain.set_recreate_pending();
 	}
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
@@ -459,12 +445,11 @@ impl RenderContext
 				.end_rendering()?;
 		}
 
-		// get the next swapchain image (expected to be B8G8R8A8_UNORM)
-		let (swapchain_image, dimensions_changed) = self.swapchain.get_next_image()?;
-		if dimensions_changed {
+		// get the next swapchain image
+		let swapchain_image = self.swapchain.get_next_image()?;
+		if self.swapchain.extent_changed() {
 			self.resize_everything_else()?;
 		}
-		self.resize_this_frame = dimensions_changed;
 
 		// 3D
 		if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
@@ -507,12 +492,6 @@ impl RenderContext
 		let transfer_future = self.transfer_future.take();
 		self.swapchain.present(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
 
-		// set the delta time
-		let now = std::time::Instant::now();
-		let dur = now - self.last_frame_presented;
-		self.last_frame_presented = now;
-		self.frame_time = dur;
-
 		Ok(())
 	}
 
@@ -529,7 +508,7 @@ impl RenderContext
 	/// Check if the window has been resized since the last frame submission.
 	pub fn window_resized(&self) -> bool
 	{
-		self.resize_this_frame
+		self.swapchain.extent_changed()
 	}
 
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
@@ -554,7 +533,7 @@ impl RenderContext
 	/// Get the delta time for last frame.
 	pub fn delta(&self) -> std::time::Duration
 	{
-		self.frame_time
+		self.swapchain.delta()
 	}
 }
 

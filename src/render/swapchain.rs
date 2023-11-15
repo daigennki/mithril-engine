@@ -29,9 +29,13 @@ pub struct Swapchain
 	images: Vec<Arc<Image>>,
 
 	recreate_pending: bool,
+	extent_changed: bool, // `true` if image extent changed since the last presentation
 
 	acquire_future: Option<SwapchainAcquireFuture>,
 	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
+
+	last_frame_presented: std::time::Instant,
+	frame_time: std::time::Duration,
 }
 impl Swapchain
 {
@@ -100,14 +104,23 @@ impl Swapchain
 			swapchain,
 			images,
 			recreate_pending: false,
+			extent_changed: false,
 			acquire_future: None,
 			submission_future: None,
+			last_frame_presented: std::time::Instant::now(),
+			frame_time: std::time::Duration::ZERO,
 		})
+	}
+
+	/// Tell the swapchain to recreate itself before the next image is acquired.
+	pub fn set_recreate_pending(&mut self)
+	{
+		self.recreate_pending = true;
 	}
 
 	/// Recreate the swapchain to fit the window's requirements (e.g., window size changed).
 	/// Returns `Ok(true)` if the image extent has changed.
-	pub fn fit_window(&mut self) -> Result<bool, GenericEngineError>
+	fn fit_window(&mut self) -> Result<bool, GenericEngineError>
 	{
 		// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
 		self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
@@ -122,46 +135,43 @@ impl Swapchain
 		self.swapchain = new_swapchain;
 		self.images = new_images;
 
-		let dimensions_changed = self.swapchain.image_extent() != prev_dimensions;
-		if dimensions_changed {
+		let extent_changed = self.swapchain.image_extent() != prev_dimensions;
+		if extent_changed {
 			log::info!(
 				"Swapchain resized: {:?} -> {:?}",
 				prev_dimensions,
 				self.swapchain.image_extent()
 			);
 		}
-		Ok(dimensions_changed)
+		Ok(extent_changed)
 	}
 
 	/// Get the next swapchain image.
-	/// Returns the image and a bool indicating if the image dimensions changed.
 	/// Subsequent command buffer commands will fail with `vulkano::sync::AccessError::AlreadyInUse`
 	/// if this isn't run after every swapchain command submission.
-	pub fn get_next_image(&mut self) -> Result<(Arc<Image>, bool), GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
 	{
+		// Panic if this function is called when an image has already been acquired without being submitted
+		assert!(self.acquire_future.is_none());
+
 		// clean up resources from finished submissions
 		if let Some(f) = self.submission_future.as_mut() {
 			f.cleanup_finished();
 		}
 
-		let dimensions_changed = if self.recreate_pending {
+		self.extent_changed = if self.recreate_pending {
 			self.fit_window()? // recreate the swapchain
 		} else {
 			false
 		};
 
-		if self.acquire_future.is_some() {
-			panic!("`get_next_image` called when an image has already been acquired without being submitted!");
-		}
-
 		match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
 			Ok((image_num, suboptimal, acquire_future)) => {
 				if suboptimal {
-					log::warn!("Swapchain image is suboptimal, swapchain recreate pending...");
+					log::warn!("Swapchain image is suboptimal!");
 				}
-				self.recreate_pending = suboptimal;
 				self.acquire_future = Some(acquire_future);
-				Ok((self.images[image_num as usize].clone(), dimensions_changed))
+				Ok(self.images[image_num as usize].clone())
 			}
 			Err(Validated::Error(VulkanError::OutOfDate)) => {
 				log::warn!("Swapchain out of date, recreating...");
@@ -218,6 +228,12 @@ impl Swapchain
 			Err(e) => return Err(Box::new(e)),
 		}
 
+		// set the delta time
+		let now = std::time::Instant::now();
+		let dur = now - self.last_frame_presented;
+		self.last_frame_presented = now;
+		self.frame_time = dur;
+
 		Ok(())
 	}
 
@@ -229,6 +245,18 @@ impl Swapchain
 	pub fn dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.image_extent()
+	}
+
+	/// Check whether or not the image extent of the swapchain chaged since the last image was presented.
+	pub fn extent_changed(&self) -> bool
+	{
+		self.extent_changed
+	}
+
+	/// Get the delta time for last frame.
+	pub fn delta(&self) -> std::time::Duration
+	{
+		self.frame_time
 	}
 }
 
