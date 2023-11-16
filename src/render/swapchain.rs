@@ -46,11 +46,13 @@ impl Swapchain
 		window_title: &str
 	) -> Result<Self, GenericEngineError>
 	{
+		let pd = vk_dev.physical_device();
+
 		let use_monitor = event_loop 
 			.primary_monitor()
 			.or(event_loop.available_monitors().next())
 			.ok_or("The primary monitor could not be detected.")?;
-		
+
 		let (_current_video_mode, fullscreen_mode) = get_video_modes(use_monitor.clone());
 
 		let window_size = if let Some(fs_mode) = &fullscreen_mode {
@@ -83,7 +85,6 @@ impl Swapchain
 
 		let surface_info = SurfaceInfo::default();
 
-		let pd = vk_dev.physical_device();
 		let surface_caps = pd.surface_capabilities(&surface, surface_info.clone())?;
 		let surface_formats = pd.surface_formats(&surface, surface_info.clone())?;
 		let surface_present_modes = pd.surface_present_modes(&surface, surface_info)?;
@@ -192,21 +193,17 @@ impl Swapchain
 	/// swapchain image, usually blitting to it) and then present the resulting image.
 	/// Optionally, a future `after` to wait for (usually for joining submitted transfers on another queue) can be given, so
 	/// that graphics operations don't begin until after that future is reached.
-	pub fn present(
+	///
+	/// If this is called without acquiring an image, it'll assume that you want to submit the contents of the command buffer
+	/// to the graphics queue without presenting an image, which may be useful when the window is minimized.
+	pub fn submit(
 		&mut self,
 		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
 		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
 	) -> Result<(), GenericEngineError>
 	{
-		let acquire_future = self
-			.acquire_future
-			.take()
-			.expect("Command buffer submit attempted without acquiring an image!");
-
-		let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), acquire_future.image_index());
-
-		let mut joined_futures = acquire_future.boxed_send_sync();
+		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
 
 		// To keep frame presentation timing stable, we must sleep before waiting for the fence.
 		self.sleep_and_calculate_delta();
@@ -222,44 +219,27 @@ impl Swapchain
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		let submission_future = joined_futures
-			.then_execute(queue.clone(), cb)?
-			.then_swapchain_present(queue, present_info)
-			.boxed_send_sync()
-			.then_signal_fence_and_flush()?;
-		self.submission_future = Some(submission_future);
+		let submission_future = match self.acquire_future.take() {
+			Some(acquire_future) => {
+				let present_info = SwapchainPresentInfo::swapchain_image_index(
+					self.swapchain.clone(),
+					acquire_future.image_index()
+				);
 
-		Ok(())
-	}
-
-	/// Submit a command buffer without presenting a swapchain image.
-	/// Only call this if `present` wasn't called for a frame, which may be the case when the window is minimized.
-	pub fn submit_without_present(
-		&mut self,
-		cb: Arc<PrimaryAutoCommandBuffer>,
-		queue: Arc<Queue>,
-		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
-	) -> Result<(), GenericEngineError>
-	{
-		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
-
-		self.sleep_and_calculate_delta();
-
-		if let Some(f) = self.submission_future.take() {
-			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
-			joined_futures = Box::new(joined_futures.join(f));
-		}
-
-		if let Some(f) = after {
-			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
-			f.wait(None)?;
-			joined_futures = Box::new(joined_futures.join(f));
-		}
-
-		let submission_future = joined_futures
-			.then_execute(queue.clone(), cb)?
-			.boxed_send_sync()
-			.then_signal_fence_and_flush()?;
+				joined_futures
+					.join(acquire_future)
+					.then_execute(queue.clone(), cb)?
+					.then_swapchain_present(queue, present_info)
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			}
+			None => {
+				joined_futures
+					.then_execute(queue.clone(), cb)?
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			}
+		};
 		self.submission_future = Some(submission_future);
 
 		Ok(())
@@ -270,7 +250,13 @@ impl Swapchain
 	{
 		let sleep_until = self.last_frame_presented + self.frame_time_min_limit;
 		if sleep_until > std::time::Instant::now() {
-			std::thread::sleep(sleep_until - std::time::Instant::now());
+			// subtract to account for sleep overshoot
+			let sleep_dur = (sleep_until - std::time::Instant::now())
+				.checked_sub(std::time::Duration::from_micros(50));
+
+			if let Some(d) = sleep_dur {
+				std::thread::sleep(d);
+			}
 		}
 
 		let now = std::time::Instant::now();
