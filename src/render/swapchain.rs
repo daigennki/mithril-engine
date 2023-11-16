@@ -29,12 +29,14 @@ pub struct Swapchain
 	images: Vec<Arc<Image>>,
 
 	extent_changed: bool, // `true` if image extent changed since the last presentation
+	recreate_pending: bool,
 
 	acquire_future: Option<SwapchainAcquireFuture>,
 	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
+	frame_time_min_limit: std::time::Duration, // minimum frame time, used for framerate limit
 }
 impl Swapchain
 {
@@ -127,15 +129,21 @@ impl Swapchain
 			image_color_space
 		);
 
+		// TODO: load this from config
+		let fps_max = 360;
+		let frame_time_min_limit = std::time::Duration::from_secs(1) / fps_max;
+
 		Ok(Swapchain {
 			window: window_arc,
 			swapchain,
 			images,
 			extent_changed: false,
+			recreate_pending: false,
 			acquire_future: None,
 			submission_future: None,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
+			frame_time_min_limit,
 		})
 	}
 
@@ -151,13 +159,11 @@ impl Swapchain
 		}
 
 		// Recreate the swapchain if the surface's properties changed (e.g. window size changed).
+		let prev_extent = self.swapchain.image_extent();
 		let new_inner_size = self.window.inner_size().into();
-		if self.swapchain.image_extent() != new_inner_size {
-			log::info!(
-				"Window resized from {:?} to {:?}, recreating swapchain...",
-				self.swapchain.image_extent(),
-				new_inner_size
-			);
+		self.extent_changed = prev_extent != new_inner_size;
+		if self.extent_changed || self.recreate_pending {
+			log::info!("Recreating swapchain; size will change from {:?} to {:?}", prev_extent, new_inner_size);
 
 			// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
 			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
@@ -166,19 +172,16 @@ impl Swapchain
 				image_extent: new_inner_size,
 				..self.swapchain.create_info()
 			};
-
 			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 			self.swapchain = new_swapchain;
 			self.images = new_images;
-
-			self.extent_changed = true;
-		} else {
-			self.extent_changed = false;
+			self.recreate_pending = false;
 		}
 
 		let (image_num, suboptimal, acquire_future) = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None)?;
 		if suboptimal {
-			log::warn!("Swapchain is suboptimal!");
+			log::warn!("Swapchain is suboptimal! Recreate pending...");
+			self.recreate_pending = true;
 		}
 		self.acquire_future = Some(acquire_future);
 
@@ -205,6 +208,9 @@ impl Swapchain
 
 		let mut joined_futures = acquire_future.boxed_send_sync();
 
+		// To keep frame presentation timing stable, we must sleep before waiting for the fence.
+		self.sleep_and_calculate_delta();
+
 		if let Some(f) = self.submission_future.take() {
 			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
 			joined_futures = Box::new(joined_futures.join(f));
@@ -223,8 +229,6 @@ impl Swapchain
 			.then_signal_fence_and_flush()?;
 		self.submission_future = Some(submission_future);
 
-		self.calculate_delta();
-
 		Ok(())
 	}
 
@@ -238,6 +242,8 @@ impl Swapchain
 	) -> Result<(), GenericEngineError>
 	{
 		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
+
+		self.sleep_and_calculate_delta();
 
 		if let Some(f) = self.submission_future.take() {
 			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
@@ -256,13 +262,17 @@ impl Swapchain
 			.then_signal_fence_and_flush()?;
 		self.submission_future = Some(submission_future);
 
-		self.calculate_delta();
-
 		Ok(())
 	}
 
-	fn calculate_delta(&mut self)
+	/// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
+	fn sleep_and_calculate_delta(&mut self)
 	{
+		let sleep_until = self.last_frame_presented + self.frame_time_min_limit;
+		if sleep_until > std::time::Instant::now() {
+			std::thread::sleep(sleep_until - std::time::Instant::now());
+		}
+
 		let now = std::time::Instant::now();
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
