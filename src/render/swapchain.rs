@@ -11,7 +11,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
-	FullScreenExclusive, PresentMode, 
+	ColorSpace, FullScreenExclusive, PresentMode,
 	Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{
@@ -32,12 +32,14 @@ pub struct Swapchain
 	images: Vec<Arc<Image>>,
 
 	extent_changed: bool, // `true` if image extent changed since the last presentation
+	recreate_pending: bool,
 
 	acquire_future: Option<SwapchainAcquireFuture>,
 	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	last_frame_presented: std::time::Instant,
 	frame_time: std::time::Duration,
+	frame_time_min_limit: std::time::Duration, // minimum frame time, used for framerate limit
 }
 impl Swapchain
 {
@@ -47,11 +49,13 @@ impl Swapchain
 		window_title: &str
 	) -> Result<Self, GenericEngineError>
 	{
+		let pd = vk_dev.physical_device();
+
 		let use_monitor = event_loop 
 			.primary_monitor()
 			.or(event_loop.available_monitors().next())
 			.ok_or("The primary monitor could not be detected.")?;
-		
+
 		let (_current_video_mode, fullscreen_mode) = get_video_modes(use_monitor.clone());
 
 		let window_size = if let Some(fs_mode) = &fullscreen_mode {
@@ -90,7 +94,6 @@ impl Swapchain
 			SurfaceInfo::default()
 		};
 
-		let pd = vk_dev.physical_device();
 		let surface_caps = pd.surface_capabilities(&surface, surface_info.clone())?;
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
@@ -108,33 +111,58 @@ impl Swapchain
 
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 
-		// NVIDIA on Linux (possibly only when using Wayland with PRIME?) only supports B8G8R8A8_UNORM + SrgbNonLinear, so it
-		// would be a safer bet than B8G8R8A8_SRGB. B8G8R8A8_UNORM does in fact have slightly wider support than B8G8R8A8_SRGB:
-		// https://vulkan.gpuinfo.org/listsurfaceformats.php?platform=linux
-		// This means we must convert to non-linear sRGB beforehand. See `RenderTarget::copy_to_swapchain` for that conversion.
+		// Pairs of format and color space we can support
+		let mut format_candidates = vec![
+			// HDR via extended sRGB linear image
+			(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
+
+			// sRGB image automatically converts from linear to non-linear
+			(Format::B8G8R8A8_SRGB, ColorSpace::SrgbNonLinear),
+
+			// Requires separate conversion from linear to non-linear, but is supported on practically any GPU,
+			// so at least this pair must be retained. See `RenderTarget::copy_to_swapchain` for the conversion.
+			(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
+		];
+
+		// Find the intersection between the format candidates and the formats supported by the physical device,
+		// then get the first one remaining.
+		format_candidates.retain(|candidate| surface_formats.contains(candidate));
+		let (image_format, image_color_space) = format_candidates[0];
+
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count,
 			image_extent: window_size.into(),
-			image_format: Format::B8G8R8A8_UNORM,
+			image_format,
+			image_color_space,
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Fifo,
 			full_screen_exclusive: surface_info.full_screen_exclusive,
 			win32_monitor: surface_info.win32_monitor,
 			..Default::default()
 		};
-
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
-		log::debug!("created {} swapchain images", images.len());
+		log::info!(
+			"Created a swapchain with {} images (format {:?}, color space {:?})",
+			images.len(),
+			image_format,
+			image_color_space
+		);
+
+		// TODO: load this from config
+		let fps_max = 360;
+		let frame_time_min_limit = std::time::Duration::from_secs(1) / fps_max;
 
 		Ok(Swapchain {
 			window: window_arc,
 			swapchain,
 			images,
 			extent_changed: false,
+			recreate_pending: false,
 			acquire_future: None,
 			submission_future: None,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
+			frame_time_min_limit,
 		})
 	}
 
@@ -150,13 +178,11 @@ impl Swapchain
 		}
 
 		// Recreate the swapchain if the surface's properties changed (e.g. window size changed).
+		let prev_extent = self.swapchain.image_extent();
 		let new_inner_size = self.window.inner_size().into();
-		if self.swapchain.image_extent() != new_inner_size {
-			log::info!(
-				"Window resized from {:?} to {:?}, recreating swapchain...",
-				self.swapchain.image_extent(),
-				new_inner_size
-			);
+		self.extent_changed = prev_extent != new_inner_size;
+		if self.extent_changed || self.recreate_pending {
+			log::info!("Recreating swapchain; size will change from {:?} to {:?}", prev_extent, new_inner_size);
 
 			// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
 			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
@@ -165,19 +191,16 @@ impl Swapchain
 				image_extent: new_inner_size,
 				..self.swapchain.create_info()
 			};
-
 			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
 			self.swapchain = new_swapchain;
 			self.images = new_images;
-
-			self.extent_changed = true;
-		} else {
-			self.extent_changed = false;
+			self.recreate_pending = false;
 		}
 
 		let (image_num, suboptimal, acquire_future) = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None)?;
 		if suboptimal {
-			log::warn!("Swapchain is suboptimal!");
+			log::warn!("Swapchain is suboptimal! Recreate pending...");
+			self.recreate_pending = true;
 		}
 		self.acquire_future = Some(acquire_future);
 
@@ -188,48 +211,10 @@ impl Swapchain
 	/// swapchain image, usually blitting to it) and then present the resulting image.
 	/// Optionally, a future `after` to wait for (usually for joining submitted transfers on another queue) can be given, so
 	/// that graphics operations don't begin until after that future is reached.
-	pub fn present(
-		&mut self,
-		cb: Arc<PrimaryAutoCommandBuffer>,
-		queue: Arc<Queue>,
-		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
-	) -> Result<(), GenericEngineError>
-	{
-		let acquire_future = self
-			.acquire_future
-			.take()
-			.expect("Command buffer submit attempted without acquiring an image!");
-
-		let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), acquire_future.image_index());
-
-		let mut joined_futures = acquire_future.boxed_send_sync();
-
-		if let Some(f) = self.submission_future.take() {
-			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
-			joined_futures = Box::new(joined_futures.join(f));
-		}
-
-		if let Some(f) = after {
-			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
-			f.wait(None)?;
-			joined_futures = Box::new(joined_futures.join(f));
-		}
-
-		let submission_future = joined_futures
-			.then_execute(queue.clone(), cb)?
-			.then_swapchain_present(queue, present_info)
-			.boxed_send_sync()
-			.then_signal_fence_and_flush()?;
-		self.submission_future = Some(submission_future);
-
-		self.calculate_delta();
-
-		Ok(())
-	}
-
-	/// Submit a command buffer without presenting a swapchain image.
-	/// Only call this if `present` wasn't called for a frame, which may be the case when the window is minimized.
-	pub fn submit_without_present(
+	///
+	/// If this is called without acquiring an image, it'll assume that you want to submit the contents of the command buffer
+	/// to the graphics queue without presenting an image, which may be useful when the window is minimized.
+	pub fn submit(
 		&mut self,
 		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
@@ -238,6 +223,9 @@ impl Swapchain
 	{
 		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
 
+		// To keep frame presentation timing stable, we must sleep before waiting for the fence.
+		self.sleep_and_calculate_delta();
+
 		if let Some(f) = self.submission_future.take() {
 			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
 			joined_futures = Box::new(joined_futures.join(f));
@@ -249,19 +237,46 @@ impl Swapchain
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		let submission_future = joined_futures
-			.then_execute(queue.clone(), cb)?
-			.boxed_send_sync()
-			.then_signal_fence_and_flush()?;
-		self.submission_future = Some(submission_future);
+		let submission_future = match self.acquire_future.take() {
+			Some(acquire_future) => {
+				let present_info = SwapchainPresentInfo::swapchain_image_index(
+					self.swapchain.clone(),
+					acquire_future.image_index()
+				);
 
-		self.calculate_delta();
+				joined_futures
+					.join(acquire_future)
+					.then_execute(queue.clone(), cb)?
+					.then_swapchain_present(queue, present_info)
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			}
+			None => {
+				joined_futures
+					.then_execute(queue.clone(), cb)?
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			}
+		};
+		self.submission_future = Some(submission_future);
 
 		Ok(())
 	}
 
-	fn calculate_delta(&mut self)
+	/// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
+	fn sleep_and_calculate_delta(&mut self)
 	{
+		let sleep_until = self.last_frame_presented + self.frame_time_min_limit;
+		if sleep_until > std::time::Instant::now() {
+			// subtract to account for sleep overshoot
+			let sleep_dur = (sleep_until - std::time::Instant::now())
+				.checked_sub(std::time::Duration::from_micros(50));
+
+			if let Some(d) = sleep_dur {
+				std::thread::sleep(d);
+			}
+		}
+
 		let now = std::time::Instant::now();
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
@@ -271,6 +286,15 @@ impl Swapchain
 	pub fn image_count(&self) -> usize
 	{
 		self.images.len()
+	}
+
+	pub fn format(&self) -> Format
+	{
+		self.swapchain.image_format()
+	}
+	pub fn color_space(&self) -> ColorSpace
+	{
+		self.swapchain.image_color_space()
 	}
 
 	pub fn dimensions(&self) -> [u32; 2]
