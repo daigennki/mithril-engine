@@ -334,6 +334,9 @@ fn get_video_modes(mon: MonitorHandle) -> (Option<VideoMode>, Option<winit::wind
 	let current_video_mode = mon
 		.video_modes()
 		.find(|vm| vm.size() == mon.size() && vm.refresh_rate_millihertz() == mon.refresh_rate_millihertz().unwrap_or(0));
+	if current_video_mode.is_none() {
+		log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
+	}
 
 	let mut video_modes: Vec<_> = mon.video_modes().collect();
 	log::info!("All video modes supported by current monitor (\"{mon_name}\"):");
@@ -341,11 +344,13 @@ fn get_video_modes(mon: MonitorHandle) -> (Option<VideoMode>, Option<winit::wind
 	// filter the video modes to those with >=1280 width, >=720 height, and not vertical (width <= height)
 	video_modes.retain(|video_mode| {
 		// print unfiltered video modes while we're at it
-		let video_mode_suffix = match &current_video_mode {
-			Some(cur_vm) if video_mode == cur_vm  => " <- likely current primary monitor video mode",
-			_ => "",
-		};
-		log::info!("{}{}", format_video_mode(video_mode), video_mode_suffix);
+		let video_mode_suffix = current_video_mode
+			.as_ref()
+			.filter(|cur_vm| video_mode == *cur_vm)
+			.map(|_| " <- likely current primary monitor video mode")
+			.unwrap_or_default();
+
+		log::info!("{}{}", video_mode, video_mode_suffix);
 
 		let size = video_mode.size();
 		size.width >= 1280 && size.height >= 720 && size.width >= size.height
@@ -358,53 +363,27 @@ fn get_video_modes(mon: MonitorHandle) -> (Option<VideoMode>, Option<winit::wind
 	video_modes.dedup_by_key(|video_mode| (video_mode.size(), video_mode.bit_depth()));
 
 	log::info!("Filtered video modes:");
-	for vm in &video_modes {
-		log::info!("{}", format_video_mode(vm))
-	}
+	video_modes.iter().for_each(|vm| log::info!("{vm}"));
 
-	// attempt to use fullscreen window if requested
+	// Determine the appropriate fullscreen mode based on the arguments given to the executable.
+	//
+	// If "-fullscreen" and "-borderless" were both specified, make a borderless window filling the entire monitor
+	// instead of exclusive fullscreen.
+	// If only "-fullscreen" was specified, use the current video mode with exclusive fullscreen.
+	//
+	// NOTE: Exclusive fullscreen gets ignored on Wayland.
+	// Therefore, it might be a good idea to hide such an option in UI from the end user on Wayland.
+	//
 	// TODO: load this from config
-	let fullscreen_mode = get_fullscreen_mode(mon, &current_video_mode);
+	let fullscreen_mode = std::env::args()
+		.find(|arg| arg == "-fullscreen")
+		.and_then(|_| {
+			std::env::args()
+				.find(|arg| arg == "-borderless")
+				.map(|_| winit::window::Fullscreen::Borderless(Some(mon)))
+				.or_else(|| current_video_mode.clone().map(|vm| winit::window::Fullscreen::Exclusive(vm)))
+		});
 
-	//(video_modes, current_video_mode)
 	(current_video_mode, fullscreen_mode)
 }
-fn format_video_mode(video_mode: &VideoMode) -> String
-{
-	let size = video_mode.size();
-	let refresh_rate_hz = video_mode.refresh_rate_millihertz() / 1000;
-	let refresh_rate_thousandths = video_mode.refresh_rate_millihertz() % 1000;
-	format!(
-		"{} x {} @ {}.{:0>3} Hz {}-bit",
-		size.width,
-		size.height,
-		refresh_rate_hz,
-		refresh_rate_thousandths,
-		video_mode.bit_depth()
-	)
-}
 
-// Determine the appropriate fullscreen mode depending on the arguments given to the executable.
-// Returns `Some` if some kind of fullscreen mode is enabled, or `None` if the window should simply be in windowed mode.
-fn get_fullscreen_mode(use_monitor: MonitorHandle, current_video_mode: &Option<VideoMode>) -> Option<winit::window::Fullscreen>
-{
-	if std::env::args().find(|arg| arg == "-fullscreen").is_some() {
-		if std::env::args().find(|arg| arg == "-borderless").is_some() {
-			// If "-fullscreen" and "-borderless" were both specified, make a borderless window filling the entire monitor
-			// instead of exclusive fullscreen.
-			Some(winit::window::Fullscreen::Borderless(Some(use_monitor)))
-		} else {
-			// NOTE: This is specifically *exclusive* fullscreen, which gets ignored on Wayland.
-			// Therefore, it might be a good idea to hide such an option in UI from the end user on Wayland.
-			// TODO: Use VK_EXT_full_screen_exclusive to minimize latency (usually only available on Windows)
-			if let Some(fullscreen_video_mode) = current_video_mode {
-				Some(winit::window::Fullscreen::Exclusive(fullscreen_video_mode.clone()))
-			} else {
-				log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
-				None
-			}
-		}
-	} else {
-		None
-	}
-}
