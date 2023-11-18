@@ -11,7 +11,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
-	ColorSpace, FullScreenExclusive, PresentMode,
+	ColorSpace, PresentMode,
 	Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::{
@@ -19,9 +19,6 @@ use vulkano::sync::{
 };
 use winit::window::{Window, WindowBuilder};
 use winit::monitor::{MonitorHandle, VideoMode};
-
-#[cfg(target_family = "windows")]
-use winit::platform::windows::MonitorHandleExtWindows;
 
 use crate::GenericEngineError;
 
@@ -78,33 +75,9 @@ impl Swapchain
 		let window_arc = Arc::new(window);
 
 		let surface = Surface::from_window(vk_dev.instance().clone(), window_arc.clone())?;
-
-		// Enable exclusive fullscreen using VK_EXT_full_screen_exclusive when possible
-		let surface_info = if vk_dev.enabled_extensions().ext_full_screen_exclusive {
-			#[cfg(target_family = "windows")]
-			let win32_monitor = Some(unsafe { vulkano::swapchain::Win32Monitor::new(use_monitor.hmonitor() as *const ()) });
-			#[cfg(not(target_family = "windows"))]
-			let win32_monitor = None;
-			SurfaceInfo {
-				full_screen_exclusive: FullScreenExclusive::Allowed,
-				win32_monitor,
-				..Default::default()
-			}
-		} else {
-			SurfaceInfo::default()
-		};
-
-		let surface_caps = pd.surface_capabilities(&surface, surface_info.clone())?;
+		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
-		
-		if vk_dev.enabled_extensions().ext_full_screen_exclusive {
-			let full_screen_exclusive_supported_str = surface_caps
-				.full_screen_exclusive_supported
-				.then_some("available")
-				.unwrap_or("not available");
-			log::info!("Exclusive full-screen is {} for the primary monitor.", full_screen_exclusive_supported_str);
-		}
 
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
@@ -114,7 +87,8 @@ impl Swapchain
 		// Pairs of format and color space we can support
 		let mut format_candidates = vec![
 			// HDR via extended sRGB linear image
-			(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
+			// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
+			//(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
 
 			// sRGB image automatically converts from linear to non-linear
 			(Format::B8G8R8A8_SRGB, ColorSpace::SrgbNonLinear),
@@ -136,8 +110,6 @@ impl Swapchain
 			image_color_space,
 			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode: PresentMode::Fifo,
-			full_screen_exclusive: surface_info.full_screen_exclusive,
-			win32_monitor: surface_info.win32_monitor,
 			..Default::default()
 		};
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
