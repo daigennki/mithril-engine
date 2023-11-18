@@ -17,6 +17,7 @@ use vulkano::swapchain::{
 use vulkano::sync::{
 	future::{FenceSignalFuture, GpuFuture, NowFuture}
 };
+use vulkano::{Validated, VulkanError};
 use winit::window::{Window, WindowBuilder};
 use winit::monitor::{MonitorHandle, VideoMode};
 
@@ -104,7 +105,7 @@ impl Swapchain
 		let (image_format, image_color_space) = format_candidates[0];
 
 		let create_info = SwapchainCreateInfo {
-			min_image_count: surface_caps.min_image_count,
+			min_image_count: surface_caps.min_image_count.max(2),
 			image_extent: window_size.into(),
 			image_format,
 			image_color_space,
@@ -169,7 +170,15 @@ impl Swapchain
 			self.recreate_pending = false;
 		}
 
-		let (image_num, suboptimal, acquire_future) = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None)?;
+		let timeout = Some(std::time::Duration::from_secs(5));
+		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), timeout);
+		let (image_num, suboptimal, acquire_future) = match acquire_result {
+			Ok(ok) => ok,
+			Err(Validated::Error(VulkanError::Timeout)) => {
+				return Err("Swapchain image took too long to become available!".into())
+			}
+			Err(e) => return Err(Box::new(e)),
+		};
 		if suboptimal {
 			log::warn!("Swapchain is suboptimal! Recreate pending...");
 			self.recreate_pending = true;
@@ -199,13 +208,26 @@ impl Swapchain
 		self.sleep_and_calculate_delta();
 
 		if let Some(f) = self.submission_future.take() {
-			f.wait(None)?; // wait for the previous submission to finish, to make sure resources are no longer in use
+			// wait for the previous submission to finish, to make sure resources are no longer in use
+			match f.wait(Some(std::time::Duration::from_secs(5))) {
+				Ok(()) => (),
+				Err(Validated::Error(VulkanError::Timeout)) => {
+					return Err("Graphics submission took too long!".into())
+				}
+				Err(e) => return Err(Box::new(e)),
+			}
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
 		if let Some(f) = after {
 			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
-			f.wait(None)?;
+			match f.wait(Some(std::time::Duration::from_secs(5))) {
+				Ok(()) => (),
+				Err(Validated::Error(VulkanError::Timeout)) => {
+					return Err("Transfer submission took too long!".into())
+				}
+				Err(e) => return Err(Box::new(e)),
+			}
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
