@@ -263,8 +263,9 @@ impl MeshManager
 			} else {
 				let push_data = MeshPushConstant {
 					projviewmodel,
-					model_notranslate,
-					translation,
+					model_x: model_notranslate.x_axis.extend(translation.x),
+					model_y: model_notranslate.y_axis.extend(translation.y),
+					model_z: model_notranslate.z_axis.extend(translation.z),
 				};
 				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 			}
@@ -288,7 +289,8 @@ impl MeshManager
 pub struct MeshPushConstant
 {
 	projviewmodel: Mat4,
-	model_notranslate: Mat3A,
-	translation: Vec3,
+	model_x: Vec4,
+	model_y: Vec4,
+	model_z: Vec4,
 }
 

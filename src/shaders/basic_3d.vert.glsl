@@ -3,8 +3,7 @@
 layout(push_constant) uniform pc
 {
     mat4 projviewmodel;	// pre-multiplied projection, view, and model transformation matrices
-	mat3 transform_notranslate;	// the model transformation matrix with just scale and rotation
-	vec3 translation;
+	mat3x4 transform;	// the model transformation matrix with scale and rotation; translation stored in 4th row
 };
 
 layout(location = 0) in vec3 pos;
@@ -19,6 +18,10 @@ void main()
 {
     gl_Position = projviewmodel * vec4(pos, 1.0);
 	texcoord = uv;
+
+	mat3 transform_notranslate = mat3(transform);
+	vec3 translation = vec3(transform[0].w, transform[1].w, transform[2].w);
+
 	normal_transformed = transform_notranslate * normal;
 	world_pos = transform_notranslate * pos + translation;
 }
