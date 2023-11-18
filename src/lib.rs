@@ -27,6 +27,7 @@ use vulkano::format::Format;
 use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{CameraFov, CameraManager};
@@ -129,6 +130,17 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Generi
 			// It would look blurry if we don't do this.
 			let extent = world.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
 			inner_size_writer.request_inner_size(extent.into())?;
+		}
+		Event::WindowEvent { event: WindowEvent::KeyboardInput { event: key_event, .. }, .. } => {
+			if !key_event.repeat && !key_event.state.is_pressed() {
+				match key_event.physical_key {
+					PhysicalKey::Code(KeyCode::F12) => {
+						// Toggle fullscreen
+						world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.set_fullscreen(!r_ctx.is_fullscreen()));
+					}
+					_ => ()
+				}
+			}
 		}
 		Event::AboutToWait => {
 			// Game logic: run systems usually specific to custom components in a project

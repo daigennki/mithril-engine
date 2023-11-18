@@ -524,6 +524,15 @@ impl RenderContext
 		self.swapchain.extent_changed()
 	}
 
+	pub fn set_fullscreen(&self, fullscreen: bool)
+	{
+		self.swapchain.set_fullscreen(fullscreen)
+	}
+	pub fn is_fullscreen(&self) -> bool
+	{
+		self.swapchain.is_fullscreen()
+	}
+
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()

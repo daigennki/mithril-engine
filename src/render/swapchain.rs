@@ -139,6 +139,15 @@ impl Swapchain
 		})
 	}
 
+	pub fn set_fullscreen(&self, fullscreen: bool)
+	{
+		self.window.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
+	}
+	pub fn is_fullscreen(&self) -> bool
+	{
+		self.window.fullscreen().is_some()
+	}
+
 	/// Get the next swapchain image.
 	pub fn get_next_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
 	{
