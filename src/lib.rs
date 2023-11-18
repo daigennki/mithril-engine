@@ -11,6 +11,9 @@ pub mod render;
 
 //#[cfg(feature = "egui")]
 //mod egui_renderer;
+//
+//#[cfg(feature = "egui")]
+//use egui_renderer::EguiRenderer;
 
 use glam::*;
 use serde::Deserialize;
@@ -34,9 +37,6 @@ use component::camera::{CameraFov, CameraManager};
 use component::ui;
 use component::ui::canvas::Canvas;
 use render::RenderContext;
-
-//#[cfg(feature = "egui")]
-//use egui_renderer::EguiRenderer;
 
 type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
