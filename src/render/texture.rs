@@ -8,7 +8,7 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, BufferContents};
 use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
 use vulkano::format::Format;
 use vulkano::image::{
@@ -42,28 +42,27 @@ impl Texture
 			_ => load_other_format(path)?,
 		};
 
-		Self::new_from_iter(memory_allocator, img_raw, vk_fmt, dim, mip_count)
+		Self::new_from_slice(memory_allocator, img_raw.as_slice(), vk_fmt, dim, mip_count)
 	}
 
-	pub fn new_from_iter<Px, I>(
+	pub fn new_from_slice<Px>(
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		iter: I,
+		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
 		mip_levels: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
-		Px: Send + Sync + bytemuck::Pod,
-		[Px]: vulkano::buffer::BufferContents,
-		I: IntoIterator<Item = Px>,
-		I::IntoIter: ExactSizeIterator,
+		Px: BufferContents + Copy,
 	{
 		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 		let buf_allocation_info = AllocationCreateInfo {
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_iter(memory_allocator.clone(), buffer_info, buf_allocation_info, iter)?;
+		let data_len = data.len().try_into()?;
+		let staging_buf = Buffer::new_slice(memory_allocator.clone(), buffer_info, buf_allocation_info, data_len)?;
+		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let image_info = ImageCreateInfo {
 			format,
@@ -165,34 +164,33 @@ impl CubemapTexture
 			combined_data.extend(&img_raw[..mip_size]);
 		}
 
-		Self::new_from_iter(
+		Self::new_from_slice(
 			memory_allocator,
-			combined_data,
+			combined_data.as_slice(),
 			cube_fmt.unwrap(),
 			cube_dim.unwrap(),
 			1,
 		)
 	}
 
-	pub fn new_from_iter<Px, I>(
+	pub fn new_from_slice<Px>(
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		iter: I,
+		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
 		mip_levels: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
-		Px: Send + Sync + bytemuck::Pod,
-		[Px]: vulkano::buffer::BufferContents,
-		I: IntoIterator<Item = Px>,
-		I::IntoIter: ExactSizeIterator,
+		Px: BufferContents + Copy,
 	{
 		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-		let buf_allocation_info = AllocationCreateInfo {
+		let buf_alloc_info = AllocationCreateInfo {
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST |  MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
-		let staging_buf = Buffer::from_iter(memory_allocator.clone(), buffer_info, buf_allocation_info, iter)?;
+		let data_len = data.len().try_into()?;
+		let staging_buf = Buffer::new_slice(memory_allocator.clone(), buffer_info, buf_alloc_info, data_len)?;
+		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,

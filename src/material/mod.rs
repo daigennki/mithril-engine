@@ -66,7 +66,7 @@ impl ColorInput
 		match self {
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				Ok(Arc::new(render_ctx.new_texture_from_iter(color.to_array(), Format::R32G32B32A32_SFLOAT, [ 1, 1 ], 1)?))
+				Ok(Arc::new(render_ctx.new_texture_from_slice(&color.to_array(), Format::R32G32B32A32_SFLOAT, [ 1, 1 ], 1)?))
 			}
 			ColorInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}

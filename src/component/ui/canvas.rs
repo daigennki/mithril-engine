@@ -156,14 +156,14 @@ impl Canvas
 			Vec2::new(0.5, -0.5),
 			Vec2::new(0.5, 0.5),
 		];
-		let quad_pos_buf = render_ctx.new_buffer(quad_pos_verts, vbo_usage)?;
+		let quad_pos_buf = render_ctx.new_buffer(&quad_pos_verts, vbo_usage)?;
 		let quad_uv_verts = [
 			Vec2::new(0.0, 0.0),
 			Vec2::new(0.0, 1.0),
 			Vec2::new(1.0, 0.0),
 			Vec2::new(1.0, 1.0),
 		];
-		let quad_uv_buf = render_ctx.new_buffer(quad_uv_verts, vbo_usage)?;
+		let quad_uv_buf = render_ctx.new_buffer(&quad_uv_verts, vbo_usage)?;
 
 		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
@@ -217,7 +217,7 @@ impl Canvas
 			Quat::IDENTITY, 
 			transform.position.as_vec2().extend(0.0)
 		);
-		let buf = render_ctx.new_buffer(projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
+		let buf = render_ctx.new_buffer(&projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
 		let set = PersistentDescriptorSet::new(
 			render_ctx.descriptor_set_allocator(),
 			self.set_layout.clone(),
@@ -268,7 +268,7 @@ impl Canvas
 	{
 		let text_image = text_to_image(&text.text_str, &self.default_font, text.size)?;
 		let img_dim = [text_image.width(), text_image.height()];
-		let tex = render_ctx.new_texture_from_iter(text_image.into_raw(), Format::R8G8B8A8_SRGB, img_dim, 1)?;
+		let tex = render_ctx.new_texture_from_slice(text_image.into_raw().as_slice(), Format::R8G8B8A8_SRGB, img_dim, 1)?;
 
 		let img_dim_vec2 = Vec2::new(img_dim[0] as f32, img_dim[1] as f32);
 

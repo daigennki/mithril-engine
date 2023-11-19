@@ -211,36 +211,38 @@ impl RenderContext
 		Ok(tex)
 	}
 
-	pub fn new_texture_from_iter<Px, I>(
+	pub fn new_texture_from_slice<Px>(
 		&mut self,
-		iter: I,
+		data: &[Px],
 		vk_fmt: Format,
 		dimensions: [u32; 2],
 		mip: u32,
 	) -> Result<texture::Texture, GenericEngineError>
 	where
-		Px: Send + Sync + bytemuck::Pod,
-		[Px]: BufferContents,
-		I: IntoIterator<Item = Px>,
-		I::IntoIter: ExactSizeIterator,
+		Px: BufferContents + Copy,
 	{
-		let (tex, staging_work) = texture::Texture::new_from_iter(self.memory_allocator.clone(), iter, vk_fmt, dimensions, mip)?;
+		let (tex, staging_work) = texture::Texture::new_from_slice(
+			self.memory_allocator.clone(), 
+			data, 
+			vk_fmt, 
+			dimensions,
+			mip
+		)?;
 		self.add_transfer(staging_work.into());
 		Ok(tex)
 	}
 
-	/// Create a device-local buffer from an iterator, initialized with `data` for `usage`.
-	/// For stuff that isn't an array, just put the data into a single-element iterator, like `[data]`.
-	pub fn new_buffer<I, T>(&mut self, data: I, usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
+	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
+	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
+	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
 	where
-		T: Send + Sync + bytemuck::AnyBitPattern,
-		I: IntoIterator<Item = T>,
-		I::IntoIter: ExactSizeIterator,
-		[T]: BufferContents,
+		T: BufferContents + Copy,
 	{
-		let buf = if self.allow_direct_buffer_access {
+		let data_len = data.len().try_into()?;
+		let buf;
+		if self.allow_direct_buffer_access {
 			// When possible, upload directly to the new buffer memory.
-			let buffer_info = BufferCreateInfo { usage, ..Default::default() };
+			let buf_info = BufferCreateInfo { usage, ..Default::default() };
 			let alloc_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
 					required_flags: MemoryPropertyFlags::HOST_VISIBLE,
@@ -250,28 +252,24 @@ impl RenderContext
 				},
 				..Default::default()
 			};
-			Buffer::from_iter(self.memory_allocator.clone(), buffer_info, alloc_info, data)?
+			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
+			buf.write().unwrap().copy_from_slice(data);
 		} else {
 			// If direct uploads aren't possible, create a staging buffer on the CPU side, 
 			// then submit a transfer command to the new buffer on the GPU side.
-			let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
+			let staging_buf_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
 			let staging_alloc_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 				..Default::default()
 			};
-			let staging_buf = Buffer::from_iter(self.memory_allocator.clone(), buffer_info, staging_alloc_info, data)?;
+			let staging = Buffer::new_slice(self.memory_allocator.clone(), staging_buf_info, staging_alloc_info, data_len)?;
+			staging.write().unwrap().copy_from_slice(data);
 
-			let buffer_info = BufferCreateInfo { usage: usage | BufferUsage::TRANSFER_DST, ..Default::default() };
-			let new_buf = Buffer::new_slice(
-				self.memory_allocator.clone(),
-				buffer_info,
-				AllocationCreateInfo::default(),
-				staging_buf.len()
-			)?;
-			self.add_transfer(CopyBufferInfo::buffers(staging_buf, new_buf.clone()).into());
-			new_buf
-		};
-		
+			let buf_info = BufferCreateInfo { usage: usage | BufferUsage::TRANSFER_DST, ..Default::default() };
+			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, AllocationCreateInfo::default(), data_len)?;
+
+			self.add_transfer(CopyBufferInfo::buffers(staging, buf.clone()).into());
+		}
 		Ok(buf)
 	}
 
