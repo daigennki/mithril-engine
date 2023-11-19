@@ -81,7 +81,7 @@ mod ui_fs {
 struct UiGpuResources
 {
 	pub mesh_type: super::mesh::MeshType,
-	pub buffer: Subbuffer<[Mat4]>,
+	pub buffer: Subbuffer<Mat4>,
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
 }
 
@@ -229,10 +229,10 @@ impl Canvas
 
 		let buffer = match self.gpu_resources.get(&eid) {
 			Some(resources) => {
-				render_ctx.update_buffer(projected, resources.buffer.clone().index(0))?;
+				render_ctx.update_buffer(projected, resources.buffer.clone())?;
 				resources.buffer.clone()
 			},
-			None => render_ctx.new_buffer(&[projected], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?
+			None => render_ctx.new_buffer(&[projected], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?.index(0)
 		};
 
 		let descriptor_set = PersistentDescriptorSet::new(

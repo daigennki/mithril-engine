@@ -8,14 +8,14 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, BufferContents};
+use vulkano::buffer::{allocator::SubbufferAllocator, BufferContents};
 use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType}, Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers,
 	ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::DeviceSize;
 
 use crate::GenericEngineError;
@@ -28,6 +28,7 @@ impl Texture
 {
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
+		subbuffer_allocator: &mut SubbufferAllocator,
 		path: &Path,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
@@ -42,11 +43,12 @@ impl Texture
 			_ => load_other_format(path)?,
 		};
 
-		Self::new_from_slice(memory_allocator, img_raw.as_slice(), vk_fmt, dim, mip_count)
+		Self::new_from_slice(memory_allocator, subbuffer_allocator, img_raw.as_slice(), vk_fmt, dim, mip_count)
 	}
 
 	pub fn new_from_slice<Px>(
 		memory_allocator: Arc<StandardMemoryAllocator>,
+		subbuffer_allocator: &mut SubbufferAllocator,
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
@@ -55,13 +57,7 @@ impl Texture
 	where
 		Px: BufferContents + Copy,
 	{
-		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-		let buf_allocation_info = AllocationCreateInfo {
-			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-			..Default::default()
-		};
-		let data_len = data.len().try_into()?;
-		let staging_buf = Buffer::new_slice(memory_allocator.clone(), buffer_info, buf_allocation_info, data_len)?;
+		let staging_buf = subbuffer_allocator.allocate_slice(data.len().try_into()?)?;
 		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let image_info = ImageCreateInfo {
@@ -125,6 +121,7 @@ impl CubemapTexture
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
+		subbuffer_allocator: &mut SubbufferAllocator,
 		faces: [PathBuf; 6],
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	{
@@ -166,6 +163,7 @@ impl CubemapTexture
 
 		Self::new_from_slice(
 			memory_allocator,
+			subbuffer_allocator,
 			combined_data.as_slice(),
 			cube_fmt.unwrap(),
 			cube_dim.unwrap(),
@@ -175,6 +173,7 @@ impl CubemapTexture
 
 	pub fn new_from_slice<Px>(
 		memory_allocator: Arc<StandardMemoryAllocator>,
+		subbuffer_allocator: &mut SubbufferAllocator,
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
@@ -183,13 +182,7 @@ impl CubemapTexture
 	where
 		Px: BufferContents + Copy,
 	{
-		let buffer_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-		let buf_alloc_info = AllocationCreateInfo {
-			memory_type_filter: MemoryTypeFilter::PREFER_HOST |  MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-			..Default::default()
-		};
-		let data_len = data.len().try_into()?;
-		let staging_buf = Buffer::new_slice(memory_allocator.clone(), buffer_info, buf_alloc_info, data_len)?;
+		let staging_buf = subbuffer_allocator.allocate_slice(data.len().try_into()?)?;
 		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let image_info = ImageCreateInfo {

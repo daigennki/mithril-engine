@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use glam::*;
 
-use vulkano::{Validated, VulkanError};
+use vulkano::{DeviceSize, Validated, VulkanError};
 use vulkano::buffer::{
 	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
 	subbuffer::Subbuffer,
@@ -92,7 +92,8 @@ pub struct RenderContext
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>, // Used for the buffer updates.
-	staging_buf_max_size: usize, // Maximum staging buffer usage for the entire duration of the program.
+	staging_buf_max_size: DeviceSize, // Maximum staging buffer usage for the entire duration of the program.
+	staging_buf_usage_frame: DeviceSize,
 }
 impl RenderContext
 {
@@ -132,7 +133,7 @@ impl RenderContext
 		)?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: 4096, // this should be adjusted based on actual memory usage
+			arena_size: 8 * 1024 * 1024, // this should be adjusted based on actual memory usage
 			buffer_usage: BufferUsage::TRANSFER_SRC,
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
@@ -162,6 +163,7 @@ impl RenderContext
 			buffer_updates,
 			staging_buffer_allocator,
 			staging_buf_max_size: 0,
+			staging_buf_usage_frame: 0,
 		})
 	}
 
@@ -195,7 +197,11 @@ impl RenderContext
 				Ok(tex.clone())
 			}
 			None => {
-				let (tex, staging_work) = texture::Texture::new(self.memory_allocator.clone(), path)?;
+				let (tex, staging_work) = texture::Texture::new(
+					self.memory_allocator.clone(),
+					&mut self.staging_buffer_allocator.lock().unwrap(),
+					path
+				)?;
 				self.add_transfer(staging_work.into());
 				let tex_arc = Arc::new(tex);
 				self.textures.insert(path.to_path_buf(), tex_arc.clone());
@@ -206,7 +212,11 @@ impl RenderContext
 
 	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
 	{
-		let (tex, staging_work) = texture::CubemapTexture::new(self.memory_allocator.clone(), faces)?;
+		let (tex, staging_work) = texture::CubemapTexture::new(
+			self.memory_allocator.clone(),
+			&mut self.staging_buffer_allocator.lock().unwrap(),
+			faces
+		)?;
 		self.add_transfer(staging_work.into());
 		Ok(tex)
 	}
@@ -222,7 +232,8 @@ impl RenderContext
 		Px: BufferContents + Copy,
 	{
 		let (tex, staging_work) = texture::Texture::new_from_slice(
-			self.memory_allocator.clone(), 
+			self.memory_allocator.clone(),
+			&mut self.staging_buffer_allocator.lock().unwrap(),
 			data, 
 			vk_fmt, 
 			dimensions,
@@ -258,18 +269,13 @@ impl RenderContext
 		} else {
 			// If direct uploads aren't possible, create a staging buffer on the CPU side, 
 			// then submit a transfer command to the new buffer on the GPU side.
-			let staging_buf_info = BufferCreateInfo { usage: BufferUsage::TRANSFER_SRC, ..Default::default() };
-			let staging_alloc_info = AllocationCreateInfo {
-				memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-				..Default::default()
-			};
-			let staging = Buffer::new_slice(self.memory_allocator.clone(), staging_buf_info, staging_alloc_info, data_len)?;
-			staging.write().unwrap().copy_from_slice(data);
+			let staging_buf = self.staging_buffer_allocator.lock().unwrap().allocate_slice(data.len().try_into()?)?;
+			staging_buf.write().unwrap().copy_from_slice(data);
 
 			let buf_info = BufferCreateInfo { usage: usage | BufferUsage::TRANSFER_DST, ..Default::default() };
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, AllocationCreateInfo::default(), data_len)?;
 
-			self.add_transfer(CopyBufferInfo::buffers(staging, buf.clone()).into());
+			self.add_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		}
 		Ok(buf)
 	}
@@ -297,6 +303,7 @@ impl RenderContext
 	/// building the draw command buffers.
 	fn add_transfer(&mut self, work: StagingWork)
 	{
+		self.staging_buf_usage_frame += work.buf_size();
 		if self.async_transfers.len() == self.async_transfers.capacity() {
 			log::warn!(
 				"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
@@ -411,20 +418,20 @@ impl RenderContext
 
 		// buffer updates
 		if self.buffer_updates.len() > 0 {
-			// this `Mutex` should never be poisoned since it's only used here
 			let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-			let mut staging_buf_usage_frame = 0;
 
 			for buf_update in self.buffer_updates.drain(..) {
 				buf_update.add_command(&mut primary_cb_builder, &mut staging_buf_alloc_guard)?;
-				staging_buf_usage_frame += buf_update.data_size();
+				self.staging_buf_usage_frame += buf_update.data_size();
 			}
 
 			// gather stats on staging buffer usage
-			if staging_buf_usage_frame > self.staging_buf_max_size {
-				self.staging_buf_max_size = staging_buf_usage_frame;
+			if self.staging_buf_usage_frame > self.staging_buf_max_size {
+				self.staging_buf_max_size = self.staging_buf_usage_frame;
 				log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
 			}
+
+			self.staging_buf_usage_frame = 0;
 		}
 
 		// do async transfers that couldn't be submitted earlier
@@ -565,9 +572,9 @@ struct UpdateBufferData<T: BufferContents + Copy>
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {
-	fn data_size(&self) -> usize
+	fn data_size(&self) -> DeviceSize
 	{
-		std::mem::size_of::<T>()
+		self.dst_buf.size()
 	}
 
 	fn add_command(
@@ -587,7 +594,7 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 }
 trait UpdateBufferDataTrait: Send + Sync
 {
-	fn data_size(&self) -> usize;
+	fn data_size(&self) -> DeviceSize;
 
 	fn add_command(
 		&self,
@@ -611,6 +618,14 @@ impl StagingWork
 			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info)?,
 		};
 		Ok(())
+	}
+
+	fn buf_size(&self) -> DeviceSize
+	{
+		match self {
+			StagingWork::CopyBuffer(info) => info.src_buffer.size(),
+			StagingWork::CopyBufferToImage(info) => info.src_buffer.size(),
+		}
 	}
 }
 impl From<CopyBufferInfo> for StagingWork
