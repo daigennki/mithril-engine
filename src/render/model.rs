@@ -25,7 +25,7 @@ pub struct Model
 {
 	materials: Vec<Box<dyn Material>>,
 	submeshes: Vec<SubMesh>,
-	vertex_buffers: Vec<Subbuffer<[f32]>>,
+	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
 }
 impl Model
@@ -79,10 +79,18 @@ impl Model
 					vertex_offset += positions_accessor.count() as i32;
 				}
 
+				let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
+				combined_data.append(&mut positions);
+				let texcoords_offset: u64 = combined_data.len().try_into()?;
+				combined_data.append(&mut texcoords);
+				let normals_offset: u64 = combined_data.len().try_into()?;
+				combined_data.append(&mut normals);
+
 				let vert_buf_usage = BufferUsage::VERTEX_BUFFER;
-				let vbo_positions = render_ctx.new_buffer(positions.as_slice(), vert_buf_usage)?;
-				let vbo_texcoords = render_ctx.new_buffer(texcoords.as_slice(), vert_buf_usage)?;
-				let vbo_normals = render_ctx.new_buffer(normals.as_slice(), vert_buf_usage)?;
+				let vertex_buffer = render_ctx.new_buffer(combined_data.as_slice(), vert_buf_usage)?;
+				let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
+				let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
+				let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
 
 				Ok(Model {
 					materials: doc
@@ -90,7 +98,7 @@ impl Model
 						.map(|mat| load_gltf_material(&mat, parent_folder))
 						.collect::<Result<_, _>>()?,
 					submeshes,
-					vertex_buffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
+					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer: IndexBufferVariant::from_u16_and_u32(render_ctx, indices_u16, indices_u32)?,
 				})
 			}
@@ -121,9 +129,9 @@ impl Model
 		// don't even bother with vertex/index buffer binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
 			if shadow_pass {
-				cb.bind_vertex_buffers(0, vec![ self.vertex_buffers[0].clone() ])?;
+				cb.bind_vertex_buffers(0, vec![ self.vertex_subbuffers[0].clone() ])?;
 			} else {
-				cb.bind_vertex_buffers(0, self.vertex_buffers.clone())?;
+				cb.bind_vertex_buffers(0, self.vertex_subbuffers.clone())?;
 			}
 			self.index_buffer.bind(cb)?;
 
