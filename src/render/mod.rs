@@ -241,6 +241,7 @@ impl RenderContext
 		let data_len = data.len().try_into()?;
 		let buf;
 		if self.allow_direct_buffer_access {
+			log::debug!("Allocating buffer of {} bytes", data_len * (std::mem::size_of::<T>() as u64));
 			// When possible, upload directly to the new buffer memory.
 			let buf_info = BufferCreateInfo { usage, ..Default::default() };
 			let alloc_info = AllocationCreateInfo {
@@ -286,7 +287,7 @@ impl RenderContext
 				self.buffer_updates.len() + 1
 			);
 		}
-		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data }));
+		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data, }));
 
 		Ok(())
 	}

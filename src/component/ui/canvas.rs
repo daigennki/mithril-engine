@@ -78,6 +78,13 @@ mod ui_fs {
 	}
 }
 
+struct UiGpuResources
+{
+	pub mesh_type: super::mesh::MeshType,
+	pub buffer: Subbuffer<[Mat4]>,
+	pub descriptor_set: Arc<PersistentDescriptorSet>,
+}
+
 #[derive(shipyard::Unique)]
 pub struct Canvas
 {
@@ -87,7 +94,7 @@ pub struct Canvas
 	set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
 
-	gpu_resources: BTreeMap<EntityId, (super::mesh::MeshType, Arc<PersistentDescriptorSet>)>,
+	gpu_resources: BTreeMap<EntityId, UiGpuResources>,
 
 	quad_pos_buf: Subbuffer<[Vec2]>,
 	quad_uv_buf: Subbuffer<[Vec2]>,
@@ -207,28 +214,50 @@ impl Canvas
 	fn update_transform(
 		&mut self,
 		render_ctx: &mut RenderContext,
+		eid: EntityId,
 		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
 		image_dimensions: Vec2,
-	) -> Result<Arc<PersistentDescriptorSet>, GenericEngineError>
+		mesh_type: super::mesh::MeshType,
+	) -> Result<(), GenericEngineError>
 	{
 		let projected = self.projection * Mat4::from_scale_rotation_translation(
-			transform.scale.unwrap_or(image_dimensions).extend(0.0), 
-			Quat::IDENTITY, 
+			transform.scale.unwrap_or(image_dimensions).extend(0.0),
+			Quat::IDENTITY,
 			transform.position.as_vec2().extend(0.0)
 		);
-		let buf = render_ctx.new_buffer(&projected.to_cols_array(), BufferUsage::UNIFORM_BUFFER)?;
-		let set = PersistentDescriptorSet::new(
+
+		let buffer = match self.gpu_resources.get(&eid) {
+			Some(resources) => {
+				render_ctx.update_buffer(projected, resources.buffer.clone().index(0))?;
+				resources.buffer.clone()
+			},
+			None => render_ctx.new_buffer(&[projected], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?
+		};
+
+		let descriptor_set = PersistentDescriptorSet::new(
 			render_ctx.descriptor_set_allocator(),
 			self.set_layout.clone(),
 			[
-				WriteDescriptorSet::buffer(0, buf),
+				WriteDescriptorSet::buffer(0, buffer.clone()),
 				WriteDescriptorSet::image_view(1, image_view),
 			],
 			[],
 		)?;
 
-		Ok(set)
+		match self.gpu_resources.get_mut(&eid) {
+			Some(resources) => resources.descriptor_set = descriptor_set,
+			None => {
+				let resources = UiGpuResources {
+					buffer,
+					descriptor_set,
+					mesh_type,
+				};
+				self.gpu_resources.insert(eid, resources);
+			}
+		}
+
+		Ok(())
 	}
 
 	/// Update the GPU resources for entities with a `Mesh` component.
@@ -248,9 +277,14 @@ impl Canvas
 			let tex_dimensions = tex.dimensions();
 			let image_dimensions = Vec2::new(tex_dimensions[0] as f32, tex_dimensions[1] as f32);
 
-			let set = self.update_transform(render_ctx, transform, tex.view().clone(), image_dimensions)?;
-
-			self.gpu_resources.insert(eid, (mesh.mesh_type, set));
+			self.update_transform(
+				render_ctx,
+				eid,
+				transform,
+				tex.view().clone(),
+				image_dimensions,
+				mesh.mesh_type
+			)?;
 		}
 
 		Ok(())
@@ -272,9 +306,14 @@ impl Canvas
 
 		let img_dim_vec2 = Vec2::new(img_dim[0] as f32, img_dim[1] as f32);
 
-		let set = self.update_transform(render_ctx, transform, tex.view().clone(), img_dim_vec2)?;
-
-		self.gpu_resources.insert(eid, (super::mesh::MeshType::Quad, set));
+		self.update_transform(
+			render_ctx,
+			eid,
+			transform,
+			tex.view().clone(),
+			img_dim_vec2,
+			super::mesh::MeshType::Quad
+		)?;
 
 		Ok(())
 	}
@@ -285,21 +324,21 @@ impl Canvas
 		eid: EntityId,
 	) -> Result<(), GenericEngineError>
 	{
-		if let Some((mesh_type, descriptor_set)) = self.gpu_resources.get(&eid) {
+		if let Some(resources) = self.gpu_resources.get(&eid) {
 			cb.bind_descriptor_sets(
 				vulkano::pipeline::PipelineBindPoint::Graphics, 
 				self.ui_pipeline.layout().clone(),
 				0,
-				vec![ descriptor_set.clone() ]
+				vec![ resources.descriptor_set.clone() ]
 			)?;
 
-			match mesh_type {
+			match resources.mesh_type {
 				MeshType::Quad => {
 					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
 					cb.draw(4, 1, 0, 0)?;
 				}
 				MeshType::Frame(_border_width) => {
-					// TODO: implement
+					todo!();
 				}
 			}
 		}
