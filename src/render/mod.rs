@@ -192,10 +192,7 @@ impl RenderContext
 	pub fn get_texture(&mut self, path: &Path) -> Result<Arc<Texture>, GenericEngineError>
 	{
 		match self.textures.get(path) {
-			Some(tex) => {
-				log::info!("Reusing loaded texture '{}'", path.display());
-				Ok(tex.clone())
-			}
+			Some(tex) => Ok(tex.clone()),
 			None => {
 				let (tex, staging_work) = texture::Texture::new(
 					self.memory_allocator.clone(),

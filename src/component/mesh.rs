@@ -99,10 +99,7 @@ impl MeshManager
 		// Get a 3D model from `path`, relative to the current working directory.
 		// This attempts loading if it hasn't been loaded into memory yet.
 		let model_data = match self.models.get(&component.model_path) {
-			Some(model) => {
-				log::info!("Reusing loaded model '{}'", component.model_path.display());
-				model.clone()
-			}
+			Some(model) => model.clone(),
 			None => {
 				let new_model = Arc::new(Model::new(render_ctx, &component.model_path)?);
 				self.models.insert(component.model_path.clone(), new_model.clone());
