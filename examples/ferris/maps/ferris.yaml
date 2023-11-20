@@ -1,4 +1,4 @@
-sky: "sky/Daylight Box_*.png"
+sky: "sky/Daylight_*.dds"
 entities:
 -
   - UITransform:

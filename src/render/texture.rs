@@ -222,10 +222,12 @@ fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngi
 
 	let vk_fmt = match dds_format {
 		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,
-		DxgiFormat::BC3_UNorm_sRGB => Format::BC3_SRGB_BLOCK,
 		DxgiFormat::BC4_UNorm => Format::BC4_UNORM_BLOCK,
 		DxgiFormat::BC5_UNorm => Format::BC5_UNORM_BLOCK,
-		_ => return Err("Unsupported DDS format!".into()),
+		// treat BC7_UNorm as sRGB for now since Compressonator doesn't support converting to BC7_UNorm_sRGB
+		DxgiFormat::BC7_UNorm => Format::BC7_SRGB_BLOCK,
+		DxgiFormat::BC7_UNorm_sRGB => Format::BC7_SRGB_BLOCK,
+		f => return Err(format!("Unsupported DDS format '{:?}'!", f).into()),
 	};
 	let dim = [ dds.get_width(), dds.get_height() ];
 	let mip_count = dds.get_num_mipmap_levels();
