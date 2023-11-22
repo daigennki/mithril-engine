@@ -12,6 +12,7 @@ mod swapchain;
 pub mod texture;
 pub mod transparency;
 mod vulkan_init;
+mod render_target;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,25 +28,23 @@ use vulkano::buffer::{
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferInheritanceInfo,
-	CommandBufferInheritanceRenderingInfo, CommandBufferUsage, CopyBufferInfo,
-	CopyBufferToImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
-	SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, RenderingAttachmentInfo,
-	CommandBufferExecFuture,
+	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, 
+	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, 
+	PrimaryCommandBufferAbstract,SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, 
+	RenderingAttachmentInfo, CommandBufferExecFuture,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
 };
 use vulkano::device::{Device, Queue};
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::view::ImageView;
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::graphics::{viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
-use vulkano::swapchain::ColorSpace;
 use vulkano::sync::{future::{FenceSignalFuture, NowFuture}, GpuFuture};
 
 use crate::GenericEngineError;
@@ -65,7 +64,7 @@ pub struct RenderContext
 	device: Arc<Device>,
 	graphics_queue: Arc<Queue>,
 	swapchain: swapchain::Swapchain,
-	main_render_target: RenderTarget,
+	main_render_target: render_target::RenderTarget,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
@@ -120,8 +119,9 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let main_render_target = RenderTarget::new(
+		let main_render_target = render_target::RenderTarget::new(
 			memory_allocator.clone(),
+			&descriptor_set_allocator,
 			swapchain.dimensions(),
 			swapchain.format(),
 			swapchain.color_space(),
@@ -380,8 +380,9 @@ impl RenderContext
 	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
 	{
 		// Update images to match the current swapchain image extent.
-		self.main_render_target = RenderTarget::new(
+		self.main_render_target = render_target::RenderTarget::new(
 			self.memory_allocator.clone(),
+			&self.descriptor_set_allocator,
 			self.swapchain.dimensions(),
 			self.swapchain.format(),
 			self.swapchain.color_space(),
@@ -462,7 +463,7 @@ impl RenderContext
 			}
 
 			// get the next swapchain image
-			let swapchain_image = self.swapchain.get_next_image()?;
+			let swapchain_image_view = self.swapchain.get_next_image()?;
 			if self.swapchain.extent_changed() {
 				self.resize_everything_else()?;
 			}
@@ -501,8 +502,8 @@ impl RenderContext
 					.end_rendering()?;
 			}
 
-			// blit or copy the image to the swapchain image, converting it to the swapchain's color space if necessary
-			self.main_render_target.copy_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
+			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
+			self.main_render_target.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
 		}
 
 		// submit the built command buffer, presenting it if possible
@@ -640,111 +641,3 @@ impl From<CopyBufferToImageInfo> for StagingWork
 	}
 }
 
-struct RenderTarget
-{
-	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
-	depth_image: Arc<ImageView>,
-
-	// An sRGB image which the above `color_image` will be blitted to, thus converting it to nonlinear.
-	// This will be copied, not blitted, to the swapchain.
-	// Only used if the swapchain image and color space is (B8G8R8A8_UNORM, SrgbNonLinear).
-	srgb_image: Option<Arc<Image>>,
-}
-impl RenderTarget
-{
-	pub fn new(
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		dimensions: [u32; 2],
-		swapchain_format: Format,
-		swapchain_color_space: ColorSpace,
-	) -> Result<Self, GenericEngineError>
-	{
-		let color_create_info = ImageCreateInfo {
-			format: Format::R16G16B16A16_SFLOAT,
-			extent: [ dimensions[0], dimensions[1], 1 ],
-			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC,
-			..Default::default()
-		};
-		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
-		let color_image_view = ImageView::new_default(color_image)?;
-
-		let depth_create_info = ImageCreateInfo {
-			format: MAIN_DEPTH_FORMAT,
-			extent: [ dimensions[0], dimensions[1], 1 ],
-			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-			..Default::default()
-		};
-		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
-		let depth_image_view = ImageView::new_default(depth_image)?;
-
-		let srgb_image = if swapchain_format == Format::B8G8R8A8_UNORM && swapchain_color_space == ColorSpace::SrgbNonLinear {
-			log::info!("Using intermediate sRGB image");
-			let srgb_img_create_info = ImageCreateInfo {
-				format: Format::B8G8R8A8_SRGB,
-				extent: [ dimensions[0], dimensions[1], 1 ],
-				usage: ImageUsage::TRANSFER_DST | ImageUsage::TRANSFER_SRC,
-				..Default::default()
-			};
-			Some(Image::new(memory_allocator, srgb_img_create_info, AllocationCreateInfo::default())?)
-		} else {
-			log::info!("Blitting directly to swapchain image");
-			None
-		};
-
-		Ok(Self { 
-			color_image: color_image_view, 
-			depth_image: depth_image_view,
-			srgb_image,
-		})
-	}
-
-	pub fn color_image(&self) -> &Arc<ImageView>
-	{
-		&self.color_image
-	}
-	pub fn depth_image(&self) -> &Arc<ImageView>
-	{
-		&self.depth_image
-	}
-
-	pub fn first_rendering_info(&self) -> RenderingInfo
-	{
-		RenderingInfo {
-			color_attachments: vec![
-				Some(RenderingAttachmentInfo {
-					// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(self.color_image.clone())
-				}),
-			],
-			depth_attachment: Some(RenderingAttachmentInfo{
-				load_op: AttachmentLoadOp::Clear,
-				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
-				clear_value: Some(ClearValue::Depth(1.0)),
-				..RenderingAttachmentInfo::image_view(self.depth_image.clone())
-			}),
-			contents: SubpassContents::SecondaryCommandBuffers,
-			..Default::default()
-		}
-	}
-
-	pub fn copy_to_swapchain(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		swapchain_image: Arc<Image>
-	) -> Result<(), GenericEngineError>
-	{
-		if let Some(srgb_image) = self.srgb_image.clone() {
-			// blit to sRGB image to convert from linear to non-linear sRGB,
-			// then copy the non-linear image to the swapchain
-			cb
-				.blit_image(BlitImageInfo::images(self.color_image.image().clone(), srgb_image.clone()))?
-				.copy_image(CopyImageInfo::images(srgb_image, swapchain_image))?;
-		} else {
-			// blit directly to the swapchain image when possible
-			cb.blit_image(BlitImageInfo::images(self.color_image.image().clone(), swapchain_image))?;
-		}
-
-		Ok(())
-	}
-}

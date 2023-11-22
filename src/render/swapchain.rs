@@ -9,7 +9,7 @@ use std::sync::Arc;
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
-use vulkano::image::{Image, ImageUsage};
+use vulkano::image::{ImageUsage, view::ImageView};
 use vulkano::swapchain::{
 	ColorSpace, PresentMode,
 	Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
@@ -27,7 +27,7 @@ pub struct Swapchain
 {
 	window: Arc<Window>,
 	swapchain: Arc<vulkano::swapchain::Swapchain>,
-	images: Vec<Arc<Image>>,
+	image_views: Vec<Arc<ImageView>>,
 
 	extent_changed: bool, // `true` if image extent changed since the last presentation
 	recreate_pending: bool,
@@ -85,17 +85,16 @@ impl Swapchain
 
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 
-		// Pairs of format and color space we can support
+		// Pairs of format and color space we can support.
 		let mut format_candidates = vec![
 			// HDR via extended sRGB linear image
 			// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
 			//(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
 
-			// sRGB image automatically converts from linear to non-linear
-			(Format::B8G8R8A8_SRGB, ColorSpace::SrgbNonLinear),
+			// sRGB 10bpc
+			(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
 
-			// Requires separate conversion from linear to non-linear, but is supported on practically any GPU,
-			// so at least this pair must be retained. See `RenderTarget::copy_to_swapchain` for the conversion.
+			// sRGB 8bpc
 			(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
 		];
 
@@ -104,12 +103,16 @@ impl Swapchain
 		format_candidates.retain(|candidate| surface_formats.contains(candidate));
 		let (image_format, image_color_space) = format_candidates[0];
 
+		let image_usage = (image_color_space == ColorSpace::SrgbNonLinear)
+			.then_some(ImageUsage::COLOR_ATTACHMENT)
+			.unwrap_or(ImageUsage::TRANSFER_DST);
+
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count.max(2),
 			image_extent: window_size.into(),
 			image_format,
 			image_color_space,
-			image_usage: ImageUsage::TRANSFER_DST,
+			image_usage,
 			present_mode: PresentMode::Fifo,
 			..Default::default()
 		};
@@ -121,6 +124,11 @@ impl Swapchain
 			image_color_space
 		);
 
+		let mut image_views = Vec::with_capacity(images.len());
+		for img in images {
+			image_views.push(ImageView::new_default(img)?);
+		}
+
 		// TODO: load this from config
 		let fps_max = 360;
 		let frame_time_min_limit = std::time::Duration::from_secs(1) / fps_max;
@@ -128,7 +136,7 @@ impl Swapchain
 		Ok(Swapchain {
 			window: window_arc,
 			swapchain,
-			images,
+			image_views,
 			extent_changed: false,
 			recreate_pending: false,
 			acquire_future: None,
@@ -149,7 +157,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> Result<Arc<Image>, GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<Arc<ImageView>, GenericEngineError>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -174,8 +182,14 @@ impl Swapchain
 				..self.swapchain.create_info()
 			};
 			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
+
+			let mut new_image_views = Vec::with_capacity(new_images.len());
+			for img in new_images {
+				new_image_views.push(ImageView::new_default(img)?);
+			}
+
 			self.swapchain = new_swapchain;
-			self.images = new_images;
+			self.image_views = new_image_views;
 			self.recreate_pending = false;
 		}
 
@@ -194,7 +208,7 @@ impl Swapchain
 		}
 		self.acquire_future = Some(acquire_future);
 
-		Ok(self.images[image_num as usize].clone())
+		Ok(self.image_views[image_num as usize].clone())
 	}
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
@@ -288,7 +302,7 @@ impl Swapchain
 
 	pub fn image_count(&self) -> usize
 	{
-		self.images.len()
+		self.image_views.len()
 	}
 
 	pub fn format(&self) -> Format
