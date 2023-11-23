@@ -5,6 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
+use std::time::Duration;
 use std::sync::Arc;
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
@@ -106,7 +107,17 @@ impl Swapchain
 
 		// TODO: load this from config
 		let fps_max = 360;
-		let frame_time_min_limit = std::time::Duration::from_secs(1) / fps_max;
+
+		// Linux and Windows have different sleep overshoot, so different values are used for each.
+		#[cfg(target_family = "windows")]
+		const SLEEP_OVERSHOOT: Duration = Duration::from_micros(260);
+		#[cfg(not(target_family = "windows"))]
+		const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
+
+		// Subtract to account for sleep overshoot.
+		let frame_time_min_limit = (Duration::from_secs(1) / fps_max)
+			.checked_sub(SLEEP_OVERSHOOT)
+			.unwrap_or_default();
 
 		Ok(Swapchain {
 			window,
@@ -168,7 +179,7 @@ impl Swapchain
 			self.recreate_pending = false;
 		}
 
-		let timeout = Some(std::time::Duration::from_secs(5));
+		let timeout = Some(Duration::from_secs(5));
 		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), timeout);
 		let (image_num, suboptimal, acquire_future) = match acquire_result {
 			Ok(ok) => ok,
@@ -202,9 +213,6 @@ impl Swapchain
 	{
 		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
 
-		// To keep frame presentation timing stable, we must sleep before waiting for the fence.
-		self.sleep_and_calculate_delta();
-
 		if let Some(f) = self.submission_future.take() {
 			// wait for the previous submission to finish, to make sure resources are no longer in use
 			match f.wait(Some(std::time::Duration::from_secs(5))) {
@@ -219,7 +227,7 @@ impl Swapchain
 
 		if let Some(f) = after {
 			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
-			match f.wait(Some(std::time::Duration::from_secs(5))) {
+			match f.wait(Some(Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => {
 					return Err("Transfer submission took too long!".into())
@@ -252,21 +260,18 @@ impl Swapchain
 		};
 		self.submission_future = Some(submission_future);
 
+		self.sleep_and_calculate_delta();
+
 		Ok(())
 	}
 
 	/// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
+	/// NOTE: High resolution timer on Windows is only available since Rust 1.75 beta.
 	fn sleep_and_calculate_delta(&mut self)
 	{
-		let sleep_until = self.last_frame_presented + self.frame_time_min_limit;
-		if sleep_until > std::time::Instant::now() {
-			// subtract to account for sleep overshoot
-			let sleep_dur = (sleep_until - std::time::Instant::now())
-				.checked_sub(std::time::Duration::from_micros(50));
-
-			if let Some(d) = sleep_dur {
-				std::thread::sleep(d);
-			}
+		let dur = self.last_frame_presented + self.frame_time_min_limit - std::time::Instant::now();
+		if dur > Duration::ZERO {
+			std::thread::sleep(dur);
 		}
 
 		let now = std::time::Instant::now();
