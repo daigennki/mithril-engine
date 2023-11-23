@@ -237,6 +237,8 @@ impl Swapchain
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
+		self.sleep_and_calculate_delta();
+
 		let submission_future = match self.acquire_future.take() {
 			Some(acquire_future) => {
 				let present_info = SwapchainPresentInfo::swapchain_image_index(
@@ -259,8 +261,6 @@ impl Swapchain
 			}
 		};
 		self.submission_future = Some(submission_future);
-
-		self.sleep_and_calculate_delta();
 
 		Ok(())
 	}
