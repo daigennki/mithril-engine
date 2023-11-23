@@ -18,8 +18,8 @@ use vulkano::sync::{
 	future::{FenceSignalFuture, GpuFuture, NowFuture}
 };
 use vulkano::{Validated, VulkanError};
+use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
-use winit::monitor::{MonitorHandle, VideoMode};
 
 use crate::GenericEngineError;
 
@@ -43,39 +43,14 @@ impl Swapchain
 {
 	pub fn new(
 		vk_dev: Arc<Device>, 
-		event_loop: &winit::event_loop::EventLoop<()>,
+		event_loop: &EventLoop<()>,
 		window_title: &str
 	) -> Result<Self, GenericEngineError>
 	{
+		let window = create_window(event_loop, window_title)?;
+		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
+
 		let pd = vk_dev.physical_device();
-
-		let use_monitor = event_loop 
-			.primary_monitor()
-			.or(event_loop.available_monitors().next())
-			.ok_or("The primary monitor could not be detected.")?;
-
-		let (_current_video_mode, fullscreen_mode) = get_video_modes(use_monitor.clone());
-
-		let window_size = if let Some(fs_mode) = &fullscreen_mode {
-			match fs_mode {
-				winit::window::Fullscreen::Exclusive(video_mode) => video_mode.size(),
-				winit::window::Fullscreen::Borderless(_) => use_monitor.size()
-			}
-		} else {
-			// TODO: load this from config
-			winit::dpi::PhysicalSize::new(1280, 720)
-		};
-
-		// create window
-		let window = WindowBuilder::new()
-			.with_inner_size(window_size)
-			.with_title(window_title)
-			.with_decorations(std::env::args().find(|arg| arg == "-borderless").is_none())
-			.with_fullscreen(fullscreen_mode)
-			.build(&event_loop)?;
-		let window_arc = Arc::new(window);
-
-		let surface = Surface::from_window(vk_dev.instance().clone(), window_arc.clone())?;
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
@@ -109,7 +84,7 @@ impl Swapchain
 
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count.max(2),
-			image_extent: window_size.into(),
+			image_extent: window.inner_size().into(),
 			image_format,
 			image_color_space,
 			image_usage,
@@ -134,7 +109,7 @@ impl Swapchain
 		let frame_time_min_limit = std::time::Duration::from_secs(1) / fps_max;
 
 		Ok(Swapchain {
-			window: window_arc,
+			window,
 			swapchain,
 			image_views,
 			extent_changed: false,
@@ -338,66 +313,45 @@ impl Swapchain
 	}
 }
 
-// Get and print the video modes supported by the given monitor, and return the monitor's current video mode.
-// This may return `None` if the monitor is currently using a video mode that it really doesn't support,
-// although that should be rare.
-fn get_video_modes(mon: MonitorHandle) -> (Option<VideoMode>, Option<winit::window::Fullscreen>)
+fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<Window>, GenericEngineError>
 {
-	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
+	let use_monitor = event_loop
+		.primary_monitor()
+		.or_else(|| event_loop.available_monitors().next())
+		.ok_or("No monitors are available!")?;
 
-	let current_video_mode = mon
-		.video_modes()
-		.find(|vm| vm.size() == mon.size() && vm.refresh_rate_millihertz() == mon.refresh_rate_millihertz().unwrap_or(0));
-	if current_video_mode.is_none() {
-		log::warn!("The current monitor's video mode could not be determined. Fullscreen mode is unavailable.");
-	}
-
-	let mut video_modes: Vec<_> = mon.video_modes().collect();
-	log::info!("All video modes supported by current monitor (\"{mon_name}\"):");
-
-	// filter the video modes to those with >=1280 width, >=720 height, and not vertical (width <= height)
-	video_modes.retain(|video_mode| {
-		// print unfiltered video modes while we're at it
-		let video_mode_suffix = current_video_mode
-			.as_ref()
-			.filter(|cur_vm| video_mode == *cur_vm)
-			.map(|_| " <- likely current primary monitor video mode")
-			.unwrap_or_default();
-
-		log::info!("{}{}", video_mode, video_mode_suffix);
-
-		let size = video_mode.size();
-		size.width >= 1280 && size.height >= 720 && size.width >= size.height
-	});
-
-	// filter the video modes to the highest refresh rate for each size
-	// (sort beforehand so that highest refresh rate for each size comes first,
-	// then remove duplicates with the same size and bit depth)
-	video_modes.sort();
-	video_modes.dedup_by_key(|video_mode| (video_mode.size(), video_mode.bit_depth()));
-
-	log::info!("Filtered video modes:");
-	video_modes.iter().for_each(|vm| log::info!("{vm}"));
-
-	// Determine the appropriate fullscreen mode based on the arguments given to the executable.
-	//
-	// If "-fullscreen" and "-borderless" were both specified, make a borderless window filling the entire monitor
-	// instead of exclusive fullscreen.
-	// If only "-fullscreen" was specified, use the current video mode with exclusive fullscreen.
-	//
-	// NOTE: Exclusive fullscreen gets ignored on Wayland.
-	// Therefore, it might be a good idea to hide such an option in UI from the end user on Wayland.
-	//
+	// If "-fullscreen" was specified in the arguments, use the current video mode with winit's "borderless" fullscreen.
+	// winit also offers an "exclusive" fullscreen option, but for Vulkan, it provides no benefits.
 	// TODO: load this from config
 	let fullscreen_mode = std::env::args()
 		.find(|arg| arg == "-fullscreen")
-		.and_then(|_| {
-			std::env::args()
-				.find(|arg| arg == "-borderless")
-				.map(|_| winit::window::Fullscreen::Borderless(Some(mon)))
-				.or_else(|| current_video_mode.clone().map(|vm| winit::window::Fullscreen::Exclusive(vm)))
-		});
+		.map(|_| winit::window::Fullscreen::Borderless(Some(use_monitor.clone())));
+	if fullscreen_mode.is_some() {
+		let mon_name = use_monitor.name().unwrap_or_else(|| "[no longer exists]".to_string());
+		let mon_size = use_monitor.size();
+		let refresh_rate = use_monitor.refresh_rate_millihertz().unwrap_or(0);
+		log::info!(
+			"Using fullscreen mode on monitor '{}' ({} x {} @ {}.{:03} Hz)",
+			mon_name,
+			mon_size.width,
+			mon_size.height,
+			refresh_rate / 1000,
+			refresh_rate % 1000,
+		);
+	}
 
-	(current_video_mode, fullscreen_mode)
+	// TODO: load window size from config
+	let window_size = fullscreen_mode
+		.as_ref()
+		.map(|_| use_monitor.size())
+		.unwrap_or_else(|| winit::dpi::PhysicalSize::new(1280, 720));
+
+	// create window
+	let window = WindowBuilder::new()
+		.with_inner_size(window_size)
+		.with_title(window_title)
+		.with_fullscreen(fullscreen_mode)
+		.build(&event_loop)?;
+
+	Ok(Arc::new(window))
 }
-
