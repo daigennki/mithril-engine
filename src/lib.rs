@@ -9,35 +9,21 @@ pub mod component;
 pub mod material;
 pub mod render;
 
-//#[cfg(feature = "egui")]
-//mod egui_renderer;
-//
-//#[cfg(feature = "egui")]
-//use egui_renderer::EguiRenderer;
-
 use glam::*;
 use serde::Deserialize;
-use shipyard::{
-	iter::{IntoIter, IntoWithId},
-	UniqueView, UniqueViewMut, View, Workload, World,
-};
+use shipyard::{UniqueView, UniqueViewMut, Workload, World};
 use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::DescriptorSet;
 use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
-use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{CameraFov, CameraManager};
-use component::ui;
 use component::ui::canvas::Canvas;
 use render::RenderContext;
 
@@ -127,9 +113,7 @@ fn init_world(
 // returns true if the application should exit
 fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, GenericEngineError>
 {
-	world.run(|mut input_helper_wrapper: UniqueViewMut<InputHelperWrapper>| {
-		input_helper_wrapper.inner.update(event);
-	});
+	world.run(|mut wrapper: UniqueViewMut<InputHelperWrapper>| wrapper.inner.update(event));
 
 	match event {
 		Event::WindowEvent {
@@ -170,7 +154,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Generi
 			world.run_workload("Pre-render")?;
 
 			// Main rendering: build the command buffers, then submit them for presentation
-			world.run_workload("Render")?;
+			world.run_workload(render::workload::render)?;
 		}
 		_ => (),
 	}
@@ -229,230 +213,9 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 
 	// TODO: clean up removed components
 
-	Workload::new("Render")
-		.with_try_system(|mut render_ctx: UniqueViewMut<render::RenderContext>| render_ctx.submit_async_transfers())
-		.with_try_system(draw_shadows)
-		.with_try_system(draw_3d)
-		.with_try_system(draw_3d_transparent_moments)
-		.with_try_system(draw_3d_transparent)
-		.with_try_system(draw_ui)
-		.with_try_system(submit_frame)
-		.add_to_world(&world)?;
+	world.add_workload(render::workload::render);
 
 	Ok((world, world_data.sky))
-}
-
-// Render shadow maps.
-fn draw_shadows(
-	render_ctx: UniqueView<render::RenderContext>,
-	transforms: View<component::Transform>,
-	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	mut light_manager: UniqueViewMut<component::light::LightManager>,
-) -> Result<(), GenericEngineError>
-{
-	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
-	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
-	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
-	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
-
-	for layer_projview in light_manager.get_dir_light_projviews() {
-		let mut cb = render_ctx.gather_commands(&[], shadow_format, viewport_extent)?;
-
-		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
-
-		for (eid, transform) in transforms.iter().with_id() {
-			if mesh_manager.has_opaque_materials(eid) {
-				let model_matrix = transform.get_matrix();
-				let transform_mat = layer_projview * model_matrix;
-				let model_mat3a = Mat3A::from_mat4(model_matrix);
-
-				mesh_manager.draw(
-					eid,
-					&mut cb,
-					shadow_pipeline.layout().clone(),
-					transform_mat,
-					model_mat3a,
-					transform.position,
-					false,
-					false,
-					true,
-				)?;
-			}
-		}
-
-		light_manager.add_dir_light_cb(cb.build()?);
-	}
-
-	Ok(())
-}
-
-// Draw 3D objects.
-// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-fn draw_common(
-	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	camera_manager: &CameraManager,
-	transforms: View<component::Transform>,
-	mesh_manager: &component::mesh::MeshManager,
-	pipeline: &Arc<GraphicsPipeline>,
-	transparency_pass: bool,
-	base_color_only: bool,
-) -> Result<(), GenericEngineError>
-{
-	let projview = camera_manager.projview();
-
-	for (eid, transform) in transforms.iter().with_id() {
-		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass)
-			|| (mesh_manager.has_transparency(eid) && transparency_pass)
-		{
-			let model_matrix = transform.get_matrix();
-			let transform_mat = projview * model_matrix;
-			let model_mat3a = Mat3A::from_mat4(model_matrix);
-			mesh_manager.draw(
-				eid,
-				command_buffer,
-				pipeline.layout().clone(),
-				transform_mat,
-				model_mat3a,
-				transform.position,
-				transparency_pass,
-				base_color_only,
-				false,
-			)?;
-		}
-	}
-	Ok(())
-}
-
-// Draw opaque 3D objects
-fn draw_3d(
-	render_ctx: UniqueView<render::RenderContext>,
-	skybox: UniqueView<render::skybox::Skybox>,
-	camera_manager: UniqueView<CameraManager>,
-	transforms: View<component::Transform>,
-	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	light_manager: UniqueView<component::light::LightManager>,
-) -> Result<(), GenericEngineError>
-{
-	let color_formats = [Format::R16G16B16A16_SFLOAT];
-	let vp_extent = render_ctx.swapchain_dimensions();
-	let light_set = vec![light_manager.get_all_lights_set().clone()];
-
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
-
-	// Draw the skybox. This will effectively clear the color image.
-	skybox.draw(&mut cb, camera_manager.sky_projview())?;
-
-	let pbr_pipeline = render_ctx.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
-
-	cb.bind_pipeline_graphics(pbr_pipeline.clone())?
-		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
-		.bind_descriptor_sets(PipelineBindPoint::Graphics, pbr_pipeline.layout().clone(), 1, light_set)?;
-
-	draw_common(
-		&mut cb,
-		&camera_manager,
-		transforms,
-		&mesh_manager,
-		pbr_pipeline,
-		false,
-		false,
-	)?;
-
-	render_ctx.add_cb(cb.build()?);
-	Ok(())
-}
-
-// Start recording commands for moment-based OIT.
-fn draw_3d_transparent_moments(
-	render_ctx: UniqueView<render::RenderContext>,
-	camera_manager: UniqueView<CameraManager>,
-	transforms: View<component::Transform>,
-	mesh_manager: UniqueView<component::mesh::MeshManager>,
-) -> Result<(), GenericEngineError>
-{
-	let color_formats = [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT];
-	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
-
-	// This will bind the pipeline for you, since it doesn't need to do anything
-	// specific to materials (it only reads the alpha channel of each texture).
-	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline();
-
-	cb.bind_pipeline_graphics(pipeline.clone())?;
-
-	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
-
-	render_ctx
-		.get_transparency_renderer()
-		.add_transparency_moments_cb(cb.build()?);
-
-	Ok(())
-}
-
-// Draw the transparent objects.
-fn draw_3d_transparent(
-	render_ctx: UniqueView<render::RenderContext>,
-	camera_manager: UniqueView<CameraManager>,
-	transforms: View<component::Transform>,
-	mesh_manager: UniqueView<component::mesh::MeshManager>,
-	light_manager: UniqueView<component::light::LightManager>,
-) -> Result<(), GenericEngineError>
-{
-	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
-	let vp_extent = render_ctx.swapchain_dimensions();
-	let pipeline = render_ctx
-		.get_transparency_pipeline("PBR")
-		.ok_or("PBR transparency pipeline not loaded!")?;
-	let common_sets = vec![
-		light_manager.get_all_lights_set().clone(),
-		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
-	];
-
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
-
-	cb.bind_pipeline_graphics(pipeline.clone())?.bind_descriptor_sets(
-		PipelineBindPoint::Graphics,
-		pipeline.layout().clone(),
-		1,
-		common_sets,
-	)?;
-
-	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
-
-	render_ctx.get_transparency_renderer().add_transparency_cb(cb.build()?);
-
-	Ok(())
-}
-
-// Draw UI elements.
-fn draw_ui(
-	render_ctx: UniqueView<render::RenderContext>,
-	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
-	ui_transforms: View<ui::UITransform>,
-) -> Result<(), GenericEngineError>
-{
-	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, vp_extent)?;
-
-	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
-
-	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	for (eid, _) in ui_transforms.iter().with_id() {
-		// TODO: how do we respect the render order?
-		canvas.draw(&mut cb, eid)?;
-	}
-
-	canvas.add_cb(cb.build()?);
-	Ok(())
-}
-
-fn submit_frame(
-	mut render_ctx: UniqueViewMut<render::RenderContext>,
-	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
-	mut light_manager: UniqueViewMut<component::light::LightManager>,
-) -> Result<(), GenericEngineError>
-{
-	render_ctx.submit_frame(canvas.take_cb(), light_manager.drain_dir_light_cb())
 }
 
 // Get data path, set up logging, and return the data path.
@@ -465,12 +228,12 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 	println!("Using data directory: {}", data_path.display());
 
 	// Create the game data directory. Log, config, and save data files will be saved here.
-	std::fs::create_dir_all(&data_path).or_else(|e| Err(format!("Failed to create data directory: {}", e)))?;
+	std::fs::create_dir_all(&data_path).map_err(|e| format!("Failed to create data directory: {e}"))?;
 
 	// open log file
 	let log_file_path = data_path.join("game.log");
-	let log_file = std::fs::File::create(&log_file_path)
-		.or_else(|e| Err(format!("Failed to create '{}': {}", log_file_path.display(), e)))?;
+	let log_file =
+		std::fs::File::create(&log_file_path).map_err(|e| format!("Failed to create '{}': {}", log_file_path.display(), e))?;
 
 	// set up logger
 	let logger_config = ConfigBuilder::new()
@@ -499,19 +262,23 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 
 fn log_error(e: GenericEngineError)
 {
-	let mut error_string = format!("{}", e);
-	log::debug!("top level error: {:?}", e);
+	let mut error_string = format!("{e}");
+	log::debug!("top level error: {e:?}");
+
 	let mut next_err_source = e.source();
-	while let Some(source) = next_err_source {
-		error_string += &format!("\ncaused by: {}", source);
-		log::debug!("caused by: {:?}", source);
-		next_err_source = source.source();
+	while let Some(src) = next_err_source {
+		error_string += &format!("\ncaused by: {src}");
+		log::debug!("caused by: {src:?}");
+		next_err_source = src.source();
 	}
+
 	if log::log_enabled!(log::Level::Error) {
-		log::error!("{}", error_string);
+		log::error!("{error_string}");
 	} else {
-		println!("{}", error_string);
+		println!("{error_string}");
 	}
-	msgbox::create("Engine Error", &error_string, msgbox::common::IconType::Error)
-		.unwrap_or_else(|mbe| log::error!("Failed to create error message box: {}", mbe));
+
+	if let Err(mbe) = msgbox::create("Engine Error", &error_string, msgbox::common::IconType::Error) {
+		log::error!("Failed to create error message box: {mbe}");
+	}
 }

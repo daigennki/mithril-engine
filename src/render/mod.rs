@@ -13,6 +13,7 @@ mod swapchain;
 pub mod texture;
 pub mod transparency;
 mod vulkan_init;
+pub mod workload;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
