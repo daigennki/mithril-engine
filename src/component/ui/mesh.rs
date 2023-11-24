@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use crate::component::WantsSystemAdded;
 
 #[derive(Clone, Copy)]
-pub enum MeshType 
+pub enum MeshType
 {
 	Quad,
-	Frame(u32),	// `u32` is border width in logical pixels
+	Frame(u32), // `u32` is border width in logical pixels
 }
 impl Default for MeshType
 {
@@ -23,7 +23,6 @@ impl Default for MeshType
 		Self::Quad
 	}
 }
-
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
 #[derive(Default, shipyard::Component)]
@@ -68,7 +67,10 @@ fn update_mesh(
 		}
 
 		// `Not` is used on `inserted_or_modified` here so that we don't run the updates twice.
-		for (eid, (t, mesh)) in (!ui_transforms.inserted_or_modified(), ui_meshes.inserted_or_modified()).iter().with_id() {
+		for (eid, (t, mesh)) in (!ui_transforms.inserted_or_modified(), ui_meshes.inserted_or_modified())
+			.iter()
+			.with_id()
+		{
 			if let Err(e) = canvas.update_mesh(&mut render_ctx, eid, t, mesh) {
 				log::error!("Failed to update UI mesh: {}", e);
 			}
@@ -86,4 +88,3 @@ fn update_mesh(
 		Self::new_from_corners(render_ctx, -half_dimensions, half_dimensions, tex)
 	}
 }*/
-

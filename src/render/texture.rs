@@ -12,8 +12,8 @@ use vulkano::buffer::{allocator::SubbufferAllocator, BufferContents};
 use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
 use vulkano::format::Format;
 use vulkano::image::{
-	view::{ImageView, ImageViewCreateInfo, ImageViewType}, Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers,
-	ImageUsage,
+	view::{ImageView, ImageViewCreateInfo, ImageViewType},
+	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::DeviceSize;
@@ -35,7 +35,14 @@ impl Texture
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
 
-		Self::new_from_slice(memory_allocator, subbuffer_allocator, img_raw.as_slice(), vk_fmt, dim, mip_count)
+		Self::new_from_slice(
+			memory_allocator,
+			subbuffer_allocator,
+			img_raw.as_slice(),
+			vk_fmt,
+			dim,
+			mip_count,
+		)
 	}
 
 	pub fn new_from_slice<Px>(
@@ -54,7 +61,7 @@ impl Texture
 
 		let image_info = ImageCreateInfo {
 			format,
-			extent: [ dimensions[0], dimensions[1], 1 ],
+			extent: [dimensions[0], dimensions[1], 1],
 			mip_levels,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
@@ -75,7 +82,7 @@ impl Texture
 					mip_level,
 					..ImageSubresourceLayers::from_parameters(format, 1)
 				},
-				image_extent: [ mip_width, mip_height, 1],
+				image_extent: [mip_width, mip_height, 1],
 				..Default::default()
 			});
 
@@ -84,7 +91,7 @@ impl Texture
 			mip_height /= 2;
 		}
 
-		let copy_to_image = CopyBufferToImageInfo{
+		let copy_to_image = CopyBufferToImageInfo {
 			regions: regions.into(),
 			..CopyBufferToImageInfo::buffer_image(staging_buf, image)
 		};
@@ -97,10 +104,10 @@ impl Texture
 		&self.view
 	}
 
-	pub fn dimensions(&self) -> [u32; 2] 
+	pub fn dimensions(&self) -> [u32; 2]
 	{
 		let extent = self.view.image().extent();
-		[ extent[0], extent[1] ]
+		[extent[0], extent[1]]
 	}
 }
 
@@ -165,7 +172,7 @@ impl CubemapTexture
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,
 			format,
-			extent: [ dimensions[0], dimensions[1], 1 ],
+			extent: [dimensions[0], dimensions[1], 1],
 			array_layers: 6,
 			mip_levels,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
@@ -179,7 +186,10 @@ impl CubemapTexture
 		};
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
-		Ok((CubemapTexture { view }, CopyBufferToImageInfo::buffer_image(staging_buf, image)))
+		Ok((
+			CubemapTexture { view },
+			CopyBufferToImageInfo::buffer_image(staging_buf, image),
+		))
 	}
 
 	pub fn view(&self) -> &Arc<ImageView>
@@ -201,9 +211,7 @@ fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), Generic
 		Some("dds") => Ok(load_dds(path)?),
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
-			let img = image::io::Reader::open(path)?
-				.decode()?
-				.into_rgba8();
+			let img = image::io::Reader::open(path)?.decode()?.into_rgba8();
 			Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
 		}
 	}
@@ -227,7 +235,7 @@ fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngi
 		DxgiFormat::BC7_UNorm_sRGB => Format::BC7_SRGB_BLOCK,
 		f => return Err(format!("Unsupported DDS format '{:?}'!", f).into()),
 	};
-	let dim = [ dds.get_width(), dds.get_height() ];
+	let dim = [dds.get_width(), dds.get_height()];
 	let mip_count = dds.get_num_mipmap_levels();
 
 	Ok((vk_fmt, dim, mip_count, dds.data))

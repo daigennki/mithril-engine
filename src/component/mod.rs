@@ -52,7 +52,6 @@ impl WantsSystemAdded for Transform
 	}
 }
 
-
 /// The trait that every component to be used in a map file must implement.
 /// This allows a deserialized component to add itself to the world, so that it can be
 /// deserialized as `Box<dyn EntityComponent>` but still keep its concrete type in the world.
@@ -82,4 +81,3 @@ pub trait WantsSystemAdded
 
 	fn add_prerender_system(&self) -> Option<WorkloadSystem>;
 }
-

@@ -54,11 +54,13 @@ fn update_text(
 		}
 
 		// `Not` is used on `inserted_or_modified` here so that we don't run the updates twice.
-		for (eid, (t, text)) in (!ui_transforms.inserted_or_modified(), ui_texts.inserted_or_modified()).iter().with_id() {
+		for (eid, (t, text)) in (!ui_transforms.inserted_or_modified(), ui_texts.inserted_or_modified())
+			.iter()
+			.with_id()
+		{
 			if let Err(e) = canvas.update_text(&mut render_ctx, eid, t, text) {
 				log::error!("Failed to update UI text: {}", e);
 			}
 		}
 	}
 }
-

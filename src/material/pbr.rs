@@ -14,21 +14,23 @@ use vulkano::descriptor_set::{
 	WriteDescriptorSet,
 };
 use vulkano::device::Device;
+use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, layout::PushConstantRange};
-use vulkano::image::sampler::{SamplerCreateInfo, Sampler};
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::{RenderContext, pipeline::PipelineConfig};
+use crate::render::{pipeline::PipelineConfig, RenderContext};
 use crate::GenericEngineError;
 
-pub mod fs {
+pub mod fs
+{
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		path: "src/shaders/pbr.frag.glsl",
 	}
 }
-pub mod fs_oit {
+pub mod fs_oit
+{
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		define: [("TRANSPARENCY_PASS", ""),],
@@ -46,7 +48,6 @@ pub struct PBR
 	//pub roughness: SingleChannelInput,
 
 	//pub specular: SingleChannelInput,
-
 	#[serde(default)]
 	pub transparent: bool,
 }
@@ -61,15 +62,23 @@ impl PBR
 		let sampler = Sampler::new(vk_dev.clone(), sampler_info)?;
 
 		let bindings = [
-			(0, DescriptorSetLayoutBinding { // binding 0: sampler0
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![ sampler ],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			}),
-			(1, DescriptorSetLayoutBinding { // binding 1: base_color
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			}),
+			(
+				0,
+				DescriptorSetLayoutBinding {
+					// binding 0: sampler0
+					stages: ShaderStages::FRAGMENT,
+					immutable_samplers: vec![sampler],
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+				},
+			),
+			(
+				1,
+				DescriptorSetLayoutBinding {
+					// binding 1: base_color
+					stages: ShaderStages::FRAGMENT,
+					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+				},
+			),
 		];
 		let layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: bindings.into(),
@@ -88,14 +97,15 @@ impl PBR
 			fragment_shader_transparency: Some(fs_oit::load(vk_dev)?),
 			attachment_blend: None, // transparency will be handled by transparency renderer
 			primitive_topology: PrimitiveTopology::TriangleList,
-			set_layouts: vec![ pbr_set_layout ],
-			push_constant_ranges: vec![
-				PushConstantRange { // push constant for projviewmodel and transform3 matrix
-					stages: ShaderStages::VERTEX,
-					offset: 0,
-					size: std::mem::size_of::<crate::component::mesh::MeshPushConstant>().try_into().unwrap(),
-				}
-			],
+			set_layouts: vec![pbr_set_layout],
+			push_constant_ranges: vec![PushConstantRange {
+				// push constant for projviewmodel and transform3 matrix
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: std::mem::size_of::<crate::component::mesh::MeshPushConstant>()
+					.try_into()
+					.unwrap(),
+			}],
 		})
 	}
 }
@@ -111,12 +121,12 @@ impl Material for PBR
 	fn gen_descriptor_set_writes(
 		&self,
 		parent_folder: &Path,
-		render_ctx: &mut RenderContext
+		render_ctx: &mut RenderContext,
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view().clone()) ];
+		let writes = vec![WriteDescriptorSet::image_view(1, base_color.view().clone())];
 
 		Ok(writes)
 	}
@@ -124,12 +134,12 @@ impl Material for PBR
 	fn gen_base_color_descriptor_set_writes(
 		&self,
 		parent_folder: &Path,
-		render_ctx: &mut RenderContext
+		render_ctx: &mut RenderContext,
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![ WriteDescriptorSet::image_view(1, base_color.view().clone()) ];
+		let writes = vec![WriteDescriptorSet::image_view(1, base_color.view().clone())];
 
 		Ok(writes)
 	}
@@ -139,4 +149,3 @@ impl Material for PBR
 		self.transparent
 	}
 }
-

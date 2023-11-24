@@ -5,32 +5,33 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use std::sync::Arc;
 use glam::*;
+use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet
+	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
+use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::graphics::{
-	color_blend::{ColorBlendState, ColorBlendAttachmentState},
+	color_blend::{ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::DepthStencilState,
 	input_assembly::PrimitiveTopology,
 	rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipeline,
 };
-use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
+use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
 use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
 use crate::GenericEngineError;
 
-mod vs {
+mod vs
+{
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		src: r"
@@ -53,7 +54,8 @@ mod vs {
 		",
 	}
 }
-mod fs {
+mod fs
+{
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		src: r"
@@ -89,7 +91,7 @@ impl Skybox
 	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, GenericEngineError>
 	{
 		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT), ],
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 			..Default::default()
 		};
@@ -98,18 +100,22 @@ impl Skybox
 
 		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(0, DescriptorSetLayoutBinding { // binding 0: skybox cubemap texture and sampler 
+			bindings: [(
+				0,
+				DescriptorSetLayoutBinding {
+					// binding 0: skybox cubemap texture and sampler
 					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![ cubemap_sampler ],
+					immutable_samplers: vec![cubemap_sampler],
 					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-				}),
-			].into(),
+				},
+			)]
+			.into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let push_constant_range = PushConstantRange { // push constant for projview matrix
+		let push_constant_range = PushConstantRange {
+			// push constant for projview matrix
 			stages: ShaderStages::VERTEX,
 			offset: 0,
 			size: std::mem::size_of::<Mat4>().try_into().unwrap(),
@@ -118,11 +124,14 @@ impl Skybox
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
-			&[ vs::load(device.clone())?, fs::load(device.clone())? ],
+			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),
-			Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
-			vec![ set_layout.clone() ],
-			vec![ push_constant_range ],
+			Some(ColorBlendState::with_attachment_states(
+				1,
+				ColorBlendAttachmentState::default(),
+			)),
+			vec![set_layout.clone()],
+			vec![push_constant_range],
 			rendering_info,
 			Some(DepthStencilState::default()),
 		)?;
@@ -173,13 +182,12 @@ impl Skybox
 		sky_projview: Mat4,
 	) -> Result<(), GenericEngineError>
 	{
-		cb
-			.bind_pipeline_graphics(self.sky_pipeline.clone())?
+		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.sky_pipeline.layout().clone(),
 				0,
-				vec![self.descriptor_set.clone()]
+				vec![self.descriptor_set.clone()],
 			)?
 			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?
 			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?

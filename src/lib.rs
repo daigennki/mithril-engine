@@ -17,7 +17,10 @@ pub mod render;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{iter::{IntoIter, IntoWithId}, UniqueView, UniqueViewMut, View, Workload, World};
+use shipyard::{
+	iter::{IntoIter, IntoWithId},
+	UniqueView, UniqueViewMut, View, Workload, World,
+};
 use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -50,7 +53,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 		Ok(el) => el,
 		Err(e) => {
 			log_error(Box::new(e));
-			return
+			return;
 		}
 	};
 
@@ -64,14 +67,12 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 		}
 	};
 
-	if let Err(e) = event_loop.run(move |mut event, window_target| {
-		match handle_event(&mut world, &mut event) {
-			Ok(true) => window_target.exit(),
-			Ok(false) => (),
-			Err(e) => {
-				log_error(e);
-				window_target.exit();
-			}
+	if let Err(e) = event_loop.run(move |mut event, window_target| match handle_event(&mut world, &mut event) {
+		Ok(true) => window_target.exit(),
+		Ok(false) => (),
+		Err(e) => {
+			log_error(e);
+			window_target.exit();
 		}
 	}) {
 		log_error(Box::new(e));
@@ -84,8 +85,12 @@ pub struct InputHelperWrapper
 	pub inner: WinitInputHelper,
 }
 
-fn init_world(org_name: &str, game_name: &str, start_map: &str, event_loop: &winit::event_loop::EventLoop<()>)
-	-> Result<World, GenericEngineError>
+fn init_world(
+	org_name: &str,
+	game_name: &str,
+	start_map: &str,
+	event_loop: &winit::event_loop::EventLoop<()>,
+) -> Result<World, GenericEngineError>
 {
 	setup_log(org_name, game_name)?;
 
@@ -98,7 +103,9 @@ fn init_world(org_name: &str, game_name: &str, start_map: &str, event_loop: &win
 
 	let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
 	let mut pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
-	pbr_pipeline_config.set_layouts.push(light_manager.get_all_lights_set().layout().clone());
+	pbr_pipeline_config
+		.set_layouts
+		.push(light_manager.get_all_lights_set().layout().clone());
 	mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
 	render_ctx.load_material_pipeline("PBR", pbr_pipeline_config)?;
 
@@ -108,7 +115,9 @@ fn init_world(org_name: &str, game_name: &str, start_map: &str, event_loop: &win
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
 	world.add_unique(mesh_manager);
-	world.add_unique(InputHelperWrapper { inner: WinitInputHelper::new() });
+	world.add_unique(InputHelperWrapper {
+		inner: WinitInputHelper::new(),
+	});
 	world.add_unique(render_ctx);
 	world.add_unique(light_manager);
 
@@ -123,22 +132,31 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Generi
 	});
 
 	match event {
-		Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => return Ok(true),
-		Event::WindowEvent { event: WindowEvent::ScaleFactorChanged { inner_size_writer, .. }, .. } => {
+		Event::WindowEvent {
+			event: WindowEvent::CloseRequested,
+			..
+		} => return Ok(true),
+		Event::WindowEvent {
+			event: WindowEvent::ScaleFactorChanged { inner_size_writer, .. },
+			..
+		} => {
 			// We don't want the image to be upscaled by the OS, so we tell it here that that the inner size of the
 			// window in physical pixels should be exactly the same (dot-by-dot) as the swapchain's image extent.
 			// It would look blurry if we don't do this.
 			let extent = world.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
 			inner_size_writer.request_inner_size(extent.into())?;
 		}
-		Event::WindowEvent { event: WindowEvent::KeyboardInput { event: key_event, .. }, .. } => {
+		Event::WindowEvent {
+			event: WindowEvent::KeyboardInput { event: key_event, .. },
+			..
+		} => {
 			if !key_event.repeat && !key_event.state.is_pressed() {
 				match key_event.physical_key {
 					PhysicalKey::Code(KeyCode::F12) => {
 						// Toggle fullscreen
 						world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.set_fullscreen(!r_ctx.is_fullscreen()));
 					}
-					_ => ()
+					_ => (),
 				}
 			}
 		}
@@ -233,7 +251,7 @@ fn draw_shadows(
 ) -> Result<(), GenericEngineError>
 {
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
-	let viewport_extent = [ dir_light_extent[0], dir_light_extent[1] ];
+	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
 	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
 	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
 
@@ -263,7 +281,7 @@ fn draw_shadows(
 		}
 
 		light_manager.add_dir_light_cb(cb.build()?);
-	}	
+	}
 
 	Ok(())
 }
@@ -283,8 +301,9 @@ fn draw_common(
 	let projview = camera_manager.projview();
 
 	for (eid, transform) in transforms.iter().with_id() {
-		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass) 
-			|| (mesh_manager.has_transparency(eid) && transparency_pass) {
+		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass)
+			|| (mesh_manager.has_transparency(eid) && transparency_pass)
+		{
 			let model_matrix = transform.get_matrix();
 			let transform_mat = projview * model_matrix;
 			let model_mat3a = Mat3A::from_mat4(model_matrix);
@@ -314,19 +333,18 @@ fn draw_3d(
 	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [ Format::R16G16B16A16_SFLOAT ];
+	let color_formats = [Format::R16G16B16A16_SFLOAT];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let light_set = vec![ light_manager.get_all_lights_set().clone() ];
+	let light_set = vec![light_manager.get_all_lights_set().clone()];
 
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
 	// Draw the skybox. This will effectively clear the color image.
 	skybox.draw(&mut cb, camera_manager.sky_projview())?;
-	
+
 	let pbr_pipeline = render_ctx.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
 
-	cb
-		.bind_pipeline_graphics(pbr_pipeline.clone())?
+	cb.bind_pipeline_graphics(pbr_pipeline.clone())?
 		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
 		.bind_descriptor_sets(PipelineBindPoint::Graphics, pbr_pipeline.layout().clone(), 1, light_set)?;
 
@@ -352,15 +370,13 @@ fn draw_3d_transparent_moments(
 	mesh_manager: UniqueView<component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [ Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT ];
+	let color_formats = [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT];
 	let vp_extent = render_ctx.swapchain_dimensions();
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
-	// This will bind the pipeline for you, since it doesn't need to do anything 
+	// This will bind the pipeline for you, since it doesn't need to do anything
 	// specific to materials (it only reads the alpha channel of each texture).
-	let pipeline = render_ctx
-		.get_transparency_renderer()
-		.get_moments_pipeline();
+	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline();
 
 	cb.bind_pipeline_graphics(pipeline.clone())?;
 
@@ -382,25 +398,28 @@ fn draw_3d_transparent(
 	light_manager: UniqueView<component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [ Format::R16G16B16A16_SFLOAT, Format::R8_UNORM ];
+	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let pipeline = render_ctx.get_transparency_pipeline("PBR").ok_or("PBR transparency pipeline not loaded!")?;
+	let pipeline = render_ctx
+		.get_transparency_pipeline("PBR")
+		.ok_or("PBR transparency pipeline not loaded!")?;
 	let common_sets = vec![
-		light_manager.get_all_lights_set().clone(), 
-		render_ctx.get_transparency_renderer().get_stage3_inputs().clone()
+		light_manager.get_all_lights_set().clone(),
+		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
 	];
 
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(render::MAIN_DEPTH_FORMAT), vp_extent)?;
 
-	cb
-		.bind_pipeline_graphics(pipeline.clone())?
-		.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline.layout().clone(), 1, common_sets)?;
+	cb.bind_pipeline_graphics(pipeline.clone())?.bind_descriptor_sets(
+		PipelineBindPoint::Graphics,
+		pipeline.layout().clone(),
+		1,
+		common_sets,
+	)?;
 
 	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
 
-	render_ctx
-		.get_transparency_renderer()
-		.add_transparency_cb(cb.build()?);
+	render_ctx.get_transparency_renderer().add_transparency_cb(cb.build()?);
 
 	Ok(())
 }
@@ -413,7 +432,7 @@ fn draw_ui(
 ) -> Result<(), GenericEngineError>
 {
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&[ Format::R16G16B16A16_SFLOAT ], None, vp_extent)?;
+	let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, vp_extent)?;
 
 	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
 

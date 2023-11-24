@@ -7,12 +7,12 @@
 
 pub mod model;
 pub mod pipeline;
+mod render_target;
 pub mod skybox;
 mod swapchain;
 pub mod texture;
 pub mod transparency;
 mod vulkan_init;
-mod render_target;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,6 @@ use std::sync::{Arc, Mutex};
 
 use glam::*;
 
-use vulkano::{DeviceSize, Validated, VulkanError};
 use vulkano::buffer::{
 	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
 	subbuffer::Subbuffer,
@@ -28,13 +27,13 @@ use vulkano::buffer::{
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, 
-	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, 
-	PrimaryCommandBufferAbstract,SecondaryAutoCommandBuffer, SubpassContents, RenderingInfo, 
-	RenderingAttachmentInfo, CommandBufferExecFuture,
+	AutoCommandBufferBuilder, CommandBufferExecFuture, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo,
+	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
+	RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo}, DescriptorSet,
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
+	DescriptorSet,
 };
 use vulkano::device::{Device, Queue};
 use vulkano::format::{ClearValue, Format};
@@ -45,7 +44,11 @@ use vulkano::memory::{
 };
 use vulkano::pipeline::graphics::{viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
-use vulkano::sync::{future::{FenceSignalFuture, NowFuture}, GpuFuture};
+use vulkano::sync::{
+	future::{FenceSignalFuture, NowFuture},
+	GpuFuture,
+};
+use vulkano::{DeviceSize, Validated, VulkanError};
 
 use crate::GenericEngineError;
 use pipeline::PipelineConfig;
@@ -91,7 +94,7 @@ pub struct RenderContext
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>, // Used for the buffer updates.
-	staging_buf_max_size: DeviceSize, // Maximum staging buffer usage for the entire duration of the program.
+	staging_buf_max_size: DeviceSize,                    // Maximum staging buffer usage for the entire duration of the program.
 	staging_buf_usage_frame: DeviceSize,
 }
 impl RenderContext
@@ -103,10 +106,8 @@ impl RenderContext
 
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), event_loop, game_name)?;
 
-		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(
-			vk_dev.clone(),
-			StandardDescriptorSetAllocatorCreateInfo::default()
-		);
+		let descriptor_set_allocator =
+			StandardDescriptorSetAllocator::new(vk_dev.clone(), StandardDescriptorSetAllocatorCreateInfo::default());
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// The counts below are multiplied by the number of swapchain images, to account for previous submissions.
@@ -173,16 +174,16 @@ impl RenderContext
 		let pipeline = pipeline::new_from_config(self.device.clone(), config.clone())?;
 
 		let transparency_pipeline = if config.fragment_shader_transparency.is_some() {
-			config.set_layouts.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
+			config
+				.set_layouts
+				.push(self.transparency_renderer.get_stage3_inputs().layout().clone());
 			Some(pipeline::new_from_config_transparency(self.device.clone(), config)?)
 		} else {
 			None
 		};
 
-		self.material_pipelines.insert(
-			name.to_string(),
-			(pipeline, transparency_pipeline)
-		);
+		self.material_pipelines
+			.insert(name.to_string(), (pipeline, transparency_pipeline));
 
 		Ok(())
 	}
@@ -197,7 +198,7 @@ impl RenderContext
 				let (tex, staging_work) = texture::Texture::new(
 					self.memory_allocator.clone(),
 					&mut self.staging_buffer_allocator.lock().unwrap(),
-					path
+					path,
 				)?;
 				self.add_transfer(staging_work.into());
 				let tex_arc = Arc::new(tex);
@@ -212,7 +213,7 @@ impl RenderContext
 		let (tex, staging_work) = texture::CubemapTexture::new(
 			self.memory_allocator.clone(),
 			&mut self.staging_buffer_allocator.lock().unwrap(),
-			faces
+			faces,
 		)?;
 		self.add_transfer(staging_work.into());
 		Ok(tex)
@@ -231,10 +232,10 @@ impl RenderContext
 		let (tex, staging_work) = texture::Texture::new_from_slice(
 			self.memory_allocator.clone(),
 			&mut self.staging_buffer_allocator.lock().unwrap(),
-			data, 
-			vk_fmt, 
+			data,
+			vk_fmt,
 			dimensions,
-			mip
+			mip,
 		)?;
 		self.add_transfer(staging_work.into());
 		Ok(tex)
@@ -251,12 +252,16 @@ impl RenderContext
 		if self.allow_direct_buffer_access {
 			log::debug!("Allocating buffer of {} bytes", data_len * (std::mem::size_of::<T>() as u64));
 			// When possible, upload directly to the new buffer memory.
-			let buf_info = BufferCreateInfo { usage, ..Default::default() };
+			let buf_info = BufferCreateInfo {
+				usage,
+				..Default::default()
+			};
 			let alloc_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
 					required_flags: MemoryPropertyFlags::HOST_VISIBLE,
 					preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
-					not_preferred_flags: MemoryPropertyFlags::HOST_CACHED | MemoryPropertyFlags::DEVICE_COHERENT
+					not_preferred_flags: MemoryPropertyFlags::HOST_CACHED
+						| MemoryPropertyFlags::DEVICE_COHERENT
 						| MemoryPropertyFlags::DEVICE_UNCACHED,
 				},
 				..Default::default()
@@ -264,13 +269,25 @@ impl RenderContext
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
 			buf.write().unwrap().copy_from_slice(data);
 		} else {
-			// If direct uploads aren't possible, create a staging buffer on the CPU side, 
+			// If direct uploads aren't possible, create a staging buffer on the CPU side,
 			// then submit a transfer command to the new buffer on the GPU side.
-			let staging_buf = self.staging_buffer_allocator.lock().unwrap().allocate_slice(data.len().try_into()?)?;
+			let staging_buf = self
+				.staging_buffer_allocator
+				.lock()
+				.unwrap()
+				.allocate_slice(data.len().try_into()?)?;
 			staging_buf.write().unwrap().copy_from_slice(data);
 
-			let buf_info = BufferCreateInfo { usage: usage | BufferUsage::TRANSFER_DST, ..Default::default() };
-			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, AllocationCreateInfo::default(), data_len)?;
+			let buf_info = BufferCreateInfo {
+				usage: usage | BufferUsage::TRANSFER_DST,
+				..Default::default()
+			};
+			buf = Buffer::new_slice(
+				self.memory_allocator.clone(),
+				buf_info,
+				AllocationCreateInfo::default(),
+				data_len,
+			)?;
 
 			self.add_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		}
@@ -290,7 +307,7 @@ impl RenderContext
 				self.buffer_updates.len() + 1
 			);
 		}
-		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data, }));
+		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data }));
 
 		Ok(())
 	}
@@ -330,10 +347,7 @@ impl RenderContext
 					work.add_command(&mut cb)?;
 				}
 
-				let transfer_future = cb
-					.build()?
-					.execute(q.clone())?
-					.then_signal_fence_and_flush()?;
+				let transfer_future = cb.build()?.execute(q.clone())?.then_signal_fence_and_flush()?;
 
 				// This panics here if there's an unused future, because it *must* have been used when
 				// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
@@ -341,7 +355,7 @@ impl RenderContext
 				assert!(self.transfer_future.replace(transfer_future).is_none());
 			}
 		}
-		
+
 		Ok(())
 	}
 
@@ -352,19 +366,25 @@ impl RenderContext
 		&self,
 		color_attachment_formats: &[Format],
 		depth_attachment_format: Option<Format>,
-		viewport_extent: [u32; 2]
+		viewport_extent: [u32; 2],
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
-		let render_pass = Some(CommandBufferInheritanceRenderingInfo {
-			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
-			depth_attachment_format,
-			..Default::default()
-		}.into());
+		let render_pass = Some(
+			CommandBufferInheritanceRenderingInfo {
+				color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
+				depth_attachment_format,
+				..Default::default()
+			}
+			.into(),
+		);
 		let mut cb = AutoCommandBufferBuilder::secondary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
-			CommandBufferInheritanceInfo { render_pass, ..Default::default() },
+			CommandBufferInheritanceInfo {
+				render_pass,
+				..Default::default()
+			},
 		)?;
 
 		let viewport = Viewport {
@@ -390,7 +410,7 @@ impl RenderContext
 		self.transparency_renderer.resize_image(
 			self.memory_allocator.clone(),
 			&self.descriptor_set_allocator,
-			self.swapchain.dimensions()
+			self.swapchain.dimensions(),
 		)?;
 
 		Ok(())
@@ -404,7 +424,7 @@ impl RenderContext
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(
 		&mut self,
-		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>, 
+		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
 		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
 	) -> Result<(), GenericEngineError>
 	{
@@ -480,19 +500,17 @@ impl RenderContext
 			self.transparency_renderer.process_transparency(
 				&mut primary_cb_builder,
 				self.main_render_target.color_image().clone(),
-				self.main_render_target.depth_image().clone()
+				self.main_render_target.depth_image().clone(),
 			)?;
 
 			// UI
 			if let Some(some_ui_cb) = ui_cb {
 				let ui_render_info = RenderingInfo {
-					color_attachments: vec![
-						Some(RenderingAttachmentInfo {
-							load_op: AttachmentLoadOp::Load,
-							store_op: AttachmentStoreOp::Store,
-							..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-						}),
-					],
+					color_attachments: vec![Some(RenderingAttachmentInfo {
+						load_op: AttachmentLoadOp::Load,
+						store_op: AttachmentStoreOp::Store,
+						..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+					})],
 					contents: SubpassContents::SecondaryCommandBuffers,
 					..Default::default()
 				};
@@ -503,11 +521,13 @@ impl RenderContext
 			}
 
 			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
-			self.main_render_target.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
+			self.main_render_target
+				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
 		}
 
 		// submit the built command buffer, presenting it if possible
-		self.swapchain.submit(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
+		self.swapchain
+			.submit(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
 
 		Ok(())
 	}
@@ -578,7 +598,7 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 	fn add_command(
 		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		subbuffer_allocator: &mut SubbufferAllocator
+		subbuffer_allocator: &mut SubbufferAllocator,
 	) -> Result<(), GenericEngineError>
 	{
 		let staging_buf = subbuffer_allocator.allocate_sized()?;
@@ -596,8 +616,8 @@ trait UpdateBufferDataTrait: Send + Sync
 
 	fn add_command(
 		&self,
-		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, 
-		_: &mut SubbufferAllocator
+		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		_: &mut SubbufferAllocator,
 	) -> Result<(), GenericEngineError>;
 }
 
@@ -640,4 +660,3 @@ impl From<CopyBufferToImageInfo> for StagingWork
 		Self::CopyBufferToImage(info)
 	}
 }
-

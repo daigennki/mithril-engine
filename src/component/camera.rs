@@ -7,7 +7,10 @@
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{iter::{IntoIter, IntoWithId}, EntityId, Get, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
+use shipyard::{
+	iter::{IntoIter, IntoWithId},
+	EntityId, Get, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem,
+};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
@@ -50,10 +53,7 @@ impl WantsSystemAdded for Camera
 		Some(update_camera.into_workload_system().unwrap())
 	}
 }
-fn select_default_camera(
-	mut camera_manager: UniqueViewMut<CameraManager>,
-	cameras: View<Camera>,
-)
+fn select_default_camera(mut camera_manager: UniqueViewMut<CameraManager>, cameras: View<Camera>)
 {
 	// If an active camera is not set, set the first inserted camera as the active one.
 	if camera_manager.active_camera() == EntityId::dead() {
@@ -98,13 +98,14 @@ impl CameraManager
 		let fov_y_rad = match default_fov {
 			CameraFov::X(fov_x) => fov_x / aspect_ratio,
 			CameraFov::Y(fov_y) => fov_y,
-		}.to_radians();
+		}
+		.to_radians();
 
 		// the view matrix position is initially all zero, so it can be used to
 		// initialize the sky view matrix as well
 		let proj = Mat4::perspective_lh(fov_y_rad, aspect_ratio, CAMERA_NEAR, CAMERA_FAR);
 		let view = Mat4::look_to_lh(Vec3::ZERO, Vec3::Y, Vec3::NEG_Z);
-		let projview = proj * view;	
+		let projview = proj * view;
 
 		Ok(CameraManager {
 			active_camera: Default::default(),
@@ -132,7 +133,8 @@ impl CameraManager
 		let fov_y_rad = match fov.unwrap_or(self.default_fov) {
 			CameraFov::X(fov_x) => fov_x / aspect_ratio,
 			CameraFov::Y(fov_y) => fov_y,
-		}.to_radians();
+		}
+		.to_radians();
 
 		let proj = Mat4::perspective_lh(fov_y_rad, aspect_ratio, CAMERA_NEAR, CAMERA_FAR);
 		let view = Mat4::look_to_lh(current_pos, direction, Vec3::NEG_Z);
@@ -180,4 +182,3 @@ impl CameraManager
 		self.sky_projview
 	}
 }
-

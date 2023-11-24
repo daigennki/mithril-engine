@@ -6,8 +6,7 @@
 ----------------------------------------------------------------------------- */
 use std::sync::Arc;
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, BlitImageInfo, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, 
-	SubpassContents,
+	AutoCommandBufferBuilder, BlitImageInfo, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SubpassContents,
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator,
@@ -16,12 +15,19 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::{Sampler, SamplerCreateInfo}, view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::{
+	sampler::{Sampler, SamplerCreateInfo},
+	view::ImageView,
+	Image, ImageCreateInfo, ImageUsage,
+};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::{ColorBlendAttachmentState, ColorBlendState}, input_assembly::PrimitiveTopology,
-		rasterization::RasterizationState, subpass::PipelineRenderingCreateInfo, viewport::Viewport,
+		color_blend::{ColorBlendAttachmentState, ColorBlendState},
+		input_assembly::PrimitiveTopology,
+		rasterization::RasterizationState,
+		subpass::PipelineRenderingCreateInfo,
+		viewport::Viewport,
 	},
 	GraphicsPipeline, Pipeline, PipelineBindPoint,
 };
@@ -91,7 +97,7 @@ impl RenderTarget
 
 		let color_create_info = ImageCreateInfo {
 			format: Format::R16G16B16A16_SFLOAT,
-			extent: [ dimensions[0], dimensions[1], 1 ],
+			extent: [dimensions[0], dimensions[1], 1],
 			usage,
 			..Default::default()
 		};
@@ -100,7 +106,7 @@ impl RenderTarget
 
 		let depth_create_info = ImageCreateInfo {
 			format: super::MAIN_DEPTH_FORMAT,
-			extent: [ dimensions[0], dimensions[1], 1 ],
+			extent: [dimensions[0], dimensions[1], 1],
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 			..Default::default()
 		};
@@ -108,25 +114,27 @@ impl RenderTarget
 		let depth_image_view = ImageView::new_default(depth_image)?;
 
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(0, DescriptorSetLayoutBinding {
+			bindings: [(
+				0,
+				DescriptorSetLayoutBinding {
 					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![ Sampler::new(device.clone(), SamplerCreateInfo::default())? ],
+					immutable_samplers: vec![Sampler::new(device.clone(), SamplerCreateInfo::default())?],
 					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-				}),
-			].into(),
+				},
+			)]
+			.into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 		let color_set = PersistentDescriptorSet::new(
 			descriptor_set_allocator,
 			set_layout.clone(),
-			[ WriteDescriptorSet::image_view(0, color_image_view.clone()) ],
+			[WriteDescriptorSet::image_view(0, color_image_view.clone())],
 			[],
 		)?;
 
 		let gamma_rendering = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![ Some(swapchain_format) ],
+			color_attachment_formats: vec![Some(swapchain_format)],
 			..Default::default()
 		};
 
@@ -134,10 +142,13 @@ impl RenderTarget
 			Some(super::pipeline::new(
 				device.clone(),
 				PrimitiveTopology::TriangleList,
-				&[ vs_fill_viewport::load(device.clone())?, fs_gamma::load(device)? ],
+				&[vs_fill_viewport::load(device.clone())?, fs_gamma::load(device)?],
 				RasterizationState::default(),
-				Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
-				vec![ set_layout ],
+				Some(ColorBlendState::with_attachment_states(
+					1,
+					ColorBlendAttachmentState::default(),
+				)),
+				vec![set_layout],
 				vec![],
 				gamma_rendering,
 				None,
@@ -145,8 +156,8 @@ impl RenderTarget
 		} else {
 			None
 		};
-		
-		Ok(Self { 
+
+		Ok(Self {
 			color_image: color_image_view,
 			color_set,
 			depth_image: depth_image_view,
@@ -166,14 +177,12 @@ impl RenderTarget
 	pub fn first_rendering_info(&self) -> RenderingInfo
 	{
 		RenderingInfo {
-			color_attachments: vec![
-				Some(RenderingAttachmentInfo {
-					// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(self.color_image.clone())
-				}),
-			],
-			depth_attachment: Some(RenderingAttachmentInfo{
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(self.color_image.clone())
+			})],
+			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
 				clear_value: Some(ClearValue::Depth(1.0)),
@@ -187,20 +196,18 @@ impl RenderTarget
 	pub fn blit_to_swapchain(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		swapchain_image: Arc<ImageView>
+		swapchain_image: Arc<ImageView>,
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(gamma_pipeline) = &self.gamma_pipeline {
 			// perform gamma correction and write to the swapchain image
 			let swapchain_image_extent = swapchain_image.image().extent();
 			let render_info = RenderingInfo {
-				color_attachments: vec![
-					Some(RenderingAttachmentInfo {
-						load_op: AttachmentLoadOp::DontCare,
-						store_op: AttachmentStoreOp::Store,
-						..RenderingAttachmentInfo::image_view(swapchain_image)
-					}),
-				],
+				color_attachments: vec![Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::DontCare,
+					store_op: AttachmentStoreOp::Store,
+					..RenderingAttachmentInfo::image_view(swapchain_image)
+				})],
 				contents: SubpassContents::Inline,
 				..Default::default()
 			};
@@ -210,23 +217,25 @@ impl RenderTarget
 				depth_range: 0.0..=1.0,
 			};
 
-			cb
-				.begin_rendering(render_info)?
+			cb.begin_rendering(render_info)?
 				.set_viewport(0, [viewport].as_slice().into())?
 				.bind_pipeline_graphics(gamma_pipeline.clone())?
 				.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					gamma_pipeline.layout().clone(),
 					0,
-					vec![ self.color_set.clone() ],
+					vec![self.color_set.clone()],
 				)?
 				.draw(3, 1, 0, 0)?
 				.end_rendering()?;
 		} else {
-			// blit to the swapchain image without gamma correction 
-			cb.blit_image(BlitImageInfo::images(self.color_image.image().clone(), swapchain_image.image().clone()))?;
+			// blit to the swapchain image without gamma correction
+			cb.blit_image(BlitImageInfo::images(
+				self.color_image.image().clone(),
+				swapchain_image.image().clone(),
+			))?;
 		}
 
 		Ok(())
 	}
-} 
+}

@@ -129,7 +129,7 @@ impl Model
 		// don't even bother with vertex/index buffer binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
 			if shadow_pass {
-				cb.bind_vertex_buffers(0, vec![ self.vertex_subbuffers[0].clone() ])?;
+				cb.bind_vertex_buffers(0, vec![self.vertex_subbuffers[0].clone()])?;
 			} else {
 				cb.bind_vertex_buffers(0, self.vertex_subbuffers.clone())?;
 			}
@@ -138,7 +138,10 @@ impl Model
 			for submesh in visible_submeshes {
 				// it's okay that we use a panic function here, since the glTF loader validates the index for us
 				let mat_res = &material_resources[submesh.material_index()];
-				let mat = mat_res.mat_override.as_ref().unwrap_or_else(|| &self.materials[submesh.material_index()]);
+				let mat = mat_res
+					.mat_override
+					.as_ref()
+					.unwrap_or_else(|| &self.materials[submesh.material_index()]);
 
 				if mat.has_transparency() == transparency_pass {
 					if !shadow_pass {
@@ -167,7 +170,7 @@ struct MaterialExtras
 fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<dyn Material>, GenericEngineError>
 {
 	// Use an external material file if specified in the extras.
-	// This can be specified in Blender by giving a material a custom property called "external" 
+	// This can be specified in Blender by giving a material a custom property called "external"
 	// with a boolean value of `true` (box is checked).
 	let use_external = if let Some(extras) = mat.extras() {
 		let parsed_extras: MaterialExtras = serde_json::from_str(extras.get())?;
@@ -177,7 +180,9 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<
 	};
 
 	if use_external {
-		let material_name = mat.name().ok_or("model wants an external material, but the glTF mesh material has no name")?;
+		let material_name = mat
+			.name()
+			.ok_or("model wants an external material, but the glTF mesh material has no name")?;
 		let mat_path = search_folder.join(material_name).with_extension("yaml");
 
 		log::info!(
@@ -235,8 +240,7 @@ impl IndexBufferVariant
 		})
 	}
 
-	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
-		-> Result<(), GenericEngineError>
+	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),

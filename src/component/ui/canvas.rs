@@ -6,7 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use glam::*;
-use image::{DynamicImage, RgbaImage, Rgba};
+use image::{DynamicImage, Rgba, RgbaImage};
 use rusttype::{point, Font, Scale};
 use shipyard::EntityId;
 use std::collections::BTreeMap;
@@ -15,27 +15,32 @@ use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet
+	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::image::{sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo}, view::ImageView};
+use vulkano::image::{
+	sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo},
+	view::ImageView,
+};
 use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
-		input_assembly::PrimitiveTopology, GraphicsPipeline,
+		input_assembly::PrimitiveTopology,
 		rasterization::RasterizationState,
 		subpass::PipelineRenderingCreateInfo,
+		GraphicsPipeline,
 	},
 	Pipeline,
 };
 use vulkano::shader::ShaderStages;
 
+use super::mesh::MeshType;
 use crate::render::RenderContext;
 use crate::GenericEngineError;
-use super::mesh::MeshType;
 
-mod ui_vs {
+mod ui_vs
+{
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		src: r"
@@ -58,7 +63,8 @@ mod ui_vs {
 		",
 	}
 }
-mod ui_fs {
+mod ui_fs
+{
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		src: r"
@@ -105,8 +111,7 @@ pub struct Canvas
 }
 impl Canvas
 {
-	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32)
-		-> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> Result<Self, GenericEngineError>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
@@ -122,26 +127,38 @@ impl Canvas
 
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, DescriptorSetLayoutBinding { // binding 0: transformation matrix
-					stages: ShaderStages::VERTEX,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-				}),
-				(1, DescriptorSetLayoutBinding { // binding 1: tex
-					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![ sampler ],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-				}),
-			].into(),
+				(
+					0,
+					DescriptorSetLayoutBinding {
+						// binding 0: transformation matrix
+						stages: ShaderStages::VERTEX,
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+					},
+				),
+				(
+					1,
+					DescriptorSetLayoutBinding {
+						// binding 1: tex
+						stages: ShaderStages::FRAGMENT,
+						immutable_samplers: vec![sampler],
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+					},
+				),
+			]
+			.into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let color_blend_state = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
-			blend: Some(AttachmentBlend::alpha()),
-			..Default::default()
-		});
+		let color_blend_state = ColorBlendState::with_attachment_states(
+			1,
+			ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend::alpha()),
+				..Default::default()
+			},
+		);
 		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
 		};
 		let ui_pipeline = crate::render::pipeline::new(
@@ -150,10 +167,10 @@ impl Canvas
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
 			Some(color_blend_state),
-			vec![ set_layout.clone() ],
+			vec![set_layout.clone()],
 			vec![],
 			rendering_info,
-			None
+			None,
 		)?;
 
 		let vbo_usage = BufferUsage::VERTEX_BUFFER;
@@ -221,18 +238,21 @@ impl Canvas
 		mesh_type: super::mesh::MeshType,
 	) -> Result<(), GenericEngineError>
 	{
-		let projected = self.projection * Mat4::from_scale_rotation_translation(
-			transform.scale.unwrap_or(image_dimensions).extend(0.0),
-			Quat::IDENTITY,
-			transform.position.as_vec2().extend(0.0)
-		);
+		let projected = self.projection
+			* Mat4::from_scale_rotation_translation(
+				transform.scale.unwrap_or(image_dimensions).extend(0.0),
+				Quat::IDENTITY,
+				transform.position.as_vec2().extend(0.0),
+			);
 
 		let buffer = match self.gpu_resources.get(&eid) {
 			Some(resources) => {
 				render_ctx.update_buffer(projected, resources.buffer.clone())?;
 				resources.buffer.clone()
-			},
-			None => render_ctx.new_buffer(&[projected], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?.index(0)
+			}
+			None => render_ctx
+				.new_buffer(&[projected], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?
+				.index(0),
 		};
 
 		let descriptor_set = PersistentDescriptorSet::new(
@@ -263,14 +283,14 @@ impl Canvas
 	/// Update the GPU resources for entities with a `Mesh` component.
 	/// Call this whenever the component has been inserted or modified.
 	pub fn update_mesh(
-		&mut self, 
-		render_ctx: &mut RenderContext, 
+		&mut self,
+		render_ctx: &mut RenderContext,
 		eid: EntityId,
 		transform: &super::UITransform,
 		mesh: &super::mesh::Mesh,
 	) -> Result<(), GenericEngineError>
 	{
-		// Only actually do something if the `Mesh` is supposed to use an image file (path is not empty), 
+		// Only actually do something if the `Mesh` is supposed to use an image file (path is not empty),
 		// rather than a texture set by another component like `UIText`.
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
@@ -283,7 +303,7 @@ impl Canvas
 				transform,
 				tex.view().clone(),
 				image_dimensions,
-				mesh.mesh_type
+				mesh.mesh_type,
 			)?;
 		}
 
@@ -312,7 +332,7 @@ impl Canvas
 			transform,
 			tex.view().clone(),
 			img_dim_vec2,
-			super::mesh::MeshType::Quad
+			super::mesh::MeshType::Quad,
 		)?;
 
 		Ok(())
@@ -326,10 +346,10 @@ impl Canvas
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
 			cb.bind_descriptor_sets(
-				vulkano::pipeline::PipelineBindPoint::Graphics, 
+				vulkano::pipeline::PipelineBindPoint::Graphics,
 				self.ui_pipeline.layout().clone(),
 				0,
-				vec![ resources.descriptor_set.clone() ]
+				vec![resources.descriptor_set.clone()],
 			)?;
 
 			match resources.mesh_type {
@@ -385,9 +405,7 @@ fn text_to_image(text: &str, font: &Font<'static>, size: f32) -> Result<RgbaImag
 	let v_metrics = font.v_metrics(scale_uniform);
 
 	// lay out the glyphs in a line with 1 pixel padding
-	let glyphs: Vec<_> = font
-		.layout(text, scale_uniform, point(1.0, 1.0 + v_metrics.ascent))
-		.collect();
+	let glyphs: Vec<_> = font.layout(text, scale_uniform, point(1.0, 1.0 + v_metrics.ascent)).collect();
 
 	// work out the layout size
 	let glyphs_height = (v_metrics.ascent - v_metrics.descent).ceil() as u32;

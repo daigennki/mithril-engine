@@ -20,9 +20,9 @@ use crate::component::{EntityComponent, WantsSystemAdded};
 pub struct UITransform
 {
 	pub position: IVec2,
-	pub scale: Option<Vec2>,	// leave as `None` to use scale from image of another component
+	pub scale: Option<Vec2>, // leave as `None` to use scale from image of another component
 
-	// TODO: parent-child relationship
+	                         // TODO: parent-child relationship
 }
 impl WantsSystemAdded for UITransform
 {
@@ -35,4 +35,3 @@ impl WantsSystemAdded for UITransform
 		None
 	}
 }
-

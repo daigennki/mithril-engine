@@ -13,30 +13,33 @@ use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet
+	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	sampler::{Filter, SamplerCreateInfo, Sampler}, 
-	view::{ImageView, ImageViewCreateInfo}, Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
+	sampler::{Filter, Sampler, SamplerCreateInfo},
+	view::{ImageView, ImageViewCreateInfo},
+	Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::{
 	graphics::{
 		depth_stencil::{CompareOp, DepthState, DepthStencilState},
-		input_assembly::PrimitiveTopology, rasterization::{RasterizationState, CullMode, DepthBiasState},
-		subpass::PipelineRenderingCreateInfo, GraphicsPipeline,
+		input_assembly::PrimitiveTopology,
+		rasterization::{CullMode, DepthBiasState, RasterizationState},
+		subpass::PipelineRenderingCreateInfo,
+		GraphicsPipeline,
 	},
 	layout::PushConstantRange,
 };
 use vulkano::shader::ShaderStages;
 
+use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
 use crate::{render::RenderContext, GenericEngineError};
-use super::{EntityComponent, WantsSystemAdded, Transform, camera::CameraManager};
 
 /// These are various components that represent light sources in the world.
-/// 
+///
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -76,13 +79,11 @@ fn update_directional_light(
 			near = fars[i];
 		}
 
-		if let Err(e) = light_manager.update_dir_light(
-			&mut render_ctx,
-			dl,
-			t,
-			cut_frustums,
-		) {
-			log::error!("update_directional_light: Failed to update `DirectionalLight` GPU buffer: {}", e);
+		if let Err(e) = light_manager.update_dir_light(&mut render_ctx, dl, t, cut_frustums) {
+			log::error!(
+				"update_directional_light: Failed to update `DirectionalLight` GPU buffer: {}",
+				e
+			);
 		}
 	}
 }
@@ -100,7 +101,6 @@ pub struct SpotLight
 	pub color: Vec3,
 	pub intensity: f32,
 }*/
-
 
 #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
@@ -145,7 +145,6 @@ pub struct LightManager
 
 	/*point_light_buf: Arc<Subbuffer<[PointLightData]>>,
 	spot_light_buf: Arc<Subbuffer<[SpotLightData]>>,*/
-
 	all_lights_set: Arc<PersistentDescriptorSet>,
 
 	shadow_pipeline: Arc<GraphicsPipeline>,
@@ -160,19 +159,20 @@ impl LightManager
 		let image_info = ImageCreateInfo {
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
 			format: Format::D16_UNORM,
-			extent: [ 1024, 1024, 1 ],
+			extent: [1024, 1024, 1],
 			array_layers: 3,
 			..Default::default()
 		};
 
 		/* directional light */
 		let dir_light_data = DirLightData::default();
-		let dir_light_buf = render_ctx.new_buffer(&[dir_light_data], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?;
+		let dir_light_buf =
+			render_ctx.new_buffer(&[dir_light_data], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?;
 
 		let dir_light_shadow_img = Image::new(
-			render_ctx.memory_allocator().clone(), 
-			image_info.clone(), 
-			AllocationCreateInfo::default()
+			render_ctx.memory_allocator().clone(),
+			image_info.clone(),
+			AllocationCreateInfo::default(),
 		)?;
 		let dir_light_shadow_view_info = ImageViewCreateInfo {
 			usage: ImageUsage::SAMPLED,
@@ -186,7 +186,7 @@ impl LightManager
 				subresource_range: ImageSubresourceRange {
 					aspects: ImageAspects::DEPTH,
 					mip_levels: 0..1,
-					array_layers: i..(i+1),
+					array_layers: i..(i + 1),
 				},
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
@@ -207,20 +207,33 @@ impl LightManager
 		/* descriptor set with everything lighting- and shadow-related */
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, DescriptorSetLayoutBinding { // shadow sampler
-					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![ shadow_sampler ],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-				}),
-				(1, DescriptorSetLayoutBinding { // directional light buffer 
-					stages: ShaderStages::FRAGMENT,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-				}),
-				(2, DescriptorSetLayoutBinding { // directional light shadow
-					stages: ShaderStages::FRAGMENT,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-				}),
-			].into(),
+				(
+					0,
+					DescriptorSetLayoutBinding {
+						// shadow sampler
+						stages: ShaderStages::FRAGMENT,
+						immutable_samplers: vec![shadow_sampler],
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+					},
+				),
+				(
+					1,
+					DescriptorSetLayoutBinding {
+						// directional light buffer
+						stages: ShaderStages::FRAGMENT,
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+					},
+				),
+				(
+					2,
+					DescriptorSetLayoutBinding {
+						// directional light shadow
+						stages: ShaderStages::FRAGMENT,
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+					},
+				),
+			]
+			.into(),
 			..Default::default()
 		};
 		let all_lights_set = PersistentDescriptorSet::new(
@@ -230,7 +243,7 @@ impl LightManager
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),
 				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),
 			],
-			[]
+			[],
 		)?;
 
 		/* shadow pipeline */
@@ -250,17 +263,16 @@ impl LightManager
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			&[ vs_shadow::load(device.clone())? ],
+			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
 			None,
 			vec![],
-			vec![
-				PushConstantRange { // push constant for transformation matrix
-					stages: ShaderStages::VERTEX,
-					offset: 0,
-					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
-				}
-			],
+			vec![PushConstantRange {
+				// push constant for transformation matrix
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+			}],
 			shadow_rendering,
 			Some(depth_stencil_state),
 		)?;
@@ -282,8 +294,7 @@ impl LightManager
 		light: &DirectionalLight,
 		transform: &Transform,
 		cut_camera_frustums: [Mat4; 3],
-	)
-		-> Result<(), GenericEngineError>
+	) -> Result<(), GenericEngineError>
 	{
 		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
 
@@ -359,7 +370,10 @@ impl LightManager
 	}
 	pub fn drain_dir_light_cb(&mut self) -> Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>
 	{
-		self.dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter().cloned()).collect()
+		self.dir_light_cb
+			.drain(..)
+			.zip(self.dir_light_shadow_layers.iter().cloned())
+			.collect()
 	}
 
 	pub fn get_dir_light_shadow(&self) -> &Arc<ImageView>
@@ -403,4 +417,3 @@ mod vs_shadow
 		",
 	}
 }
-

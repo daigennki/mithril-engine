@@ -11,13 +11,14 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::descriptor_set::{WriteDescriptorSet};
+use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::format::Format;
 
 use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
 
-pub mod vs_3d_common {
+pub mod vs_3d_common
+{
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		path: "src/shaders/basic_3d.vert.glsl",
@@ -35,13 +36,13 @@ pub trait Material: Send + Sync
 	fn gen_descriptor_set_writes(
 		&self,
 		parent_folder: &Path,
-		render_ctx: &mut RenderContext
+		render_ctx: &mut RenderContext,
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
 
 	fn gen_base_color_descriptor_set_writes(
 		&self,
 		parent_folder: &Path,
-		render_ctx: &mut RenderContext
+		render_ctx: &mut RenderContext,
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
@@ -66,7 +67,12 @@ impl ColorInput
 		match self {
 			ColorInput::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				Ok(Arc::new(render_ctx.new_texture_from_slice(&color.to_array(), Format::R32G32B32A32_SFLOAT, [ 1, 1 ], 1)?))
+				Ok(Arc::new(render_ctx.new_texture_from_slice(
+					&color.to_array(),
+					Format::R32G32B32A32_SFLOAT,
+					[1, 1],
+					1,
+				)?))
 			}
 			ColorInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
@@ -94,4 +100,3 @@ impl SingleChannelInput
 		}
 	}
 }*/
-

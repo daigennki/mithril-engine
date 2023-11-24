@@ -61,8 +61,8 @@ impl std::fmt::Display for DriverVersion
 }
 
 fn create_vulkan_instance(
-	game_name: &str, 
-	event_loop: &winit::event_loop::EventLoop<()>
+	game_name: &str,
+	event_loop: &winit::event_loop::EventLoop<()>,
 ) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
 {
 	let lib = vulkano::library::VulkanLibrary::new()?;
@@ -104,9 +104,7 @@ fn create_vulkan_instance(
 }
 
 /// Get the most appropriate GPU, along with whether or not Resizable BAR is enabled on its largest `DEVICE_LOCAL` memory heap.
-fn get_physical_device(
-	vkinst: &Arc<vulkano::instance::Instance>
-) -> Result<(Arc<PhysicalDevice>, bool), GenericEngineError>
+fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc<PhysicalDevice>, bool), GenericEngineError>
 {
 	log::info!("Available Vulkan physical devices:");
 	let (mut dgpu, mut igpu) = (None, None);
@@ -128,10 +126,10 @@ fn get_physical_device(
 		match properties.device_type {
 			PhysicalDeviceType::DiscreteGpu => {
 				dgpu.get_or_insert((i, pd));
-			},
+			}
 			PhysicalDeviceType::IntegratedGpu => {
 				igpu.get_or_insert((i, pd));
-			},
+			}
 			_ => (),
 		}
 	}
@@ -215,7 +213,7 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 		.find_map(|(q, i)| q.queue_flags.contains(QueueFlags::GRAPHICS).then_some(i))
 		.ok_or("No graphics queue family found!")?;
 
-	// Get another queue family that is ideally specifically optimized for async transfers, 
+	// Get another queue family that is ideally specifically optimized for async transfers,
 	// by means of finding one with the TRANSFER flag set and least number of flags set.
 	let transfer = queue_family_properties
 		.iter()
@@ -231,18 +229,21 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 	let infos = [graphics]
 		.into_iter()
 		.chain(transfer.into_iter())
-		.map(|queue_family_index| QueueCreateInfo { queue_family_index, ..Default::default() })
+		.map(|queue_family_index| QueueCreateInfo {
+			queue_family_index,
+			..Default::default()
+		})
 		.collect();
 
 	Ok(infos)
 }
 
 /// Set up the Vulkan instance, physical device, logical device, and queue.
-/// Returns a graphics queue (which owns the device), and an optional transfer queue, 
+/// Returns a graphics queue (which owns the device), and an optional transfer queue,
 /// along with whether or not Resizable BAR is in use.
 pub fn vulkan_setup(
 	game_name: &str,
-	event_loop: &winit::event_loop::EventLoop<()>
+	event_loop: &winit::event_loop::EventLoop<()>,
 ) -> Result<(Arc<Queue>, Option<Arc<Queue>>, bool), GenericEngineError>
 {
 	let vkinst = create_vulkan_instance(game_name, event_loop)?;

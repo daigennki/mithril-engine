@@ -37,11 +37,7 @@ impl WantsSystemAdded for Mesh
 		Some(update_meshes.into_workload_system().unwrap())
 	}
 }
-fn update_meshes(
-	mut render_ctx: UniqueViewMut<RenderContext>,
-	mut mesh_manager: UniqueViewMut<MeshManager>,
-	meshes: View<Mesh>,
-)
+fn update_meshes(mut render_ctx: UniqueViewMut<RenderContext>, mut mesh_manager: UniqueViewMut<MeshManager>, meshes: View<Mesh>)
 {
 	for (eid, mesh) in meshes.inserted().iter().with_id() {
 		if let Err(e) = mesh_manager.load(&mut render_ctx, eid, mesh) {
@@ -81,7 +77,7 @@ impl MeshManager
 			models: Default::default(),
 			set_layouts: Default::default(),
 			basecolor_only_set_layout,
-			resources: Default::default()
+			resources: Default::default(),
 		}
 	}
 
@@ -89,7 +85,10 @@ impl MeshManager
 	{
 		let existing = self.set_layouts.insert(material_name, set_layout);
 		if existing.is_some() {
-			log::warn!("Replaced existing set layout in `MeshManager` for material '{}'", material_name);
+			log::warn!(
+				"Replaced existing set layout in `MeshManager` for material '{}'",
+				material_name
+			);
 		}
 	}
 
@@ -114,24 +113,26 @@ impl MeshManager
 		for mat in orig_materials {
 			// TODO: if there's a material override, use that instead of the original material
 			// to create the descriptor set
-			
+
 			let parent_folder = component.model_path.parent().unwrap();
-			
+
 			// try to get the set layout for the material
 			let set_layout = self
 				.set_layouts
 				.get(mat.material_name())
-				.ok_or(format!("Set layout for material '{}' not loaded into `MeshManager`", mat.material_name()))?
+				.ok_or(format!(
+					"Set layout for material '{}' not loaded into `MeshManager`",
+					mat.material_name()
+				))?
 				.clone();
 
 			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
-			log::debug!("got {} descriptor set writes for {} material", writes.len(), mat.material_name());
-			let mat_set = PersistentDescriptorSet::new(
-				render_ctx.descriptor_set_allocator(),
-				set_layout,
-				writes,
-				[],
-			)?;
+			log::debug!(
+				"got {} descriptor set writes for {} material",
+				writes.len(),
+				mat.material_name()
+			);
+			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
 			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
 			let mat_basecolor_only_set = PersistentDescriptorSet::new(
@@ -186,7 +187,7 @@ impl MeshManager
 					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
 					.any(|mat| mat.has_transparency())
 			}
-			None => false
+			None => false,
 		}
 	}
 
@@ -205,13 +206,13 @@ impl MeshManager
 					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
 					.any(|mat| !mat.has_transparency())
 			}
-			None => false
+			None => false,
 		}
 	}
 
 	pub fn draw(
 		&self,
-		eid: EntityId, 
+		eid: EntityId,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_layout: Arc<PipelineLayout>,
 		projviewmodel: Mat4,
@@ -260,4 +261,3 @@ pub struct MeshPushConstant
 	model_y: Vec4,
 	model_z: Vec4,
 }
-

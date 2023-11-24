@@ -1,7 +1,7 @@
-use shipyard::{IntoIter, IntoWorkloadSystem, WorkloadSystem, UniqueView, View, ViewMut};
-use serde::Deserialize;
 use mithrilengine::component::{EntityComponent, WantsSystemAdded};
 use mithrilengine_derive::EntityComponent;
+use serde::Deserialize;
+use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, View, ViewMut, WorkloadSystem};
 
 // This is an example implementation of a camera controller that would be implemented by the game developer.
 
@@ -19,7 +19,7 @@ fn update_controllable_camera(
 	mut transforms: ViewMut<mithrilengine::component::Transform>,
 	cameras: View<mithrilengine::component::camera::Camera>,
 	camera_controller: View<CameraController>,
-) 
+)
 {
 	let input_helper = &input_helper_wrapper.inner;
 	if input_helper.mouse_held(1) {
@@ -37,4 +37,3 @@ fn update_controllable_camera(
 		}
 	}
 }
-

@@ -5,19 +5,16 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
-use vulkano::image::{ImageUsage, view::ImageView};
+use vulkano::image::{view::ImageView, ImageUsage};
 use vulkano::swapchain::{
-	ColorSpace, PresentMode,
-	Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
+	ColorSpace, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
-use vulkano::sync::{
-	future::{FenceSignalFuture, GpuFuture, NowFuture}
-};
+use vulkano::sync::future::{FenceSignalFuture, GpuFuture, NowFuture};
 use vulkano::{Validated, VulkanError};
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
@@ -42,11 +39,7 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(
-		vk_dev: Arc<Device>, 
-		event_loop: &EventLoop<()>,
-		window_title: &str
-	) -> Result<Self, GenericEngineError>
+	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> Result<Self, GenericEngineError>
 	{
 		let window = create_window(event_loop, window_title)?;
 		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
@@ -69,7 +62,6 @@ impl Swapchain
 
 			// sRGB 10bpc
 			(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
-
 			// sRGB 8bpc
 			(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
 		];
@@ -135,7 +127,8 @@ impl Swapchain
 
 	pub fn set_fullscreen(&self, fullscreen: bool)
 	{
-		self.window.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
+		self.window
+			.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
 	}
 	pub fn is_fullscreen(&self) -> bool
 	{
@@ -158,7 +151,11 @@ impl Swapchain
 		let new_inner_size = self.window.inner_size().into();
 		self.extent_changed = prev_extent != new_inner_size;
 		if self.extent_changed || self.recreate_pending {
-			log::info!("Recreating swapchain; size will change from {:?} to {:?}", prev_extent, new_inner_size);
+			log::info!(
+				"Recreating swapchain; size will change from {:?} to {:?}",
+				prev_extent,
+				new_inner_size
+			);
 
 			// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
 			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
@@ -217,9 +214,7 @@ impl Swapchain
 			// wait for the previous submission to finish, to make sure resources are no longer in use
 			match f.wait(Some(std::time::Duration::from_secs(5))) {
 				Ok(()) => (),
-				Err(Validated::Error(VulkanError::Timeout)) => {
-					return Err("Graphics submission took too long!".into())
-				}
+				Err(Validated::Error(VulkanError::Timeout)) => return Err("Graphics submission took too long!".into()),
 				Err(e) => return Err(Box::new(e)),
 			}
 			joined_futures = Box::new(joined_futures.join(f));
@@ -229,9 +224,7 @@ impl Swapchain
 			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
 			match f.wait(Some(Duration::from_secs(5))) {
 				Ok(()) => (),
-				Err(Validated::Error(VulkanError::Timeout)) => {
-					return Err("Transfer submission took too long!".into())
-				}
+				Err(Validated::Error(VulkanError::Timeout)) => return Err("Transfer submission took too long!".into()),
 				Err(e) => return Err(Box::new(e)),
 			}
 			joined_futures = Box::new(joined_futures.join(f));
@@ -241,10 +234,8 @@ impl Swapchain
 
 		let submission_future = match self.acquire_future.take() {
 			Some(acquire_future) => {
-				let present_info = SwapchainPresentInfo::swapchain_image_index(
-					self.swapchain.clone(),
-					acquire_future.image_index()
-				);
+				let present_info =
+					SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), acquire_future.image_index());
 
 				joined_futures
 					.join(acquire_future)
@@ -253,12 +244,10 @@ impl Swapchain
 					.boxed_send_sync()
 					.then_signal_fence_and_flush()?
 			}
-			None => {
-				joined_futures
-					.then_execute(queue.clone(), cb)?
-					.boxed_send_sync()
-					.then_signal_fence_and_flush()?
-			}
+			None => joined_futures
+				.then_execute(queue.clone(), cb)?
+				.boxed_send_sync()
+				.then_signal_fence_and_flush()?,
 		};
 		self.submission_future = Some(submission_future);
 

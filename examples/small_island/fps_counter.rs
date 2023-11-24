@@ -1,8 +1,8 @@
-use shipyard::{IntoIter, IntoWorkloadSystem, WorkloadSystem, UniqueView, ViewMut};
-use serde::Deserialize;
-use mithrilengine::render::RenderContext;
 use mithrilengine::component::{ui, EntityComponent, WantsSystemAdded};
+use mithrilengine::render::RenderContext;
 use mithrilengine_derive::EntityComponent;
+use serde::Deserialize;
+use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, ViewMut, WorkloadSystem};
 
 // This is an example implementation of a framerate counter.
 
@@ -16,7 +16,7 @@ struct FpsCounter
 }
 impl Default for FpsCounter
 {
-	fn default() -> Self 
+	fn default() -> Self
 	{
 		Self {
 			last_update: std::time::Instant::now(),
@@ -36,15 +36,14 @@ impl FpsCounter
 		self.frame_time_samples.push(frame_time);
 
 		let dur_since_last_update = std::time::Instant::now() - self.last_update;
-		(dur_since_last_update >= std::time::Duration::from_millis(250))
-			.then(|| {
-				let sample_count: u32 = self.frame_time_samples.len().try_into().unwrap();
-				let frame_time_avg = self.frame_time_samples.drain(..).sum::<std::time::Duration>() / sample_count;
+		(dur_since_last_update >= std::time::Duration::from_millis(250)).then(|| {
+			let sample_count: u32 = self.frame_time_samples.len().try_into().unwrap();
+			let frame_time_avg = self.frame_time_samples.drain(..).sum::<std::time::Duration>() / sample_count;
 
-				self.last_update = std::time::Instant::now();
+			self.last_update = std::time::Instant::now();
 
-				frame_time_avg
-			})
+			frame_time_avg
+		})
 	}
 }
 impl WantsSystemAdded for FpsCounter
@@ -74,4 +73,3 @@ fn update_fps_counter(
 		}
 	}
 }
-

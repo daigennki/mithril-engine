@@ -9,20 +9,20 @@ use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
-use vulkano::pipeline::{
-	layout::{PipelineLayoutCreateInfo, PushConstantRange}, DynamicState, GraphicsPipeline, PipelineLayout,
-	PipelineShaderStageCreateInfo
-};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendState, ColorBlendAttachmentState},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
 	multisample::MultisampleState,
 	rasterization::{CullMode, RasterizationState},
+	subpass::PipelineRenderingCreateInfo,
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
 	viewport::ViewportState,
-	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipelineCreateInfo,
+};
+use vulkano::pipeline::{
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule};
 
@@ -41,8 +41,7 @@ pub fn new(
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let primitive_restart_enable =
-		primitive_topology == PrimitiveTopology::TriangleStrip
-		|| primitive_topology == PrimitiveTopology::TriangleFan;
+		primitive_topology == PrimitiveTopology::TriangleStrip || primitive_topology == PrimitiveTopology::TriangleFan;
 	let input_assembly_state = Some(InputAssemblyState {
 		topology: primitive_topology,
 		primitive_restart_enable,
@@ -54,7 +53,11 @@ pub fn new(
 		stages.push(get_shader_stage(&sm, "main")?);
 	}
 
-	let layout_info = PipelineLayoutCreateInfo { set_layouts, push_constant_ranges, ..Default::default() };
+	let layout_info = PipelineLayoutCreateInfo {
+		set_layouts,
+		push_constant_ranges,
+		..Default::default()
+	};
 	print_pipeline_layout(&layout_info);
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
@@ -66,7 +69,7 @@ pub fn new(
 		multisample_state: Some(MultisampleState::default()),
 		depth_stencil_state,
 		color_blend_state,
-		dynamic_state: [ DynamicState::Viewport ].into_iter().collect(),
+		dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 		subpass: Some(rendering_info.into()),
 		..GraphicsPipelineCreateInfo::layout(PipelineLayout::new(vk_dev.clone(), layout_info)?)
 	};
@@ -74,13 +77,10 @@ pub fn new(
 	Ok(GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?)
 }
 
-pub fn new_from_config(
-	vk_dev: Arc<Device>,
-	config: PipelineConfig,
-) -> Result<Arc<GraphicsPipeline>, GenericEngineError> 
+pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let rendering_info = PipelineRenderingCreateInfo {
-		color_attachment_formats: vec![ Some(Format::R16G16B16A16_SFLOAT) ],
+		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 		depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 		..Default::default()
 	};
@@ -93,16 +93,22 @@ pub fn new_from_config(
 		..Default::default()
 	};
 
-	let color_blend_state = ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState {
-		blend: config.attachment_blend,
-		..Default::default()
-	});
+	let color_blend_state = ColorBlendState::with_attachment_states(
+		1,
+		ColorBlendAttachmentState {
+			blend: config.attachment_blend,
+			..Default::default()
+		},
+	);
 
 	new(
 		vk_dev,
 		config.primitive_topology,
 		&[config.vertex_shader, config.fragment_shader],
-		RasterizationState{ cull_mode: CullMode::Back, ..Default::default() },
+		RasterizationState {
+			cull_mode: CullMode::Back,
+			..Default::default()
+		},
 		Some(color_blend_state),
 		config.set_layouts,
 		config.push_constant_ranges,
@@ -117,10 +123,7 @@ pub fn new_from_config_transparency(
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let rendering_info = PipelineRenderingCreateInfo {
-		color_attachment_formats: vec![
-			Some(Format::R16G16B16A16_SFLOAT),
-			Some(Format::R8_UNORM),
-		],
+		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
 		depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
 		..Default::default()
 	};
@@ -159,7 +162,10 @@ pub fn new_from_config_transparency(
 		vk_dev,
 		config.primitive_topology,
 		&[config.vertex_shader, config.fragment_shader_transparency.unwrap()],
-		RasterizationState{ cull_mode: CullMode::Back, ..Default::default() },
+		RasterizationState {
+			cull_mode: CullMode::Back,
+			..Default::default()
+		},
 		Some(wboit_accum_blend),
 		config.set_layouts,
 		config.push_constant_ranges,
@@ -186,9 +192,10 @@ fn get_shader_stage(
 	entry_point_name: &str,
 ) -> Result<PipelineShaderStageCreateInfo, GenericEngineError>
 {
-	let entry_point = shader_module
-		.entry_point(entry_point_name)
-		.ok_or(format!("No entry point called '{}' found in SPIR-V module!", entry_point_name))?;
+	let entry_point = shader_module.entry_point(entry_point_name).ok_or(format!(
+		"No entry point called '{}' found in SPIR-V module!",
+		entry_point_name
+	))?;
 
 	Ok(PipelineShaderStageCreateInfo::new(entry_point))
 }
