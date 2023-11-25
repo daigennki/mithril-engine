@@ -144,7 +144,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> Result<Arc<ImageView>, GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<Option<Arc<ImageView>>, GenericEngineError>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -188,6 +188,13 @@ impl Swapchain
 		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), timeout);
 		let (image_num, suboptimal, acquire_future) = match acquire_result {
 			Ok(ok) => ok,
+			Err(Validated::Error(VulkanError::OutOfDate)) => {
+				// If the swapchain is out of date, don't return an image;
+				// recreate the swapchain before the next image is acquired.
+				log::warn!("Swapchain is out of date! Recreate pending...");
+				self.recreate_pending = true;
+				return Ok(None);
+			}
 			Err(Validated::Error(VulkanError::Timeout)) => {
 				return Err("Swapchain image took too long to become available!".into())
 			}
@@ -199,7 +206,7 @@ impl Swapchain
 		}
 		self.acquire_future = Some(acquire_future);
 
-		Ok(self.image_views[image_num as usize].clone())
+		Ok(Some(self.image_views[image_num as usize].clone()))
 	}
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
@@ -245,19 +252,33 @@ impl Swapchain
 				let present_info =
 					SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), acquire_future.image_index());
 
-				joined_futures
+				let submit_result = joined_futures
 					.join(acquire_future)
 					.then_execute(queue.clone(), cb)?
 					.then_swapchain_present(queue, present_info)
 					.boxed_send_sync()
-					.then_signal_fence_and_flush()?
+					.then_signal_fence_and_flush();
+
+				match submit_result {
+					Ok(f) => Some(f),
+					Err(Validated::Error(VulkanError::OutOfDate)) => {
+						// If the swapchain is out of date, don't present;
+						// recreate the swapchain before the next image is acquired.
+						log::warn!("Swapchain is out of date! Recreate pending...");
+						self.recreate_pending = true;
+						None
+					}
+					Err(e) => return Err(e.into()),
+				}
 			}
-			None => joined_futures
-				.then_execute(queue.clone(), cb)?
-				.boxed_send_sync()
-				.then_signal_fence_and_flush()?,
+			None => Some(
+				joined_futures
+					.then_execute(queue.clone(), cb)?
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?,
+			),
 		};
-		self.submission_future = Some(submission_future);
+		self.submission_future = submission_future;
 
 		Ok(())
 	}

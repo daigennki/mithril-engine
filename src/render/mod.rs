@@ -465,65 +465,66 @@ impl RenderContext
 		// which we can't resize the swapchain to. We can't keep presenting swapchain images without causing an "out of date"
 		// error either, so we just have to not present any images.
 		if !self.swapchain.window_minimized() {
-			// shadows
-			for (shadow_cb, shadow_layer_image_view) in dir_light_shadows {
-				let shadow_render_info = RenderingInfo {
-					depth_attachment: Some(RenderingAttachmentInfo {
-						load_op: AttachmentLoadOp::Clear,
-						store_op: AttachmentStoreOp::Store,
-						clear_value: Some(ClearValue::Depth(1.0)),
-						..RenderingAttachmentInfo::image_view(shadow_layer_image_view)
-					}),
-					contents: SubpassContents::SecondaryCommandBuffers,
-					..Default::default()
-				};
-				primary_cb_builder
-					.begin_rendering(shadow_render_info)?
-					.execute_commands(shadow_cb)?
-					.end_rendering()?;
+			// Sometimes no image may be returned because the image is out of date, in which case, don't present.
+			if let Some(swapchain_image_view) = self.swapchain.get_next_image()? {
+				if self.swapchain.extent_changed() {
+					self.resize_everything_else()?;
+				}
+
+				// shadows
+				for (shadow_cb, shadow_layer_image_view) in dir_light_shadows {
+					let shadow_render_info = RenderingInfo {
+						depth_attachment: Some(RenderingAttachmentInfo {
+							load_op: AttachmentLoadOp::Clear,
+							store_op: AttachmentStoreOp::Store,
+							clear_value: Some(ClearValue::Depth(1.0)),
+							..RenderingAttachmentInfo::image_view(shadow_layer_image_view)
+						}),
+						contents: SubpassContents::SecondaryCommandBuffers,
+						..Default::default()
+					};
+					primary_cb_builder
+						.begin_rendering(shadow_render_info)?
+						.execute_commands(shadow_cb)?
+						.end_rendering()?;
+				}
+
+				// 3D
+				if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
+					primary_cb_builder
+						.begin_rendering(self.main_render_target.first_rendering_info())?
+						.execute_commands(some_cb_3d)?
+						.end_rendering()?;
+				}
+
+				// 3D OIT
+				self.transparency_renderer.process_transparency(
+					&mut primary_cb_builder,
+					self.main_render_target.color_image().clone(),
+					self.main_render_target.depth_image().clone(),
+				)?;
+
+				// UI
+				if let Some(some_ui_cb) = ui_cb {
+					let ui_render_info = RenderingInfo {
+						color_attachments: vec![Some(RenderingAttachmentInfo {
+							load_op: AttachmentLoadOp::Load,
+							store_op: AttachmentStoreOp::Store,
+							..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+						})],
+						contents: SubpassContents::SecondaryCommandBuffers,
+						..Default::default()
+					};
+					primary_cb_builder
+						.begin_rendering(ui_render_info)?
+						.execute_commands(some_ui_cb)?
+						.end_rendering()?;
+				}
+
+				// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
+				self.main_render_target
+					.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
 			}
-
-			// get the next swapchain image
-			let swapchain_image_view = self.swapchain.get_next_image()?;
-			if self.swapchain.extent_changed() {
-				self.resize_everything_else()?;
-			}
-
-			// 3D
-			if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
-				primary_cb_builder
-					.begin_rendering(self.main_render_target.first_rendering_info())?
-					.execute_commands(some_cb_3d)?
-					.end_rendering()?;
-			}
-
-			// 3D OIT
-			self.transparency_renderer.process_transparency(
-				&mut primary_cb_builder,
-				self.main_render_target.color_image().clone(),
-				self.main_render_target.depth_image().clone(),
-			)?;
-
-			// UI
-			if let Some(some_ui_cb) = ui_cb {
-				let ui_render_info = RenderingInfo {
-					color_attachments: vec![Some(RenderingAttachmentInfo {
-						load_op: AttachmentLoadOp::Load,
-						store_op: AttachmentStoreOp::Store,
-						..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-					})],
-					contents: SubpassContents::SecondaryCommandBuffers,
-					..Default::default()
-				};
-				primary_cb_builder
-					.begin_rendering(ui_render_info)?
-					.execute_commands(some_ui_cb)?
-					.end_rendering()?;
-			}
-
-			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
-			self.main_render_target
-				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
 		}
 
 		// submit the built command buffer, presenting it if possible
