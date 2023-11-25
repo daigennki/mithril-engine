@@ -5,6 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
+use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
@@ -309,43 +310,49 @@ impl Swapchain
 
 fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<Window>, GenericEngineError>
 {
-	let use_monitor = event_loop
+	let mon = event_loop
 		.primary_monitor()
 		.or_else(|| event_loop.available_monitors().next())
 		.ok_or("No monitors are available!")?;
 
-	// If "-fullscreen" was specified in the arguments, use the current video mode with winit's "borderless" fullscreen.
+	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
+	let mon_size: [u32; 2] = mon.size().into();
+	let refresh_rate = mon.refresh_rate_millihertz().unwrap_or(0);
+	log::info!(
+		"Guessed primary monitor: '{}' ({} x {} @ {}.{:03} Hz)",
+		mon_name,
+		mon_size[0],
+		mon_size[1],
+		refresh_rate / 1000,
+		refresh_rate % 1000,
+	);
+
+	// If "-fullscreen" was specified in the arguments, use winit's "borderless" fullscreen on the primary monitor.
 	// winit also offers an "exclusive" fullscreen option, but for Vulkan, it provides no benefits.
 	// TODO: load this from config
-	let fullscreen_mode = std::env::args()
+	let (fullscreen, inner_size) = std::env::args()
 		.find(|arg| arg == "-fullscreen")
-		.map(|_| winit::window::Fullscreen::Borderless(Some(use_monitor.clone())));
-	if fullscreen_mode.is_some() {
-		let mon_name = use_monitor.name().unwrap_or_else(|| "[no longer exists]".to_string());
-		let mon_size = use_monitor.size();
-		let refresh_rate = use_monitor.refresh_rate_millihertz().unwrap_or(0);
-		log::info!(
-			"Using fullscreen mode on monitor '{}' ({} x {} @ {}.{:03} Hz)",
-			mon_name,
-			mon_size.width,
-			mon_size.height,
-			refresh_rate / 1000,
-			refresh_rate % 1000,
-		);
-	}
+		.map(|_| (Some(winit::window::Fullscreen::Borderless(Some(mon.clone()))), mon.size()))
+		.unwrap_or_else(|| (None, [1280, 720].into()));
 
-	// TODO: load window size from config
-	let window_size = fullscreen_mode
-		.as_ref()
-		.map(|_| use_monitor.size())
-		.unwrap_or_else(|| winit::dpi::PhysicalSize::new(1280, 720));
-
-	// create window
 	let window = WindowBuilder::new()
-		.with_inner_size(window_size)
+		.with_inner_size(inner_size)
 		.with_title(window_title)
-		.with_fullscreen(fullscreen_mode)
+		.with_fullscreen(fullscreen)
 		.build(&event_loop)?;
+
+	// Center the window on the primary monitor.
+	//
+	// winit says that `set_outer_position` is unsupported on Wayland,
+	// but that shouldn't be a problem since Wayland already centers the window by default
+	// (albeit on the "current" monitor rather than the "primary" monitor).
+	let mon_pos: [i32; 2] = mon.position().into();
+	let mon_size_half: IVec2 = (UVec2::from(mon_size) / 2).try_into()?;
+	let mon_center = IVec2::from(mon_pos) + mon_size_half;
+	let outer_size: [u32; 2] = window.outer_size().into();
+	let outer_size_half: IVec2 = (UVec2::from(outer_size) / 2).try_into()?;
+	let outer_pos = winit::dpi::Position::Physical((mon_center - outer_size_half).to_array().into());
+	window.set_outer_position(outer_pos);
 
 	Ok(Arc::new(window))
 }
