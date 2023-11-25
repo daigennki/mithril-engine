@@ -98,8 +98,15 @@ impl Swapchain
 			image_views.push(ImageView::new_default(img)?);
 		}
 
-		// TODO: load this from config
-		let fps_max = 360;
+		// Set the framerate limit
+		let fps_max_regex = regex::Regex::new("--fps_max=(?<value>\\d+)")?;
+		let fps_max = std::env::args()
+			.collect::<Vec<_>>()
+			.iter()
+			.find_map(|arg| fps_max_regex.captures(arg))
+			.and_then(|caps| caps.name("value"))
+			.and_then(|value_match| value_match.as_str().parse().ok())
+			.unwrap_or(360);
 
 		// Linux and Windows have different sleep overshoot, so different values are used for each.
 		#[cfg(target_family = "windows")]
@@ -327,11 +334,10 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<W
 		refresh_rate % 1000,
 	);
 
-	// If "-fullscreen" was specified in the arguments, use winit's "borderless" fullscreen on the primary monitor.
+	// If "--fullscreen" was specified in the arguments, use winit's "borderless" fullscreen on the primary monitor.
 	// winit also offers an "exclusive" fullscreen option, but for Vulkan, it provides no benefits.
-	// TODO: load this from config
 	let (fullscreen, inner_size) = std::env::args()
-		.find(|arg| arg == "-fullscreen")
+		.find(|arg| arg == "--fullscreen")
 		.map(|_| (Some(winit::window::Fullscreen::Borderless(Some(mon.clone()))), mon.size()))
 		.unwrap_or_else(|| (None, [1280, 720].into()));
 
@@ -339,6 +345,7 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<W
 		.with_inner_size(inner_size)
 		.with_title(window_title)
 		.with_fullscreen(fullscreen)
+		.with_decorations(std::env::args().find(|arg| arg == "--noborder").is_none())
 		.build(&event_loop)?;
 
 	// Center the window on the primary monitor.

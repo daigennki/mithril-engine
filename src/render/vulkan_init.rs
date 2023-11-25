@@ -134,8 +134,8 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 		}
 	}
 
-	// If the "-prefer_igp" argument was provided, prefer the integrated GPU over the discrete GPU.
-	let prefer_igp = std::env::args().find(|arg| arg == "-prefer_igp").is_some();
+	// If the "--prefer_igp" argument was provided, prefer the integrated GPU over the discrete GPU.
+	let prefer_igp = std::env::args().find(|arg| arg == "--prefer_igp").is_some();
 
 	let (i, physical_device) = if prefer_igp {
 		igpu.or(dgpu).ok_or("No GPUs were found!")?

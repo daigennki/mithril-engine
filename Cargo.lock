@@ -1321,6 +1321,7 @@ dependencies = [
  "log",
  "mithrilengine-derive",
  "msgbox",
+ "regex",
  "rusttype",
  "serde",
  "serde_json",
