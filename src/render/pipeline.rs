@@ -24,7 +24,7 @@ use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
-use vulkano::shader::{ShaderInterfaceEntryType, ShaderModule};
+use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
 use crate::GenericEngineError;
 
@@ -48,10 +48,12 @@ pub fn new(
 		..Default::default()
 	});
 
-	let mut stages = smallvec::SmallVec::new();
+	let mut stages = smallvec::SmallVec::<[PipelineShaderStageCreateInfo; 5]>::new();
 	for sm in shader_modules {
 		stages.push(get_shader_stage(&sm, "main")?);
 	}
+
+	let vertex_input_state = Some(gen_vertex_input_state(&stages[0].entry_point)?);
 
 	let layout_info = PipelineLayoutCreateInfo {
 		set_layouts,
@@ -62,7 +64,7 @@ pub fn new(
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
-		vertex_input_state: Some(gen_vertex_input_state(&shader_modules[0])?),
+		vertex_input_state,
 		input_assembly_state,
 		viewport_state: Some(ViewportState::default()),
 		rasterization_state: Some(rasterization_state),
@@ -201,11 +203,10 @@ fn get_shader_stage(
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
-fn gen_vertex_input_state(shader_module: &Arc<ShaderModule>) -> Result<VertexInputState, GenericEngineError>
+fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, GenericEngineError>
 {
-	let vertex_input_state = shader_module
-		.entry_point("main")
-		.ok_or("No valid 'main' entry point in SPIR-V module!")?
+	log::debug!("Automatically generating VertexInputState:");
+	let vertex_input_state = entry_point
 		.info()
 		.input_interface
 		.elements()
@@ -214,6 +215,9 @@ fn gen_vertex_input_state(shader_module: &Arc<ShaderModule>) -> Result<VertexInp
 			let binding = input.location;
 			let format = format_from_interface_type(&input.ty);
 			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
+
+			log::debug!("- binding + attribute {binding}: {format:?} (stride {stride})");
+
 			accum
 				.binding(
 					binding,
@@ -232,7 +236,9 @@ fn gen_vertex_input_state(shader_module: &Arc<ShaderModule>) -> Result<VertexInp
 				)
 		});
 
-	log::debug!("Automatically generated VertexInputState: {:#?}", &vertex_input_state);
+	if vertex_input_state.attributes.is_empty() {
+		log::debug!("- (empty)");
+	}
 
 	Ok(vertex_input_state)
 }
@@ -269,7 +275,7 @@ fn print_pipeline_layout(layout_info: &PipelineLayoutCreateInfo)
 		let bindings = set.bindings();
 		for (binding_i, binding) in bindings {
 			log::debug!(
-				"set {}, binding {}: {}x {:?} for {:?} shader(s)",
+				"- set {}, binding {}: {}x {:?} for {:?} shader(s)",
 				i,
 				binding_i,
 				binding.descriptor_count,
@@ -280,7 +286,7 @@ fn print_pipeline_layout(layout_info: &PipelineLayoutCreateInfo)
 	}
 	for range in layout_info.push_constant_ranges.iter() {
 		log::debug!(
-			"push constant range at offset {} with size {} for {:?} shader(s)",
+			"- push constant range at offset {} with size {} for {:?} shader(s)",
 			range.offset,
 			range.size,
 			range.stages

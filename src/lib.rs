@@ -65,7 +65,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 	}
 }
 
-#[derive(shipyard::Unique)]
+#[derive(shipyard::Unique, Default)]
 pub struct InputHelperWrapper
 {
 	pub inner: WinitInputHelper,
@@ -101,9 +101,7 @@ fn init_world(
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
 	world.add_unique(mesh_manager);
-	world.add_unique(InputHelperWrapper {
-		inner: WinitInputHelper::new(),
-	});
+	world.add_unique(InputHelperWrapper::default());
 	world.add_unique(render_ctx);
 	world.add_unique(light_manager);
 

@@ -51,7 +51,7 @@ impl Swapchain
 		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
 
 		log::info!("Available surface format and color space combinations:");
-		surface_formats.iter().for_each(|f| log::info!("{:?}", f));
+		surface_formats.iter().for_each(|f| log::info!("- {f:?}"));
 
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 

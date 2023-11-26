@@ -127,11 +127,6 @@ impl MeshManager
 				.clone();
 
 			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
-			log::debug!(
-				"got {} descriptor set writes for {} material",
-				writes.len(),
-				mat.material_name()
-			);
 			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
 			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
