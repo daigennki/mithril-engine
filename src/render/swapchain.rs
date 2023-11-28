@@ -154,6 +154,14 @@ impl Swapchain
 			f.cleanup_finished();
 		}
 
+		// If the window is minimized, don't acquire an image.
+		// We have to do this because sometimes (often on Windows) the window may report an inner width or height of 0,
+		// which we can't resize the swapchain to. We can't keep presenting swapchain images without causing an "out of date"
+		// error either, so we just have to not present any images.
+		if self.window.is_minimized().unwrap_or(false) {
+			return Ok(None);
+		}
+
 		// Recreate the swapchain if the surface's properties changed (e.g. window size changed).
 		let prev_extent = self.swapchain.image_extent();
 		let new_inner_size = self.window.inner_size().into();
@@ -321,12 +329,6 @@ impl Swapchain
 	pub fn extent_changed(&self) -> bool
 	{
 		self.extent_changed
-	}
-
-	/// Check if the window is currently minimized.
-	pub fn window_minimized(&self) -> bool
-	{
-		self.window.is_minimized().unwrap_or(false)
 	}
 
 	/// Get the delta time for last frame.
