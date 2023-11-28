@@ -298,7 +298,7 @@ impl RenderContext
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
-	pub fn update_buffer<T>(&mut self, data: T, dst_buf: Subbuffer<T>) -> Result<(), GenericEngineError>
+	pub fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>) -> Result<(), GenericEngineError>
 	where
 		T: BufferContents + Copy,
 	{
@@ -310,7 +310,7 @@ impl RenderContext
 				self.buffer_updates.len() + 1
 			);
 		}
-		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data }));
+		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data: data.into() }));
 
 		Ok(())
 	}
@@ -584,8 +584,8 @@ impl RenderContext
 
 struct UpdateBufferData<T: BufferContents + Copy>
 {
-	pub dst_buf: Subbuffer<T>,
-	pub data: T,
+	pub dst_buf: Subbuffer<[T]>,
+	pub data: Vec<T>,
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {
@@ -600,8 +600,8 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		subbuffer_allocator: &mut SubbufferAllocator,
 	) -> Result<(), GenericEngineError>
 	{
-		let staging_buf = subbuffer_allocator.allocate_sized()?;
-		*staging_buf.write()? = self.data.clone();
+		let staging_buf = subbuffer_allocator.allocate_slice(self.data.len().try_into()?)?;
+		staging_buf.write()?.copy_from_slice(self.data.as_slice());
 
 		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data
 		cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf.clone()))?;

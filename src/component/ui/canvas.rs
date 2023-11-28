@@ -280,10 +280,10 @@ impl Canvas
 		image_view: Arc<ImageView>,
 		image_dimensions: Vec2,
 		mesh_type: super::mesh::MeshType,
-		instance_offsets: Option<Vec<Vec2>>,
+		glyph_offsets: Option<Vec<Vec2>>,
 	) -> Result<(), GenericEngineError>
 	{
-		let projected = if instance_offsets.is_some() {
+		let projected = if glyph_offsets.is_some() {
 			// for text components
 			self.projection
 				* Mat4::from_scale_rotation_translation(
@@ -303,7 +303,7 @@ impl Canvas
 
 		let buffer = match self.gpu_resources.get(&eid) {
 			Some(resources) => {
-				render_ctx.update_buffer(projected, resources.buffer.clone())?;
+				render_ctx.update_buffer(&[projected], resources.buffer.clone().into_slice())?;
 				resources.buffer.clone()
 			}
 			None => render_ctx
@@ -321,20 +321,51 @@ impl Canvas
 			[],
 		)?;
 
-		let (vert_buf_pos, vert_buf_uv, indirect_commands);
-		if let Some(offsets) = instance_offsets {
-			let mut commands = Vec::with_capacity(offsets.len().try_into()?);
-			for i in 0..offsets.len() {
-				let command = DrawIndirectCommand {
-					vertex_count: 4,
-					instance_count: 1,
-					first_vertex: (i * 4).try_into()?,
-					first_instance: 0,
-				};
-				commands.push(command);
-			}
-			indirect_commands = Some(render_ctx.new_buffer(commands.as_slice(), BufferUsage::INDIRECT_BUFFER)?);
+		let new_glyph_count = glyph_offsets.as_ref().map(|offsets| offsets.len()).unwrap_or(0);
+		let (vert_buf_pos, vert_buf_uv, indirect_commands, prev_glyph_count);
+		if let Some(offsets) = glyph_offsets {
+			// reuse buffers when they're of the same length
+			match self.gpu_resources.get(&eid) {
+				Some(resources) => {
+					prev_glyph_count = resources
+						.indirect_commands
+						.as_ref()
+						.map(|commands| commands.len())
+						.unwrap_or(0)
+						.try_into()?;
 
+					if new_glyph_count == prev_glyph_count {
+						indirect_commands = resources.indirect_commands.clone();
+					} else {
+						let mut commands = Vec::with_capacity(offsets.len().try_into()?);
+						for i in 0..offsets.len() {
+							let command = DrawIndirectCommand {
+								vertex_count: 4,
+								instance_count: 1,
+								first_vertex: (i * 4).try_into()?,
+								first_instance: 0,
+							};
+							commands.push(command);
+						}
+						indirect_commands = Some(render_ctx.new_buffer(commands.as_slice(), BufferUsage::INDIRECT_BUFFER)?);
+					}
+				}
+				None => {
+					prev_glyph_count = 0;
+					let mut commands = Vec::with_capacity(offsets.len().try_into()?);
+					for i in 0..offsets.len() {
+						let command = DrawIndirectCommand {
+							vertex_count: 4,
+							instance_count: 1,
+							first_vertex: (i * 4).try_into()?,
+							first_instance: 0,
+						};
+						commands.push(command);
+					}
+					indirect_commands = Some(render_ctx.new_buffer(commands.as_slice(), BufferUsage::INDIRECT_BUFFER)?);
+				}
+			}
+			
 			let mut text_pos_verts = Vec::with_capacity(4 * offsets.len());
 			let mut text_uv_verts = Vec::with_capacity(4 * offsets.len());
 			for offset in offsets {
@@ -354,10 +385,25 @@ impl Canvas
 					Vec2::new(1.0, 1.0),
 				]);
 			}
-
+			
 			let vbo_usage = BufferUsage::VERTEX_BUFFER;
-			vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage)?;
-			vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
+			match self.gpu_resources.get(&eid) {
+				Some(resources) => {
+					if new_glyph_count == prev_glyph_count {
+						// reuse buffers when they're of the same length
+						render_ctx.update_buffer(&text_pos_verts, resources.vert_buf_pos.clone())?;
+						vert_buf_pos = resources.vert_buf_pos.clone();
+						vert_buf_uv = resources.vert_buf_uv.clone();
+					} else {
+						vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage | BufferUsage::TRANSFER_DST)?;
+						vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
+					}
+				}
+				None => {
+					vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage | BufferUsage::TRANSFER_DST)?;
+					vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
+				}
+			};
 		} else {
 			vert_buf_pos = self.quad_pos_buf.clone();
 			vert_buf_uv = self.quad_uv_buf.clone();
@@ -417,7 +463,6 @@ impl Canvas
 		text: &super::text::UIText,
 	) -> Result<(), GenericEngineError>
 	{
-		//let text_image = text_to_image(&text.text_str, &self.default_font, text.size)?;
 		let glyph_image_array = text_to_image_array(&text.text_str, &self.default_font, text.size);
 
 		let img_dim = glyph_image_array
