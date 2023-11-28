@@ -72,6 +72,7 @@ impl ColorInput
 					Format::R32G32B32A32_SFLOAT,
 					[1, 1],
 					1,
+					1,
 				)?))
 			}
 			ColorInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),

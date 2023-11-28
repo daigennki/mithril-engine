@@ -219,6 +219,8 @@ fn draw_ui(
 	render_ctx: UniqueView<RenderContext>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	ui_transforms: View<ui::UITransform>,
+	ui_meshes: View<ui::mesh::Mesh>,
+	ui_texts: View<ui::text::UIText>,
 ) -> Result<(), GenericEngineError>
 {
 	let vp_extent = render_ctx.swapchain_dimensions();
@@ -227,9 +229,15 @@ fn draw_ui(
 	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
 
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	for (eid, _) in ui_transforms.iter().with_id() {
+	for (eid, _) in (&ui_transforms, &ui_meshes).iter().with_id() {
 		// TODO: how do we respect the render order?
 		canvas.draw(&mut cb, eid)?;
+	}
+
+	cb.bind_pipeline_graphics(canvas.get_text_pipeline().clone())?;
+	for (eid, _) in (&ui_transforms, &ui_texts).iter().with_id() {
+		// TODO: how do we respect the render order?
+		canvas.draw_text(&mut cb, eid)?;
 	}
 
 	canvas.add_cb(cb.build()?);

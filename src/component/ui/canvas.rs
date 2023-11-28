@@ -6,13 +6,13 @@
 ----------------------------------------------------------------------------- */
 
 use glam::*;
-use image::{DynamicImage, Rgba, RgbaImage};
-use rusttype::{point, Font, Scale};
+use image::{DynamicImage, Luma, GrayImage};
+use rusttype::{Font, Scale};
 use shipyard::EntityId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndirectCommand, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
@@ -44,7 +44,7 @@ mod ui_vs
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		src: r"
-			#version 450
+			#version 460
 
 			layout(binding = 0) uniform transform_ubo
 			{
@@ -54,11 +54,13 @@ mod ui_vs
 			layout(location = 0) in vec2 pos;
 			layout(location = 1) in vec2 uv;
 			layout(location = 0) out vec2 texcoord;
+			layout(location = 1) flat out int draw_id;
 
 			void main()
 			{
 				gl_Position = transformation * vec4(pos, 0.0, 1.0);
 				texcoord = uv;
+				draw_id = gl_DrawID;
 			}
 		",
 	}
@@ -68,11 +70,12 @@ mod ui_fs
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		src: r"
-			#version 450
+			#version 460
 
 			layout(binding = 1) uniform sampler2D tex;
 
 			layout(location = 0) in vec2 texcoord;
+			layout(location = 1) flat in int draw_id;
 			layout(location = 0) out vec4 color_out;
 
 			void main()
@@ -83,12 +86,35 @@ mod ui_fs
 		",
 	}
 }
+mod ui_text_fs
+{
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		src: r"
+			#version 460
+
+			layout(binding = 1) uniform sampler2DArray tex;
+
+			layout(location = 0) in vec2 texcoord;
+			layout(location = 1) flat in int draw_id;
+			layout(location = 0) out vec4 color_out;
+
+			void main()
+			{
+				color_out = vec4(0.0, 0.0, 0.0, texture(tex, vec3(texcoord, draw_id)).r);
+			}
+		",
+	}
+}
 
 struct UiGpuResources
 {
 	pub mesh_type: super::mesh::MeshType,
+	pub vert_buf_pos: Subbuffer<[Vec2]>,
+	pub vert_buf_uv: Subbuffer<[Vec2]>,
 	pub buffer: Subbuffer<Mat4>,
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
+	pub indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
 }
 
 #[derive(shipyard::Unique)]
@@ -99,6 +125,7 @@ pub struct Canvas
 
 	set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
+	text_pipeline: Arc<GraphicsPipeline>,
 
 	gpu_resources: BTreeMap<EntityId, UiGpuResources>,
 
@@ -166,6 +193,17 @@ impl Canvas
 			PrimitiveTopology::TriangleStrip,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
+			Some(color_blend_state.clone()),
+			vec![set_layout.clone()],
+			vec![],
+			rendering_info.clone(),
+			None,
+		)?;
+		let text_pipeline = crate::render::pipeline::new(
+			device.clone(),
+			PrimitiveTopology::TriangleStrip,
+			&[ui_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
+			RasterizationState::default(),
 			Some(color_blend_state),
 			vec![set_layout.clone()],
 			vec![],
@@ -199,6 +237,7 @@ impl Canvas
 			projection: calculate_projection(canvas_width, canvas_height, dim[0], dim[1]),
 			set_layout,
 			ui_pipeline,
+			text_pipeline,
 			gpu_resources: Default::default(),
 			quad_pos_buf,
 			quad_uv_buf,
@@ -215,6 +254,11 @@ impl Canvas
 	pub fn get_pipeline(&self) -> &Arc<GraphicsPipeline>
 	{
 		&self.ui_pipeline
+	}
+
+	pub fn get_text_pipeline(&self) -> &Arc<GraphicsPipeline>
+	{
+		&self.text_pipeline
 	}
 
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
@@ -236,14 +280,26 @@ impl Canvas
 		image_view: Arc<ImageView>,
 		image_dimensions: Vec2,
 		mesh_type: super::mesh::MeshType,
+		instance_offsets: Option<Vec<Vec2>>,
 	) -> Result<(), GenericEngineError>
 	{
-		let projected = self.projection
-			* Mat4::from_scale_rotation_translation(
-				transform.scale.unwrap_or(image_dimensions).extend(0.0),
-				Quat::IDENTITY,
-				transform.position.as_vec2().extend(0.0),
-			);
+		let projected = if instance_offsets.is_some() {
+			// for text components
+			self.projection
+				* Mat4::from_scale_rotation_translation(
+					Vec3::ONE,
+					Quat::IDENTITY,
+					transform.position.as_vec2().extend(0.0),
+				)
+		} else {
+			// for quad/mesh components
+			self.projection
+				* Mat4::from_scale_rotation_translation(
+					transform.scale.unwrap_or(image_dimensions).extend(0.0),
+					Quat::IDENTITY,
+					transform.position.as_vec2().extend(0.0),
+				)
+		};
 
 		let buffer = match self.gpu_resources.get(&eid) {
 			Some(resources) => {
@@ -265,17 +321,57 @@ impl Canvas
 			[],
 		)?;
 
-		match self.gpu_resources.get_mut(&eid) {
-			Some(resources) => resources.descriptor_set = descriptor_set,
-			None => {
-				let resources = UiGpuResources {
-					buffer,
-					descriptor_set,
-					mesh_type,
+		let (vert_buf_pos, vert_buf_uv, indirect_commands);
+		if let Some(offsets) = instance_offsets {
+			let mut commands = Vec::with_capacity(offsets.len().try_into()?);
+			for i in 0..offsets.len() {
+				let command = DrawIndirectCommand {
+					vertex_count: 4,
+					instance_count: 1,
+					first_vertex: (i * 4).try_into()?,
+					first_instance: 0,
 				};
-				self.gpu_resources.insert(eid, resources);
+				commands.push(command);
 			}
+			indirect_commands = Some(render_ctx.new_buffer(commands.as_slice(), BufferUsage::INDIRECT_BUFFER)?);
+
+			let mut text_pos_verts = Vec::with_capacity(4 * offsets.len());
+			let mut text_uv_verts = Vec::with_capacity(4 * offsets.len());
+			for offset in offsets {
+				let first_corner: Vec2 = offset.into();
+
+				text_pos_verts.extend_from_slice(&[
+					first_corner,
+					first_corner + Vec2::new(0.0, image_dimensions[1]),
+					first_corner + Vec2::new(image_dimensions[0], 0.0),
+					first_corner + image_dimensions,
+				]);
+
+				text_uv_verts.extend_from_slice(&[
+					Vec2::new(0.0, 0.0),
+					Vec2::new(0.0, 1.0),
+					Vec2::new(1.0, 0.0),
+					Vec2::new(1.0, 1.0),
+				]);
+			}
+
+			let vbo_usage = BufferUsage::VERTEX_BUFFER;
+			vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage)?;
+			vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
+		} else {
+			vert_buf_pos = self.quad_pos_buf.clone();
+			vert_buf_uv = self.quad_uv_buf.clone();
+			indirect_commands = None;
 		}
+
+		self.gpu_resources.insert(eid, UiGpuResources {
+			vert_buf_pos,
+			vert_buf_uv,
+			buffer,
+			descriptor_set,
+			mesh_type,
+			indirect_commands,
+		});
 
 		Ok(())
 	}
@@ -304,6 +400,7 @@ impl Canvas
 				tex.view().clone(),
 				image_dimensions,
 				mesh.mesh_type,
+				None,
 			)?;
 		}
 
@@ -320,9 +417,22 @@ impl Canvas
 		text: &super::text::UIText,
 	) -> Result<(), GenericEngineError>
 	{
-		let text_image = text_to_image(&text.text_str, &self.default_font, text.size)?;
-		let img_dim = [text_image.width(), text_image.height()];
-		let tex = render_ctx.new_texture_from_slice(text_image.into_raw().as_slice(), Format::R8G8B8A8_SRGB, img_dim, 1)?;
+		//let text_image = text_to_image(&text.text_str, &self.default_font, text.size)?;
+		let glyph_image_array = text_to_image_array(&text.text_str, &self.default_font, text.size);
+
+		let img_dim = glyph_image_array
+			.first()
+			.map(|(image, _)| [image.width(), image.height()])
+			.unwrap();
+
+		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_image_array.len());
+		let mut glyph_offsets = Vec::with_capacity(glyph_image_array.len());
+		for (image, offset) in glyph_image_array.into_iter() {
+			combined_images.extend_from_slice(image.into_raw().as_slice());
+			glyph_offsets.push(offset);
+		}
+		let array_layers = glyph_offsets.len().try_into()?;
+		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, array_layers)?;
 
 		let img_dim_vec2 = Vec2::new(img_dim[0] as f32, img_dim[1] as f32);
 
@@ -333,8 +443,28 @@ impl Canvas
 			tex.view().clone(),
 			img_dim_vec2,
 			super::mesh::MeshType::Quad,
+			Some(glyph_offsets),
 		)?;
 
+		Ok(())
+	}
+
+	pub fn draw_text(
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		eid: EntityId,
+	) -> Result<(), GenericEngineError>
+	{
+		if let Some(resources) = self.gpu_resources.get(&eid) {
+			cb.bind_descriptor_sets(
+				vulkano::pipeline::PipelineBindPoint::Graphics,
+				self.text_pipeline.layout().clone(),
+				0,
+				vec![resources.descriptor_set.clone()],
+			)?;
+			cb.bind_vertex_buffers(0, (resources.vert_buf_pos.clone(), resources.vert_buf_uv.clone()))?;
+			cb.draw_indirect(resources.indirect_commands.clone().unwrap())?;
+		}
 		Ok(())
 	}
 
@@ -398,64 +528,41 @@ fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32
 	Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0)
 }
 
-fn text_to_image(text: &str, font: &Font<'static>, size: f32) -> Result<RgbaImage, GenericEngineError>
+/// Create a `Vec` of greyscale images.
+/// Each image is paired with a `Vec2` representing the top left corner of each image relative to the baseline.
+fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(GrayImage, Vec2)>
 {
 	let scale_uniform = Scale::uniform(size);
-	let color = (255, 255, 0);
-	let v_metrics = font.v_metrics(scale_uniform);
+	let glyphs: Vec<_> = font.layout(text, scale_uniform, rusttype::point(0.0, 0.0)).collect();
 
-	// lay out the glyphs in a line with 1 pixel padding
-	let glyphs: Vec<_> = font.layout(text, scale_uniform, point(1.0, 1.0 + v_metrics.ascent)).collect();
+	// Get the largest glyphs in terms of width and height respectively
+	let max_width: u32 = glyphs
+		.iter()
+		.filter_map(|glyph| glyph.pixel_bounding_box())
+		.map(|bb| bb.width().abs() as u32)
+		.max()
+		.unwrap_or(1);
+	let max_height: u32 = glyphs
+		.iter()
+		.filter_map(|glyph| glyph.pixel_bounding_box())
+		.map(|bb| bb.height().abs() as u32)
+		.max()
+		.unwrap_or(1);
 
-	// work out the layout size
-	let glyphs_height = (v_metrics.ascent - v_metrics.descent).ceil() as u32;
-	let min_x = glyphs
-		.first()
-		.ok_or("there were no glyphs for the string!")?
-		.pixel_bounding_box()
-		.ok_or("pixel_bounding_box was `None`!")?
-		.min
-		.x;
-	let max_x = glyphs
-		.last()
-		.ok_or("there were no glyphs for the string!")?
-		.pixel_bounding_box()
-		.ok_or("pixel_bounding_box was `None`!")?
-		.max
-		.x;
-	let glyphs_width = (max_x - min_x) as u32;
-
-	// Create a new rgba image
-	let mut image = DynamicImage::new_rgba8(glyphs_width + 2, glyphs_height + 2).into_rgba8();
-
-	// Loop through the glyphs in the text, positing each one on a line
+	let mut bitmaps = Vec::with_capacity(glyphs.len());
 	for glyph in glyphs {
-		if let Some(bounding_box) = glyph.pixel_bounding_box() {
-			// Draw the glyph into the image per-pixel by using the draw closure
-			glyph.draw(|x, y, v| {
-				// Offset the position by the glyph bounding box
-				let x_offset = x + bounding_box.min.x as u32;
-				let y_offset = y + bounding_box.min.y as u32;
-				// Make sure the pixel isn't out of bounds. If it is OoB, then don't draw it.
-				if x_offset >= image.width() || y_offset >= image.height() {
-					log::warn!(
-						"Text pixel at ({},{}) is out of bounds of ({},{})",
-						x_offset,
-						y_offset,
-						image.width(),
-						image.height()
-					);
-				} else {
-					// Turn the coverage into an alpha value
-					image.put_pixel(x_offset, y_offset, Rgba([color.0, color.1, color.2, (v * 255.0) as u8]))
-				}
-			});
+		if let Some(bb) = glyph.pixel_bounding_box() {
+			let mut image = DynamicImage::new_luma8(max_width, max_height).into_luma8();
+
+			// Draw the glyph into the image per-pixel by using the draw closure,
+			// and turn the coverage into an alpha value
+			glyph.draw(|x, y, v| image.put_pixel(x, y, Luma([(v * 255.0) as u8])));
+
+			let pos = Vec2::new(bb.min.x as f32, bb.min.y as f32);
+
+			bitmaps.push((image, pos));
 		}
 	}
 
-	// TODO: use these to properly align the image
-	let _mesh_top_left = Vec2::new(image.width() as f32 / -2.0, -v_metrics.ascent - 1.0);
-	let _mesh_bottom_right = Vec2::new(image.height() as f32 / 2.0, -v_metrics.descent + 1.0);
-
-	Ok(image)
+	bitmaps
 }

@@ -268,7 +268,9 @@ pub fn vulkan_setup(
 		dynamic_rendering: true,
 		image_cube_array: true,
 		independent_blend: true,
+		multi_draw_indirect: true,
 		sampler_anisotropy: true,
+		shader_draw_parameters: true,
 		texture_compression_bc: true,
 		..Default::default()
 	};

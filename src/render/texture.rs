@@ -42,6 +42,7 @@ impl Texture
 			vk_fmt,
 			dim,
 			mip_count,
+			1,
 		)
 	}
 
@@ -52,6 +53,7 @@ impl Texture
 		format: Format,
 		dimensions: [u32; 2],
 		mip_levels: u32,
+		array_layers: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		Px: BufferContents + Copy,
@@ -62,6 +64,7 @@ impl Texture
 		let image_info = ImageCreateInfo {
 			format,
 			extent: [dimensions[0], dimensions[1], 1],
+			array_layers,
 			mip_levels,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
@@ -80,7 +83,7 @@ impl Texture
 				buffer_offset,
 				image_subresource: ImageSubresourceLayers {
 					mip_level,
-					..ImageSubresourceLayers::from_parameters(format, 1)
+					..ImageSubresourceLayers::from_parameters(format, array_layers)
 				},
 				image_extent: [mip_width, mip_height, 1],
 				..Default::default()

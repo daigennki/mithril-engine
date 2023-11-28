@@ -226,6 +226,7 @@ impl RenderContext
 		vk_fmt: Format,
 		dimensions: [u32; 2],
 		mip: u32,
+		array_layers: u32,
 	) -> Result<texture::Texture, GenericEngineError>
 	where
 		Px: BufferContents + Copy,
@@ -237,6 +238,7 @@ impl RenderContext
 			vk_fmt,
 			dimensions,
 			mip,
+			array_layers,
 		)?;
 		self.add_transfer(staging_work.into());
 		Ok(tex)
