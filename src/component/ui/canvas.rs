@@ -278,28 +278,19 @@ impl Canvas
 		eid: EntityId,
 		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
-		image_dimensions: Vec2,
+		default_scale: Vec2,
 		mesh_type: super::mesh::MeshType,
-		glyph_offsets: Option<Vec<Vec2>>,
+		indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
+		vert_buf_pos: Subbuffer<[Vec2]>,
+		vert_buf_uv: Subbuffer<[Vec2]>,
 	) -> Result<(), GenericEngineError>
 	{
-		let projected = if glyph_offsets.is_some() {
-			// for text components
-			self.projection
-				* Mat4::from_scale_rotation_translation(
-					Vec3::ONE,
-					Quat::IDENTITY,
-					transform.position.as_vec2().extend(0.0),
-				)
-		} else {
-			// for quad/mesh components
-			self.projection
-				* Mat4::from_scale_rotation_translation(
-					transform.scale.unwrap_or(image_dimensions).extend(0.0),
-					Quat::IDENTITY,
-					transform.position.as_vec2().extend(0.0),
-				)
-		};
+		let projected = self.projection
+			* Mat4::from_scale_rotation_translation(
+				transform.scale.unwrap_or(default_scale).extend(1.0),
+				Quat::IDENTITY,
+				transform.position.as_vec2().extend(0.0),
+			);
 
 		let buffer = match self.gpu_resources.get(&eid) {
 			Some(resources) => {
@@ -320,95 +311,6 @@ impl Canvas
 			],
 			[],
 		)?;
-
-		let new_glyph_count = glyph_offsets.as_ref().map(|offsets| offsets.len()).unwrap_or(0);
-		let (vert_buf_pos, vert_buf_uv, indirect_commands, prev_glyph_count);
-		if let Some(offsets) = glyph_offsets {
-			// reuse buffers when they're of the same length
-			match self.gpu_resources.get(&eid) {
-				Some(resources) => {
-					prev_glyph_count = resources
-						.indirect_commands
-						.as_ref()
-						.map(|commands| commands.len())
-						.unwrap_or(0)
-						.try_into()?;
-
-					if new_glyph_count == prev_glyph_count {
-						indirect_commands = resources.indirect_commands.clone();
-					} else {
-						let mut commands = Vec::with_capacity(offsets.len().try_into()?);
-						for i in 0..offsets.len() {
-							let command = DrawIndirectCommand {
-								vertex_count: 4,
-								instance_count: 1,
-								first_vertex: (i * 4).try_into()?,
-								first_instance: 0,
-							};
-							commands.push(command);
-						}
-						indirect_commands = Some(render_ctx.new_buffer(commands.as_slice(), BufferUsage::INDIRECT_BUFFER)?);
-					}
-				}
-				None => {
-					prev_glyph_count = 0;
-					let mut commands = Vec::with_capacity(offsets.len().try_into()?);
-					for i in 0..offsets.len() {
-						let command = DrawIndirectCommand {
-							vertex_count: 4,
-							instance_count: 1,
-							first_vertex: (i * 4).try_into()?,
-							first_instance: 0,
-						};
-						commands.push(command);
-					}
-					indirect_commands = Some(render_ctx.new_buffer(commands.as_slice(), BufferUsage::INDIRECT_BUFFER)?);
-				}
-			}
-			
-			let mut text_pos_verts = Vec::with_capacity(4 * offsets.len());
-			let mut text_uv_verts = Vec::with_capacity(4 * offsets.len());
-			for offset in offsets {
-				let first_corner: Vec2 = offset.into();
-
-				text_pos_verts.extend_from_slice(&[
-					first_corner,
-					first_corner + Vec2::new(0.0, image_dimensions[1]),
-					first_corner + Vec2::new(image_dimensions[0], 0.0),
-					first_corner + image_dimensions,
-				]);
-
-				text_uv_verts.extend_from_slice(&[
-					Vec2::new(0.0, 0.0),
-					Vec2::new(0.0, 1.0),
-					Vec2::new(1.0, 0.0),
-					Vec2::new(1.0, 1.0),
-				]);
-			}
-			
-			let vbo_usage = BufferUsage::VERTEX_BUFFER;
-			match self.gpu_resources.get(&eid) {
-				Some(resources) => {
-					if new_glyph_count == prev_glyph_count {
-						// reuse buffers when they're of the same length
-						render_ctx.update_buffer(&text_pos_verts, resources.vert_buf_pos.clone())?;
-						vert_buf_pos = resources.vert_buf_pos.clone();
-						vert_buf_uv = resources.vert_buf_uv.clone();
-					} else {
-						vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage | BufferUsage::TRANSFER_DST)?;
-						vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
-					}
-				}
-				None => {
-					vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage | BufferUsage::TRANSFER_DST)?;
-					vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
-				}
-			};
-		} else {
-			vert_buf_pos = self.quad_pos_buf.clone();
-			vert_buf_uv = self.quad_uv_buf.clone();
-			indirect_commands = None;
-		}
 
 		self.gpu_resources.insert(eid, UiGpuResources {
 			vert_buf_pos,
@@ -447,6 +349,8 @@ impl Canvas
 				image_dimensions,
 				mesh.mesh_type,
 				None,
+				self.quad_pos_buf.clone(),
+				self.quad_uv_buf.clone(),
 			)?;
 		}
 
@@ -463,6 +367,13 @@ impl Canvas
 		text: &super::text::UIText,
 	) -> Result<(), GenericEngineError>
 	{
+		// TODO: Handle empty string
+
+		// TODO: We might want to check against `VkPhysicalDeviceLimits::maxImageArrayLayers`
+		// (which is never less than 2048 on Windows/Linux desktop), even if such a long single
+		// line of text would never be needed.
+		// Maybe just stop adding glyphs if the limit is reached, and print a warning to log.
+
 		let glyph_image_array = text_to_image_array(&text.text_str, &self.default_font, text.size);
 
 		let img_dim = glyph_image_array
@@ -476,19 +387,86 @@ impl Canvas
 			combined_images.extend_from_slice(image.into_raw().as_slice());
 			glyph_offsets.push(offset);
 		}
-		let array_layers = glyph_offsets.len().try_into()?;
-		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, array_layers)?;
 
-		let img_dim_vec2 = Vec2::new(img_dim[0] as f32, img_dim[1] as f32);
+		let new_glyph_count = glyph_offsets.len().try_into()?;
+		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, new_glyph_count)?;
+
+		let prev_glyph_count = self
+			.gpu_resources
+			.get(&eid)
+			.as_ref()
+			.and_then(|res| res.indirect_commands.as_ref())
+			.map(|commands| commands.len() as u32)
+			.unwrap_or(0);
+
+		let text_pos_verts: Vec<_> = glyph_offsets
+			.iter()
+			.map(|offset| {
+				let first_corner: Vec2 = *offset;
+				[
+					first_corner,
+					first_corner + Vec2::new(0.0, img_dim[1] as f32),
+					first_corner + Vec2::new(img_dim[0] as f32, 0.0),
+					first_corner + Vec2::new(img_dim[0] as f32, img_dim[1] as f32),
+				]
+			})
+			.flatten()
+			.collect();
+
+		let text_uv_verts: Vec<_> = glyph_offsets
+			.iter()
+			.map(|_| {
+				[
+					Vec2::new(0.0, 0.0),
+					Vec2::new(0.0, 1.0),
+					Vec2::new(1.0, 0.0),
+					Vec2::new(1.0, 1.0),
+				]
+			})
+			.flatten()
+			.collect();
+
+		let (indirect_commands, vert_buf_pos, vert_buf_uv);
+		if new_glyph_count == prev_glyph_count {
+			// Reuse buffers when they're of the same length.
+			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
+			// the given `eid` is `Some`, so we use `unwrap` here.
+			let resources = self.gpu_resources.get(&eid).unwrap();
+
+			indirect_commands = resources.indirect_commands.clone().unwrap();
+
+			render_ctx.update_buffer(&text_pos_verts, resources.vert_buf_pos.clone())?;
+			vert_buf_pos = resources.vert_buf_pos.clone();
+			vert_buf_uv = resources.vert_buf_uv.clone();
+		} else {
+			let commands: Vec<_> = glyph_offsets
+				.iter()
+				.enumerate()
+				.map(|(i, _)| DrawIndirectCommand {
+					vertex_count: 4,
+					instance_count: 1,
+					first_vertex: (i * 4) as u32,
+					first_instance: 0,
+				})
+				.collect();
+
+			indirect_commands = render_ctx.new_buffer(&commands, BufferUsage::INDIRECT_BUFFER)?;
+
+			let vbo_usage = BufferUsage::VERTEX_BUFFER;
+			vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage | BufferUsage::TRANSFER_DST)?;
+			vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
+		}
 
 		self.update_transform(
 			render_ctx,
 			eid,
 			transform,
 			tex.view().clone(),
-			img_dim_vec2,
+			Vec2::ONE,
 			super::mesh::MeshType::Quad,
-			Some(glyph_offsets),
+			Some(indirect_commands),
+			vert_buf_pos,
+			vert_buf_uv,
 		)?;
 
 		Ok(())
