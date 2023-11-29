@@ -122,6 +122,7 @@ pub struct Canvas
 {
 	base_dimensions: [u32; 2],
 	projection: Mat4,
+	scale_factor: f32,
 
 	set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
@@ -232,9 +233,12 @@ impl Canvas
 
 		let dim = render_ctx.swapchain_dimensions();
 
+		let (projection, scale_factor) = calculate_projection(canvas_width, canvas_height, dim[0], dim[1]);
+
 		Ok(Canvas {
 			base_dimensions: [canvas_width, canvas_height],
-			projection: calculate_projection(canvas_width, canvas_height, dim[0], dim[1]),
+			projection,
+			scale_factor,
 			set_layout,
 			ui_pipeline,
 			text_pipeline,
@@ -264,7 +268,10 @@ impl Canvas
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
 	pub fn on_screen_resize(&mut self, screen_width: u32, screen_height: u32)
 	{
-		self.projection = calculate_projection(self.base_dimensions[0], self.base_dimensions[1], screen_width, screen_height)
+		let (proj, scale_factor) =
+			calculate_projection(self.base_dimensions[0], self.base_dimensions[1], screen_width, screen_height);
+		self.projection = proj;
+		self.scale_factor = scale_factor;
 	}
 
 	pub fn projection(&self) -> Mat4
@@ -374,7 +381,7 @@ impl Canvas
 		// line of text would never be needed.
 		// Maybe just stop adding glyphs if the limit is reached, and print a warning to log.
 
-		let glyph_image_array = text_to_image_array(&text.text_str, &self.default_font, text.size);
+		let glyph_image_array = text_to_image_array(&text.text_str, &self.default_font, text.size * self.scale_factor);
 
 		let img_dim = glyph_image_array
 			.first()
@@ -402,12 +409,13 @@ impl Canvas
 		let text_pos_verts: Vec<_> = glyph_offsets
 			.iter()
 			.map(|offset| {
-				let first_corner: Vec2 = *offset;
+				let first_corner: Vec2 = *offset / self.scale_factor;
+				let img_dim_scaled = Vec2::new(img_dim[0] as f32, img_dim[1] as f32) / self.scale_factor;
 				[
 					first_corner,
-					first_corner + Vec2::new(0.0, img_dim[1] as f32),
-					first_corner + Vec2::new(img_dim[0] as f32, 0.0),
-					first_corner + Vec2::new(img_dim[0] as f32, img_dim[1] as f32),
+					first_corner + Vec2::new(0.0, img_dim_scaled.y),
+					first_corner + Vec2::new(img_dim_scaled.x, 0.0),
+					first_corner + img_dim_scaled,
 				]
 			})
 			.flatten()
@@ -529,26 +537,34 @@ impl Canvas
 	}
 }
 
-fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) -> Mat4
+fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) -> (Mat4, f32)
 {
 	let canvas_aspect_ratio = canvas_width as f32 / canvas_height as f32;
 	let screen_aspect_ratio = screen_width as f32 / screen_height as f32;
 
-	// adjusted canvas dimensions
-	let mut adj_canvas_w = canvas_width;
-	let mut adj_canvas_h = canvas_height;
+	// UI scale factor, used to increase resolution of components such as text when necessary
+	let scale_factor;
 
-	// if the screen is wider than the canvas, make the canvas wider.
-	// otherwise, make the canvas taller.
+	// Adjusted canvas dimensions
+	let (adjusted_canvas_w, adjusted_canvas_h);
+
+	// If the screen is wider than the canvas, make the canvas wider.
+	// Otherwise, make the canvas taller.
 	if screen_aspect_ratio > canvas_aspect_ratio {
-		adj_canvas_w = canvas_height * screen_width / screen_height;
+		adjusted_canvas_w = canvas_height * screen_width / screen_height;
+		adjusted_canvas_h = canvas_height;
+		scale_factor = screen_height as f32 / canvas_height as f32;
 	} else {
-		adj_canvas_h = canvas_width * screen_height / screen_width;
+		adjusted_canvas_w = canvas_width;
+		adjusted_canvas_h = canvas_width * screen_height / screen_width;
+		scale_factor = screen_width as f32 / canvas_width as f32;
 	}
 
-	let half_width = adj_canvas_w as f32 / 2.0;
-	let half_height = adj_canvas_h as f32 / 2.0;
-	Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0)
+	let half_width = adjusted_canvas_w as f32 / 2.0;
+	let half_height = adjusted_canvas_h as f32 / 2.0;
+	let proj = Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0);
+
+	(proj, scale_factor)
 }
 
 /// Create a `Vec` of greyscale images.
