@@ -14,7 +14,6 @@ entities:
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
       model_path: examples/ferris/models/test_floor.glb
-
 -
   - Transform:
       position: [0.0, 0.0, 0.0]

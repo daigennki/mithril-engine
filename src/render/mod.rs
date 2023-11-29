@@ -541,6 +541,11 @@ impl RenderContext
 		&self.memory_allocator
 	}
 
+	pub fn device(&self) -> &Arc<Device>
+	{
+		&self.device
+	}
+
 	/// Check if the window has been resized since the last frame submission.
 	pub fn window_resized(&self) -> bool
 	{

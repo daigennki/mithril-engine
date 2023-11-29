@@ -21,7 +21,7 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo},
-	view::ImageView,
+	view::ImageView, ImageFormatInfo, ImageUsage,
 };
 use vulkano::pipeline::{
 	graphics::{
@@ -374,14 +374,46 @@ impl Canvas
 		text: &super::text::UIText,
 	) -> Result<(), GenericEngineError>
 	{
-		// TODO: Handle empty string
+		let text_str = &text.text_str;
 
-		// TODO: We might want to check against `VkPhysicalDeviceLimits::maxImageArrayLayers`
-		// (which is never less than 2048 on Windows/Linux desktop), even if such a long single
-		// line of text would never be needed.
-		// Maybe just stop adding glyphs if the limit is reached, and print a warning to log.
+		// If the string is longer than the maximum image array layers allowed by Vulkan, refuse to
+		// render it. On Windows/Linux desktop, the limit is always at least 2048, so it should be
+		// extremely rare that we get such a long string, but we should check it anyways just in case.
+		let image_format_info = ImageFormatInfo {
+			format: Format::R8_UNORM,
+			usage: ImageUsage::SAMPLED,
+			..Default::default()
+		};
+		let max_array_layers: usize = render_ctx
+			.device()
+			.physical_device()
+			.image_format_properties(image_format_info)?
+			.unwrap()
+			.max_array_layers
+			.try_into()?;
+		if text_str.chars().count() >= max_array_layers {
+			log::warn!(
+				"text_str.len() >= max_array_layers ({} >= {})! Refusing to render string: {}",
+				text_str.len(),
+				max_array_layers,
+				text_str,
+			);
+			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
+				resources.indirect_commands = None;
+			}
+			return Ok(())
+		}
 
-		let glyph_image_array = text_to_image_array(&text.text_str, &self.default_font, text.size * self.scale_factor);
+		let glyph_image_array = text_to_image_array(text_str, &self.default_font, text.size * self.scale_factor);
+
+		// If no visible glyphs were produced (e.g. the string was empty, or it only has space characters),
+		// remove the indirect draw commands from the GPU resources, and then return immediately.
+		if glyph_image_array.is_empty() {
+			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
+				resources.indirect_commands = None;
+			}
+			return Ok(())
+		}
 
 		let img_dim = glyph_image_array
 			.first()
@@ -423,20 +455,18 @@ impl Canvas
 
 		let text_uv_verts: Vec<_> = glyph_offsets
 			.iter()
-			.map(|_| {
-				[
-					Vec2::new(0.0, 0.0),
-					Vec2::new(0.0, 1.0),
-					Vec2::new(1.0, 0.0),
-					Vec2::new(1.0, 1.0),
-				]
-			})
+			.map(|_| [
+				Vec2::new(0.0, 0.0),
+				Vec2::new(0.0, 1.0),
+				Vec2::new(1.0, 0.0),
+				Vec2::new(1.0, 1.0),
+			])
 			.flatten()
 			.collect();
 
 		let (indirect_commands, vert_buf_pos, vert_buf_uv);
 		if new_glyph_count == prev_glyph_count {
-			// Reuse buffers when they're of the same length.
+			// Reuse buffers if they're of the same length.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.gpu_resources.get(&eid).unwrap();
@@ -487,14 +517,16 @@ impl Canvas
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
-			cb.bind_descriptor_sets(
-				vulkano::pipeline::PipelineBindPoint::Graphics,
-				self.text_pipeline.layout().clone(),
-				0,
-				vec![resources.descriptor_set.clone()],
-			)?;
-			cb.bind_vertex_buffers(0, (resources.vert_buf_pos.clone(), resources.vert_buf_uv.clone()))?;
-			cb.draw_indirect(resources.indirect_commands.clone().unwrap())?;
+			if let Some(indirect_commands) = resources.indirect_commands.clone() {
+				cb.bind_descriptor_sets(
+					vulkano::pipeline::PipelineBindPoint::Graphics,
+					self.text_pipeline.layout().clone(),
+					0,
+					vec![resources.descriptor_set.clone()],
+				)?;
+				cb.bind_vertex_buffers(0, (resources.vert_buf_pos.clone(), resources.vert_buf_uv.clone()))?;
+				cb.draw_indirect(indirect_commands)?;
+			}
 		}
 		Ok(())
 	}
