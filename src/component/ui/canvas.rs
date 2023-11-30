@@ -54,13 +54,11 @@ mod ui_vs
 			layout(location = 0) in vec2 pos;
 			layout(location = 1) in vec2 uv;
 			layout(location = 0) out vec2 texcoord;
-			layout(location = 1) flat out int draw_id;
 
 			void main()
 			{
 				gl_Position = transformation * vec4(pos, 0.0, 1.0);
 				texcoord = uv;
-				draw_id = gl_DrawID;
 			}
 		",
 	}
@@ -75,13 +73,38 @@ mod ui_fs
 			layout(binding = 1) uniform sampler2D tex;
 
 			layout(location = 0) in vec2 texcoord;
-			layout(location = 1) flat in int draw_id;
 			layout(location = 0) out vec4 color_out;
 
 			void main()
 			{
 				color_out = texture(tex, texcoord);
 				color_out.rgb *= color_out.a;
+			}
+		",
+	}
+}
+mod ui_text_vs
+{
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		src: r"
+			#version 460
+
+			layout(binding = 0) uniform transform_ubo
+			{
+				mat4 transformation;
+			};
+
+			layout(location = 0) in vec2 pos;
+			layout(location = 0) out vec2 texcoord;
+			layout(location = 1) flat out int draw_id;
+
+			void main()
+			{
+				gl_Position = transformation * vec4(pos, 0.0, 1.0);
+				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, 1.0 }, { 1.0, 0.0 }, { 1.0, 1.0 } };
+				texcoord = texcoords[gl_VertexIndex % 4];
+				draw_id = gl_DrawID;
 			}
 		",
 	}
@@ -111,7 +134,6 @@ struct UiGpuResources
 {
 	pub mesh_type: super::mesh::MeshType,
 	pub vert_buf_pos: Subbuffer<[Vec2]>,
-	pub vert_buf_uv: Subbuffer<[Vec2]>,
 	pub buffer: Subbuffer<Mat4>,
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
 	pub indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
@@ -230,7 +252,7 @@ impl Canvas
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			&[ui_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
+			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			Some(color_blend_state),
 			vec![text_set_layout.clone()],
@@ -317,7 +339,6 @@ impl Canvas
 		mesh_type: super::mesh::MeshType,
 		indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
 		vert_buf_pos: Subbuffer<[Vec2]>,
-		vert_buf_uv: Subbuffer<[Vec2]>,
 	) -> Result<(), GenericEngineError>
 	{
 		let projected = self.projection
@@ -350,7 +371,6 @@ impl Canvas
 
 		self.gpu_resources.insert(eid, UiGpuResources {
 			vert_buf_pos,
-			vert_buf_uv,
 			buffer,
 			descriptor_set,
 			mesh_type,
@@ -386,7 +406,6 @@ impl Canvas
 				mesh.mesh_type,
 				None,
 				self.quad_pos_buf.clone(),
-				self.quad_uv_buf.clone(),
 			)?;
 		}
 
@@ -471,7 +490,7 @@ impl Canvas
 			.iter()
 			.map(|offset| {
 				let first_corner: Vec2 = *offset / self.scale_factor;
-				let img_dim_scaled = Vec2::new(img_dim[0] as f32, img_dim[1] as f32) / self.scale_factor;
+				let img_dim_scaled = UVec2::from(img_dim).as_vec2() / self.scale_factor;
 				[
 					first_corner,
 					first_corner + Vec2::new(0.0, img_dim_scaled.y),
@@ -482,18 +501,7 @@ impl Canvas
 			.flatten()
 			.collect();
 
-		let text_uv_verts: Vec<_> = glyph_offsets
-			.iter()
-			.map(|_| [
-				Vec2::new(0.0, 0.0),
-				Vec2::new(0.0, 1.0),
-				Vec2::new(1.0, 0.0),
-				Vec2::new(1.0, 1.0),
-			])
-			.flatten()
-			.collect();
-
-		let (indirect_commands, vert_buf_pos, vert_buf_uv);
+		let (indirect_commands, vert_buf_pos);
 		if new_glyph_count == prev_glyph_count {
 			// Reuse buffers if they're of the same length.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
@@ -504,24 +512,21 @@ impl Canvas
 
 			render_ctx.update_buffer(&text_pos_verts, resources.vert_buf_pos.clone())?;
 			vert_buf_pos = resources.vert_buf_pos.clone();
-			vert_buf_uv = resources.vert_buf_uv.clone();
 		} else {
-			let commands: Vec<_> = glyph_offsets
-				.iter()
-				.enumerate()
-				.map(|(i, _)| DrawIndirectCommand {
+			let mut commands = Vec::with_capacity(glyph_offsets.len());
+			for i in 0..glyph_offsets.len() {
+				commands.push(DrawIndirectCommand {
 					vertex_count: 4,
 					instance_count: 1,
 					first_vertex: (i * 4) as u32,
 					first_instance: 0,
-				})
-				.collect();
+				});
+			}
 
 			indirect_commands = render_ctx.new_buffer(&commands, BufferUsage::INDIRECT_BUFFER)?;
 
-			let vbo_usage = BufferUsage::VERTEX_BUFFER;
-			vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage | BufferUsage::TRANSFER_DST)?;
-			vert_buf_uv = render_ctx.new_buffer(&text_uv_verts, vbo_usage)?;
+			let vbo_usage = BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST;
+			vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage)?;
 		}
 
 		self.update_transform(
@@ -533,7 +538,6 @@ impl Canvas
 			super::mesh::MeshType::Quad,
 			Some(indirect_commands),
 			vert_buf_pos,
-			vert_buf_uv,
 		)?;
 
 		Ok(())
@@ -553,7 +557,7 @@ impl Canvas
 					0,
 					vec![resources.descriptor_set.clone()],
 				)?;
-				cb.bind_vertex_buffers(0, (resources.vert_buf_pos.clone(), resources.vert_buf_uv.clone()))?;
+				cb.bind_vertex_buffers(0, (resources.vert_buf_pos.clone(),))?;
 				cb.draw_indirect(indirect_commands)?;
 			}
 		}
