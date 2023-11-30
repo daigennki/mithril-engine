@@ -229,9 +229,9 @@ fn draw_ui(
 	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
 
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	for (eid, _) in (&ui_transforms, &ui_meshes).iter().with_id() {
+	for (eid, (_, ui_mesh)) in (&ui_transforms, &ui_meshes).iter().with_id() {
 		// TODO: how do we respect the render order?
-		canvas.draw(&mut cb, eid)?;
+		canvas.draw(&mut cb, eid, ui_mesh)?;
 	}
 
 	cb.bind_pipeline_graphics(canvas.get_text_pipeline().clone())?;

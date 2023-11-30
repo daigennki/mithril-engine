@@ -132,7 +132,6 @@ mod ui_text_fs
 
 struct UiGpuResources
 {
-	pub mesh_type: super::mesh::MeshType,
 	pub vert_buf_pos: Subbuffer<[Vec2]>,
 	pub buffer: Subbuffer<Mat4>,
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
@@ -261,21 +260,20 @@ impl Canvas
 			None,
 		)?;
 
-		let vbo_usage = BufferUsage::VERTEX_BUFFER;
-		let quad_pos_verts = [
+		let quad_verts = [
+			// position
 			Vec2::new(-0.5, -0.5),
 			Vec2::new(-0.5, 0.5),
 			Vec2::new(0.5, -0.5),
 			Vec2::new(0.5, 0.5),
-		];
-		let quad_pos_buf = render_ctx.new_buffer(&quad_pos_verts, vbo_usage)?;
-		let quad_uv_verts = [
+			// texcoord
 			Vec2::new(0.0, 0.0),
 			Vec2::new(0.0, 1.0),
 			Vec2::new(1.0, 0.0),
 			Vec2::new(1.0, 1.0),
 		];
-		let quad_uv_buf = render_ctx.new_buffer(&quad_uv_verts, vbo_usage)?;
+		let vert_buf = render_ctx.new_buffer(&quad_verts, BufferUsage::VERTEX_BUFFER)?;
+		let (quad_pos_buf, quad_uv_buf) = vert_buf.split_at(4);
 
 		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
@@ -336,7 +334,6 @@ impl Canvas
 		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
-		mesh_type: super::mesh::MeshType,
 		indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
 		vert_buf_pos: Subbuffer<[Vec2]>,
 	) -> Result<(), GenericEngineError>
@@ -373,7 +370,6 @@ impl Canvas
 			vert_buf_pos,
 			buffer,
 			descriptor_set,
-			mesh_type,
 			indirect_commands,
 		});
 
@@ -390,20 +386,15 @@ impl Canvas
 		mesh: &super::mesh::Mesh,
 	) -> Result<(), GenericEngineError>
 	{
-		// Only actually do something if the `Mesh` is supposed to use an image file (path is not empty),
-		// rather than a texture set by another component like `UIText`.
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
-			let tex_dimensions = tex.dimensions();
-			let image_dimensions = Vec2::new(tex_dimensions[0] as f32, tex_dimensions[1] as f32);
-
+			let image_dimensions = UVec2::from(tex.dimensions()).as_vec2();
 			self.update_transform(
 				render_ctx,
 				eid,
 				transform,
 				tex.view().clone(),
 				image_dimensions,
-				mesh.mesh_type,
 				None,
 				self.quad_pos_buf.clone(),
 			)?;
@@ -468,41 +459,34 @@ impl Canvas
 			.map(|(image, _)| [image.width(), image.height()])
 			.unwrap();
 
-		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_image_array.len());
-		let mut glyph_offsets = Vec::with_capacity(glyph_image_array.len());
-		for (image, offset) in glyph_image_array.into_iter() {
-			combined_images.extend_from_slice(image.into_raw().as_slice());
-			glyph_offsets.push(offset);
-		}
-
-		let new_glyph_count = glyph_offsets.len().try_into()?;
-		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, new_glyph_count)?;
-
+		let glyph_count = glyph_image_array.len();
 		let prev_glyph_count = self
 			.gpu_resources
 			.get(&eid)
 			.as_ref()
 			.and_then(|res| res.indirect_commands.as_ref())
-			.map(|commands| commands.len() as u32)
+			.map(|commands| commands.len() as usize)
 			.unwrap_or(0);
 
-		let text_pos_verts: Vec<_> = glyph_offsets
-			.iter()
-			.map(|offset| {
-				let first_corner: Vec2 = *offset / self.scale_factor;
-				let img_dim_scaled = UVec2::from(img_dim).as_vec2() / self.scale_factor;
-				[
-					first_corner,
-					first_corner + Vec2::new(0.0, img_dim_scaled.y),
-					first_corner + Vec2::new(img_dim_scaled.x, 0.0),
-					first_corner + img_dim_scaled,
-				]
-			})
-			.flatten()
-			.collect();
+		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_count);
+		let mut text_pos_verts = Vec::with_capacity(glyph_count * 4);
+		for (image, offset) in glyph_image_array.into_iter() {
+			combined_images.extend_from_slice(image.into_raw().as_slice());
+
+			let first_corner: Vec2 = offset / self.scale_factor;
+			let img_dim_scaled = UVec2::from(img_dim).as_vec2() / self.scale_factor;
+			text_pos_verts.extend_from_slice(&[
+				first_corner,
+				first_corner + Vec2::new(0.0, img_dim_scaled.y),
+				first_corner + Vec2::new(img_dim_scaled.x, 0.0),
+				first_corner + img_dim_scaled,
+			]);
+		}
+
+		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, glyph_count.try_into()?)?;
 
 		let (indirect_commands, vert_buf_pos);
-		if new_glyph_count == prev_glyph_count {
+		if glyph_count == prev_glyph_count {
 			// Reuse buffers if they're of the same length.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
@@ -513,8 +497,8 @@ impl Canvas
 			render_ctx.update_buffer(&text_pos_verts, resources.vert_buf_pos.clone())?;
 			vert_buf_pos = resources.vert_buf_pos.clone();
 		} else {
-			let mut commands = Vec::with_capacity(glyph_offsets.len());
-			for i in 0..glyph_offsets.len() {
+			let mut commands = Vec::with_capacity(glyph_count);
+			for i in 0..glyph_count {
 				commands.push(DrawIndirectCommand {
 					vertex_count: 4,
 					instance_count: 1,
@@ -522,7 +506,6 @@ impl Canvas
 					first_instance: 0,
 				});
 			}
-
 			indirect_commands = render_ctx.new_buffer(&commands, BufferUsage::INDIRECT_BUFFER)?;
 
 			let vbo_usage = BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST;
@@ -535,7 +518,6 @@ impl Canvas
 			transform,
 			tex.view().clone(),
 			Vec2::ONE,
-			super::mesh::MeshType::Quad,
 			Some(indirect_commands),
 			vert_buf_pos,
 		)?;
@@ -568,6 +550,7 @@ impl Canvas
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		eid: EntityId,
+		component: &super::mesh::Mesh
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
@@ -578,7 +561,7 @@ impl Canvas
 				vec![resources.descriptor_set.clone()],
 			)?;
 
-			match resources.mesh_type {
+			match component.mesh_type {
 				MeshType::Quad => {
 					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
 					cb.draw(4, 1, 0, 0)?;
