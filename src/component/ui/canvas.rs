@@ -125,6 +125,7 @@ pub struct Canvas
 	scale_factor: f32,
 
 	set_layout: Arc<DescriptorSetLayout>,
+	text_set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
 	text_pipeline: Arc<GraphicsPipeline>,
 
@@ -178,6 +179,32 @@ impl Canvas
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
+		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
+		let text_set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [
+				(
+					0,
+					DescriptorSetLayoutBinding {
+						// binding 0: transformation matrix
+						stages: ShaderStages::VERTEX,
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+					},
+				),
+				(
+					1,
+					DescriptorSetLayoutBinding {
+						// binding 1: tex
+						stages: ShaderStages::FRAGMENT,
+						immutable_samplers: vec![text_sampler],
+						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+					},
+				),
+			]
+			.into(),
+			..Default::default()
+		};
+		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
+
 		let color_blend_state = ColorBlendState::with_attachment_states(
 			1,
 			ColorBlendAttachmentState {
@@ -206,7 +233,7 @@ impl Canvas
 			&[ui_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			Some(color_blend_state),
-			vec![set_layout.clone()],
+			vec![text_set_layout.clone()],
 			vec![],
 			rendering_info,
 			None,
@@ -240,6 +267,7 @@ impl Canvas
 			projection,
 			scale_factor,
 			set_layout,
+			text_set_layout,
 			ui_pipeline,
 			text_pipeline,
 			gpu_resources: Default::default(),
@@ -309,15 +337,16 @@ impl Canvas
 				.index(0),
 		};
 
-		let descriptor_set = PersistentDescriptorSet::new(
-			render_ctx.descriptor_set_allocator(),
-			self.set_layout.clone(),
-			[
-				WriteDescriptorSet::buffer(0, buffer.clone()),
-				WriteDescriptorSet::image_view(1, image_view),
-			],
-			[],
-		)?;
+		let set_layout = if indirect_commands.is_some() {
+			self.text_set_layout.clone()
+		} else {
+			self.set_layout.clone()
+		};
+		let writes = [
+			WriteDescriptorSet::buffer(0, buffer.clone()),
+			WriteDescriptorSet::image_view(1, image_view),
+		];
+		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
 		self.gpu_resources.insert(eid, UiGpuResources {
 			vert_buf_pos,
