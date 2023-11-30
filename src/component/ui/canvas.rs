@@ -418,23 +418,26 @@ impl Canvas
 		// If the string is longer than the maximum image array layers allowed by Vulkan, refuse to
 		// render it. On Windows/Linux desktop, the limit is always at least 2048, so it should be
 		// extremely rare that we get such a long string, but we should check it anyways just in case.
+		// We also check that it's no larger than 2048 characters, because we might use
+		// vkCmdUpdateBuffer to update vertices, which has a limit of 65536 (32 * 2048) bytes.
 		let image_format_info = ImageFormatInfo {
 			format: Format::R8_UNORM,
 			usage: ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let max_array_layers: usize = render_ctx
+		let max_glyphs: usize = render_ctx
 			.device()
 			.physical_device()
 			.image_format_properties(image_format_info)?
 			.unwrap()
 			.max_array_layers
+			.min(2048)
 			.try_into()?;
-		if text_str.chars().count() >= max_array_layers {
+		if text_str.chars().count() >= max_glyphs {
 			log::warn!(
-				"text_str.len() >= max_array_layers ({} >= {})! Refusing to render string: {}",
+				"UI text string too long ({} chars, limit is {})! Refusing to render string: {}",
 				text_str.len(),
-				max_array_layers,
+				max_glyphs,
 				text_str,
 			);
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
