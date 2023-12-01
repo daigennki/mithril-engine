@@ -22,6 +22,24 @@ use winit::window::{Window, WindowBuilder};
 
 use crate::GenericEngineError;
 
+// Pairs of format and color space we can support.
+const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
+	// HDR via extended sRGB linear image
+	// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
+	//(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
+
+	// sRGB 10bpc
+	(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
+	// sRGB 8bpc
+	(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
+];
+
+// Windows and Linux have different sleep overshoot, so different values are used for each.
+#[cfg(target_family = "windows")]
+const SLEEP_OVERSHOOT: Duration = Duration::from_micros(260);
+#[cfg(not(target_family = "windows"))]
+const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
+
 pub struct Swapchain
 {
 	window: Arc<Window>,
@@ -55,22 +73,13 @@ impl Swapchain
 
 		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
 
-		// Pairs of format and color space we can support.
-		let mut format_candidates = vec![
-			// HDR via extended sRGB linear image
-			// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
-			//(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
-
-			// sRGB 10bpc
-			(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
-			// sRGB 8bpc
-			(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
-		];
-
 		// Find the intersection between the format candidates and the formats supported by the physical device,
 		// then get the first one remaining.
-		format_candidates.retain(|candidate| surface_formats.contains(candidate));
-		let (image_format, image_color_space) = format_candidates[0];
+		let (image_format, image_color_space) = FORMAT_CANDIDATES
+			.into_iter()
+			.filter(|candidate| surface_formats.contains(candidate))
+			.next()
+			.unwrap();
 
 		let image_usage = (image_color_space == ColorSpace::SrgbNonLinear)
 			.then_some(ImageUsage::COLOR_ATTACHMENT)
@@ -107,12 +116,6 @@ impl Swapchain
 			.and_then(|caps| caps.name("value"))
 			.and_then(|value_match| value_match.as_str().parse().ok())
 			.unwrap_or(360);
-
-		// Linux and Windows have different sleep overshoot, so different values are used for each.
-		#[cfg(target_family = "windows")]
-		const SLEEP_OVERSHOOT: Duration = Duration::from_micros(260);
-		#[cfg(not(target_family = "windows"))]
-		const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
 
 		// Subtract to account for sleep overshoot.
 		let frame_time_min_limit = (Duration::from_secs(1) / fps_max)
