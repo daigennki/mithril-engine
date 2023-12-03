@@ -21,7 +21,8 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{
-	layout::PipelineLayoutCreateInfo, DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
@@ -52,16 +53,22 @@ pub fn new(
 
 	let vertex_input_state = Some(gen_vertex_input_state(&stages[0].entry_point)?);
 
-	let push_constant_ranges = stages[0]
-		.entry_point
-		.info()
-		.push_constant_requirements
-		.into_iter()
-		.collect();
+	// Go through all the stages that have a push constant, combining the shader stage flags
+	// and getting the smallest range size to create a single `PushConstantRange`.
+	let push_constant_range = stages
+		.iter()
+		.filter_map(|stage| stage.entry_point.info().push_constant_requirements)
+		.reduce(|acc, stage_range| {
+			PushConstantRange {
+				stages: acc.stages.union(stage_range.stages),
+				offset: 0,
+				size: acc.size.min(stage_range.size),
+			}
+		});
 
 	let layout_info = PipelineLayoutCreateInfo {
 		set_layouts,
-		push_constant_ranges,
+		push_constant_ranges: push_constant_range.into_iter().collect(),
 		..Default::default()
 	};
 	print_pipeline_layout(&layout_info);
