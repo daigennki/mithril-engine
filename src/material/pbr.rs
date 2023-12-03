@@ -60,28 +60,21 @@ impl PBR
 			..SamplerCreateInfo::simple_repeat_linear()
 		};
 		let sampler = Sampler::new(vk_dev.clone(), sampler_info)?;
-
 		let bindings = [
-			(
-				0,
-				DescriptorSetLayoutBinding {
-					// binding 0: sampler0
-					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![sampler],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-				},
-			),
-			(
-				1,
-				DescriptorSetLayoutBinding {
-					// binding 1: base_color
-					stages: ShaderStages::FRAGMENT,
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-				},
-			),
+			DescriptorSetLayoutBinding {
+				// binding 0: sampler0
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: base_color
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			},
 		];
 		let layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: bindings.into(),
+			bindings: (0..).zip(bindings).collect(),
 			..Default::default()
 		};
 

@@ -340,27 +340,21 @@ impl MomentTransparencyRenderer
 			..SamplerCreateInfo::simple_repeat_linear()
 		};
 		let sampler = Sampler::new(device.clone(), sampler_info)?;
+		let stage2_bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: sampler0
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: base_color
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			},
+		];
 		let base_color_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(
-					0,
-					DescriptorSetLayoutBinding {
-						// binding 0: sampler0
-						stages: ShaderStages::FRAGMENT,
-						immutable_samplers: vec![sampler],
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-					},
-				),
-				(
-					1,
-					DescriptorSetLayoutBinding {
-						// binding 1: base_color
-						stages: ShaderStages::FRAGMENT,
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-					},
-				),
-			]
-			.into(),
+			bindings: (0..).zip(stage2_bindings).collect(),
 			..Default::default()
 		};
 		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
@@ -463,7 +457,6 @@ impl MomentTransparencyRenderer
 		//
 		/* Stage 4: Composite transparency image onto opaque image */
 		//
-
 		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
 				(0, oit_sampler_binding),
@@ -471,7 +464,6 @@ impl MomentTransparencyRenderer
 				(2, input_binding),         // revealage
 			]
 			.into(),
-
 			..Default::default()
 		};
 		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;

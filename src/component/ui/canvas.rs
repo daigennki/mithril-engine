@@ -20,7 +20,7 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo},
+	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::ImageView, ImageFormatInfo, ImageUsage,
 };
 use vulkano::pipeline::{
@@ -166,62 +166,46 @@ impl Canvas
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
 		let sampler_info = SamplerCreateInfo {
-			address_mode: [
-				SamplerAddressMode::ClampToEdge,
-				SamplerAddressMode::ClampToEdge,
-				SamplerAddressMode::ClampToEdge,
-			],
-			..SamplerCreateInfo::simple_repeat_linear_no_mipmap()
+			mag_filter: Filter::Linear,
+			min_filter: Filter::Linear,
+			..Default::default()
 		};
 		let sampler = Sampler::new(device.clone(), sampler_info)?;
-
+		let bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: transformation matrix
+				stages: ShaderStages::VERTEX,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: tex
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+			},
+		];
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(
-					0,
-					DescriptorSetLayoutBinding {
-						// binding 0: transformation matrix
-						stages: ShaderStages::VERTEX,
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-					},
-				),
-				(
-					1,
-					DescriptorSetLayoutBinding {
-						// binding 1: tex
-						stages: ShaderStages::FRAGMENT,
-						immutable_samplers: vec![sampler],
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-					},
-				),
-			]
-			.into(),
+			bindings: (0..).zip(bindings).collect(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
 		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
+		let text_bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: transformation matrix
+				stages: ShaderStages::VERTEX,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: tex
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![text_sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+			},
+		];
 		let text_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(
-					0,
-					DescriptorSetLayoutBinding {
-						// binding 0: transformation matrix
-						stages: ShaderStages::VERTEX,
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-					},
-				),
-				(
-					1,
-					DescriptorSetLayoutBinding {
-						// binding 1: tex
-						stages: ShaderStages::FRAGMENT,
-						immutable_samplers: vec![text_sampler],
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-					},
-				),
-			]
-			.into(),
+			bindings: (0..).zip(text_bindings).collect(),
 			..Default::default()
 		};
 		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
