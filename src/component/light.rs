@@ -204,35 +204,26 @@ impl LightManager
 		let shadow_sampler = Sampler::new(device.clone(), sampler_info)?;
 
 		/* descriptor set with everything lighting- and shadow-related */
+		let bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: shadow sampler
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![shadow_sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: directional light buffer
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 2: directional light shadow
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			},
+		];
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(
-					0,
-					DescriptorSetLayoutBinding {
-						// shadow sampler
-						stages: ShaderStages::FRAGMENT,
-						immutable_samplers: vec![shadow_sampler],
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-					},
-				),
-				(
-					1,
-					DescriptorSetLayoutBinding {
-						// directional light buffer
-						stages: ShaderStages::FRAGMENT,
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-					},
-				),
-				(
-					2,
-					DescriptorSetLayoutBinding {
-						// directional light shadow
-						stages: ShaderStages::FRAGMENT,
-						..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-					},
-				),
-			]
-			.into(),
+			bindings: (0..).zip(bindings).collect(),
 			..Default::default()
 		};
 		let all_lights_set = PersistentDescriptorSet::new(
