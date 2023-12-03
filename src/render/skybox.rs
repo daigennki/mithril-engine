@@ -17,10 +17,7 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::graphics::{
-	depth_stencil::DepthStencilState,
-	input_assembly::PrimitiveTopology,
-	rasterization::RasterizationState,
-	GraphicsPipeline,
+	depth_stencil::DepthStencilState, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
 };
 use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
 use vulkano::shader::ShaderStages;

@@ -310,7 +310,10 @@ impl RenderContext
 				self.buffer_updates.len() + 1
 			);
 		}
-		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data: data.into() }));
+		self.buffer_updates.push(Box::new(UpdateBufferData {
+			dst_buf,
+			data: data.into(),
+		}));
 
 		Ok(())
 	}

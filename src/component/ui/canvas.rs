@@ -6,7 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use glam::*;
-use image::{DynamicImage, Luma, GrayImage};
+use image::{DynamicImage, GrayImage, Luma};
 use rusttype::{Font, Scale};
 use shipyard::EntityId;
 use std::collections::BTreeMap;
@@ -21,12 +21,12 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
-	view::ImageView, ImageFormatInfo, ImageUsage,
+	view::ImageView,
+	ImageFormatInfo, ImageUsage,
 };
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, rasterization::RasterizationState,
-		GraphicsPipeline,
+		color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
 	},
 	Pipeline,
 };
@@ -335,12 +335,15 @@ impl Canvas
 		];
 		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
-		self.gpu_resources.insert(eid, UiGpuResources {
-			vert_buf_pos,
-			buffer,
-			descriptor_set,
-			indirect_commands,
-		});
+		self.gpu_resources.insert(
+			eid,
+			UiGpuResources {
+				vert_buf_pos,
+				buffer,
+				descriptor_set,
+				indirect_commands,
+			},
+		);
 
 		Ok(())
 	}
@@ -412,7 +415,7 @@ impl Canvas
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
 				resources.indirect_commands = None;
 			}
-			return Ok(())
+			return Ok(());
 		}
 
 		let glyph_image_array = text_to_image_array(text_str, &self.default_font, text.size * self.scale_factor);
@@ -423,7 +426,7 @@ impl Canvas
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
 				resources.indirect_commands = None;
 			}
-			return Ok(())
+			return Ok(());
 		}
 
 		let img_dim = glyph_image_array
@@ -522,7 +525,7 @@ impl Canvas
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		eid: EntityId,
-		component: &super::mesh::Mesh
+		component: &super::mesh::Mesh,
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {

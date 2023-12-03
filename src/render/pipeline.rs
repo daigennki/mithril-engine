@@ -72,11 +72,10 @@ pub fn new(
 		})
 		.unzip();
 
-	let color_blend_state = (!color_attachments.is_empty())
-		.then(|| ColorBlendState {
-			attachments: color_blend_attachment_states,
-			..Default::default()
-		});
+	let color_blend_state = (!color_attachments.is_empty()).then(|| ColorBlendState {
+		attachments: color_blend_attachment_states,
+		..Default::default()
+	});
 
 	let (depth_attachment_format, depth_stencil_state) = depth_attachment.unzip();
 
@@ -205,35 +204,36 @@ fn get_shader_stage(
 fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, GenericEngineError>
 {
 	log::debug!("Automatically generating VertexInputState:");
-	let vertex_input_state = entry_point
-		.info()
-		.input_interface
-		.elements()
-		.iter()
-		.fold(VertexInputState::new(), |accum, input| {
-			let binding = input.location;
-			let format = format_from_interface_type(&input.ty);
-			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
+	let vertex_input_state =
+		entry_point
+			.info()
+			.input_interface
+			.elements()
+			.iter()
+			.fold(VertexInputState::new(), |accum, input| {
+				let binding = input.location;
+				let format = format_from_interface_type(&input.ty);
+				let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
 
-			log::debug!("- binding + attribute {binding}: {format:?} (stride {stride})");
+				log::debug!("- binding + attribute {binding}: {format:?} (stride {stride})");
 
-			accum
-				.binding(
-					binding,
-					VertexInputBindingDescription {
-						stride,
-						input_rate: VertexInputRate::Vertex,
-					},
-				)
-				.attribute(
-					binding,
-					VertexInputAttributeDescription {
+				accum
+					.binding(
 						binding,
-						format,
-						offset: 0,
-					},
-				)
-		});
+						VertexInputBindingDescription {
+							stride,
+							input_rate: VertexInputRate::Vertex,
+						},
+					)
+					.attribute(
+						binding,
+						VertexInputAttributeDescription {
+							binding,
+							format,
+							offset: 0,
+						},
+					)
+			});
 
 	if vertex_input_state.attributes.is_empty() {
 		log::debug!("- (empty)");
