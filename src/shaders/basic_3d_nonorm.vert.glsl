@@ -3,7 +3,7 @@
 layout(push_constant) uniform pc
 {
     mat4 projviewmodel;	// pre-multiplied projection, view, and model transformation matrices
-	mat3 transform_notranslate;	// the model transformation matrix with just scale and rotation
+	mat3x4 transform;	// the model transformation matrix with just scale and rotation
 };
 
 layout(location = 0) in vec3 pos;
