@@ -23,14 +23,11 @@ use vulkano::image::{
 	Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
-use vulkano::pipeline::{
-	graphics::{
-		depth_stencil::{CompareOp, DepthState, DepthStencilState},
-		input_assembly::PrimitiveTopology,
-		rasterization::{CullMode, DepthBiasState, RasterizationState},
-		GraphicsPipeline,
-	},
-	layout::PushConstantRange,
+use vulkano::pipeline::graphics::{
+	depth_stencil::{CompareOp, DepthState, DepthStencilState},
+	input_assembly::PrimitiveTopology,
+	rasterization::{CullMode, DepthBiasState, RasterizationState},
+	GraphicsPipeline,
 };
 use vulkano::shader::ShaderStages;
 
@@ -252,12 +249,6 @@ impl LightManager
 			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
 			vec![],
-			vec![PushConstantRange {
-				// push constant for transformation matrix
-				stages: ShaderStages::VERTEX,
-				offset: 0,
-				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
-			}],
 			&[],
 			Some((Format::D16_UNORM, depth_stencil_state)),
 		)?;

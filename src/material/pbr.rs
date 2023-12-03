@@ -15,7 +15,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::Device;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
-use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, layout::PushConstantRange};
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
@@ -91,14 +91,6 @@ impl PBR
 			attachment_blend: None, // transparency will be handled by transparency renderer
 			primitive_topology: PrimitiveTopology::TriangleList,
 			set_layouts: vec![pbr_set_layout],
-			push_constant_ranges: vec![PushConstantRange {
-				// push constant for projviewmodel and transform3 matrix
-				stages: ShaderStages::VERTEX,
-				offset: 0,
-				size: std::mem::size_of::<crate::component::mesh::MeshPushConstant>()
-					.try_into()
-					.unwrap(),
-			}],
 		})
 	}
 }

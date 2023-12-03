@@ -32,7 +32,7 @@ use vulkano::pipeline::graphics::{
 	viewport::Viewport,
 	GraphicsPipeline,
 };
-use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
+use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
@@ -401,14 +401,6 @@ impl MomentTransparencyRenderer
 				..Default::default()
 			},
 			vec![base_color_set_layout.clone()],
-			vec![PushConstantRange {
-				// push constant for projview matrix
-				stages: ShaderStages::VERTEX,
-				offset: 0,
-				size: (std::mem::size_of::<Mat4>() + std::mem::size_of::<Mat3A>())
-					.try_into()
-					.unwrap(),
-			}],
 			&moments_attachments,
 			Some((super::MAIN_DEPTH_FORMAT, moments_depth_stencil_state)),
 		)?;
@@ -463,7 +455,6 @@ impl MomentTransparencyRenderer
 			],
 			RasterizationState::default(),
 			vec![stage4_inputs_layout.clone()],
-			vec![],
 			&[(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))],
 			None,
 		)?;

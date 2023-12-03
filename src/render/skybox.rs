@@ -19,7 +19,7 @@ use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::graphics::{
 	depth_stencil::DepthStencilState, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
 };
-use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
+use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
@@ -103,20 +103,12 @@ impl Skybox
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let push_constant_range = PushConstantRange {
-			// push constant for projview matrix
-			stages: ShaderStages::VERTEX,
-			offset: 0,
-			size: std::mem::size_of::<Mat4>().try_into().unwrap(),
-		};
-
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![set_layout.clone()],
-			vec![push_constant_range],
 			&[(Format::R16G16B16A16_SFLOAT, None)],
 			Some((super::MAIN_DEPTH_FORMAT, DepthStencilState::default())),
 		)?;

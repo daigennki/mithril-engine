@@ -214,7 +214,6 @@ impl Canvas
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![set_layout.clone()],
-			vec![],
 			&color_attachments,
 			None,
 		)?;
@@ -224,7 +223,6 @@ impl Canvas
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![text_set_layout.clone()],
-			vec![],
 			&color_attachments,
 			None,
 		)?;

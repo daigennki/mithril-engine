@@ -21,8 +21,7 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
+	layout::PipelineLayoutCreateInfo, DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
@@ -34,7 +33,6 @@ pub fn new(
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
-	push_constant_ranges: Vec<PushConstantRange>,
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
 	depth_attachment: Option<(Format, DepthStencilState)>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
@@ -53,6 +51,13 @@ pub fn new(
 	}
 
 	let vertex_input_state = Some(gen_vertex_input_state(&stages[0].entry_point)?);
+
+	let push_constant_ranges = stages[0]
+		.entry_point
+		.info()
+		.push_constant_requirements
+		.into_iter()
+		.collect();
 
 	let layout_info = PipelineLayoutCreateInfo {
 		set_layouts,
@@ -121,7 +126,6 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 			..Default::default()
 		},
 		config.set_layouts,
-		config.push_constant_ranges,
 		&[(Format::R16G16B16A16_SFLOAT, config.attachment_blend)],
 		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
@@ -168,7 +172,6 @@ pub fn new_from_config_transparency(
 			..Default::default()
 		},
 		config.set_layouts,
-		config.push_constant_ranges,
 		&color_attachments,
 		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
@@ -184,7 +187,6 @@ pub struct PipelineConfig
 	pub attachment_blend: Option<AttachmentBlend>, // AttachmentBlend for when OIT isn't used
 	pub primitive_topology: PrimitiveTopology,
 	pub set_layouts: Vec<Arc<DescriptorSetLayout>>,
-	pub push_constant_ranges: Vec<PushConstantRange>,
 }
 
 fn get_shader_stage(
