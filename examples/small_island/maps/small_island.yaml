@@ -1,8 +1,8 @@
-sky: "sky/Daylight Box_*.png"
+sky: "sky/Daylight_*.dds"
 entities:
 -
   - UITransform:
-      position: [500, -320]
+      position: [400, -320]
   - UIText:
       text_str: "0 fps"
       size: 32.0

@@ -13,6 +13,10 @@ impl WantsSystemAdded for CameraController
 	{
 		Some(update_controllable_camera.into_workload_system().unwrap())
 	}
+	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	{
+		None
+	}
 }
 fn update_controllable_camera(
 	input_helper_wrapper: UniqueView<mithrilengine::InputHelperWrapper>,
