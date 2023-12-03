@@ -25,7 +25,7 @@ use vulkano::image::{
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
@@ -359,34 +359,22 @@ impl MomentTransparencyRenderer
 		};
 		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
 
-		let moments_blend = ColorBlendState {
-			attachments: vec![
-				ColorBlendAttachmentState {
-					blend: Some(AttachmentBlend {
-						alpha_blend_op: BlendOp::Add,
-						..AttachmentBlend::additive()
-					}),
-					..Default::default()
-				},
-				ColorBlendAttachmentState {
-					blend: Some(AttachmentBlend {
-						alpha_blend_op: BlendOp::Add,
-						..AttachmentBlend::additive()
-					}),
-					..Default::default()
-				},
-				ColorBlendAttachmentState {
-					blend: Some(AttachmentBlend {
-						color_blend_op: BlendOp::Min,
-						src_color_blend_factor: BlendFactor::One,
-						dst_color_blend_factor: BlendFactor::One,
-						..Default::default()
-					}),
-					..Default::default()
-				},
-			],
-			..Default::default()
-		};
+		let moments_blend = [
+			Some(AttachmentBlend {
+				alpha_blend_op: BlendOp::Add,
+				..AttachmentBlend::additive()
+			}),
+			Some(AttachmentBlend {
+				alpha_blend_op: BlendOp::Add,
+				..AttachmentBlend::additive()
+			}),
+			Some(AttachmentBlend {
+				color_blend_op: BlendOp::Min,
+				src_color_blend_factor: BlendFactor::One,
+				dst_color_blend_factor: BlendFactor::One,
+				..Default::default()
+			}),
+		];
 
 		let moments_depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
@@ -413,7 +401,7 @@ impl MomentTransparencyRenderer
 				cull_mode: CullMode::Back,
 				..Default::default()
 			},
-			Some(moments_blend),
+			&moments_blend,
 			vec![base_color_set_layout.clone()],
 			vec![PushConstantRange {
 				// push constant for projview matrix
@@ -468,14 +456,6 @@ impl MomentTransparencyRenderer
 		};
 		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
 
-		let wboit_compositing_blend = ColorBlendState::with_attachment_states(
-			1,
-			ColorBlendAttachmentState {
-				blend: Some(AttachmentBlend::alpha()),
-				..Default::default()
-			},
-		);
-
 		let compositing_rendering = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
@@ -488,7 +468,7 @@ impl MomentTransparencyRenderer
 				fs_oit_compositing::load(device.clone())?,
 			],
 			RasterizationState::default(),
-			Some(wboit_compositing_blend),
+			&[Some(AttachmentBlend::alpha())],
 			vec![stage4_inputs_layout.clone()],
 			vec![],
 			compositing_rendering,

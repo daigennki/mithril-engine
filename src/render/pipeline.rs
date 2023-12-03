@@ -33,7 +33,7 @@ pub fn new(
 	primitive_topology: PrimitiveTopology,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
-	color_blend_state: Option<ColorBlendState>,
+	attachment_blends: &[Option<AttachmentBlend>],
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	push_constant_ranges: Vec<PushConstantRange>,
 	rendering_info: PipelineRenderingCreateInfo,
@@ -61,6 +61,19 @@ pub fn new(
 		..Default::default()
 	};
 	print_pipeline_layout(&layout_info);
+
+	let color_blend_attachment_states: Vec<_> = attachment_blends
+		.iter()
+		.map(|blend| ColorBlendAttachmentState {
+			blend: *blend,
+			..Default::default()
+		})
+		.collect();
+	let color_blend_state = (!color_blend_attachment_states.is_empty())
+		.then(|| ColorBlendState {
+			attachments: color_blend_attachment_states,
+			..Default::default()
+		});
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
@@ -95,14 +108,6 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 		..Default::default()
 	};
 
-	let color_blend_state = ColorBlendState::with_attachment_states(
-		1,
-		ColorBlendAttachmentState {
-			blend: config.attachment_blend,
-			..Default::default()
-		},
-	);
-
 	new(
 		vk_dev,
 		config.primitive_topology,
@@ -111,7 +116,7 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 			cull_mode: CullMode::Back,
 			..Default::default()
 		},
-		Some(color_blend_state),
+		&[config.attachment_blend],
 		config.set_layouts,
 		config.push_constant_ranges,
 		rendering_info,
@@ -138,27 +143,18 @@ pub fn new_from_config_transparency(
 		..Default::default()
 	};
 
-	let wboit_accum_blend = ColorBlendState {
-		attachments: vec![
-			ColorBlendAttachmentState {
-				blend: Some(AttachmentBlend {
-					alpha_blend_op: BlendOp::Add,
-					..AttachmentBlend::additive()
-				}),
-				..Default::default()
-			},
-			ColorBlendAttachmentState {
-				blend: Some(AttachmentBlend {
-					color_blend_op: BlendOp::Add,
-					src_color_blend_factor: BlendFactor::Zero,
-					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-					..Default::default()
-				}),
-				..Default::default()
-			},
-		],
-		..Default::default()
-	};
+	let wboit_accum_blend = [
+		Some(AttachmentBlend {
+			alpha_blend_op: BlendOp::Add,
+			..AttachmentBlend::additive()
+		}),
+		Some(AttachmentBlend {
+			color_blend_op: BlendOp::Add,
+			src_color_blend_factor: BlendFactor::Zero,
+			dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+			..Default::default()
+		}),
+	];
 
 	new(
 		vk_dev,
@@ -168,7 +164,7 @@ pub fn new_from_config_transparency(
 			cull_mode: CullMode::Back,
 			..Default::default()
 		},
-		Some(wboit_accum_blend),
+		&wboit_accum_blend,
 		config.set_layouts,
 		config.push_constant_ranges,
 		rendering_info,

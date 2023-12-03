@@ -23,7 +23,6 @@ use vulkano::image::{
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::{ColorBlendAttachmentState, ColorBlendState},
 		input_assembly::PrimitiveTopology,
 		rasterization::RasterizationState,
 		subpass::PipelineRenderingCreateInfo,
@@ -144,10 +143,7 @@ impl RenderTarget
 				PrimitiveTopology::TriangleList,
 				&[vs_fill_viewport::load(device.clone())?, fs_gamma::load(device)?],
 				RasterizationState::default(),
-				Some(ColorBlendState::with_attachment_states(
-					1,
-					ColorBlendAttachmentState::default(),
-				)),
+				&[None],
 				vec![set_layout],
 				vec![],
 				gamma_rendering,

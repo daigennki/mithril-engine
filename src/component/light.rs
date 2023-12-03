@@ -265,7 +265,7 @@ impl LightManager
 			PrimitiveTopology::TriangleList,
 			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
-			None,
+			&[],
 			vec![],
 			vec![PushConstantRange {
 				// push constant for transformation matrix

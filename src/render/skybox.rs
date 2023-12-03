@@ -17,7 +17,6 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::graphics::{
-	color_blend::{ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::DepthStencilState,
 	input_assembly::PrimitiveTopology,
 	rasterization::RasterizationState,
@@ -126,10 +125,7 @@ impl Skybox
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),
-			Some(ColorBlendState::with_attachment_states(
-				1,
-				ColorBlendAttachmentState::default(),
-			)),
+			&[None],
 			vec![set_layout.clone()],
 			vec![push_constant_range],
 			rendering_info,
