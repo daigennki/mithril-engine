@@ -20,7 +20,6 @@ use vulkano::pipeline::graphics::{
 	depth_stencil::DepthStencilState,
 	input_assembly::PrimitiveTopology,
 	rasterization::RasterizationState,
-	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipeline,
 };
 use vulkano::pipeline::{layout::PushConstantRange, Pipeline, PipelineBindPoint};
@@ -89,12 +88,6 @@ impl Skybox
 	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
 	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, GenericEngineError>
 	{
-		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
-			..Default::default()
-		};
-
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
 		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
@@ -125,11 +118,10 @@ impl Skybox
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),
-			&[None],
 			vec![set_layout.clone()],
 			vec![push_constant_range],
-			rendering_info,
-			Some(DepthStencilState::default()),
+			&[(Format::R16G16B16A16_SFLOAT, None)],
+			Some((super::MAIN_DEPTH_FORMAT, DepthStencilState::default())),
 		)?;
 
 		// sky texture cubemap

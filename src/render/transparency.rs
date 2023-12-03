@@ -29,7 +29,6 @@ use vulkano::pipeline::graphics::{
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
-	subpass::PipelineRenderingCreateInfo,
 	viewport::Viewport,
 	GraphicsPipeline,
 };
@@ -359,21 +358,30 @@ impl MomentTransparencyRenderer
 		};
 		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
 
-		let moments_blend = [
-			Some(AttachmentBlend {
-				alpha_blend_op: BlendOp::Add,
-				..AttachmentBlend::additive()
-			}),
-			Some(AttachmentBlend {
-				alpha_blend_op: BlendOp::Add,
-				..AttachmentBlend::additive()
-			}),
-			Some(AttachmentBlend {
-				color_blend_op: BlendOp::Min,
-				src_color_blend_factor: BlendFactor::One,
-				dst_color_blend_factor: BlendFactor::One,
-				..Default::default()
-			}),
+		let moments_attachments = [
+			(
+				Format::R32G32B32A32_SFLOAT, // moments
+				Some(AttachmentBlend {
+					alpha_blend_op: BlendOp::Add,
+					..AttachmentBlend::additive()
+				}),
+			),
+			(
+				Format::R32_SFLOAT, // optical_depth
+				Some(AttachmentBlend {
+					alpha_blend_op: BlendOp::Add,
+					..AttachmentBlend::additive()
+				}),
+			),
+			(
+				Format::R32_SFLOAT, // min_depth
+				Some(AttachmentBlend {
+					color_blend_op: BlendOp::Min,
+					src_color_blend_factor: BlendFactor::One,
+					dst_color_blend_factor: BlendFactor::One,
+					..Default::default()
+				}),
+			),
 		];
 
 		let moments_depth_stencil_state = DepthStencilState {
@@ -384,15 +392,6 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 
-		let moments_rendering = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![
-				Some(Format::R32G32B32A32_SFLOAT), // moments
-				Some(Format::R32_SFLOAT),          // optical_depth
-				Some(Format::R32_SFLOAT),          // min_depth
-			],
-			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
-			..Default::default()
-		};
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -401,7 +400,6 @@ impl MomentTransparencyRenderer
 				cull_mode: CullMode::Back,
 				..Default::default()
 			},
-			&moments_blend,
 			vec![base_color_set_layout.clone()],
 			vec![PushConstantRange {
 				// push constant for projview matrix
@@ -411,8 +409,8 @@ impl MomentTransparencyRenderer
 					.try_into()
 					.unwrap(),
 			}],
-			moments_rendering,
-			Some(moments_depth_stencil_state),
+			&moments_attachments,
+			Some((super::MAIN_DEPTH_FORMAT, moments_depth_stencil_state)),
 		)?;
 
 		//
@@ -456,10 +454,6 @@ impl MomentTransparencyRenderer
 		};
 		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
 
-		let compositing_rendering = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			..Default::default()
-		};
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -468,10 +462,9 @@ impl MomentTransparencyRenderer
 				fs_oit_compositing::load(device.clone())?,
 			],
 			RasterizationState::default(),
-			&[Some(AttachmentBlend::alpha())],
 			vec![stage4_inputs_layout.clone()],
 			vec![],
-			compositing_rendering,
+			&[(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))],
 			None,
 		)?;
 

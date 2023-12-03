@@ -22,12 +22,7 @@ use vulkano::image::{
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	graphics::{
-		input_assembly::PrimitiveTopology,
-		rasterization::RasterizationState,
-		subpass::PipelineRenderingCreateInfo,
-		viewport::Viewport,
-	},
+	graphics::{input_assembly::PrimitiveTopology, rasterization::RasterizationState, viewport::Viewport},
 	GraphicsPipeline, Pipeline, PipelineBindPoint,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -132,21 +127,15 @@ impl RenderTarget
 			[],
 		)?;
 
-		let gamma_rendering = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(swapchain_format)],
-			..Default::default()
-		};
-
 		let gamma_pipeline = if swapchain_color_space == ColorSpace::SrgbNonLinear {
 			Some(super::pipeline::new(
 				device.clone(),
 				PrimitiveTopology::TriangleList,
 				&[vs_fill_viewport::load(device.clone())?, fs_gamma::load(device)?],
 				RasterizationState::default(),
-				&[None],
 				vec![set_layout],
 				vec![],
-				gamma_rendering,
+				&[(swapchain_format, None)],
 				None,
 			)?)
 		} else {

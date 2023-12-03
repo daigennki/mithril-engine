@@ -28,7 +28,6 @@ use vulkano::pipeline::{
 		depth_stencil::{CompareOp, DepthState, DepthStencilState},
 		input_assembly::PrimitiveTopology,
 		rasterization::{CullMode, DepthBiasState, RasterizationState},
-		subpass::PipelineRenderingCreateInfo,
 		GraphicsPipeline,
 	},
 	layout::PushConstantRange,
@@ -256,16 +255,11 @@ impl LightManager
 			depth_bias: Some(DepthBiasState::default()),
 			..Default::default()
 		};
-		let shadow_rendering = PipelineRenderingCreateInfo {
-			depth_attachment_format: Some(Format::D16_UNORM),
-			..Default::default()
-		};
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
-			&[],
 			vec![],
 			vec![PushConstantRange {
 				// push constant for transformation matrix
@@ -273,8 +267,8 @@ impl LightManager
 				offset: 0,
 				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
 			}],
-			shadow_rendering,
-			Some(depth_stencil_state),
+			&[],
+			Some((Format::D16_UNORM, depth_stencil_state)),
 		)?;
 
 		Ok(LightManager {

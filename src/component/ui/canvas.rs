@@ -25,10 +25,7 @@ use vulkano::image::{
 };
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::AttachmentBlend,
-		input_assembly::PrimitiveTopology,
-		rasterization::RasterizationState,
-		subpass::PipelineRenderingCreateInfo,
+		color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, rasterization::RasterizationState,
 		GraphicsPipeline,
 	},
 	Pipeline,
@@ -210,20 +207,15 @@ impl Canvas
 		};
 		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
 
-		let blend_attachments = [Some(AttachmentBlend::alpha())];
-		let rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			..Default::default()
-		};
+		let color_attachments = [(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))];
 		let ui_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
-			&blend_attachments,
 			vec![set_layout.clone()],
 			vec![],
-			rendering_info.clone(),
+			&color_attachments,
 			None,
 		)?;
 		let text_pipeline = crate::render::pipeline::new(
@@ -231,10 +223,9 @@ impl Canvas
 			PrimitiveTopology::TriangleStrip,
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
-			&blend_attachments,
 			vec![text_set_layout.clone()],
 			vec![],
-			rendering_info,
+			&color_attachments,
 			None,
 		)?;
 

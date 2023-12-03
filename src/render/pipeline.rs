@@ -33,11 +33,10 @@ pub fn new(
 	primitive_topology: PrimitiveTopology,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
-	attachment_blends: &[Option<AttachmentBlend>],
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	push_constant_ranges: Vec<PushConstantRange>,
-	rendering_info: PipelineRenderingCreateInfo,
-	depth_stencil_state: Option<DepthStencilState>,
+	color_attachments: &[(Format, Option<AttachmentBlend>)],
+	depth_attachment: Option<(Format, DepthStencilState)>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let primitive_restart_enable =
@@ -62,18 +61,30 @@ pub fn new(
 	};
 	print_pipeline_layout(&layout_info);
 
-	let color_blend_attachment_states: Vec<_> = attachment_blends
+	let (color_attachment_formats, color_blend_attachment_states) = color_attachments
 		.iter()
-		.map(|blend| ColorBlendAttachmentState {
-			blend: *blend,
-			..Default::default()
+		.map(|(format, blend)| {
+			let blend_attachment_state = ColorBlendAttachmentState {
+				blend: *blend,
+				..Default::default()
+			};
+			(Some(*format), blend_attachment_state)
 		})
-		.collect();
-	let color_blend_state = (!color_blend_attachment_states.is_empty())
+		.unzip();
+
+	let color_blend_state = (!color_attachments.is_empty())
 		.then(|| ColorBlendState {
 			attachments: color_blend_attachment_states,
 			..Default::default()
 		});
+
+	let (depth_attachment_format, depth_stencil_state) = depth_attachment.unzip();
+
+	let rendering_info = PipelineRenderingCreateInfo {
+		color_attachment_formats,
+		depth_attachment_format,
+		..Default::default()
+	};
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
@@ -94,12 +105,6 @@ pub fn new(
 
 pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
-	let rendering_info = PipelineRenderingCreateInfo {
-		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-		depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
-		..Default::default()
-	};
-
 	let depth_stencil_state = DepthStencilState {
 		depth: Some(DepthState {
 			write_enable: true,
@@ -116,11 +121,10 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 			cull_mode: CullMode::Back,
 			..Default::default()
 		},
-		&[config.attachment_blend],
 		config.set_layouts,
 		config.push_constant_ranges,
-		rendering_info,
-		Some(depth_stencil_state),
+		&[(Format::R16G16B16A16_SFLOAT, config.attachment_blend)],
+		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
 }
 
@@ -129,12 +133,6 @@ pub fn new_from_config_transparency(
 	config: PipelineConfig,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
-	let rendering_info = PipelineRenderingCreateInfo {
-		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
-		depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
-		..Default::default()
-	};
-
 	let depth_stencil_state = DepthStencilState {
 		depth: Some(DepthState {
 			write_enable: false,
@@ -143,17 +141,23 @@ pub fn new_from_config_transparency(
 		..Default::default()
 	};
 
-	let wboit_accum_blend = [
-		Some(AttachmentBlend {
-			alpha_blend_op: BlendOp::Add,
-			..AttachmentBlend::additive()
-		}),
-		Some(AttachmentBlend {
-			color_blend_op: BlendOp::Add,
-			src_color_blend_factor: BlendFactor::Zero,
-			dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-			..Default::default()
-		}),
+	let color_attachments = [
+		(
+			Format::R16G16B16A16_SFLOAT,
+			Some(AttachmentBlend {
+				alpha_blend_op: BlendOp::Add,
+				..AttachmentBlend::additive()
+			}),
+		),
+		(
+			Format::R8_UNORM,
+			Some(AttachmentBlend {
+				color_blend_op: BlendOp::Add,
+				src_color_blend_factor: BlendFactor::Zero,
+				dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+				..Default::default()
+			}),
+		),
 	];
 
 	new(
@@ -164,11 +168,10 @@ pub fn new_from_config_transparency(
 			cull_mode: CullMode::Back,
 			..Default::default()
 		},
-		&wboit_accum_blend,
 		config.set_layouts,
 		config.push_constant_ranges,
-		rendering_info,
-		Some(depth_stencil_state),
+		&color_attachments,
+		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
 }
 
