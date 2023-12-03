@@ -60,7 +60,7 @@ impl Texture
 	{
 		// We allocate a subbuffer using a `DeviceLayout` here so that the buffer is aligned to the
 		// block size of the format.
-		let data_size_bytes: u64 = (data.len() * std::mem::size_of::<Px>()).try_into()?;
+		let data_size_bytes: DeviceSize = (data.len() * std::mem::size_of::<Px>()).try_into()?;
 		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
 			.ok_or("Texture::new_from_slice: given slice is empty or alignment is not a power of two")?;
 		let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
