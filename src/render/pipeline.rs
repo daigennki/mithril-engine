@@ -24,7 +24,7 @@ use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
-use vulkano::shader::{EntryPoint, ShaderInterfaceEntryType, ShaderModule};
+use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
 use crate::GenericEngineError;
 
@@ -51,7 +51,12 @@ pub fn new(
 		stages.push(get_shader_stage(&sm, "main")?);
 	}
 
-	let vertex_input_state = Some(gen_vertex_input_state(&stages[0].entry_point)?);
+	let vertex_shader = stages
+		.iter()
+		.find(|stage| stage.entry_point.info().execution_model == ExecutionModel::Vertex)
+		.ok_or("pipeline::new: no vertex shader was provided")?;
+
+	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader.entry_point)?);
 
 	// Go through all the stages that have a push constant, combining the shader stage flags
 	// and getting the smallest range size to create a single `PushConstantRange`.
