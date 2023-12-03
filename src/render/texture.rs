@@ -8,14 +8,14 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{allocator::SubbufferAllocator, BufferContents};
+use vulkano::buffer::{allocator::SubbufferAllocator, BufferContents, Subbuffer};
 use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
 	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, StandardMemoryAllocator};
 use vulkano::DeviceSize;
 
 use crate::GenericEngineError;
@@ -58,7 +58,12 @@ impl Texture
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = subbuffer_allocator.allocate_slice(data.len().try_into()?)?;
+		// We allocate a subbuffer using a `DeviceLayout` here so that the buffer is aligned to the
+		// block size of the format.
+		let data_size_bytes: u64 = (data.len() * std::mem::size_of::<Px>()).try_into()?;
+		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
+			.ok_or("Texture::new_from_slice: given slice is empty or alignment is not a power of two")?;
+		let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
 		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let image_info = ImageCreateInfo {
