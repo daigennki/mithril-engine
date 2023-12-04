@@ -11,8 +11,9 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::descriptor_set::{layout::DescriptorSetLayout, WriteDescriptorSet};
 use vulkano::format::Format;
+use vulkano::pipeline::GraphicsPipeline;
 
 use crate::render::{texture::Texture, RenderContext};
 use crate::GenericEngineError;
@@ -29,6 +30,9 @@ pub mod vs_3d_common
 #[typetag::deserialize]
 pub trait Material: Send + Sync
 {
+	fn material_name_associated() -> &'static str
+		where Self: Sized;
+
 	fn material_name(&self) -> &'static str;
 
 	/// Generate descriptor set writes for creating a descriptor set.
@@ -46,6 +50,10 @@ pub trait Material: Send + Sync
 	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
+
+	fn load_pipeline(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
+		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+		where Self: Sized;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.

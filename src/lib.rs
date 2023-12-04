@@ -16,8 +16,6 @@ use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
-use vulkano::descriptor_set::DescriptorSet;
-use vulkano::device::DeviceOwned;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -87,13 +85,8 @@ fn init_world(
 
 	let light_manager = component::light::LightManager::new(&mut render_ctx)?;
 
-	let vk_dev = render_ctx.descriptor_set_allocator().device().clone();
-	let mut pbr_pipeline_config = material::pbr::PBR::get_pipeline_config(vk_dev.clone())?;
-	pbr_pipeline_config
-		.set_layouts
-		.push(light_manager.get_all_lights_set().layout().clone());
-	mesh_manager.load_set_layout("PBR", pbr_pipeline_config.set_layouts[0].clone());
-	render_ctx.load_material_pipeline("PBR", pbr_pipeline_config)?;
+	let pbr_set_layout = render_ctx.load_material_pipeline::<material::pbr::PBR>()?;
+	mesh_manager.load_set_layout("PBR", pbr_set_layout);
 
 	let (world, sky) = load_world(start_map)?;
 

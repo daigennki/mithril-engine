@@ -12,24 +12,21 @@ use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::{
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
-	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::{ImageView, ImageViewCreateInfo},
 	Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
-	depth_stencil::{CompareOp, DepthState, DepthStencilState},
+	depth_stencil::{DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, DepthBiasState, RasterizationState},
 	GraphicsPipeline,
 };
-use vulkano::shader::ShaderStages;
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
 use crate::{render::RenderContext, GenericEngineError};
@@ -191,41 +188,10 @@ impl LightManager
 			dir_light_shadow_layers.push(layer_view);
 		}
 
-		/* shadow sampler */
-		let sampler_info = SamplerCreateInfo {
-			mag_filter: Filter::Linear,
-			min_filter: Filter::Linear,
-			compare: Some(CompareOp::LessOrEqual),
-			..Default::default()
-		};
-		let shadow_sampler = Sampler::new(device.clone(), sampler_info)?;
-
 		/* descriptor set with everything lighting- and shadow-related */
-		let bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: shadow sampler
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![shadow_sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: directional light buffer
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 2: directional light shadow
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			},
-		];
-		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(bindings).collect(),
-			..Default::default()
-		};
 		let all_lights_set = PersistentDescriptorSet::new(
 			render_ctx.descriptor_set_allocator(),
-			DescriptorSetLayout::new(device.clone(), set_layout_info)?,
+			render_ctx.get_light_set_layout().clone(),
 			[
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),
 				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),

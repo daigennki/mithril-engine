@@ -13,13 +13,13 @@ use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	WriteDescriptorSet,
 };
-use vulkano::device::Device;
+use vulkano::device::{DeviceOwned};
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
+use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, GraphicsPipeline};
 use vulkano::shader::ShaderStages;
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::{pipeline::PipelineConfig, RenderContext};
+use crate::render::RenderContext;
 use crate::GenericEngineError;
 
 pub mod fs
@@ -51,56 +51,17 @@ pub struct PBR
 	#[serde(default)]
 	pub transparent: bool,
 }
-impl PBR
-{
-	pub fn set_layout_pbr(vk_dev: Arc<Device>) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
-	{
-		let sampler_info = SamplerCreateInfo {
-			anisotropy: Some(16.0),
-			..SamplerCreateInfo::simple_repeat_linear()
-		};
-		let sampler = Sampler::new(vk_dev.clone(), sampler_info)?;
-		let bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: sampler0
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: base_color
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			},
-		];
-		let layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(bindings).collect(),
-			..Default::default()
-		};
-
-		Ok(DescriptorSetLayout::new(vk_dev, layout_info)?)
-	}
-
-	pub fn get_pipeline_config(vk_dev: Arc<Device>) -> Result<PipelineConfig, GenericEngineError>
-	{
-		let pbr_set_layout = Self::set_layout_pbr(vk_dev.clone())?;
-		Ok(crate::render::pipeline::PipelineConfig {
-			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
-			fragment_shader: fs::load(vk_dev.clone())?,
-			fragment_shader_transparency: Some(fs_oit::load(vk_dev)?),
-			attachment_blend: None, // transparency will be handled by transparency renderer
-			primitive_topology: PrimitiveTopology::TriangleList,
-			set_layouts: vec![pbr_set_layout],
-		})
-	}
-}
 
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn material_name(&self) -> &'static str
+	fn material_name_associated() -> &'static str
 	{
 		"PBR"
+	}
+	fn material_name(&self) -> &'static str
+	{
+		Self::material_name_associated()
 	}
 
 	fn gen_descriptor_set_writes(
@@ -132,5 +93,51 @@ impl Material for PBR
 	fn has_transparency(&self) -> bool
 	{
 		self.transparent
+	}
+
+	fn load_pipeline(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
+		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+	{
+		let vk_dev = transparency_inputs.device().clone();
+
+		let sampler_info = SamplerCreateInfo {
+			anisotropy: Some(16.0),
+			..SamplerCreateInfo::simple_repeat_linear()
+		};
+		let sampler = Sampler::new(vk_dev.clone(), sampler_info)?;
+		let bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: sampler0
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: base_color
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			},
+		];
+		let layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: (0..).zip(bindings).collect(),
+			..Default::default()
+		};
+		let set_layout = DescriptorSetLayout::new(vk_dev.clone(), layout_info)?;
+
+		let mut config = crate::render::pipeline::PipelineConfig {
+			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
+			fragment_shader: fs::load(vk_dev.clone())?,
+			fragment_shader_transparency: Some(fs_oit::load(vk_dev.clone())?),
+			attachment_blend: None, // transparency will be handled by transparency renderer
+			primitive_topology: PrimitiveTopology::TriangleList,
+			set_layouts: vec![set_layout.clone(), light_set_layout],
+		};
+
+		let pipeline = crate::render::pipeline::new_from_config(vk_dev.clone(), config.clone())?;
+
+		config.set_layouts.push(transparency_inputs);
+		let transparency_pipeline = crate::render::pipeline::new_from_config_transparency(vk_dev.clone(), config)?;
+
+		Ok((pipeline, Some(transparency_pipeline), set_layout))
 	}
 }
