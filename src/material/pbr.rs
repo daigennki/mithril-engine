@@ -95,7 +95,7 @@ impl Material for PBR
 		self.transparent
 	}
 
-	fn load_pipeline(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
+	fn load_pipeline_associated(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
 		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
 	{
 		let vk_dev = transparency_inputs.device().clone();
@@ -139,5 +139,11 @@ impl Material for PBR
 		let transparency_pipeline = crate::render::pipeline::new_from_config_transparency(vk_dev.clone(), config)?;
 
 		Ok((pipeline, Some(transparency_pipeline), set_layout))
+	}
+
+	fn load_pipeline(&self, light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
+		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+	{
+		Self::load_pipeline_associated(light_set_layout, transparency_inputs)
 	}
 }

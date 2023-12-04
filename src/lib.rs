@@ -81,12 +81,7 @@ fn init_world(
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 
 	let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
-	let mut mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
-
-	let light_manager = component::light::LightManager::new(&mut render_ctx)?;
-
-	let pbr_set_layout = render_ctx.load_material_pipeline::<material::pbr::PBR>()?;
-	mesh_manager.load_set_layout("PBR", pbr_set_layout);
+	let mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
 
 	let (world, sky) = load_world(start_map)?;
 
@@ -94,9 +89,9 @@ fn init_world(
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
 	world.add_unique(mesh_manager);
+	world.add_unique(component::light::LightManager::new(&mut render_ctx)?);
 	world.add_unique(InputHelperWrapper::default());
 	world.add_unique(render_ctx);
-	world.add_unique(light_manager);
 
 	Ok(world)
 }

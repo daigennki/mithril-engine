@@ -51,9 +51,12 @@ pub trait Material: Send + Sync
 
 	fn has_transparency(&self) -> bool;
 
-	fn load_pipeline(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
+	fn load_pipeline_associated(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
 		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
 		where Self: Sized;
+
+	fn load_pipeline(&self, light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
+		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.

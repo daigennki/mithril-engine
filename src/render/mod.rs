@@ -54,6 +54,7 @@ use vulkano::sync::{
 use vulkano::{DeviceSize, Validated, VulkanError};
 
 use crate::GenericEngineError;
+use crate::material::Material;
 use texture::Texture;
 
 // Format used for main depth buffer.
@@ -207,18 +208,25 @@ impl RenderContext
 
 	/// Load a material shader pipeline into memory.
 	/// Returns a set layout representing the descriptor set interface unique to the material.
-	pub fn load_material_pipeline<M>(&mut self) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
-		where M: crate::material::Material
+	pub fn load_material_pipeline(&mut self, mat: &dyn Material) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
 	{
-		let name = M::material_name_associated();
+		let name = mat.material_name();
 		let transparency_set_layout = self.transparency_renderer.get_stage3_inputs().layout().clone();
 		let (pipeline, transparency_pipeline, mat_set_layout) =
-			M::load_pipeline(self.light_set_layout.clone(), transparency_set_layout)?;
+			mat.load_pipeline(self.light_set_layout.clone(), transparency_set_layout)?;
 
 		self.material_pipelines
 			.insert(name.to_string(), (pipeline, transparency_pipeline));
 
 		Ok(mat_set_layout)
+	}
+	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
+	{
+		self.material_pipelines.get(name).map(|(pl, _)| pl)
+	}
+	pub fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
+	{
+		self.material_pipelines.get(name).and_then(|(_, pl)| pl.as_ref())
 	}
 
 	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
@@ -609,15 +617,6 @@ impl RenderContext
 	pub fn get_transparency_renderer(&self) -> &transparency::MomentTransparencyRenderer
 	{
 		&self.transparency_renderer
-	}
-
-	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
-	{
-		self.material_pipelines.get(name).map(|(pl, _)| pl)
-	}
-	pub fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
-	{
-		self.material_pipelines.get(name).and_then(|(_, pl)| pl.as_ref())
 	}
 
 	/// Get the delta time for last frame.

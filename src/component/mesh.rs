@@ -81,17 +81,6 @@ impl MeshManager
 		}
 	}
 
-	pub fn load_set_layout(&mut self, material_name: &'static str, set_layout: Arc<DescriptorSetLayout>)
-	{
-		let existing = self.set_layouts.insert(material_name, set_layout);
-		if existing.is_some() {
-			log::warn!(
-				"Replaced existing set layout in `MeshManager` for material '{}'",
-				material_name
-			);
-		}
-	}
-
 	/// Load the model for the given `Mesh`.
 	pub fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), GenericEngineError>
 	{
@@ -116,18 +105,23 @@ impl MeshManager
 
 			let parent_folder = component.model_path.parent().unwrap();
 
-			// try to get the set layout for the material
+			// Load the pipeline if it hasn't already been loaded.
+			let mat_name = mat.material_name();
+			if render_ctx.get_pipeline(mat_name).is_none() {
+				log::info!("Loading pipeline for material '{mat_name}'...");
+				let new_set_layout = render_ctx.load_material_pipeline(mat.as_ref())?;
+				self.set_layouts.insert(mat_name, new_set_layout);
+			}
+
+			// Get the set layout. We use `unwrap` here since it must have already been loaded when
+			// the pipeline was loaded just above.
 			let set_layout = self
 				.set_layouts
-				.get(mat.material_name())
-				.ok_or(format!(
-					"Set layout for material '{}' not loaded into `MeshManager`",
-					mat.material_name()
-				))?
-				.clone();
+				.get(mat_name)
+				.unwrap();
 
 			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
-			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
+			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout.clone(), writes, [])?;
 
 			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
 			let mat_basecolor_only_set = PersistentDescriptorSet::new(
