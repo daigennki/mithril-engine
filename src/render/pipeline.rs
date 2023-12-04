@@ -141,6 +141,7 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 	)
 }
 
+/// Create a pipeline from a configuration, assuming that the fragment shader is specfically for OIT.
 pub fn new_from_config_transparency(
 	vk_dev: Arc<Device>,
 	config: PipelineConfig,
@@ -176,7 +177,7 @@ pub fn new_from_config_transparency(
 	new(
 		vk_dev,
 		config.primitive_topology,
-		&[config.vertex_shader, config.fragment_shader_transparency.unwrap()],
+		&[config.vertex_shader, config.fragment_shader],
 		RasterizationState {
 			cull_mode: CullMode::Back,
 			..Default::default()
@@ -193,8 +194,7 @@ pub struct PipelineConfig
 {
 	pub vertex_shader: Arc<ShaderModule>,
 	pub fragment_shader: Arc<ShaderModule>,
-	pub fragment_shader_transparency: Option<Arc<ShaderModule>>,
-	pub attachment_blend: Option<AttachmentBlend>, // AttachmentBlend for when OIT isn't used
+	pub attachment_blend: Option<AttachmentBlend>, // ignored for `new_from_config_transparency`
 	pub primitive_topology: PrimitiveTopology,
 	pub set_layouts: Vec<Arc<DescriptorSetLayout>>,
 }
