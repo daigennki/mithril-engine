@@ -88,17 +88,13 @@ impl Skybox
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
 		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
+		let tex_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			immutable_samplers: vec![cubemap_sampler],
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+		};
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [(
-				0,
-				DescriptorSetLayoutBinding {
-					// binding 0: skybox cubemap texture and sampler
-					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![cubemap_sampler],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-				},
-			)]
-			.into(),
+			bindings: [(0, tex_binding)].into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;

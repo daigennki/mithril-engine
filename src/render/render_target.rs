@@ -107,16 +107,13 @@ impl RenderTarget
 		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
 		let depth_image_view = ImageView::new_default(depth_image)?;
 
+		let input_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			immutable_samplers: vec![Sampler::new(device.clone(), SamplerCreateInfo::default())?],
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+		};
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [(
-				0,
-				DescriptorSetLayoutBinding {
-					stages: ShaderStages::FRAGMENT,
-					immutable_samplers: vec![Sampler::new(device.clone(), SamplerCreateInfo::default())?],
-					..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-				},
-			)]
-			.into(),
+			bindings: [(0, input_binding)].into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;

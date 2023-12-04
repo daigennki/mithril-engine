@@ -63,12 +63,10 @@ pub fn new(
 	let push_constant_range = stages
 		.iter()
 		.filter_map(|stage| stage.entry_point.info().push_constant_requirements)
-		.reduce(|acc, stage_range| {
-			PushConstantRange {
-				stages: acc.stages.union(stage_range.stages),
-				offset: 0,
-				size: acc.size.min(stage_range.size),
-			}
+		.reduce(|acc, stage_range| PushConstantRange {
+			stages: acc.stages.union(stage_range.stages),
+			offset: 0,
+			size: acc.size.min(stage_range.size),
 		});
 
 	let layout_info = PipelineLayoutCreateInfo {
