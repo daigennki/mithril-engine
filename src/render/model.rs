@@ -24,6 +24,7 @@ use crate::GenericEngineError;
 pub struct Model
 {
 	materials: Vec<Box<dyn Material>>,
+	material_variants: Vec<String>,
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
@@ -50,6 +51,27 @@ impl Model
 				let mut indices_u16 = Vec::new();
 				let mut indices_u32 = Vec::new();
 				let mut indices_type = DataType::U16;
+
+				let materials: Vec<_> = doc
+					.materials()
+					.map(|mat| load_gltf_material(&mat, parent_folder))
+					.collect::<Result<_, _>>()?;
+
+				// Collect material variants. If there are no material variants, only one material
+				// group will be set up in the end.
+				let material_variants: Vec<_> = doc
+					.variants()
+					.into_iter()
+					.flatten()
+					.map(|variant| variant.name().to_string())
+					.collect();
+
+				if material_variants.is_empty() {
+					log::debug!("no material variants in model");
+				} else {
+					log::debug!("material variants in model:");
+					material_variants.iter().for_each(|variant| log::debug!("- {}", &variant));
+				}
 
 				let primitives = doc
 					.nodes()
@@ -118,10 +140,8 @@ impl Model
 				};
 
 				Ok(Model {
-					materials: doc
-						.materials()
-						.map(|mat| load_gltf_material(&mat, parent_folder))
-						.collect::<Result<_, _>>()?,
+					materials,
+					material_variants,
 					submeshes,
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer,
@@ -134,6 +154,10 @@ impl Model
 	pub fn get_materials(&self) -> &Vec<Box<dyn Material>>
 	{
 		&self.materials
+	}
+	pub fn get_material_variants(&self) -> &Vec<String>
+	{
+		&self.material_variants
 	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
@@ -161,12 +185,13 @@ impl Model
 			self.index_buffer.bind(cb)?;
 
 			for submesh in visible_submeshes {
-				// it's okay that we use a panic function here, since the glTF loader validates the index for us
-				let mat_res = &material_resources[submesh.material_index()];
+				// it's okay that we use panicking functions here, since the glTF loader validates the index for us
+				let material_index = submesh.material_indices()[0];
+				let mat_res = &material_resources[material_index];
 				let mat = mat_res
 					.mat_override
 					.as_ref()
-					.unwrap_or_else(|| &self.materials[submesh.material_index()]);
+					.unwrap_or_else(|| &self.materials[material_index]);
 
 				if mat.has_transparency() == transparency_pass {
 					if !shadow_pass {
@@ -255,24 +280,36 @@ struct SubMesh
 	first_index: u32,
 	index_count: u32,
 	vertex_offset: i32,
-	mat_index: usize,
+	mat_indices: Vec<usize>, // material index to use for each material group; never empty
 	corner_min: Vec3,
 	corner_max: Vec3,
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(prim: &gltf::Primitive, first_index: u32, vertex_offset: i32)
+	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32)
 		-> Result<Self, GenericEngineError>
 	{
-		let indices = prim.indices().ok_or("no indices in glTF primitive")?;
+		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
+
+		// Get the material index for each material variant. If this glTF document doesn't have
+		// material variants, `mat_indices` will contain exactly one index, the material index
+		// from the regular material.
+		let mat_indices = if primitive.mappings().len() > 0 {
+			primitive
+				.mappings()
+				.map(|mapping| mapping.material().index().unwrap_or(0))
+				.collect()
+		} else {
+			vec![primitive.material().index().unwrap_or(0)]
+		};
 
 		Ok(SubMesh {
 			first_index,
 			index_count: indices.count().try_into()?,
 			vertex_offset,
-			mat_index: prim.material().index().unwrap_or(0),
-			corner_min: prim.bounding_box().min.into(),
-			corner_max: prim.bounding_box().max.into(),
+			mat_indices,
+			corner_min: primitive.bounding_box().min.into(),
+			corner_max: primitive.bounding_box().max.into(),
 		})
 	}
 
@@ -325,9 +362,9 @@ impl SubMesh
 		Ok(())
 	}
 
-	pub fn material_index(&self) -> usize
+	pub fn material_indices(&self) -> &Vec<usize>
 	{
-		self.mat_index
+		&self.mat_indices
 	}
 }
 
