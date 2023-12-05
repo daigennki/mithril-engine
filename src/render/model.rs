@@ -49,6 +49,7 @@ impl Model
 				let mut submeshes = Vec::new();
 				let mut indices_u16 = Vec::new();
 				let mut indices_u32 = Vec::new();
+				let mut indices_type = DataType::U16;
 
 				let primitives = doc
 					.nodes()
@@ -68,8 +69,25 @@ impl Model
 
 					let indices_accessor = prim.indices().ok_or("no indices in glTF primitive")?;
 					match indices_accessor.data_type() {
-						DataType::U16 => indices_u16.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?),
-						DataType::U32 => indices_u32.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?),
+						DataType::U16 => {
+							if indices_type == DataType::U32 {
+								// convert the indices to u32 if mixed with u32 indices
+								let slice_u16: &[u16] = get_buf_data(&indices_accessor, &data_buffers)?;
+								indices_u32.extend(slice_u16.iter().map(|index| *index as u32));
+							} else {
+								indices_u16.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?)
+							}
+						}
+						DataType::U32 => {
+							if indices_type == DataType::U16 {
+								// convert existing indices to u32 if they're u16
+								indices_type = DataType::U32;
+								indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
+								indices_u16 = Vec::new(); // free some memory
+							}
+
+							indices_u32.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?);
+						}
 						other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
 					};
 
@@ -91,6 +109,13 @@ impl Model
 				let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
 				let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
 				let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
+				
+				let index_buf_usage = BufferUsage::INDEX_BUFFER;
+				let index_buffer = match indices_type {
+					DataType::U16 => IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, index_buf_usage)?),
+					DataType::U32 => IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, index_buf_usage)?),
+					_ => unreachable!(),
+				};
 
 				Ok(Model {
 					materials: doc
@@ -99,7 +124,7 @@ impl Model
 						.collect::<Result<_, _>>()?,
 					submeshes,
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
-					index_buffer: IndexBufferVariant::from_u16_and_u32(render_ctx, indices_u16, indices_u32)?,
+					index_buffer,
 				})
 			}
 			_ => Err(format!("couldn't determine model file type of {}", path.display()).into()),
@@ -215,31 +240,6 @@ enum IndexBufferVariant
 }
 impl IndexBufferVariant
 {
-	/// Determine the appropriate kind of index buffer, depending on whether the u16 or u32 index buffer is empty.
-	/// If there are no u32 indices, a u16 index buffer will be created.
-	/// If there are any u32 indices, a u32 index buffer will be created, and any u16 indices that may exist
-	/// will be converted to u32.
-	pub fn from_u16_and_u32(
-		render_ctx: &mut RenderContext,
-		indices_u16: Vec<u16>,
-		mut indices_u32: Vec<u32>,
-	) -> Result<Self, GenericEngineError>
-	{
-		// Convert the u16 indices into u32, if there are some u32 indices they will be mixed with.
-		if !indices_u32.is_empty() && !indices_u16.is_empty() {
-			let u16_to_u32 = indices_u16.iter().map(|index| *index as u32);
-			indices_u32.extend(u16_to_u32);
-		}
-
-		let index_buf_usage = BufferUsage::INDEX_BUFFER;
-
-		Ok(if indices_u32.is_empty() {
-			IndexBufferVariant::U16(render_ctx.new_buffer(indices_u16.as_slice(), index_buf_usage)?)
-		} else {
-			IndexBufferVariant::U32(render_ctx.new_buffer(indices_u32.as_slice(), index_buf_usage)?)
-		})
-	}
-
 	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
 	{
 		match self {
