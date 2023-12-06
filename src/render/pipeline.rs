@@ -31,6 +31,7 @@ use crate::GenericEngineError;
 pub fn new(
 	vk_dev: Arc<Device>,
 	primitive_topology: PrimitiveTopology,
+	vertex_input_rate_instance: bool,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
@@ -56,7 +57,7 @@ pub fn new(
 		.find(|stage| stage.entry_point.info().execution_model == ExecutionModel::Vertex)
 		.ok_or("pipeline::new: no vertex shader was provided")?;
 
-	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader.entry_point)?);
+	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader.entry_point, vertex_input_rate_instance)?);
 
 	// Go through all the stages that have a push constant, combining the shader stage flags
 	// and getting the smallest range size to create a single `PushConstantRange`.
@@ -130,6 +131,7 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 	new(
 		vk_dev,
 		config.primitive_topology,
+		false,
 		&[config.vertex_shader, config.fragment_shader],
 		RasterizationState {
 			cull_mode: CullMode::Back,
@@ -177,6 +179,7 @@ pub fn new_from_config_transparency(
 	new(
 		vk_dev,
 		config.primitive_topology,
+		false,
 		&[config.vertex_shader, config.fragment_shader],
 		RasterizationState {
 			cull_mode: CullMode::Back,
@@ -213,7 +216,8 @@ fn get_shader_stage(
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
-fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, GenericEngineError>
+fn gen_vertex_input_state(entry_point: &EntryPoint, input_rate_instance: bool)
+	-> Result<VertexInputState, GenericEngineError>
 {
 	log::debug!("Automatically generating VertexInputState:");
 	let vertex_input_state =
@@ -229,22 +233,21 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, 
 
 				log::debug!("- binding + attribute {binding}: {format:?} (stride {stride})");
 
+				let input_rate = input_rate_instance
+					.then_some(VertexInputRate::Instance { divisor: 1 })
+					.unwrap_or(VertexInputRate::Vertex);
+				let binding_desc = VertexInputBindingDescription {
+					stride,
+					input_rate,
+				};
+				let attribute_desc = VertexInputAttributeDescription {
+					binding,
+					format,
+					offset: 0,
+				};
 				accum
-					.binding(
-						binding,
-						VertexInputBindingDescription {
-							stride,
-							input_rate: VertexInputRate::Vertex,
-						},
-					)
-					.attribute(
-						binding,
-						VertexInputAttributeDescription {
-							binding,
-							format,
-							offset: 0,
-						},
-					)
+					.binding(binding, binding_desc)
+					.attribute(binding, attribute_desc)
 			});
 
 	if vertex_input_state.attributes.is_empty() {

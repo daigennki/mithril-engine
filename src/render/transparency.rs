@@ -395,6 +395,7 @@ impl MomentTransparencyRenderer
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
+			false,
 			&[vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())?],
 			RasterizationState {
 				cull_mode: CullMode::Back,
@@ -449,6 +450,7 @@ impl MomentTransparencyRenderer
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
+			false,
 			&[
 				vs_fill_viewport::load(device.clone())?,
 				fs_oit_compositing::load(device.clone())?,

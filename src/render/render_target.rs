@@ -128,6 +128,7 @@ impl RenderTarget
 			Some(super::pipeline::new(
 				device.clone(),
 				PrimitiveTopology::TriangleList,
+				false,
 				&[vs_fill_viewport::load(device.clone())?, fs_gamma::load(device)?],
 				RasterizationState::default(),
 				vec![set_layout],

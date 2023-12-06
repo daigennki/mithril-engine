@@ -12,7 +12,7 @@ use shipyard::EntityId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndirectCommand, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
@@ -92,16 +92,19 @@ mod ui_text_vs
 				mat4 transformation;
 			};
 
-			layout(location = 0) in vec2 pos;
+			layout(location = 0) in vec4 pos; // xy: top left pos, zw: width and height
 			layout(location = 0) out vec2 texcoord;
-			layout(location = 1) flat out int draw_id;
+			layout(location = 1) flat out int instance_index;
 
 			void main()
 			{
-				gl_Position = transformation * vec4(pos, 0.0, 1.0);
 				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, 1.0 }, { 1.0, 0.0 }, { 1.0, 1.0 } };
 				texcoord = texcoords[gl_VertexIndex % 4];
-				draw_id = gl_DrawID;
+				vec2 pos2 = texcoord * pos.zw + pos.xy;
+
+				gl_Position = transformation * vec4(pos2, 0.0, 1.0);
+
+				instance_index = gl_InstanceIndex;
 			}
 		",
 	}
@@ -116,12 +119,12 @@ mod ui_text_fs
 			layout(binding = 1) uniform sampler2DArray tex;
 
 			layout(location = 0) in vec2 texcoord;
-			layout(location = 1) flat in int draw_id;
+			layout(location = 1) flat in int instance_index;
 			layout(location = 0) out vec4 color_out;
 
 			void main()
 			{
-				color_out = vec4(0.0, 0.0, 0.0, texture(tex, vec3(texcoord, draw_id)).r);
+				color_out = vec4(0.0, 0.0, 0.0, texture(tex, vec3(texcoord, instance_index)).r);
 			}
 		",
 	}
@@ -129,10 +132,9 @@ mod ui_text_fs
 
 struct UiGpuResources
 {
-	pub vert_buf_pos: Subbuffer<[Vec2]>,
+	pub text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
 	pub buffer: Subbuffer<Mat4>,
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
-	pub indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
 }
 
 #[derive(shipyard::Unique)]
@@ -211,6 +213,7 @@ impl Canvas
 		let ui_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
+			false,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![set_layout.clone()],
@@ -220,6 +223,7 @@ impl Canvas
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
+			true,
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![text_set_layout.clone()],
@@ -301,8 +305,7 @@ impl Canvas
 		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
-		indirect_commands: Option<Subbuffer<[DrawIndirectCommand]>>,
-		vert_buf_pos: Subbuffer<[Vec2]>,
+		text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let projected = self.projection
@@ -322,7 +325,7 @@ impl Canvas
 				.index(0),
 		};
 
-		let set_layout = if indirect_commands.is_some() {
+		let set_layout = if text_vert_buf_pos.is_some() {
 			self.text_set_layout.clone()
 		} else {
 			self.set_layout.clone()
@@ -336,10 +339,9 @@ impl Canvas
 		self.gpu_resources.insert(
 			eid,
 			UiGpuResources {
-				vert_buf_pos,
+				text_vert_buf_pos,
 				buffer,
 				descriptor_set,
-				indirect_commands,
 			},
 		);
 
@@ -366,7 +368,6 @@ impl Canvas
 				tex.view().clone(),
 				image_dimensions,
 				None,
-				self.quad_pos_buf.clone(),
 			)?;
 		}
 
@@ -389,7 +390,7 @@ impl Canvas
 		// render it. On Windows/Linux desktop, the limit is always at least 2048, so it should be
 		// extremely rare that we get such a long string, but we should check it anyways just in case.
 		// We also check that it's no larger than 2048 characters, because we might use
-		// vkCmdUpdateBuffer to update vertices, which has a limit of 65536 (32 * 2048) bytes.
+		// vkCmdUpdateBuffer to update vertices, which has a limit of 65536 bytes.
 		let image_format_info = ImageFormatInfo {
 			format: Format::R8_UNORM,
 			usage: ImageUsage::SAMPLED,
@@ -411,7 +412,7 @@ impl Canvas
 				text_str,
 			);
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
-				resources.indirect_commands = None;
+				resources.text_vert_buf_pos = None;
 			}
 			return Ok(());
 		}
@@ -422,7 +423,7 @@ impl Canvas
 		// remove the indirect draw commands from the GPU resources, and then return immediately.
 		if glyph_image_array.is_empty() {
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
-				resources.indirect_commands = None;
+				resources.text_vert_buf_pos = None;
 			}
 			return Ok(());
 		}
@@ -437,53 +438,36 @@ impl Canvas
 			.gpu_resources
 			.get(&eid)
 			.as_ref()
-			.and_then(|res| res.indirect_commands.as_ref())
+			.and_then(|res| res.text_vert_buf_pos.as_ref())
 			.map(|commands| commands.len() as usize)
 			.unwrap_or(0);
 
 		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_count);
-		let mut text_pos_verts = Vec::with_capacity(glyph_count * 4);
+		let mut text_pos_verts = Vec::with_capacity(glyph_count);
 		for (image, offset) in glyph_image_array.into_iter() {
 			combined_images.extend_from_slice(image.into_raw().as_slice());
 
 			let first_corner: Vec2 = offset / self.scale_factor;
 			let img_dim_scaled = UVec2::from(img_dim).as_vec2() / self.scale_factor;
-			text_pos_verts.extend_from_slice(&[
-				first_corner,
-				first_corner + Vec2::new(0.0, img_dim_scaled.y),
-				first_corner + Vec2::new(img_dim_scaled.x, 0.0),
-				first_corner + img_dim_scaled,
-			]);
+			text_pos_verts.push((first_corner, img_dim_scaled).into());
 		}
 
 		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, glyph_count.try_into()?)?;
 
-		let (indirect_commands, vert_buf_pos);
-		if glyph_count == prev_glyph_count {
+		let text_vert_buf_pos = if glyph_count == prev_glyph_count {
 			// Reuse buffers if they're of the same length.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
-			let resources = self.gpu_resources.get(&eid).unwrap();
-
-			indirect_commands = resources.indirect_commands.clone().unwrap();
-
-			render_ctx.update_buffer(&text_pos_verts, resources.vert_buf_pos.clone())?;
-			vert_buf_pos = resources.vert_buf_pos.clone();
+			let some_vbo_pos = self
+				.gpu_resources
+				.get(&eid)
+				.and_then(|resources| resources.text_vert_buf_pos.clone())
+				.unwrap();
+			render_ctx.update_buffer(&text_pos_verts, some_vbo_pos.clone())?;
+			some_vbo_pos
 		} else {
-			let mut commands = Vec::with_capacity(glyph_count);
-			for i in 0..glyph_count {
-				commands.push(DrawIndirectCommand {
-					vertex_count: 4,
-					instance_count: 1,
-					first_vertex: (i * 4) as u32,
-					first_instance: 0,
-				});
-			}
-			indirect_commands = render_ctx.new_buffer(&commands, BufferUsage::INDIRECT_BUFFER)?;
-
-			let vbo_usage = BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST;
-			vert_buf_pos = render_ctx.new_buffer(&text_pos_verts, vbo_usage)?;
-		}
+			render_ctx.new_buffer(&text_pos_verts, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
+		};
 
 		self.update_transform(
 			render_ctx,
@@ -491,8 +475,7 @@ impl Canvas
 			transform,
 			tex.view().clone(),
 			Vec2::ONE,
-			Some(indirect_commands),
-			vert_buf_pos,
+			Some(text_vert_buf_pos),
 		)?;
 
 		Ok(())
@@ -505,15 +488,15 @@ impl Canvas
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
-			if let Some(indirect_commands) = resources.indirect_commands.clone() {
+			if let Some(vert_buf_pos) = resources.text_vert_buf_pos.clone() {
 				cb.bind_descriptor_sets(
 					vulkano::pipeline::PipelineBindPoint::Graphics,
 					self.text_pipeline.layout().clone(),
 					0,
 					vec![resources.descriptor_set.clone()],
 				)?;
-				cb.bind_vertex_buffers(0, (resources.vert_buf_pos.clone(),))?;
-				cb.draw_indirect(indirect_commands)?;
+				cb.bind_vertex_buffers(0, (vert_buf_pos.clone(),))?;
+				cb.draw(4, vert_buf_pos.len() as u32, 0, 0)?;
 			}
 		}
 		Ok(())
