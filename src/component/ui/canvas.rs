@@ -93,8 +93,10 @@ mod ui_text_vs
 			};
 
 			layout(location = 0) in vec4 pos; // xy: top left pos, zw: width and height
+			layout(location = 1) in vec4 color;
 			layout(location = 0) out vec2 texcoord;
 			layout(location = 1) flat out int instance_index;
+			layout(location = 2) flat out vec4 glyph_color;
 
 			void main()
 			{
@@ -106,6 +108,7 @@ mod ui_text_vs
 				gl_Position = transformation * vec4(pos2, 0.0, 1.0);
 
 				instance_index = gl_InstanceIndex;
+				glyph_color = color;
 			}
 		",
 	}
@@ -121,11 +124,13 @@ mod ui_text_fs
 
 			layout(location = 0) in vec2 texcoord;
 			layout(location = 1) flat in int instance_index;
+			layout(location = 2) flat in vec4 glyph_color;
 			layout(location = 0) out vec4 color_out;
 
 			void main()
 			{
-				color_out = vec4(0.0, 0.0, 0.0, texture(tex, vec3(texcoord, instance_index)).r);
+				vec4 sampled_color = vec4(1.0, 1.0, 1.0, texture(tex, vec3(texcoord, instance_index)).r);
+				color_out = glyph_color * sampled_color;
 			}
 		",
 	}
@@ -134,6 +139,7 @@ mod ui_text_fs
 struct UiGpuResources
 {
 	pub text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
+	pub colors_buf: Option<Subbuffer<[Vec4]>>,
 	pub buffer: Subbuffer<[f32]>, // uniform buffer
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
 }
@@ -307,6 +313,7 @@ impl Canvas
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
 		text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
+		colors_buf: Option<Subbuffer<[Vec4]>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let projected = self.projection
@@ -335,8 +342,7 @@ impl Canvas
 				render_ctx.update_buffer(buf_data_slice, resources.buffer.clone())?;
 				resources.buffer.clone()
 			}
-			None => render_ctx
-				.new_buffer(buf_data_slice, BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?
+			None => render_ctx.new_buffer(buf_data_slice, BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?,
 		};
 
 		let set_layout = if text_vert_buf_pos.is_some() {
@@ -354,6 +360,7 @@ impl Canvas
 			eid,
 			UiGpuResources {
 				text_vert_buf_pos,
+				colors_buf,
 				buffer,
 				descriptor_set,
 			},
@@ -375,14 +382,7 @@ impl Canvas
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
 			let image_dimensions = UVec2::from(tex.dimensions()).as_vec2();
-			self.update_transform(
-				render_ctx,
-				eid,
-				transform,
-				tex.view().clone(),
-				image_dimensions,
-				None,
-			)?;
+			self.update_transform(render_ctx, eid, transform, tex.view().clone(), image_dimensions, None, None)?;
 		}
 
 		Ok(())
@@ -468,19 +468,24 @@ impl Canvas
 
 		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, glyph_count.try_into()?)?;
 
-		let text_vert_buf_pos = if glyph_count == prev_glyph_count {
+		let colors = vec![text.color; glyph_count];
+
+		let (text_vert_buf_pos, colors_buf) = if glyph_count == prev_glyph_count {
 			// Reuse buffers if they're of the same length.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
-			let some_vbo_pos = self
-				.gpu_resources
-				.get(&eid)
-				.and_then(|resources| resources.text_vert_buf_pos.clone())
-				.unwrap();
+			let resources = self.gpu_resources.get(&eid).unwrap();
+			let some_vbo_pos = resources.text_vert_buf_pos.clone().unwrap();
+			let some_colors_buf = resources.colors_buf.clone().unwrap();
+
 			render_ctx.update_buffer(&text_pos_verts, some_vbo_pos.clone())?;
-			some_vbo_pos
+			render_ctx.update_buffer(&colors, some_colors_buf.clone())?;
+			(some_vbo_pos, some_colors_buf)
 		} else {
-			render_ctx.new_buffer(&text_pos_verts, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
+			(
+				render_ctx.new_buffer(&text_pos_verts, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?,
+				render_ctx.new_buffer(&colors, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?,
+			)
 		};
 
 		self.update_transform(
@@ -490,6 +495,7 @@ impl Canvas
 			tex.view().clone(),
 			Vec2::ONE,
 			Some(text_vert_buf_pos),
+			Some(colors_buf),
 		)?;
 
 		Ok(())
@@ -509,7 +515,7 @@ impl Canvas
 					0,
 					vec![resources.descriptor_set.clone()],
 				)?;
-				cb.bind_vertex_buffers(0, (vert_buf_pos.clone(),))?;
+				cb.bind_vertex_buffers(0, (vert_buf_pos.clone(), resources.colors_buf.clone().unwrap()))?;
 				cb.draw(4, vert_buf_pos.len() as u32, 0, 0)?;
 			}
 		}

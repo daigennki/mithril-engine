@@ -5,6 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
+use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 
@@ -17,6 +18,7 @@ pub struct UIText
 {
 	pub text_str: String,
 	pub size: f32,
+	pub color: Vec4,
 }
 impl WantsSystemAdded for UIText
 {

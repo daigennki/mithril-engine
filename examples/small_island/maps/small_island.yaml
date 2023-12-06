@@ -6,6 +6,7 @@ entities:
   - UIText:
       text_str: "0 fps"
       size: 32.0
+      color: [1.0, 1.0, 0.0, 1.0]
   - FpsCounter:
       
 - 
