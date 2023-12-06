@@ -28,7 +28,7 @@ use vulkano::pipeline::{
 	graphics::{
 		color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
 	},
-	Pipeline,
+	Pipeline, PipelineBindPoint,
 };
 use vulkano::shader::ShaderStages;
 
@@ -98,8 +98,8 @@ mod ui_text_vs
 
 			void main()
 			{
-				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, 1.0 }, { 1.0, 0.0 }, { 1.0, 1.0 } };
-				vec2 texcoord_logical_pixels = texcoords[gl_VertexIndex % 4] * pos.zw;
+				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, pos.w }, { pos.z, 0.0 }, pos.zw };
+				vec2 texcoord_logical_pixels = texcoords[min(gl_VertexIndex, 3)];
 				vec2 pos2 = texcoord_logical_pixels + pos.xy;
 				texcoord = texcoord_logical_pixels * texture_size_inv;
 
@@ -504,7 +504,7 @@ impl Canvas
 		if let Some(resources) = self.gpu_resources.get(&eid) {
 			if let Some(vert_buf_pos) = resources.text_vert_buf_pos.clone() {
 				cb.bind_descriptor_sets(
-					vulkano::pipeline::PipelineBindPoint::Graphics,
+					PipelineBindPoint::Graphics,
 					self.text_pipeline.layout().clone(),
 					0,
 					vec![resources.descriptor_set.clone()],
@@ -525,7 +525,7 @@ impl Canvas
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
 			cb.bind_descriptor_sets(
-				vulkano::pipeline::PipelineBindPoint::Graphics,
+				PipelineBindPoint::Graphics,
 				self.ui_pipeline.layout().clone(),
 				0,
 				vec![resources.descriptor_set.clone()],
