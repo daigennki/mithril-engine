@@ -75,7 +75,6 @@ mod ui_fs
 			void main()
 			{
 				color_out = texture(tex, texcoord);
-				color_out.rgb *= color_out.a;
 			}
 		",
 	}
@@ -90,6 +89,7 @@ mod ui_text_vs
 			layout(binding = 0) uniform transform_ubo
 			{
 				mat4 transformation;
+				vec2 texture_size_inv;
 			};
 
 			layout(location = 0) in vec4 pos; // xy: top left pos, zw: width and height
@@ -99,8 +99,9 @@ mod ui_text_vs
 			void main()
 			{
 				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, 1.0 }, { 1.0, 0.0 }, { 1.0, 1.0 } };
-				texcoord = texcoords[gl_VertexIndex % 4];
-				vec2 pos2 = texcoord * pos.zw + pos.xy;
+				vec2 texcoord_logical_pixels = texcoords[gl_VertexIndex % 4] * pos.zw;
+				vec2 pos2 = texcoord_logical_pixels + pos.xy;
+				texcoord = texcoord_logical_pixels * texture_size_inv;
 
 				gl_Position = transformation * vec4(pos2, 0.0, 1.0);
 
@@ -133,7 +134,7 @@ mod ui_text_fs
 struct UiGpuResources
 {
 	pub text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
-	pub buffer: Subbuffer<Mat4>,
+	pub buffer: Subbuffer<[f32]>, // uniform buffer
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
 }
 
@@ -315,14 +316,27 @@ impl Canvas
 				transform.position.as_vec2().extend(0.0),
 			);
 
+		let mut buf_data: [f32; 18] = Default::default();
+		buf_data[..16].copy_from_slice(&projected.to_cols_array());
+
+		let image_extent = image_view.image().extent();
+		// division inverted here so that division isn't performed in shader
+		buf_data[16] = self.scale_factor / image_extent[0] as f32;
+		buf_data[17] = self.scale_factor / image_extent[1] as f32;
+
+		let buf_data_slice = if text_vert_buf_pos.is_some() {
+			&buf_data[..18]
+		} else {
+			&buf_data[..16]
+		};
+
 		let buffer = match self.gpu_resources.get(&eid) {
 			Some(resources) => {
-				render_ctx.update_buffer(&[projected], resources.buffer.clone().into_slice())?;
+				render_ctx.update_buffer(buf_data_slice, resources.buffer.clone())?;
 				resources.buffer.clone()
 			}
 			None => render_ctx
-				.new_buffer(&[projected], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?
-				.index(0),
+				.new_buffer(buf_data_slice, BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
 		let set_layout = if text_vert_buf_pos.is_some() {
@@ -430,7 +444,7 @@ impl Canvas
 
 		let img_dim = glyph_image_array
 			.first()
-			.map(|(image, _)| [image.width(), image.height()])
+			.map(|(image, _, _)| [image.width(), image.height()])
 			.unwrap();
 
 		let glyph_count = glyph_image_array.len();
@@ -439,17 +453,17 @@ impl Canvas
 			.get(&eid)
 			.as_ref()
 			.and_then(|res| res.text_vert_buf_pos.as_ref())
-			.map(|commands| commands.len() as usize)
+			.map(|quads| quads.len() as usize)
 			.unwrap_or(0);
 
 		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_count);
 		let mut text_pos_verts = Vec::with_capacity(glyph_count);
-		for (image, offset) in glyph_image_array.into_iter() {
+		for (image, tl, bb_size) in glyph_image_array.into_iter() {
 			combined_images.extend_from_slice(image.into_raw().as_slice());
 
-			let first_corner: Vec2 = offset / self.scale_factor;
-			let img_dim_scaled = UVec2::from(img_dim).as_vec2() / self.scale_factor;
-			text_pos_verts.push((first_corner, img_dim_scaled).into());
+			let top_left_corner: Vec2 = tl / self.scale_factor;
+			let logical_quad_size: Vec2 = bb_size.as_vec2() / self.scale_factor;
+			text_pos_verts.push((top_left_corner, logical_quad_size).into());
 		}
 
 		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, glyph_count.try_into()?)?;
@@ -571,9 +585,10 @@ fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32
 	(proj, scale_factor)
 }
 
-/// Create a `Vec` of greyscale images.
-/// Each image is paired with a `Vec2` representing the top left corner of each image relative to the baseline.
-fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(GrayImage, Vec2)>
+/// Create a `Vec` of greyscale images for each rendered glyph.
+/// Each image is paired with a `Vec2` representing the top left corner relative to the baseline,
+/// and an `IVec2` representing the bounding box size.
+fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(GrayImage, Vec2, IVec2)>
 {
 	let scale_uniform = Scale::uniform(size);
 	let glyphs: Vec<_> = font.layout(text, scale_uniform, rusttype::point(0.0, 0.0)).collect();
@@ -601,9 +616,10 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 			// and turn the coverage into an alpha value
 			glyph.draw(|x, y, v| image.put_pixel(x, y, Luma([(v * 255.0) as u8])));
 
-			let pos = Vec2::new(bb.min.x as f32, bb.min.y as f32);
+			let pos_tl = Vec2::new(bb.min.x as f32, bb.min.y as f32);
+			let bounding_box_size = IVec2::new(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
 
-			bitmaps.push((image, pos));
+			bitmaps.push((image, pos_tl, bounding_box_size));
 		}
 	}
 
