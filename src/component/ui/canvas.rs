@@ -43,9 +43,10 @@ mod ui_vs
 		src: r"
 			#version 460
 
-			layout(binding = 0) uniform transform_ubo
+			layout(push_constant) uniform pc
 			{
-				mat4 transformation;
+				mat2 transformation;
+				vec2 translation_projected;
 			};
 
 			layout(location = 0) in vec2 pos;
@@ -54,7 +55,7 @@ mod ui_vs
 
 			void main()
 			{
-				gl_Position = transformation * vec4(pos, 0.0, 1.0);
+				gl_Position = vec4(transformation * pos + translation_projected, 0.0, 1.0);
 				texcoord = uv;
 			}
 		",
@@ -67,7 +68,7 @@ mod ui_fs
 		src: r"
 			#version 460
 
-			layout(binding = 1) uniform sampler2D tex;
+			layout(binding = 0) uniform sampler2D tex;
 
 			layout(location = 0) in vec2 texcoord;
 			layout(location = 0) out vec4 color_out;
@@ -86,9 +87,10 @@ mod ui_text_vs
 		src: r"
 			#version 460
 
-			layout(binding = 0) uniform transform_ubo
+			layout(push_constant) uniform pc
 			{
-				mat4 transformation;
+				mat2 transformation;
+				vec2 translation_projected;
 				vec2 texture_size_inv;
 			};
 
@@ -107,7 +109,7 @@ mod ui_text_vs
 				vec2 pos2 = texcoord_logical_pixels + pos.xy;
 				texcoord = texcoord_logical_pixels * texture_size_inv;
 
-				gl_Position = transformation * vec4(pos2, 0.0, 1.0);
+				gl_Position = vec4(transformation * pos2 + translation_projected, 0.0, 1.0);
 
 				instance_index = gl_InstanceIndex;
 				glyph_color = color_INSTANCE;
@@ -122,7 +124,7 @@ mod ui_text_fs
 		src: r"
 			#version 460
 
-			layout(binding = 1) uniform sampler2DArray tex;
+			layout(binding = 0) uniform sampler2DArray tex;
 
 			layout(location = 0) in vec2 texcoord;
 			layout(location = 1) flat in int instance_index;
@@ -140,16 +142,17 @@ mod ui_text_fs
 
 struct UiGpuResources
 {
-	pub text_vbo: Option<Subbuffer<[Vec4]>>,
-	pub buffer: Subbuffer<[f32]>, // uniform buffer
-	pub descriptor_set: Arc<PersistentDescriptorSet>,
+	text_vbo: Option<Subbuffer<[Vec4]>>,
+	descriptor_set: Arc<PersistentDescriptorSet>,
+	projected: Affine2,
+	logical_texture_size_inv: Vec2,
 }
 
 #[derive(shipyard::Unique)]
 pub struct Canvas
 {
 	base_dimensions: [u32; 2],
-	projection: Mat4,
+	canvas_scaling: Vec2,
 	scale_factor: f32,
 
 	set_layout: Arc<DescriptorSetLayout>,
@@ -178,41 +181,25 @@ impl Canvas
 			..Default::default()
 		};
 		let sampler = Sampler::new(device.clone(), sampler_info)?;
-		let bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: transformation matrix
-				stages: ShaderStages::VERTEX,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: tex
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-			},
-		];
+		let image_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			immutable_samplers: vec![sampler],
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+		};
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(bindings).collect(),
+			bindings: [(0, image_binding)].into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
 		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
-		let text_bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: transformation matrix
-				stages: ShaderStages::VERTEX,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: tex
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![text_sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-			},
-		];
+		let text_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::FRAGMENT,
+			immutable_samplers: vec![text_sampler],
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+		};
 		let text_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(text_bindings).collect(),
+			bindings: [(0, text_binding)].into(),
 			..Default::default()
 		};
 		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
@@ -257,11 +244,12 @@ impl Canvas
 
 		let dim = render_ctx.swapchain_dimensions();
 
-		let (projection, scale_factor) = calculate_projection(canvas_width, canvas_height, dim[0], dim[1]);
+		let (canvas_scaling, scale_factor) =
+			calculate_projection(canvas_width as f32, canvas_height as f32, dim[0] as f32, dim[1] as f32);
 
 		Ok(Canvas {
 			base_dimensions: [canvas_width, canvas_height],
-			projection,
+			canvas_scaling,
 			scale_factor,
 			set_layout,
 			text_set_layout,
@@ -293,15 +281,11 @@ impl Canvas
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
 	pub fn on_screen_resize(&mut self, screen_width: u32, screen_height: u32)
 	{
-		let (proj, scale_factor) =
-			calculate_projection(self.base_dimensions[0], self.base_dimensions[1], screen_width, screen_height);
-		self.projection = proj;
+		let (canvas_width, canvas_height) = (self.base_dimensions[0] as f32, self.base_dimensions[1] as f32);
+		let (canvas_scaling, scale_factor) =
+			calculate_projection(canvas_width, canvas_height, screen_width as f32, screen_height as f32);
+		self.canvas_scaling = canvas_scaling;
 		self.scale_factor = scale_factor;
-	}
-
-	pub fn projection(&self) -> Mat4
-	{
-		self.projection
 	}
 
 	fn update_transform(
@@ -314,52 +298,30 @@ impl Canvas
 		text_vbo: Option<Subbuffer<[Vec4]>>,
 	) -> Result<(), GenericEngineError>
 	{
-		let projected = self.projection
-			* Mat4::from_scale_rotation_translation(
-				transform.scale.unwrap_or(default_scale).extend(1.0),
-				Quat::IDENTITY,
-				transform.position.as_vec2().extend(0.0),
-			);
-
-		let mut buf_data: [f32; 18] = Default::default();
-		buf_data[..16].copy_from_slice(&projected.to_cols_array());
+		let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
+		let translation = transform.position.as_vec2() * self.canvas_scaling;
+		let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
 
 		let image_extent = image_view.image().extent();
+
 		// division inverted here so that division isn't performed in shader
-		buf_data[16] = self.scale_factor / image_extent[0] as f32;
-		buf_data[17] = self.scale_factor / image_extent[1] as f32;
-
-		let buf_data_slice = if text_vbo.is_some() {
-			&buf_data[..18]
-		} else {
-			&buf_data[..16]
-		};
-
-		let buffer = match self.gpu_resources.get(&eid) {
-			Some(resources) => {
-				render_ctx.update_buffer(buf_data_slice, resources.buffer.clone())?;
-				resources.buffer.clone()
-			}
-			None => render_ctx.new_buffer(buf_data_slice, BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?,
-		};
+		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
 
 		let set_layout = if text_vbo.is_some() {
 			self.text_set_layout.clone()
 		} else {
 			self.set_layout.clone()
 		};
-		let writes = [
-			WriteDescriptorSet::buffer(0, buffer.clone()),
-			WriteDescriptorSet::image_view(1, image_view),
-		];
+		let writes = [WriteDescriptorSet::image_view(0, image_view)];
 		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
 		self.gpu_resources.insert(
 			eid,
 			UiGpuResources {
 				text_vbo,
-				buffer,
 				descriptor_set,
+				projected,
+				logical_texture_size_inv,
 			},
 		);
 
@@ -503,6 +465,11 @@ impl Canvas
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
 			if let Some(vbo) = resources.text_vbo.clone() {
+				let mut push_constant_data: [f32; 8] = Default::default();
+				resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
+				resources.logical_texture_size_inv.write_to_slice(&mut push_constant_data[6..8]);
+
+				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)?;
 				cb.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					self.text_pipeline.layout().clone(),
@@ -525,6 +492,7 @@ impl Canvas
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
+			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
 			cb.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.ui_pipeline.layout().clone(),
@@ -556,10 +524,10 @@ impl Canvas
 	}
 }
 
-fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32, screen_height: u32) -> (Mat4, f32)
+fn calculate_projection(canvas_width: f32, canvas_height: f32, screen_width: f32, screen_height: f32) -> (Vec2, f32)
 {
-	let canvas_aspect_ratio = canvas_width as f32 / canvas_height as f32;
-	let screen_aspect_ratio = screen_width as f32 / screen_height as f32;
+	let canvas_aspect_ratio = canvas_width / canvas_height;
+	let screen_aspect_ratio = screen_width / screen_height;
 
 	// UI scale factor, used to increase resolution of components such as text when necessary
 	let scale_factor;
@@ -572,16 +540,14 @@ fn calculate_projection(canvas_width: u32, canvas_height: u32, screen_width: u32
 	if screen_aspect_ratio > canvas_aspect_ratio {
 		adjusted_canvas_w = canvas_height * screen_width / screen_height;
 		adjusted_canvas_h = canvas_height;
-		scale_factor = screen_height as f32 / canvas_height as f32;
+		scale_factor = screen_height / canvas_height;
 	} else {
 		adjusted_canvas_w = canvas_width;
 		adjusted_canvas_h = canvas_width * screen_height / screen_width;
-		scale_factor = screen_width as f32 / canvas_width as f32;
+		scale_factor = screen_width / canvas_width;
 	}
 
-	let half_width = adjusted_canvas_w as f32 / 2.0;
-	let half_height = adjusted_canvas_h as f32 / 2.0;
-	let proj = Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 0.0, 1.0);
+	let proj = 2.0 / Vec2::new(adjusted_canvas_w, adjusted_canvas_h);
 
 	(proj, scale_factor)
 }
