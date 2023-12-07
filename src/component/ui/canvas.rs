@@ -560,19 +560,22 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 	let scale_uniform = Scale::uniform(size);
 	let glyphs: Vec<_> = font.layout(text, scale_uniform, rusttype::point(0.0, 0.0)).collect();
 
-	// Get the largest glyphs in terms of width and height respectively
+	// Get the largest glyphs in terms of width and height respectively.
+	// They get adjusted to the next multiple of 8 for memory alignment purposes.
 	let max_width: u32 = glyphs
 		.iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box())
 		.map(|bb| bb.width().abs() as u32)
 		.max()
-		.unwrap_or(1);
+		.unwrap_or(1)
+		.next_multiple_of(8);
 	let max_height: u32 = glyphs
 		.iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box())
 		.map(|bb| bb.height().abs() as u32)
 		.max()
-		.unwrap_or(1);
+		.unwrap_or(1)
+		.next_multiple_of(8);
 
 	let mut bitmaps = Vec::with_capacity(glyphs.len());
 	for glyph in glyphs {
