@@ -296,9 +296,10 @@ impl RenderContext
 		T: BufferContents + Copy,
 	{
 		let data_len = data.len().try_into()?;
+		let data_size_bytes = data.len() * std::mem::size_of::<T>();
 		let buf;
 		if self.allow_direct_buffer_access {
-			log::debug!("Allocating buffer of {} bytes", data_len * (std::mem::size_of::<T>() as u64));
+			log::debug!("Allocating direct buffer of {} bytes", data_size_bytes);
 			// When possible, upload directly to the new buffer memory.
 			let buf_info = BufferCreateInfo {
 				usage,
@@ -317,6 +318,7 @@ impl RenderContext
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
 			buf.write().unwrap().copy_from_slice(data);
 		} else {
+			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
 			// If direct uploads aren't possible, create a staging buffer on the CPU side,
 			// then submit a transfer command to the new buffer on the GPU side.
 			let staging_buf = self

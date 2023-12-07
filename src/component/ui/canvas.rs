@@ -138,8 +138,7 @@ mod ui_text_fs
 
 struct UiGpuResources
 {
-	pub text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
-	pub colors_buf: Option<Subbuffer<[Vec4]>>,
+	pub text_vbo: Option<Subbuffer<[Vec4]>>,
 	pub buffer: Subbuffer<[f32]>, // uniform buffer
 	pub descriptor_set: Arc<PersistentDescriptorSet>,
 }
@@ -312,8 +311,7 @@ impl Canvas
 		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
-		text_vert_buf_pos: Option<Subbuffer<[Vec4]>>,
-		colors_buf: Option<Subbuffer<[Vec4]>>,
+		text_vbo: Option<Subbuffer<[Vec4]>>,
 	) -> Result<(), GenericEngineError>
 	{
 		let projected = self.projection
@@ -331,7 +329,7 @@ impl Canvas
 		buf_data[16] = self.scale_factor / image_extent[0] as f32;
 		buf_data[17] = self.scale_factor / image_extent[1] as f32;
 
-		let buf_data_slice = if text_vert_buf_pos.is_some() {
+		let buf_data_slice = if text_vbo.is_some() {
 			&buf_data[..18]
 		} else {
 			&buf_data[..16]
@@ -345,7 +343,7 @@ impl Canvas
 			None => render_ctx.new_buffer(buf_data_slice, BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?,
 		};
 
-		let set_layout = if text_vert_buf_pos.is_some() {
+		let set_layout = if text_vbo.is_some() {
 			self.text_set_layout.clone()
 		} else {
 			self.set_layout.clone()
@@ -359,8 +357,7 @@ impl Canvas
 		self.gpu_resources.insert(
 			eid,
 			UiGpuResources {
-				text_vert_buf_pos,
-				colors_buf,
+				text_vbo,
 				buffer,
 				descriptor_set,
 			},
@@ -382,7 +379,7 @@ impl Canvas
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
 			let image_dimensions = UVec2::from(tex.dimensions()).as_vec2();
-			self.update_transform(render_ctx, eid, transform, tex.view().clone(), image_dimensions, None, None)?;
+			self.update_transform(render_ctx, eid, transform, tex.view().clone(), image_dimensions, None)?;
 		}
 
 		Ok(())
@@ -404,7 +401,7 @@ impl Canvas
 		// render it. On Windows/Linux desktop, the limit is always at least 2048, so it should be
 		// extremely rare that we get such a long string, but we should check it anyways just in case.
 		// We also check that it's no larger than 2048 characters, because we might use
-		// vkCmdUpdateBuffer to update vertices, which has a limit of 65536 bytes.
+		// vkCmdUpdateBuffer to update vertices, which has a limit of 65536 (32 * 2048) bytes.
 		let image_format_info = ImageFormatInfo {
 			format: Format::R8_UNORM,
 			usage: ImageUsage::SAMPLED,
@@ -426,7 +423,7 @@ impl Canvas
 				text_str,
 			);
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
-				resources.text_vert_buf_pos = None;
+				resources.text_vbo = None;
 			}
 			return Ok(());
 		}
@@ -437,7 +434,7 @@ impl Canvas
 		// remove the indirect draw commands from the GPU resources, and then return immediately.
 		if glyph_image_array.is_empty() {
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
-				resources.text_vert_buf_pos = None;
+				resources.text_vbo = None;
 			}
 			return Ok(());
 		}
@@ -452,8 +449,8 @@ impl Canvas
 			.gpu_resources
 			.get(&eid)
 			.as_ref()
-			.and_then(|res| res.text_vert_buf_pos.as_ref())
-			.map(|quads| quads.len() as usize)
+			.and_then(|res| res.text_vbo.as_ref())
+			.map(|vbo| (vbo.len() / 2) as usize)
 			.unwrap_or(0);
 
 		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_count);
@@ -470,22 +467,20 @@ impl Canvas
 
 		let colors = vec![text.color; glyph_count];
 
-		let (text_vert_buf_pos, colors_buf) = if glyph_count == prev_glyph_count {
+		// Combine position and color data into a single vertex buffer.
+		let mut vbo_data = text_pos_verts;
+		vbo_data.extend_from_slice(&colors);
+
+		let text_vbo = if glyph_count == prev_glyph_count {
 			// Reuse buffers if they're of the same length.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.gpu_resources.get(&eid).unwrap();
-			let some_vbo_pos = resources.text_vert_buf_pos.clone().unwrap();
-			let some_colors_buf = resources.colors_buf.clone().unwrap();
-
-			render_ctx.update_buffer(&text_pos_verts, some_vbo_pos.clone())?;
-			render_ctx.update_buffer(&colors, some_colors_buf.clone())?;
-			(some_vbo_pos, some_colors_buf)
+			let some_vbo = resources.text_vbo.clone().unwrap();
+			render_ctx.update_buffer(&vbo_data, some_vbo.clone())?;
+			some_vbo
 		} else {
-			(
-				render_ctx.new_buffer(&text_pos_verts, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?,
-				render_ctx.new_buffer(&colors, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?,
-			)
+			render_ctx.new_buffer(&vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
 		self.update_transform(
@@ -494,8 +489,7 @@ impl Canvas
 			transform,
 			tex.view().clone(),
 			Vec2::ONE,
-			Some(text_vert_buf_pos),
-			Some(colors_buf),
+			Some(text_vbo),
 		)?;
 
 		Ok(())
@@ -508,15 +502,16 @@ impl Canvas
 	) -> Result<(), GenericEngineError>
 	{
 		if let Some(resources) = self.gpu_resources.get(&eid) {
-			if let Some(vert_buf_pos) = resources.text_vert_buf_pos.clone() {
+			if let Some(vbo) = resources.text_vbo.clone() {
 				cb.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					self.text_pipeline.layout().clone(),
 					0,
 					vec![resources.descriptor_set.clone()],
 				)?;
-				cb.bind_vertex_buffers(0, (vert_buf_pos.clone(), resources.colors_buf.clone().unwrap()))?;
-				cb.draw(4, vert_buf_pos.len() as u32, 0, 0)?;
+				let glyph_count = vbo.len() / 2;
+				cb.bind_vertex_buffers(0, vbo.clone().split_at(glyph_count))?;
+				cb.draw(4, glyph_count as u32, 0, 0)?;
 			}
 		}
 		Ok(())
