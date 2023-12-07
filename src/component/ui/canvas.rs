@@ -400,8 +400,8 @@ impl Canvas
 		// If the string is longer than the maximum image array layers allowed by Vulkan, refuse to
 		// render it. On Windows/Linux desktop, the limit is always at least 2048, so it should be
 		// extremely rare that we get such a long string, but we should check it anyways just in case.
-		// We also check that it's no larger than 2048 characters, because we might use
-		// vkCmdUpdateBuffer to update vertices, which has a limit of 65536 (32 * 2048) bytes.
+		// We also check that it's no larger than 2048 characters because we might use
+		// vkCmdUpdateBuffer, which has a limit of 65536 (32 * 2048) bytes, to update vertices.
 		let image_format_info = ImageFormatInfo {
 			format: Format::R8_UNORM,
 			usage: ImageUsage::SAMPLED,
@@ -431,7 +431,7 @@ impl Canvas
 		let glyph_image_array = text_to_image_array(text_str, &self.default_font, text.size * self.scale_factor);
 
 		// If no visible glyphs were produced (e.g. the string was empty, or it only has space characters),
-		// remove the indirect draw commands from the GPU resources, and then return immediately.
+		// remove the vertex buffers from the GPU resources, and then return immediately.
 		if glyph_image_array.is_empty() {
 			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
 				resources.text_vbo = None;
@@ -472,7 +472,7 @@ impl Canvas
 		vbo_data.extend_from_slice(&colors);
 
 		let text_vbo = if glyph_count == prev_glyph_count {
-			// Reuse buffers if they're of the same length.
+			// Reuse the vertex buffer if the glyph count hasn't changed.
 			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.gpu_resources.get(&eid).unwrap();
