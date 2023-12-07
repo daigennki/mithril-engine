@@ -92,14 +92,16 @@ mod ui_text_vs
 				vec2 texture_size_inv;
 			};
 
-			layout(location = 0) in vec4 pos; // xy: top left pos, zw: width and height
-			layout(location = 1) in vec4 color;
+			// for position input, xy: top left pos, zw: width and height
+			layout(location = 0) in vec4 pos_INSTANCE;
+			layout(location = 1) in vec4 color_INSTANCE;
 			layout(location = 0) out vec2 texcoord;
 			layout(location = 1) flat out int instance_index;
 			layout(location = 2) flat out vec4 glyph_color;
 
 			void main()
 			{
+				vec4 pos = pos_INSTANCE;
 				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, pos.w }, { pos.z, 0.0 }, pos.zw };
 				vec2 texcoord_logical_pixels = texcoords[min(gl_VertexIndex, 3)];
 				vec2 pos2 = texcoord_logical_pixels + pos.xy;
@@ -108,7 +110,7 @@ mod ui_text_vs
 				gl_Position = transformation * vec4(pos2, 0.0, 1.0);
 
 				instance_index = gl_InstanceIndex;
-				glyph_color = color;
+				glyph_color = color_INSTANCE;
 			}
 		",
 	}
@@ -219,7 +221,6 @@ impl Canvas
 		let ui_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			false,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![set_layout.clone()],
@@ -229,7 +230,6 @@ impl Canvas
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			true,
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			vec![text_set_layout.clone()],

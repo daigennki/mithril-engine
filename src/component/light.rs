@@ -212,7 +212,6 @@ impl LightManager
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			false,
 			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
 			vec![],

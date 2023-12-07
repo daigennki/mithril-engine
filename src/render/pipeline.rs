@@ -28,10 +28,13 @@ use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryTyp
 
 use crate::GenericEngineError;
 
+/// Create a new graphics pipeline using the given parameters.
+///
+/// NOTE: In the vertex shader, giving vertex inputs a name that ends with '_INSTANCE' will apply
+/// `VertexInputRate::Instance` for that input. Otherwise, `VertexInputRate::Vertex` will be used.
 pub fn new(
 	vk_dev: Arc<Device>,
 	primitive_topology: PrimitiveTopology,
-	vertex_input_rate_instance: bool,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
@@ -57,7 +60,7 @@ pub fn new(
 		.find(|stage| stage.entry_point.info().execution_model == ExecutionModel::Vertex)
 		.ok_or("pipeline::new: no vertex shader was provided")?;
 
-	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader.entry_point, vertex_input_rate_instance)?);
+	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader.entry_point)?);
 
 	// Go through all the stages that have a push constant, combining the shader stage flags
 	// and getting the smallest range size to create a single `PushConstantRange`.
@@ -131,7 +134,6 @@ pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Ar
 	new(
 		vk_dev,
 		config.primitive_topology,
-		false,
 		&[config.vertex_shader, config.fragment_shader],
 		RasterizationState {
 			cull_mode: CullMode::Back,
@@ -179,7 +181,6 @@ pub fn new_from_config_transparency(
 	new(
 		vk_dev,
 		config.primitive_topology,
-		false,
 		&[config.vertex_shader, config.fragment_shader],
 		RasterizationState {
 			cull_mode: CullMode::Back,
@@ -216,7 +217,7 @@ fn get_shader_stage(
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
-fn gen_vertex_input_state(entry_point: &EntryPoint, input_rate_instance: bool)
+fn gen_vertex_input_state(entry_point: &EntryPoint)
 	-> Result<VertexInputState, GenericEngineError>
 {
 	log::debug!("Automatically generating VertexInputState:");
@@ -230,12 +231,16 @@ fn gen_vertex_input_state(entry_point: &EntryPoint, input_rate_instance: bool)
 				let binding = input.location;
 				let format = format_from_interface_type(&input.ty);
 				let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
+				let name = input.name.as_ref().map(|n| n.as_ref()).unwrap_or("[unknown]");
 
-				log::debug!("- binding + attribute {binding}: {format:?} (stride {stride})");
+				log::debug!("- binding + attribute {binding} '{name}': {format:?} (stride {stride})");
 
-				let input_rate = input_rate_instance
+				// If the input name ends with "_INSTANCE", use `VertexInputRate::Instance` for that input.
+				let input_rate = name
+					.ends_with("_INSTANCE")
 					.then_some(VertexInputRate::Instance { divisor: 1 })
 					.unwrap_or(VertexInputRate::Vertex);
+
 				let binding_desc = VertexInputBindingDescription {
 					stride,
 					input_rate,
