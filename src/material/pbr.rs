@@ -13,7 +13,7 @@ use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	WriteDescriptorSet,
 };
-use vulkano::device::{DeviceOwned};
+use vulkano::device::DeviceOwned;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, GraphicsPipeline};
 use vulkano::shader::ShaderStages;
@@ -95,8 +95,10 @@ impl Material for PBR
 		self.transparent
 	}
 
-	fn load_pipeline_associated(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
-		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+	fn load_pipeline_associated(
+		light_set_layout: Arc<DescriptorSetLayout>,
+		transparency_inputs: Arc<DescriptorSetLayout>,
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
 	{
 		let vk_dev = transparency_inputs.device().clone();
 
@@ -144,8 +146,11 @@ impl Material for PBR
 		Ok((pipeline, Some(transparency_pipeline), set_layout))
 	}
 
-	fn load_pipeline(&self, light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
-		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+	fn load_pipeline(
+		&self,
+		light_set_layout: Arc<DescriptorSetLayout>,
+		transparency_inputs: Arc<DescriptorSetLayout>,
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
 	{
 		Self::load_pipeline_associated(light_set_layout, transparency_inputs)
 	}

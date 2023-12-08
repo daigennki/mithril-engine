@@ -445,14 +445,7 @@ impl Canvas
 			render_ctx.new_buffer(&vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		self.update_transform(
-			render_ctx,
-			eid,
-			transform,
-			tex.view().clone(),
-			Vec2::ONE,
-			Some(text_vbo),
-		)?;
+		self.update_transform(render_ctx, eid, transform, tex.view().clone(), Vec2::ONE, Some(text_vbo))?;
 
 		Ok(())
 	}
@@ -467,7 +460,9 @@ impl Canvas
 			if let Some(vbo) = resources.text_vbo.clone() {
 				let mut push_constant_data: [f32; 8] = Default::default();
 				resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
-				resources.logical_texture_size_inv.write_to_slice(&mut push_constant_data[6..8]);
+				resources
+					.logical_texture_size_inv
+					.write_to_slice(&mut push_constant_data[6..8]);
 
 				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)?;
 				cb.bind_descriptor_sets(

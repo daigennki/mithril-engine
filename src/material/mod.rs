@@ -31,7 +31,8 @@ pub mod vs_3d_common
 pub trait Material: Send + Sync
 {
 	fn material_name_associated() -> &'static str
-		where Self: Sized;
+	where
+		Self: Sized;
 
 	fn material_name(&self) -> &'static str;
 
@@ -51,12 +52,18 @@ pub trait Material: Send + Sync
 
 	fn has_transparency(&self) -> bool;
 
-	fn load_pipeline_associated(light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
-		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
-		where Self: Sized;
+	fn load_pipeline_associated(
+		light_set_layout: Arc<DescriptorSetLayout>,
+		transparency_inputs: Arc<DescriptorSetLayout>,
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+	where
+		Self: Sized;
 
-	fn load_pipeline(&self, light_set_layout: Arc<DescriptorSetLayout>, transparency_inputs: Arc<DescriptorSetLayout>)
-		-> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>;
+	fn load_pipeline(
+		&self,
+		light_set_layout: Arc<DescriptorSetLayout>,
+		transparency_inputs: Arc<DescriptorSetLayout>,
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.

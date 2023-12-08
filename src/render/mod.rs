@@ -39,7 +39,10 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::{Device, Queue};
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::{Filter, Sampler, SamplerCreateInfo}, view::ImageView};
+use vulkano::image::{
+	sampler::{Filter, Sampler, SamplerCreateInfo},
+	view::ImageView,
+};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
@@ -53,8 +56,8 @@ use vulkano::sync::{
 };
 use vulkano::{DeviceSize, Validated, VulkanError};
 
-use crate::GenericEngineError;
 use crate::material::Material;
+use crate::GenericEngineError;
 use texture::Texture;
 
 // Format used for main depth buffer.

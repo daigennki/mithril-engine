@@ -212,8 +212,7 @@ fn get_shader_stage(
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
-fn gen_vertex_input_state(entry_point: &EntryPoint)
-	-> Result<VertexInputState, GenericEngineError>
+fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, GenericEngineError>
 {
 	log::debug!("Automatically generating VertexInputState:");
 	let vertex_input_state =
@@ -236,18 +235,13 @@ fn gen_vertex_input_state(entry_point: &EntryPoint)
 					.then_some(VertexInputRate::Instance { divisor: 1 })
 					.unwrap_or(VertexInputRate::Vertex);
 
-				let binding_desc = VertexInputBindingDescription {
-					stride,
-					input_rate,
-				};
+				let binding_desc = VertexInputBindingDescription { stride, input_rate };
 				let attribute_desc = VertexInputAttributeDescription {
 					binding,
 					format,
 					offset: 0,
 				};
-				accum
-					.binding(binding, binding_desc)
-					.attribute(binding, attribute_desc)
+				accum.binding(binding, binding_desc).attribute(binding, attribute_desc)
 			});
 
 	if vertex_input_state.attributes.is_empty() {

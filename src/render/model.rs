@@ -131,7 +131,7 @@ impl Model
 				let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
 				let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
 				let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
-				
+
 				let index_buf_usage = BufferUsage::INDEX_BUFFER;
 				let index_buffer = match indices_type {
 					DataType::U16 => IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, index_buf_usage)?),
@@ -286,8 +286,11 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32)
-		-> Result<Self, GenericEngineError>
+	pub fn from_gltf_primitive(
+		primitive: &gltf::Primitive,
+		first_index: u32,
+		vertex_offset: i32,
+	) -> Result<Self, GenericEngineError>
 	{
 		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
 

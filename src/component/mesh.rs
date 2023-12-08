@@ -115,10 +115,7 @@ impl MeshManager
 
 			// Get the set layout. We use `unwrap` here since it must have already been loaded when
 			// the pipeline was loaded just above.
-			let set_layout = self
-				.set_layouts
-				.get(mat_name)
-				.unwrap();
+			let set_layout = self.set_layouts.get(mat_name).unwrap();
 
 			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
 			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout.clone(), writes, [])?;
