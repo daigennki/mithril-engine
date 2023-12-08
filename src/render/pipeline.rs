@@ -121,36 +121,49 @@ pub fn new(
 	Ok(GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?)
 }
 
-pub fn new_from_config(vk_dev: Arc<Device>, config: PipelineConfig) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
+/// Create a pipeline for a material.
+pub fn new_for_material(
+	vk_dev: Arc<Device>,
+	vertex_shader: Arc<ShaderModule>,
+	fragment_shader: Arc<ShaderModule>,
+	attachment_blend: Option<AttachmentBlend>,
+	primitive_topology: PrimitiveTopology,
+	set_layouts: Vec<Arc<DescriptorSetLayout>>,
+) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
+	let rasterization_state = RasterizationState {
+		cull_mode: CullMode::Back,
+		..Default::default()
+	};
 	let depth_stencil_state = DepthStencilState {
-		depth: Some(DepthState {
-			write_enable: true,
-			compare_op: CompareOp::Less,
-		}),
+		depth: Some(DepthState::simple()),
 		..Default::default()
 	};
 
 	new(
 		vk_dev,
-		config.primitive_topology,
-		&[config.vertex_shader, config.fragment_shader],
-		RasterizationState {
-			cull_mode: CullMode::Back,
-			..Default::default()
-		},
-		config.set_layouts,
-		&[(Format::R16G16B16A16_SFLOAT, config.attachment_blend)],
+		primitive_topology,
+		&[vertex_shader, fragment_shader],
+		rasterization_state,
+		set_layouts,
+		&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
 		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
 }
 
-/// Create a pipeline from a configuration, assuming that the fragment shader is specfically for OIT.
-pub fn new_from_config_transparency(
+/// Create a pipeline for a material, assuming that the fragment shader is specfically for OIT.
+pub fn new_for_material_transparency(
 	vk_dev: Arc<Device>,
-	config: PipelineConfig,
+	vertex_shader: Arc<ShaderModule>,
+	fragment_shader: Arc<ShaderModule>,
+	primitive_topology: PrimitiveTopology,
+	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
+	let rasterization_state = RasterizationState {
+		cull_mode: CullMode::Back,
+		..Default::default()
+	};
 	let depth_stencil_state = DepthStencilState {
 		depth: Some(DepthState {
 			write_enable: false,
@@ -159,48 +172,30 @@ pub fn new_from_config_transparency(
 		..Default::default()
 	};
 
+	let accum_blend = AttachmentBlend {
+		alpha_blend_op: BlendOp::Add,
+		..AttachmentBlend::additive()
+	};
+	let revealage_blend = AttachmentBlend {
+		color_blend_op: BlendOp::Add,
+		src_color_blend_factor: BlendFactor::Zero,
+		dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+		..Default::default()
+	};
 	let color_attachments = [
-		(
-			Format::R16G16B16A16_SFLOAT,
-			Some(AttachmentBlend {
-				alpha_blend_op: BlendOp::Add,
-				..AttachmentBlend::additive()
-			}),
-		),
-		(
-			Format::R8_UNORM,
-			Some(AttachmentBlend {
-				color_blend_op: BlendOp::Add,
-				src_color_blend_factor: BlendFactor::Zero,
-				dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-				..Default::default()
-			}),
-		),
+		(Format::R16G16B16A16_SFLOAT, Some(accum_blend)),
+		(Format::R8_UNORM, Some(revealage_blend)),
 	];
 
 	new(
 		vk_dev,
-		config.primitive_topology,
-		&[config.vertex_shader, config.fragment_shader],
-		RasterizationState {
-			cull_mode: CullMode::Back,
-			..Default::default()
-		},
-		config.set_layouts,
+		primitive_topology,
+		&[vertex_shader, fragment_shader],
+		rasterization_state,
+		set_layouts,
 		&color_attachments,
 		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
-}
-
-/// Pipeline configuration used by materials, hence why the fragment shader is required.
-#[derive(Clone)]
-pub struct PipelineConfig
-{
-	pub vertex_shader: Arc<ShaderModule>,
-	pub fragment_shader: Arc<ShaderModule>,
-	pub attachment_blend: Option<AttachmentBlend>, // ignored for `new_from_config_transparency`
-	pub primitive_topology: PrimitiveTopology,
-	pub set_layouts: Vec<Arc<DescriptorSetLayout>>,
 }
 
 fn get_shader_stage(

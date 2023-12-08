@@ -11,9 +11,7 @@ use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, Wo
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use vulkano::descriptor_set::{
-	PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
@@ -24,7 +22,7 @@ use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
 	depth_stencil::{DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
-	rasterization::{CullMode, DepthBiasState, RasterizationState},
+	rasterization::{DepthBiasState, RasterizationState},
 	GraphicsPipeline,
 };
 
@@ -205,7 +203,6 @@ impl LightManager
 			..Default::default()
 		};
 		let rasterization_state = RasterizationState {
-			cull_mode: CullMode::Back,
 			depth_bias: Some(DepthBiasState::default()),
 			..Default::default()
 		};

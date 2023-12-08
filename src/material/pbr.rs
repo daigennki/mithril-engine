@@ -124,18 +124,22 @@ impl Material for PBR
 		};
 		let set_layout = DescriptorSetLayout::new(vk_dev.clone(), layout_info)?;
 
-		let mut config = crate::render::pipeline::PipelineConfig {
-			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
-			fragment_shader: fs::load(vk_dev.clone())?,
-			attachment_blend: None, // transparency will be handled by transparency renderer
-			primitive_topology: PrimitiveTopology::TriangleList,
-			set_layouts: vec![set_layout.clone(), light_set_layout],
-		};
-		let pipeline = crate::render::pipeline::new_from_config(vk_dev.clone(), config.clone())?;
-
-		config.set_layouts.push(transparency_inputs);
-		config.fragment_shader = fs_oit::load(vk_dev.clone())?;
-		let transparency_pipeline = crate::render::pipeline::new_from_config_transparency(vk_dev.clone(), config)?;
+		let vertex_shader = super::vs_3d_common::load(vk_dev.clone())?;
+		let pipeline = crate::render::pipeline::new_for_material(
+			vk_dev.clone(),
+			vertex_shader.clone(),
+			fs::load(vk_dev.clone())?,
+			None,
+			PrimitiveTopology::TriangleList,
+			vec![set_layout.clone(), light_set_layout.clone()],
+		)?;
+		let transparency_pipeline = crate::render::pipeline::new_for_material_transparency(
+			vk_dev.clone(),
+			vertex_shader,
+			fs_oit::load(vk_dev)?,
+			PrimitiveTopology::TriangleList,
+			vec![set_layout.clone(), light_set_layout, transparency_inputs],
+		)?;
 
 		Ok((pipeline, Some(transparency_pipeline), set_layout))
 	}
