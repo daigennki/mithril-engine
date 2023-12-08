@@ -50,23 +50,23 @@ pub fn new(
 		..Default::default()
 	});
 
-	let mut stages = smallvec::SmallVec::<[PipelineShaderStageCreateInfo; 5]>::new();
-	for sm in shader_modules {
-		stages.push(get_shader_stage(&sm, "main")?);
-	}
-
-	let vertex_shader = stages
+	let entry_points: Vec<_> = shader_modules
 		.iter()
-		.find(|stage| stage.entry_point.info().execution_model == ExecutionModel::Vertex)
+		.map(|sm| sm.entry_point("main").ok_or("no 'main' entry point in shader"))
+		.collect::<Result<_, _>>()?;
+
+	let vertex_shader = entry_points
+		.iter()
+		.find(|entry_point| entry_point.info().execution_model == ExecutionModel::Vertex)
 		.ok_or("pipeline::new: no vertex shader was provided")?;
 
-	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader.entry_point)?);
+	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader)?);
 
 	// Go through all the stages that have a push constant, combining the shader stage flags
 	// and getting the smallest range size to create a single `PushConstantRange`.
-	let push_constant_range = stages
+	let push_constant_range = entry_points
 		.iter()
-		.filter_map(|stage| stage.entry_point.info().push_constant_requirements)
+		.filter_map(|entry_point| entry_point.info().push_constant_requirements)
 		.reduce(|acc, stage_range| PushConstantRange {
 			stages: acc.stages.union(stage_range.stages),
 			offset: 0,
@@ -103,6 +103,11 @@ pub fn new(
 		depth_attachment_format,
 		..Default::default()
 	};
+
+	let stages = entry_points
+		.into_iter()
+		.map(|e| PipelineShaderStageCreateInfo::new(e))
+		.collect();
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
@@ -196,19 +201,6 @@ pub fn new_for_material_transparency(
 		&color_attachments,
 		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
 	)
-}
-
-fn get_shader_stage(
-	shader_module: &Arc<ShaderModule>,
-	entry_point_name: &str,
-) -> Result<PipelineShaderStageCreateInfo, GenericEngineError>
-{
-	let entry_point = shader_module.entry_point(entry_point_name).ok_or(format!(
-		"No entry point called '{}' found in SPIR-V module!",
-		entry_point_name
-	))?;
-
-	Ok(PipelineShaderStageCreateInfo::new(entry_point))
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
