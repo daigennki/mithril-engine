@@ -9,6 +9,7 @@ use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
+use vulkano::image::ImageAspects;
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
@@ -39,7 +40,7 @@ pub fn new(
 	rasterization_state: RasterizationState,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
-	depth_attachment: Option<(Format, DepthStencilState)>,
+	depth_stencil_attachment: Option<(Format, DepthStencilState)>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let primitive_restart_enable =
@@ -96,13 +97,30 @@ pub fn new(
 		..Default::default()
 	});
 
-	let (depth_attachment_format, depth_stencil_state) = depth_attachment.unzip();
+	// Some notes regarding observed support for depth/stencil formats:
+	//
+	// - `D16_UNORM`: Supported on all GPUs.
+	// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
+	// - `X8_D24_UNORM_PACK32`: Only supported on NVIDIA and Intel GPUs.
+	// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
+	// - `D32_SFLOAT`: Supported on all GPUs.
+	// - `D32_SFLOAT_S8_UINT`: Supported on all GPUs.
+	// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
+	//
+	// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+	let (depth_stencil_format, depth_stencil_state) = depth_stencil_attachment.unzip();
 
 	let rendering_info = PipelineRenderingCreateInfo {
 		color_attachment_formats,
-		depth_attachment_format,
+		depth_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::DEPTH)),
+		stencil_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::STENCIL)),
 		..Default::default()
 	};
+	if let Some(f) = depth_stencil_format {
+		if rendering_info.depth_attachment_format.is_none() && rendering_info.stencil_attachment_format.is_none() {
+			log::warn!("Depth/stencil attachment format '{f:?}' given to pipeline is neither a depth nor a stencil format!");
+		}
+	}
 
 	let stages = entry_points
 		.into_iter()
