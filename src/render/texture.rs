@@ -58,13 +58,7 @@ impl Texture
 	where
 		Px: BufferContents + Copy,
 	{
-		// We allocate a subbuffer using a `DeviceLayout` here so that the buffer is aligned to the
-		// block size of the format.
-		let data_size_bytes: DeviceSize = (data.len() * std::mem::size_of::<Px>()).try_into()?;
-		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
-			.ok_or("Texture::new_from_slice: given slice is empty or alignment is not a power of two")?;
-		let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
-		staging_buf.write().unwrap().copy_from_slice(data);
+		let staging_buf = get_tex_staging_buf(subbuffer_allocator, data, format)?;
 
 		let image_info = ImageCreateInfo {
 			format,
@@ -159,7 +153,6 @@ impl CubemapTexture
 			combined_data.as_slice(),
 			cube_fmt.unwrap(),
 			cube_dim.unwrap(),
-			1,
 		)
 	}
 
@@ -169,20 +162,17 @@ impl CubemapTexture
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
-		mip_levels: u32,
 	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = subbuffer_allocator.allocate_slice(data.len().try_into()?)?;
-		staging_buf.write().unwrap().copy_from_slice(data);
+		let staging_buf = get_tex_staging_buf(subbuffer_allocator, data, format)?;
 
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,
 			format,
 			extent: [dimensions[0], dimensions[1], 1],
 			array_layers: 6,
-			mip_levels,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
@@ -194,16 +184,36 @@ impl CubemapTexture
 		};
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
-		Ok((
-			CubemapTexture { view },
-			CopyBufferToImageInfo::buffer_image(staging_buf, image),
-		))
+		let copy_to_image = CopyBufferToImageInfo::buffer_image(staging_buf, image);
+
+		Ok((CubemapTexture { view }, copy_to_image))
 	}
 
 	pub fn view(&self) -> &Arc<ImageView>
 	{
 		&self.view
 	}
+}
+
+fn get_tex_staging_buf<Px>(
+	subbuffer_allocator: &mut SubbufferAllocator,
+	data: &[Px],
+	format: Format,
+) -> Result<Subbuffer<[Px]>, GenericEngineError>
+where
+	Px: BufferContents + Copy,
+{
+	// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
+	// of the format.
+	let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into()?;
+	let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
+		.ok_or("Texture::new_from_slice: given slice is empty or alignment is not a power of two")?;
+
+	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
+
+	staging_buf.write().unwrap().copy_from_slice(data);
+
+	Ok(staging_buf)
 }
 
 fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngineError>
