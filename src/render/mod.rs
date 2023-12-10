@@ -41,7 +41,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
-	view::ImageView,
+	view::ImageView, ImageAspects,
 };
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
@@ -421,24 +421,22 @@ impl RenderContext
 	pub fn gather_commands(
 		&self,
 		color_attachment_formats: &[Format],
-		depth_attachment_format: Option<Format>,
+		depth_stencil_format: Option<Format>,
 		viewport_extent: [u32; 2],
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
-		let render_pass = Some(
-			CommandBufferInheritanceRenderingInfo {
-				color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
-				depth_attachment_format,
-				..Default::default()
-			}
-			.into(),
-		);
+		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
+			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
+			depth_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::DEPTH)),
+			stencil_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::STENCIL)),
+			..Default::default()
+		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 			CommandBufferInheritanceInfo {
-				render_pass,
+				render_pass: Some(rendering_inheritance.into()),
 				..Default::default()
 			},
 		)?;
