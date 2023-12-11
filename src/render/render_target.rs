@@ -133,6 +133,7 @@ impl RenderTarget
 				vec![set_layout],
 				&[(swapchain_format, None)],
 				None,
+				None,
 			)?)
 		} else {
 			None

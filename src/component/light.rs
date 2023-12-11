@@ -20,7 +20,7 @@ use vulkano::image::{
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
-	depth_stencil::{DepthState, DepthStencilState},
+	depth_stencil::DepthState,
 	input_assembly::PrimitiveTopology,
 	rasterization::{DepthBiasState, RasterizationState},
 	GraphicsPipeline,
@@ -198,10 +198,6 @@ impl LightManager
 		)?;
 
 		/* shadow pipeline */
-		let depth_stencil_state = DepthStencilState {
-			depth: Some(DepthState::simple()),
-			..Default::default()
-		};
 		let rasterization_state = RasterizationState {
 			depth_bias: Some(DepthBiasState::default()),
 			..Default::default()
@@ -213,7 +209,8 @@ impl LightManager
 			rasterization_state,
 			vec![],
 			&[],
-			Some((Format::D16_UNORM, depth_stencil_state)),
+			Some((Format::D16_UNORM, Some(DepthState::simple()))),
+			None,
 		)?;
 
 		Ok(LightManager {

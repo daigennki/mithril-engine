@@ -16,9 +16,7 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
-use vulkano::pipeline::graphics::{
-	depth_stencil::DepthStencilState, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
-};
+use vulkano::pipeline::graphics::{input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline};
 use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::shader::ShaderStages;
 
@@ -106,7 +104,8 @@ impl Skybox
 			RasterizationState::default(),
 			vec![set_layout.clone()],
 			&[(Format::R16G16B16A16_SFLOAT, None)],
-			Some((super::MAIN_DEPTH_FORMAT, DepthStencilState::default())),
+			Some((super::MAIN_DEPTH_FORMAT, None)),
+			None,
 		)?;
 
 		// sky texture cubemap

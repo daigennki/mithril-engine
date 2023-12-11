@@ -213,6 +213,7 @@ impl Canvas
 			vec![set_layout.clone()],
 			&color_attachments,
 			None,
+			None,
 		)?;
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
@@ -221,6 +222,7 @@ impl Canvas
 			RasterizationState::default(),
 			vec![text_set_layout.clone()],
 			&color_attachments,
+			None,
 			None,
 		)?;
 

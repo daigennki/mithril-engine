@@ -26,7 +26,7 @@ use vulkano::image::{
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp},
-	depth_stencil::{CompareOp, DepthState, DepthStencilState},
+	depth_stencil::{CompareOp, DepthState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
 	viewport::Viewport,
@@ -384,12 +384,9 @@ impl MomentTransparencyRenderer
 			),
 		];
 
-		let moments_depth_stencil_state = DepthStencilState {
-			depth: Some(DepthState {
-				write_enable: false,
-				compare_op: CompareOp::Less,
-			}),
-			..Default::default()
+		let moments_depth_state = DepthState {
+			write_enable: false,
+			compare_op: CompareOp::Less,
 		};
 
 		let moments_pl = super::pipeline::new(
@@ -402,7 +399,8 @@ impl MomentTransparencyRenderer
 			},
 			vec![base_color_set_layout.clone()],
 			&moments_attachments,
-			Some((super::MAIN_DEPTH_FORMAT, moments_depth_stencil_state)),
+			Some((super::MAIN_DEPTH_FORMAT, Some(moments_depth_state))),
+			None,
 		)?;
 
 		//
@@ -456,6 +454,7 @@ impl MomentTransparencyRenderer
 			RasterizationState::default(),
 			vec![stage4_inputs_layout.clone()],
 			&[(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))],
+			None,
 			None,
 		)?;
 

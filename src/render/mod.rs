@@ -41,7 +41,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
-	view::ImageView, ImageAspects,
+	view::ImageView,
 };
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
@@ -421,14 +421,15 @@ impl RenderContext
 	pub fn gather_commands(
 		&self,
 		color_attachment_formats: &[Format],
-		depth_stencil_format: Option<Format>,
+		depth_attachment_format: Option<Format>,
+		stencil_attachment_format: Option<Format>,
 		viewport_extent: [u32; 2],
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
-			depth_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::DEPTH)),
-			stencil_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::STENCIL)),
+			depth_attachment_format,
+			stencil_attachment_format,
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(

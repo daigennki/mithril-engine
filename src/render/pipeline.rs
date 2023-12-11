@@ -9,10 +9,9 @@ use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
-use vulkano::image::ImageAspects;
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-	depth_stencil::{CompareOp, DepthState, DepthStencilState},
+	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
 	multisample::MultisampleState,
 	rasterization::{CullMode, RasterizationState},
@@ -40,7 +39,8 @@ pub fn new(
 	rasterization_state: RasterizationState,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
-	depth_stencil_attachment: Option<(Format, DepthStencilState)>,
+	depth_attachment: Option<(Format, Option<DepthState>)>,
+	stencil_attachment: Option<(Format, Option<StencilState>)>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let primitive_restart_enable =
@@ -108,19 +108,22 @@ pub fn new(
 	// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
 	//
 	// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
-	let (depth_stencil_format, depth_stencil_state) = depth_stencil_attachment.unzip();
+	let (depth_attachment_format, depth_state) = depth_attachment.unzip();
+	let (stencil_attachment_format, stencil_state) = stencil_attachment.unzip();
+
+	let depth_stencil_state =
+		(depth_attachment_format.is_some() || stencil_attachment_format.is_some()).then(|| DepthStencilState {
+			depth: depth_state.flatten(),
+			stencil: stencil_state.flatten(),
+			..Default::default()
+		});
 
 	let rendering_info = PipelineRenderingCreateInfo {
 		color_attachment_formats,
-		depth_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::DEPTH)),
-		stencil_attachment_format: depth_stencil_format.filter(|f| f.aspects().contains(ImageAspects::STENCIL)),
+		depth_attachment_format,
+		stencil_attachment_format,
 		..Default::default()
 	};
-	if let Some(f) = depth_stencil_format {
-		if rendering_info.depth_attachment_format.is_none() && rendering_info.stencil_attachment_format.is_none() {
-			log::warn!("Depth/stencil attachment format '{f:?}' given to pipeline is neither a depth nor a stencil format!");
-		}
-	}
 
 	let stages = entry_points
 		.into_iter()
@@ -158,10 +161,6 @@ pub fn new_for_material(
 		cull_mode: CullMode::Back,
 		..Default::default()
 	};
-	let depth_stencil_state = DepthStencilState {
-		depth: Some(DepthState::simple()),
-		..Default::default()
-	};
 
 	new(
 		vk_dev,
@@ -170,7 +169,8 @@ pub fn new_for_material(
 		rasterization_state,
 		set_layouts,
 		&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
-		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
+		Some((super::MAIN_DEPTH_FORMAT, Some(DepthState::simple()))),
+		None,
 	)
 }
 
@@ -187,12 +187,9 @@ pub fn new_for_material_transparency(
 		cull_mode: CullMode::Back,
 		..Default::default()
 	};
-	let depth_stencil_state = DepthStencilState {
-		depth: Some(DepthState {
-			write_enable: false,
-			compare_op: CompareOp::Less,
-		}),
-		..Default::default()
+	let depth_state = DepthState {
+		write_enable: false,
+		compare_op: CompareOp::Less,
 	};
 
 	let accum_blend = AttachmentBlend {
@@ -217,7 +214,8 @@ pub fn new_for_material_transparency(
 		rasterization_state,
 		set_layouts,
 		&color_attachments,
-		Some((super::MAIN_DEPTH_FORMAT, depth_stencil_state)),
+		Some((super::MAIN_DEPTH_FORMAT, Some(depth_state))),
+		None,
 	)
 }
 
