@@ -127,10 +127,11 @@ fn draw_3d(
 	let vp_extent = render_ctx.swapchain_dimensions();
 	let light_set = vec![light_manager.get_all_lights_set().clone()];
 
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let mut sky_cb = render_ctx.gather_commands(&color_formats, None, None, vp_extent)?;
+	skybox.draw(&mut sky_cb, camera_manager.sky_projview())?;
+	render_ctx.add_cb(sky_cb.build()?);
 
-	// Draw the skybox. This will effectively clear the color image.
-	skybox.draw(&mut cb, camera_manager.sky_projview())?;
+	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
 	let pbr_pipeline = render_ctx.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
 

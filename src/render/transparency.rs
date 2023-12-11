@@ -399,7 +399,7 @@ impl MomentTransparencyRenderer
 			},
 			vec![base_color_set_layout.clone()],
 			&moments_attachments,
-			Some((super::MAIN_DEPTH_FORMAT, Some(moments_depth_state))),
+			Some((super::MAIN_DEPTH_FORMAT, moments_depth_state)),
 			None,
 		)?;
 

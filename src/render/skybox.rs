@@ -104,7 +104,7 @@ impl Skybox
 			RasterizationState::default(),
 			vec![set_layout.clone()],
 			&[(Format::R16G16B16A16_SFLOAT, None)],
-			Some((super::MAIN_DEPTH_FORMAT, None)),
+			None,
 			None,
 		)?;
 

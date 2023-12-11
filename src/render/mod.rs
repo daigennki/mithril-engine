@@ -15,7 +15,7 @@ pub mod transparency;
 mod vulkan_init;
 pub mod workload;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -78,7 +78,7 @@ pub struct RenderContext
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
+	cb_3d: Mutex<VecDeque<Arc<SecondaryAutoCommandBuffer>>>,
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
@@ -120,10 +120,10 @@ impl RenderContext
 
 		// The counts below are multiplied by the number of swapchain images, to account for previous submissions.
 		// - Primary: One for graphics, another for async transfers, each on separate queue families.
-		// - Secondary: Only one should be created per thread.
+		// - Secondary: Only up to two should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: swapchain.image_count(),
-			secondary_buffer_count: swapchain.image_count(),
+			secondary_buffer_count: 2 * swapchain.image_count(),
 			..Default::default()
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
@@ -192,7 +192,7 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
-			cb_3d: Mutex::new(None),
+			cb_3d: Mutex::new(VecDeque::with_capacity(2)),
 			material_pipelines: HashMap::new(),
 			main_render_target,
 			transparency_renderer,
@@ -473,7 +473,7 @@ impl RenderContext
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
-		*self.cb_3d.lock().unwrap() = Some(cb);
+		self.cb_3d.lock().unwrap().push_back(cb);
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
@@ -539,13 +539,41 @@ impl RenderContext
 					.end_rendering()?;
 			}
 
+			// skybox (effectively clears the image)
+			let sky_render_info = RenderingInfo {
+				color_attachments: vec![Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::DontCare,
+					store_op: AttachmentStoreOp::Store,
+					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+				})],
+				contents: SubpassContents::SecondaryCommandBuffers,
+				..Default::default()
+			};
+			primary_cb_builder
+				.begin_rendering(sky_render_info)?
+				.execute_commands(self.cb_3d.lock().unwrap().pop_front().unwrap())?
+				.end_rendering()?;
+
 			// 3D
-			if let Some(some_cb_3d) = self.cb_3d.lock().unwrap().take() {
-				primary_cb_builder
-					.begin_rendering(self.main_render_target.first_rendering_info())?
-					.execute_commands(some_cb_3d)?
-					.end_rendering()?;
-			}
+			let main_render_info = RenderingInfo {
+				color_attachments: vec![Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::Load,
+					store_op: AttachmentStoreOp::Store,
+					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
+				})],
+				depth_attachment: Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::Clear,
+					store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
+					clear_value: Some(ClearValue::Depth(1.0)),
+					..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
+				}),
+				contents: SubpassContents::SecondaryCommandBuffers,
+				..Default::default()
+			};
+			primary_cb_builder
+				.begin_rendering(main_render_info)?
+				.execute_commands(self.cb_3d.lock().unwrap().pop_front().unwrap())?
+				.end_rendering()?;
 
 			// 3D OIT
 			self.transparency_renderer.process_transparency(

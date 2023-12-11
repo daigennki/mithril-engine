@@ -14,7 +14,7 @@ use vulkano::descriptor_set::{
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
-use vulkano::format::{ClearValue, Format};
+use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Sampler, SamplerCreateInfo},
 	view::ImageView,
@@ -154,25 +154,6 @@ impl RenderTarget
 	pub fn depth_image(&self) -> &Arc<ImageView>
 	{
 		&self.depth_image
-	}
-
-	pub fn first_rendering_info(&self) -> RenderingInfo
-	{
-		RenderingInfo {
-			color_attachments: vec![Some(RenderingAttachmentInfo {
-				// `load_op` default `DontCare` is used since drawing the skybox effectively clears the image for us
-				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(self.color_image.clone())
-			})],
-			depth_attachment: Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Clear,
-				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
-				clear_value: Some(ClearValue::Depth(1.0)),
-				..RenderingAttachmentInfo::image_view(self.depth_image.clone())
-			}),
-			contents: SubpassContents::SecondaryCommandBuffers,
-			..Default::default()
-		}
 	}
 
 	pub fn blit_to_swapchain(

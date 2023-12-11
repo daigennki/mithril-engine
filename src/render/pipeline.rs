@@ -39,8 +39,8 @@ pub fn new(
 	rasterization_state: RasterizationState,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
-	depth_attachment: Option<(Format, Option<DepthState>)>,
-	stencil_attachment: Option<(Format, Option<StencilState>)>,
+	depth_attachment: Option<(Format, DepthState)>,
+	stencil_attachment: Option<(Format, StencilState)>,
 ) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
 {
 	let primitive_restart_enable =
@@ -113,8 +113,8 @@ pub fn new(
 
 	let depth_stencil_state =
 		(depth_attachment_format.is_some() || stencil_attachment_format.is_some()).then(|| DepthStencilState {
-			depth: depth_state.flatten(),
-			stencil: stencil_state.flatten(),
+			depth: depth_state,
+			stencil: stencil_state,
 			..Default::default()
 		});
 
@@ -169,7 +169,7 @@ pub fn new_for_material(
 		rasterization_state,
 		set_layouts,
 		&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
-		Some((super::MAIN_DEPTH_FORMAT, Some(DepthState::simple()))),
+		Some((super::MAIN_DEPTH_FORMAT, DepthState::simple())),
 		None,
 	)
 }
@@ -214,7 +214,7 @@ pub fn new_for_material_transparency(
 		rasterization_state,
 		set_layouts,
 		&color_attachments,
-		Some((super::MAIN_DEPTH_FORMAT, Some(depth_state))),
+		Some((super::MAIN_DEPTH_FORMAT, depth_state)),
 		None,
 	)
 }

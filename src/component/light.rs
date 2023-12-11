@@ -209,7 +209,7 @@ impl LightManager
 			rasterization_state,
 			vec![],
 			&[],
-			Some((Format::D16_UNORM, Some(DepthState::simple()))),
+			Some((Format::D16_UNORM, DepthState::simple())),
 			None,
 		)?;
 
