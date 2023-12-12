@@ -12,7 +12,6 @@ use shipyard::{
 };
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::format::Format;
 use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use super::RenderContext;
@@ -43,12 +42,9 @@ fn draw_shadows(
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
 	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
 	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
-	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
 
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		let mut cb = render_ctx.gather_commands(&[], shadow_format, None, viewport_extent)?;
-
-		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
+		let mut cb = render_ctx.gather_commands(shadow_pipeline.clone(), viewport_extent)?;
 
 		for (eid, transform) in transforms.iter().with_id() {
 			if mesh_manager.has_opaque_materials(eid) {
@@ -123,21 +119,18 @@ fn draw_3d(
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [Format::R16G16B16A16_SFLOAT];
+	// first draw the skybox
+	let sky_cb = skybox.draw(&render_ctx, camera_manager.sky_projview())?;
+	render_ctx.add_cb(sky_cb);
+
 	let vp_extent = render_ctx.swapchain_dimensions();
 	let light_set = vec![light_manager.get_all_lights_set().clone()];
-
-	let mut sky_cb = render_ctx.gather_commands(&color_formats, None, None, vp_extent)?;
-	skybox.draw(&mut sky_cb, camera_manager.sky_projview())?;
-	render_ctx.add_cb(sky_cb.build()?);
-
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
-
 	let pbr_pipeline = render_ctx.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
 
-	cb.bind_pipeline_graphics(pbr_pipeline.clone())?
-		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
-		.bind_descriptor_sets(PipelineBindPoint::Graphics, pbr_pipeline.layout().clone(), 1, light_set)?;
+	let mut cb = render_ctx.gather_commands(pbr_pipeline.clone(), vp_extent)?;
+
+	cb.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?;
+	cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pbr_pipeline.layout().clone(), 1, light_set)?;
 
 	draw_common(
 		&mut cb,
@@ -161,15 +154,12 @@ fn draw_3d_transparent_moments(
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
 	// This will bind the pipeline for you, since it doesn't need to do anything
 	// specific to materials (it only reads the alpha channel of each texture).
 	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline();
-
-	cb.bind_pipeline_graphics(pipeline.clone())?;
+	let mut cb = render_ctx.gather_commands(pipeline.clone(), vp_extent)?;
 
 	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
 
@@ -189,7 +179,6 @@ fn draw_3d_transparent(
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
 	let vp_extent = render_ctx.swapchain_dimensions();
 	let pipeline = render_ctx
 		.get_transparency_pipeline("PBR")
@@ -199,14 +188,9 @@ fn draw_3d_transparent(
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
 	];
 
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let mut cb = render_ctx.gather_commands(pipeline.clone(), vp_extent)?;
 
-	cb.bind_pipeline_graphics(pipeline.clone())?.bind_descriptor_sets(
-		PipelineBindPoint::Graphics,
-		pipeline.layout().clone(),
-		1,
-		common_sets,
-	)?;
+	cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline.layout().clone(), 1, common_sets)?;
 
 	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
 
@@ -225,9 +209,7 @@ fn draw_ui(
 ) -> Result<(), GenericEngineError>
 {
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
-
-	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
+	let mut cb = render_ctx.gather_commands(canvas.get_pipeline().clone(), vp_extent)?;
 
 	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
 	for (eid, (_, ui_mesh)) in (&ui_transforms, &ui_meshes).iter().with_id() {
