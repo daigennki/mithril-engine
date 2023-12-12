@@ -47,12 +47,7 @@ use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::pipeline::graphics::{
-	depth_stencil::CompareOp,
-	subpass::{PipelineRenderingCreateInfo, PipelineSubpassType},
-	viewport::Viewport,
-	GraphicsPipeline,
-};
+use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport, GraphicsPipeline};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::sync::{
@@ -420,31 +415,23 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Issue a new secondary command buffer builder to begin recording to. It will be set up for
-	/// drawing to the subpass that the given pipeline was set up with, will initially bind that
-	/// same pipeline, and will initially have a viewport as large as`viewport_extent`.
+	/// Issue a new secondary command buffer builder to begin recording to.
+	/// It will be set up for drawing to color and depth images with the given format,
+	/// and with a viewport as large as `viewport_extent`.
 	pub fn gather_commands(
 		&self,
-		first_pipeline: Arc<GraphicsPipeline>,
+		color_attachment_formats: &[Format],
+		depth_attachment_format: Option<Format>,
+		stencil_attachment_format: Option<Format>,
 		viewport_extent: [u32; 2],
 	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
 	{
-		let PipelineRenderingCreateInfo {
-			color_attachment_formats,
-			depth_attachment_format,
-			stencil_attachment_format,
-			..
-		} = match first_pipeline.subpass() {
-			PipelineSubpassType::BeginRenderPass(_) => unimplemented!(),
-			PipelineSubpassType::BeginRendering(r) => r.clone(),
-		};
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
-			color_attachment_formats,
+			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
 			depth_attachment_format,
 			stencil_attachment_format,
 			..Default::default()
 		};
-
 		let mut cb = AutoCommandBufferBuilder::secondary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
@@ -461,7 +448,6 @@ impl RenderContext
 			depth_range: 0.0..=1.0,
 		};
 		cb.set_viewport(0, [viewport].as_slice().into())?;
-		cb.bind_pipeline_graphics(first_pipeline.clone())?;
 
 		Ok(cb)
 	}

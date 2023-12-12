@@ -8,7 +8,7 @@
 use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
@@ -150,13 +150,11 @@ impl Skybox
 
 	pub fn draw(
 		&self,
-		render_ctx: &RenderContext,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		sky_projview: Mat4,
-	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
+	) -> Result<(), GenericEngineError>
 	{
-		let vp_extent = render_ctx.swapchain_dimensions();
-		let mut command_buffer = render_ctx.gather_commands(self.sky_pipeline.clone(), vp_extent)?;
-		command_buffer
+		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.sky_pipeline.layout().clone(),
@@ -167,6 +165,6 @@ impl Skybox
 			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?
 			.bind_index_buffer(self.cube_ibo.clone())?
 			.draw_indexed(17, 1, 0, 0, 0)?;
-		Ok(command_buffer.build()?)
+		Ok(())
 	}
 }
