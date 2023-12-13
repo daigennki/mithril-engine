@@ -200,10 +200,10 @@ impl RenderContext
 		})
 	}
 
-	/*pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
 	{
 		&self.light_set_layout
-	}*/
+	}
 
 	/// Load an image file as a texture into memory.
 	/// If the image was already loaded, it'll use the corresponding texture.

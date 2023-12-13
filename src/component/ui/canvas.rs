@@ -160,7 +160,8 @@ pub struct Canvas
 	ui_pipeline: Arc<GraphicsPipeline>,
 	text_pipeline: Arc<GraphicsPipeline>,
 
-	gpu_resources: BTreeMap<EntityId, UiGpuResources>,
+	text_resources: BTreeMap<EntityId, UiGpuResources>,
+	mesh_resources: BTreeMap<EntityId, UiGpuResources>,
 
 	quad_pos_buf: Subbuffer<[Vec2]>,
 	quad_uv_buf: Subbuffer<[Vec2]>,
@@ -257,12 +258,24 @@ impl Canvas
 			text_set_layout,
 			ui_pipeline,
 			text_pipeline,
-			gpu_resources: Default::default(),
+			text_resources: Default::default(),
+			mesh_resources: Default::default(),
 			quad_pos_buf,
 			quad_uv_buf,
 			default_font,
 			ui_cb: None,
 		})
+	}
+
+	/// Clean up resources for removed `UIText` components.
+	pub fn cleanup_removed_text(&mut self, eid: EntityId)
+	{
+		self.text_resources.remove(&eid);
+	}
+	/// Clean up resources for removed UI mesh components.
+	pub fn cleanup_removed_mesh(&mut self, eid: EntityId)
+	{
+		self.mesh_resources.remove(&eid);
 	}
 
 	pub fn get_set_layout(&self) -> &Arc<DescriptorSetLayout>
@@ -293,12 +306,12 @@ impl Canvas
 	fn update_transform(
 		&mut self,
 		render_ctx: &mut RenderContext,
-		eid: EntityId,
+		set_layout: Arc<DescriptorSetLayout>,
 		transform: &super::UITransform,
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
 		text_vbo: Option<Subbuffer<[Vec4]>>,
-	) -> Result<(), GenericEngineError>
+	) -> Result<UiGpuResources, GenericEngineError>
 	{
 		let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
 		let translation = transform.position.as_vec2() * self.canvas_scaling;
@@ -309,25 +322,15 @@ impl Canvas
 		// division inverted here so that division isn't performed in shader
 		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
 
-		let set_layout = if text_vbo.is_some() {
-			self.text_set_layout.clone()
-		} else {
-			self.set_layout.clone()
-		};
 		let writes = [WriteDescriptorSet::image_view(0, image_view)];
 		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
-		self.gpu_resources.insert(
-			eid,
-			UiGpuResources {
-				text_vbo,
-				descriptor_set,
-				projected,
-				logical_texture_size_inv,
-			},
-		);
-
-		Ok(())
+		Ok(UiGpuResources {
+			text_vbo,
+			descriptor_set,
+			projected,
+			logical_texture_size_inv,
+		})
 	}
 
 	/// Update the GPU resources for entities with a `Mesh` component.
@@ -343,7 +346,15 @@ impl Canvas
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
 			let image_dimensions = UVec2::from(tex.dimensions()).as_vec2();
-			self.update_transform(render_ctx, eid, transform, tex.view().clone(), image_dimensions, None)?;
+			let resources = self.update_transform(
+				render_ctx,
+				self.set_layout.clone(),
+				transform,
+				tex.view().clone(),
+				image_dimensions,
+				None,
+			)?;
+			self.mesh_resources.insert(eid, resources);
 		}
 
 		Ok(())
@@ -386,7 +397,7 @@ impl Canvas
 				max_glyphs,
 				text_str,
 			);
-			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
+			if let Some(resources) = self.text_resources.get_mut(&eid) {
 				resources.text_vbo = None;
 			}
 			return Ok(());
@@ -397,7 +408,7 @@ impl Canvas
 		// If no visible glyphs were produced (e.g. the string was empty, or it only has space characters),
 		// remove the vertex buffers from the GPU resources, and then return immediately.
 		if glyph_image_array.is_empty() {
-			if let Some(resources) = self.gpu_resources.get_mut(&eid) {
+			if let Some(resources) = self.text_resources.get_mut(&eid) {
 				resources.text_vbo = None;
 			}
 			return Ok(());
@@ -410,7 +421,7 @@ impl Canvas
 
 		let glyph_count = glyph_image_array.len();
 		let prev_glyph_count = self
-			.gpu_resources
+			.text_resources
 			.get(&eid)
 			.as_ref()
 			.and_then(|res| res.text_vbo.as_ref())
@@ -437,9 +448,9 @@ impl Canvas
 
 		let text_vbo = if glyph_count == prev_glyph_count {
 			// Reuse the vertex buffer if the glyph count hasn't changed.
-			// If `prev_glyph_count` is greater than 0, we already know that `gpu_resources` for
+			// If `prev_glyph_count` is greater than 0, we already know that `text_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
-			let resources = self.gpu_resources.get(&eid).unwrap();
+			let resources = self.text_resources.get(&eid).unwrap();
 			let some_vbo = resources.text_vbo.clone().unwrap();
 			render_ctx.update_buffer(&vbo_data, some_vbo.clone())?;
 			some_vbo
@@ -447,7 +458,15 @@ impl Canvas
 			render_ctx.new_buffer(&vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		self.update_transform(render_ctx, eid, transform, tex.view().clone(), Vec2::ONE, Some(text_vbo))?;
+		let resources = self.update_transform(
+			render_ctx,
+			self.text_set_layout.clone(),
+			transform,
+			tex.view().clone(),
+			Vec2::ONE,
+			Some(text_vbo),
+		)?;
+		self.text_resources.insert(eid, resources);
 
 		Ok(())
 	}
@@ -458,7 +477,7 @@ impl Canvas
 		eid: EntityId,
 	) -> Result<(), GenericEngineError>
 	{
-		if let Some(resources) = self.gpu_resources.get(&eid) {
+		if let Some(resources) = self.text_resources.get(&eid) {
 			if let Some(vbo) = resources.text_vbo.clone() {
 				let mut push_constant_data: [f32; 8] = Default::default();
 				resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
@@ -488,7 +507,7 @@ impl Canvas
 		component: &super::mesh::Mesh,
 	) -> Result<(), GenericEngineError>
 	{
-		if let Some(resources) = self.gpu_resources.get(&eid) {
+		if let Some(resources) = self.mesh_resources.get(&eid) {
 			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
 			cb.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,

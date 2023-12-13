@@ -44,6 +44,9 @@ fn update_meshes(mut render_ctx: UniqueViewMut<RenderContext>, mut mesh_manager:
 			log::error!("Failed to run `MeshManager::load`: {}", e);
 		}
 	}
+	for eid in meshes.removed() {
+		mesh_manager.cleanup_removed(eid);
+	}
 }
 
 pub struct MaterialResources
@@ -269,6 +272,12 @@ impl MeshManager
 			)?;
 		}
 		Ok(())
+	}
+
+	/// Free resources for the given entity ID. Only call this when the entity was actually removed!
+	pub fn cleanup_removed(&mut self, eid: EntityId)
+	{
+		self.resources.remove(&eid);
 	}
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)

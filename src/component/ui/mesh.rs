@@ -50,6 +50,10 @@ fn update_mesh(
 	ui_meshes: View<Mesh>,
 )
 {
+	for eid in ui_meshes.removed() {
+		canvas.cleanup_removed_mesh(eid);
+	}
+
 	if render_ctx.window_resized() {
 		let d = render_ctx.swapchain_dimensions();
 		canvas.on_screen_resize(d[0], d[1]);

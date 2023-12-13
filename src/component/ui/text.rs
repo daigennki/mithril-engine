@@ -38,6 +38,10 @@ fn update_text(
 	ui_texts: View<UIText>,
 )
 {
+	for eid in ui_texts.removed() {
+		canvas.cleanup_removed_text(eid);
+	}
+
 	if render_ctx.window_resized() {
 		let d = render_ctx.swapchain_dimensions();
 		canvas.on_screen_resize(d[0], d[1]);
