@@ -35,7 +35,6 @@ use vulkano::command_buffer::{
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	DescriptorSet,
 };
 use vulkano::device::{Device, Queue};
 use vulkano::format::{ClearValue, Format};
@@ -47,7 +46,7 @@ use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport, GraphicsPipeline};
+use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::sync::{
@@ -56,7 +55,6 @@ use vulkano::sync::{
 };
 use vulkano::{DeviceSize, Validated, VulkanError};
 
-use crate::material::Material;
 use crate::GenericEngineError;
 use texture::Texture;
 
@@ -83,9 +81,6 @@ pub struct RenderContext
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
 	light_set_layout: Arc<DescriptorSetLayout>,
-
-	// User-accessible material pipelines. Optional transparency pipeline may also be specified.
-	material_pipelines: HashMap<String, (Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>)>,
 
 	// Loaded textures, with the key being the path relative to the current working directory
 	textures: HashMap<PathBuf, Arc<Texture>>,
@@ -193,7 +188,6 @@ impl RenderContext
 			memory_allocator,
 			command_buffer_allocator,
 			cb_3d: Mutex::new(VecDeque::with_capacity(2)),
-			material_pipelines: HashMap::new(),
 			main_render_target,
 			transparency_renderer,
 			light_set_layout,
@@ -207,29 +201,6 @@ impl RenderContext
 			staging_buf_max_size: 0,
 			staging_buf_usage_frame: 0,
 		})
-	}
-
-	/// Load a material shader pipeline into memory.
-	/// Returns a set layout representing the descriptor set interface unique to the material.
-	pub fn load_material_pipeline(&mut self, mat: &dyn Material) -> Result<Arc<DescriptorSetLayout>, GenericEngineError>
-	{
-		let name = mat.material_name();
-		let transparency_set_layout = self.transparency_renderer.get_stage3_inputs().layout().clone();
-		let (pipeline, transparency_pipeline, mat_set_layout) =
-			mat.load_pipeline(self.light_set_layout.clone(), transparency_set_layout)?;
-
-		self.material_pipelines
-			.insert(name.to_string(), (pipeline, transparency_pipeline));
-
-		Ok(mat_set_layout)
-	}
-	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
-	{
-		self.material_pipelines.get(name).map(|(pl, _)| pl)
-	}
-	pub fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
-	{
-		self.material_pipelines.get(name).and_then(|(_, pl)| pl.as_ref())
 	}
 
 	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>

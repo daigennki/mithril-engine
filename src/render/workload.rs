@@ -133,7 +133,7 @@ fn draw_3d(
 
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
-	let pbr_pipeline = render_ctx.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
+	let pbr_pipeline = mesh_manager.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
 
 	cb.bind_pipeline_graphics(pbr_pipeline.clone())?
 		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
@@ -191,7 +191,7 @@ fn draw_3d_transparent(
 {
 	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let pipeline = render_ctx
+	let pipeline = mesh_manager
 		.get_transparency_pipeline("PBR")
 		.ok_or("PBR transparency pipeline not loaded!")?;
 	let common_sets = vec![

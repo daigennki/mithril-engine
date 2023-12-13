@@ -8,12 +8,12 @@
 use glam::*;
 use serde::Deserialize;
 use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
-use vulkano::pipeline::PipelineLayout;
+use vulkano::pipeline::{GraphicsPipeline, PipelineLayout};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::material::Material;
@@ -53,30 +53,44 @@ pub struct MaterialResources
 	pub mat_basecolor_only_set: Arc<PersistentDescriptorSet>, // used for OIT when only "base color" texture is needed
 }
 
+/// Pipeline for each material, as well as the descriptor set layout unique to each material.
+pub struct PipelineData
+{
+	opaque_pipeline: Arc<GraphicsPipeline>,
+	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
+	material_set_layout: Arc<DescriptorSetLayout>,
+}
+
 /// A single manager that manages the GPU resources for all `Mesh` components.
 #[derive(shipyard::Unique)]
 pub struct MeshManager
 {
+	material_pipelines: HashMap<&'static str, PipelineData>,
+
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: BTreeMap<PathBuf, Arc<Model>>,
 
-	// Set layouts for different materials.
-	set_layouts: BTreeMap<&'static str, Arc<DescriptorSetLayout>>,
-
-	// Set layout for OIT when only "base color" texture is needed
-	basecolor_only_set_layout: Arc<DescriptorSetLayout>,
+	basecolor_only_set_layout: Arc<DescriptorSetLayout>, // Set layout for OIT when only "base color" texture is needed
+	transparency_input_layout: Arc<DescriptorSetLayout>,
+	light_set_layout: Arc<DescriptorSetLayout>,
 
 	// The models and material overrides for each entity.
 	resources: BTreeMap<EntityId, (Arc<Model>, Vec<MaterialResources>)>,
 }
 impl MeshManager
 {
-	pub fn new(basecolor_only_set_layout: Arc<DescriptorSetLayout>) -> Self
+	pub fn new(
+		basecolor_only_set_layout: Arc<DescriptorSetLayout>,
+		transparency_input_layout: Arc<DescriptorSetLayout>,
+		light_set_layout: Arc<DescriptorSetLayout>,
+	) -> Self
 	{
 		MeshManager {
+			material_pipelines: Default::default(),
 			models: Default::default(),
-			set_layouts: Default::default(),
 			basecolor_only_set_layout,
+			transparency_input_layout,
+			light_set_layout,
 			resources: Default::default(),
 		}
 	}
@@ -105,20 +119,26 @@ impl MeshManager
 
 			let parent_folder = component.model_path.parent().unwrap();
 
-			// Load the pipeline if it hasn't already been loaded.
 			let mat_name = mat.material_name();
-			if render_ctx.get_pipeline(mat_name).is_none() {
-				log::info!("Loading pipeline for material '{mat_name}'...");
-				let new_set_layout = render_ctx.load_material_pipeline(mat.as_ref())?;
-				self.set_layouts.insert(mat_name, new_set_layout);
+
+			// Load the pipeline if it hasn't already been loaded.
+			if !self.material_pipelines.contains_key(mat_name) {
+				let (opaque_pipeline, oit_pipeline, material_set_layout) =
+					mat.load_pipeline(self.light_set_layout.clone(), self.transparency_input_layout.clone())?;
+
+				let pipeline_data = PipelineData {
+					opaque_pipeline,
+					oit_pipeline,
+					material_set_layout,
+				};
+				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
 
-			// Get the set layout. We use `unwrap` here since it must have already been loaded when
-			// the pipeline was loaded just above.
-			let set_layout = self.set_layouts.get(mat_name).unwrap();
+			// We use `unwrap` here since the material pipeline must've been loaded above.
+			let set_layout = self.material_pipelines.get(mat_name).unwrap().material_set_layout.clone();
 
 			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
-			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout.clone(), writes, [])?;
+			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
 			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
 			let mat_basecolor_only_set = PersistentDescriptorSet::new(
@@ -141,6 +161,17 @@ impl MeshManager
 		}
 
 		Ok(())
+	}
+
+	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
+	{
+		self.material_pipelines.get(name).map(|pl_data| &pl_data.opaque_pipeline)
+	}
+	pub fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
+	{
+		self.material_pipelines
+			.get(name)
+			.and_then(|pl_data| pl_data.oit_pipeline.as_ref())
 	}
 
 	/// Get a reference to the original materials of the model.

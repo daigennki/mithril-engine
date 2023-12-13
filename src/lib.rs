@@ -16,6 +16,7 @@ use simplelog::*;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::PathBuf;
+use vulkano::descriptor_set::DescriptorSet;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -80,8 +81,14 @@ fn init_world(
 
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 
-	let basecolor_only_set_layout = render_ctx.get_transparency_renderer().get_base_color_only_set_layout();
-	let mesh_manager = component::mesh::MeshManager::new(basecolor_only_set_layout.clone());
+	let basecolor_only_set_layout = render_ctx
+		.get_transparency_renderer()
+		.get_base_color_only_set_layout()
+		.clone();
+	let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
+	let light_set_layout = render_ctx.get_light_set_layout().clone();
+	let mesh_manager =
+		component::mesh::MeshManager::new(basecolor_only_set_layout, transparency_input_layout, light_set_layout);
 
 	let (world, sky) = load_world(start_map)?;
 
