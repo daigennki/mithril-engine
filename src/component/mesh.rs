@@ -8,9 +8,9 @@
 use glam::*;
 use serde::Deserialize;
 use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout};
@@ -76,6 +76,8 @@ pub struct MeshManager
 
 	// The models and material overrides for each entity.
 	resources: BTreeMap<EntityId, (Arc<Model>, Vec<MaterialResources>)>,
+
+	cb_3d: Mutex<VecDeque<Arc<SecondaryAutoCommandBuffer>>>,
 }
 impl MeshManager
 {
@@ -92,6 +94,7 @@ impl MeshManager
 			transparency_input_layout,
 			light_set_layout,
 			resources: Default::default(),
+			cb_3d: Mutex::new(VecDeque::with_capacity(2)),
 		}
 	}
 
@@ -266,6 +269,16 @@ impl MeshManager
 			)?;
 		}
 		Ok(())
+	}
+
+	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
+	{
+		self.cb_3d.lock().unwrap().push_back(cb);
+	}
+
+	pub fn take_cb(&mut self) -> VecDeque<Arc<SecondaryAutoCommandBuffer>>
+	{
+		std::mem::replace(&mut self.cb_3d.lock().unwrap(), VecDeque::with_capacity(2))
 	}
 }
 

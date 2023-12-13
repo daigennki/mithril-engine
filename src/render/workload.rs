@@ -129,7 +129,7 @@ fn draw_3d(
 
 	let mut sky_cb = render_ctx.gather_commands(&color_formats, None, None, vp_extent)?;
 	skybox.draw(&mut sky_cb, camera_manager.sky_projview())?;
-	render_ctx.add_cb(sky_cb.build()?);
+	mesh_manager.add_cb(sky_cb.build()?);
 
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
@@ -149,7 +149,7 @@ fn draw_3d(
 		false,
 	)?;
 
-	render_ctx.add_cb(cb.build()?);
+	mesh_manager.add_cb(cb.build()?);
 	Ok(())
 }
 
@@ -247,9 +247,10 @@ fn draw_ui(
 
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
+	mut mesh_manager: UniqueViewMut<crate::component::mesh::MeshManager>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	render_ctx.submit_frame(canvas.take_cb(), light_manager.drain_dir_light_cb())
+	render_ctx.submit_frame(mesh_manager.take_cb(), canvas.take_cb(), light_manager.drain_dir_light_cb())
 }

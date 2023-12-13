@@ -76,8 +76,6 @@ pub struct RenderContext
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	cb_3d: Mutex<VecDeque<Arc<SecondaryAutoCommandBuffer>>>,
-
 	transparency_renderer: transparency::MomentTransparencyRenderer,
 
 	light_set_layout: Arc<DescriptorSetLayout>,
@@ -187,7 +185,6 @@ impl RenderContext
 			descriptor_set_allocator,
 			memory_allocator,
 			command_buffer_allocator,
-			cb_3d: Mutex::new(VecDeque::with_capacity(2)),
 			main_render_target,
 			transparency_renderer,
 			light_set_layout,
@@ -203,10 +200,10 @@ impl RenderContext
 		})
 	}
 
-	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	/*pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
 	{
 		&self.light_set_layout
-	}
+	}*/
 
 	/// Load an image file as a texture into memory.
 	/// If the image was already loaded, it'll use the corresponding texture.
@@ -442,14 +439,10 @@ impl RenderContext
 		Ok(())
 	}
 
-	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.cb_3d.lock().unwrap().push_back(cb);
-	}
-
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(
 		&mut self,
+		mut cb_3d: VecDeque<Arc<SecondaryAutoCommandBuffer>>,
 		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
 		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
 	) -> Result<(), GenericEngineError>
@@ -522,7 +515,7 @@ impl RenderContext
 			};
 			primary_cb_builder
 				.begin_rendering(sky_render_info)?
-				.execute_commands(self.cb_3d.lock().unwrap().pop_front().unwrap())?
+				.execute_commands(cb_3d.pop_front().unwrap())?
 				.end_rendering()?;
 
 			// 3D
@@ -543,7 +536,7 @@ impl RenderContext
 			};
 			primary_cb_builder
 				.begin_rendering(main_render_info)?
-				.execute_commands(self.cb_3d.lock().unwrap().pop_front().unwrap())?
+				.execute_commands(cb_3d.pop_front().unwrap())?
 				.end_rendering()?;
 
 			// 3D OIT
