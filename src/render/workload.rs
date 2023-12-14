@@ -10,7 +10,6 @@ use shipyard::{
 	UniqueView, UniqueViewMut, View, Workload,
 };
 use vulkano::format::Format;
-use vulkano::pipeline::Pipeline;
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
@@ -42,20 +41,18 @@ fn draw_shadows(
 	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
 
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		let mut cb = render_ctx.gather_commands(&[], shadow_format, None, viewport_extent)?;
-
-		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
-
-		mesh_manager.draw(
-			&mut cb,
+		let cb_builder = render_ctx.gather_commands(&[], shadow_format, None, viewport_extent)?;
+		let cb_built = mesh_manager.draw(
+			cb_builder,
 			layer_projview,
+			Some(shadow_pipeline.clone()),
 			false,
-			None,
-			Some(shadow_pipeline.layout().clone()),
+			false,
+			true,
 			&[],
 		)?;
 
-		light_manager.add_dir_light_cb(cb.build()?);
+		light_manager.add_dir_light_cb(cb_built);
 	}
 
 	Ok(())
@@ -78,11 +75,10 @@ fn draw_3d(
 	skybox.draw(&mut sky_cb, camera_manager.sky_projview())?;
 	mesh_manager.add_cb(sky_cb.build()?);
 
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let cb_builder = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let cb_built = mesh_manager.draw(cb_builder, camera_manager.projview(), None, false, false, false, &common_sets)?;
 
-	mesh_manager.draw(&mut cb, camera_manager.projview(), false, None, None, &common_sets)?;
-
-	mesh_manager.add_cb(cb.build()?);
+	mesh_manager.add_cb(cb_built);
 	Ok(())
 }
 
@@ -95,26 +91,15 @@ fn draw_3d_transparent_moments(
 {
 	let color_formats = [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
 	// This will bind the pipeline for you, since it doesn't need to do anything
 	// specific to materials (it only reads the alpha channel of each texture).
-	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline();
+	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline().clone();
 
-	cb.bind_pipeline_graphics(pipeline.clone())?;
+	let cb_builder = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let cb_built = mesh_manager.draw(cb_builder, camera_manager.projview(), Some(pipeline), true, true, false, &[])?;
 
-	mesh_manager.draw(
-		&mut cb,
-		camera_manager.projview(),
-		true,
-		Some(pipeline.layout().clone()),
-		None,
-		&[],
-	)?;
-
-	render_ctx
-		.get_transparency_renderer()
-		.add_transparency_moments_cb(cb.build()?);
+	render_ctx.get_transparency_renderer().add_transparency_moments_cb(cb_built);
 
 	Ok(())
 }
@@ -129,16 +114,15 @@ fn draw_3d_transparent(
 {
 	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let common_sets = vec![
+	let common_sets = [
 		light_manager.get_all_lights_set().clone(),
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
 	];
 
-	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let cb_builder = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
+	let cb_built = mesh_manager.draw(cb_builder, camera_manager.projview(), None, true, false, false, &common_sets)?;
 
-	mesh_manager.draw(&mut cb, camera_manager.projview(), true, None, None, &common_sets)?;
-
-	render_ctx.get_transparency_renderer().add_transparency_cb(cb.build()?);
+	render_ctx.get_transparency_renderer().add_transparency_cb(cb_built);
 
 	Ok(())
 }

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::material::Material;
@@ -206,11 +206,11 @@ impl MeshManager
 		self.resources.get_mut(&eid).unwrap().model_matrix = model_matrix;
 	}
 
-	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
+	fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
 	{
 		self.material_pipelines.get(name).map(|pl_data| &pl_data.opaque_pipeline)
 	}
-	pub fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
+	fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
 	{
 		self.material_pipelines
 			.get(name)
@@ -234,29 +234,29 @@ impl MeshManager
 
 	pub fn draw(
 		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		mut cb: AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		projview: Mat4,
+		pipeline_override: Option<Arc<GraphicsPipeline>>,
 		transparency_pass: bool,
-		base_color_pipeline_layout: Option<Arc<PipelineLayout>>,
-		shadow_pass_pipeline_layout: Option<Arc<PipelineLayout>>,
+		base_color_only: bool,
+		shadow_pass: bool,
 		common_sets: &[Arc<PersistentDescriptorSet>],
-	) -> Result<(), GenericEngineError>
+	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		let pipeline_layout;
-		if let Some(shadow_pl_layout) = shadow_pass_pipeline_layout.clone() {
-			pipeline_layout = shadow_pl_layout;
-		} else if let Some(some_base_color_pl_layout) = base_color_pipeline_layout.clone() {
-			pipeline_layout = some_base_color_pl_layout;
+		let pipeline = if let Some(pl) = pipeline_override {
+			pl
+		} else if transparency_pass {
+			self.get_transparency_pipeline("PBR")
+				.ok_or("PBR transparency pipeline not loaded!")?
+				.clone()
 		} else {
-			let pipeline = if transparency_pass {
-				self.get_transparency_pipeline("PBR")
-					.ok_or("PBR transparency pipeline not loaded!")?
-			} else {
-				self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?
-			};
-			pipeline_layout = pipeline.layout().clone();
+			self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone()
+		};
+		let pipeline_layout = pipeline.layout().clone();
 
-			cb.bind_pipeline_graphics(pipeline.clone())?;
+		cb.bind_pipeline_graphics(pipeline.clone())?;
+
+		if common_sets.len() > 0 {
 			cb.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				pipeline_layout.clone(),
@@ -279,9 +279,6 @@ impl MeshManager
 				.any(|mat| mat.has_transparency() == transparency_pass);
 
 			if continue_draw {
-				let shadow_pass = shadow_pass_pipeline_layout.is_some();
-				let base_color_only = base_color_pipeline_layout.is_some();
-
 				let projviewmodel = projview * mesh_resources.model_matrix;
 				if shadow_pass {
 					// TODO: also consider point lights, which require different matrices
@@ -299,7 +296,7 @@ impl MeshManager
 				}
 
 				mesh_resources.model.draw(
-					cb,
+					&mut cb,
 					pipeline_layout.clone(),
 					&projviewmodel,
 					&mesh_resources.material_resources,
@@ -309,7 +306,8 @@ impl MeshManager
 				)?;
 			}
 		}
-		Ok(())
+
+		Ok(cb.build()?)
 	}
 
 	/// Free resources for the given entity ID. Only call this when the `Mesh` component was actually removed!
