@@ -12,7 +12,7 @@ use shipyard::EntityId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
@@ -146,6 +146,7 @@ struct UiGpuResources
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	projected: Affine2,
 	logical_texture_size_inv: Vec2,
+	mesh_type: MeshType,
 }
 
 #[derive(shipyard::Unique)]
@@ -278,21 +279,6 @@ impl Canvas
 		self.mesh_resources.remove(&eid);
 	}
 
-	pub fn get_set_layout(&self) -> &Arc<DescriptorSetLayout>
-	{
-		&self.set_layout
-	}
-
-	pub fn get_pipeline(&self) -> &Arc<GraphicsPipeline>
-	{
-		&self.ui_pipeline
-	}
-
-	pub fn get_text_pipeline(&self) -> &Arc<GraphicsPipeline>
-	{
-		&self.text_pipeline
-	}
-
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
 	pub fn on_screen_resize(&mut self, screen_width: u32, screen_height: u32)
 	{
@@ -330,6 +316,7 @@ impl Canvas
 			descriptor_set,
 			projected,
 			logical_texture_size_inv,
+			mesh_type: MeshType::Quad,
 		})
 	}
 
@@ -471,13 +458,36 @@ impl Canvas
 		Ok(())
 	}
 
-	pub fn draw_text(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		eid: EntityId,
-	) -> Result<(), GenericEngineError>
+	pub fn draw(&mut self, render_ctx: &RenderContext) -> Result<(), GenericEngineError>
 	{
-		if let Some(resources) = self.text_resources.get(&eid) {
+		// TODO: how do we respect the render order of each UI element?
+
+		let vp_extent = render_ctx.swapchain_dimensions();
+		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
+
+		cb.bind_pipeline_graphics(self.ui_pipeline.clone())?;
+		for resources in self.mesh_resources.values() {
+			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
+			cb.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				self.ui_pipeline.layout().clone(),
+				0,
+				vec![resources.descriptor_set.clone()],
+			)?;
+
+			match resources.mesh_type {
+				MeshType::Quad => {
+					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
+					cb.draw(4, 1, 0, 0)?;
+				}
+				MeshType::Frame(_border_width) => {
+					todo!();
+				}
+			}
+		}
+
+		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
+		for resources in self.text_resources.values() {
 			if let Some(vbo) = resources.text_vbo.clone() {
 				let mut push_constant_data: [f32; 8] = Default::default();
 				resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
@@ -497,43 +507,12 @@ impl Canvas
 				cb.draw(4, glyph_count as u32, 0, 0)?;
 			}
 		}
-		Ok(())
-	}
 
-	pub fn draw(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		eid: EntityId,
-		component: &super::mesh::Mesh,
-	) -> Result<(), GenericEngineError>
-	{
-		if let Some(resources) = self.mesh_resources.get(&eid) {
-			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
-			cb.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				self.ui_pipeline.layout().clone(),
-				0,
-				vec![resources.descriptor_set.clone()],
-			)?;
-
-			match component.mesh_type {
-				MeshType::Quad => {
-					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
-					cb.draw(4, 1, 0, 0)?;
-				}
-				MeshType::Frame(_border_width) => {
-					todo!();
-				}
-			}
-		}
+		assert!(self.ui_cb.replace(cb.build()?).is_none());
 
 		Ok(())
 	}
 
-	pub fn add_cb(&mut self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
-	{
-		self.ui_cb = Some(command_buffer);
-	}
 	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
 	{
 		self.ui_cb.take()

@@ -5,11 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use shipyard::{
-	iter::{IntoIter, IntoWithId},
-	UniqueView, UniqueViewMut, View, Workload,
-};
-use vulkano::format::Format;
+use shipyard::{UniqueView, UniqueViewMut, Workload};
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
@@ -115,30 +111,9 @@ fn draw_3d_transparent(
 fn draw_ui(
 	render_ctx: UniqueView<RenderContext>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
-	ui_transforms: View<ui::UITransform>,
-	ui_meshes: View<ui::mesh::Mesh>,
-	ui_texts: View<ui::text::UIText>,
 ) -> Result<(), GenericEngineError>
 {
-	let vp_extent = render_ctx.swapchain_dimensions();
-	let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
-
-	cb.bind_pipeline_graphics(canvas.get_pipeline().clone())?;
-
-	// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-	for (eid, (_, ui_mesh)) in (&ui_transforms, &ui_meshes).iter().with_id() {
-		// TODO: how do we respect the render order?
-		canvas.draw(&mut cb, eid, ui_mesh)?;
-	}
-
-	cb.bind_pipeline_graphics(canvas.get_text_pipeline().clone())?;
-	for (eid, _) in (&ui_transforms, &ui_texts).iter().with_id() {
-		// TODO: how do we respect the render order?
-		canvas.draw_text(&mut cb, eid)?;
-	}
-
-	canvas.add_cb(cb.build()?);
-	Ok(())
+	canvas.draw(&render_ctx)
 }
 
 fn submit_frame(
