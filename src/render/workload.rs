@@ -38,21 +38,18 @@ fn draw_shadows(
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
 	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
 	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
-	let shadow_format = Some(light_manager.get_dir_light_shadow().format());
+	let shadow_format = light_manager.get_dir_light_shadow().format();
 
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		let cb_builder = render_ctx.gather_commands(&[], shadow_format, None, viewport_extent)?;
-		let cb_built = mesh_manager.draw(
-			cb_builder,
+		let cb = mesh_manager.draw(
+			&render_ctx,
 			layer_projview,
 			Some(shadow_pipeline.clone()),
 			false,
-			false,
-			true,
+			Some((shadow_format, viewport_extent)),
 			&[],
 		)?;
-
-		light_manager.add_dir_light_cb(cb_built);
+		light_manager.add_dir_light_cb(cb);
 	}
 
 	Ok(())
@@ -67,18 +64,12 @@ fn draw_3d(
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [Format::R16G16B16A16_SFLOAT];
-	let vp_extent = render_ctx.swapchain_dimensions();
+	mesh_manager.add_cb(skybox.draw(&render_ctx, camera_manager.sky_projview())?);
+
 	let common_sets = [light_manager.get_all_lights_set().clone()];
+	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), None, false, None, &common_sets)?;
 
-	let mut sky_cb = render_ctx.gather_commands(&color_formats, None, None, vp_extent)?;
-	skybox.draw(&mut sky_cb, camera_manager.sky_projview())?;
-	mesh_manager.add_cb(sky_cb.build()?);
-
-	let cb_builder = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
-	let cb_built = mesh_manager.draw(cb_builder, camera_manager.projview(), None, false, false, false, &common_sets)?;
-
-	mesh_manager.add_cb(cb_built);
+	mesh_manager.add_cb(cb);
 	Ok(())
 }
 
@@ -89,17 +80,13 @@ fn draw_3d_transparent_moments(
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT];
-	let vp_extent = render_ctx.swapchain_dimensions();
-
 	// This will bind the pipeline for you, since it doesn't need to do anything
 	// specific to materials (it only reads the alpha channel of each texture).
 	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline().clone();
 
-	let cb_builder = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
-	let cb_built = mesh_manager.draw(cb_builder, camera_manager.projview(), Some(pipeline), true, true, false, &[])?;
+	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), Some(pipeline), true, None, &[])?;
 
-	render_ctx.get_transparency_renderer().add_transparency_moments_cb(cb_built);
+	render_ctx.get_transparency_renderer().add_transparency_moments_cb(cb);
 
 	Ok(())
 }
@@ -112,17 +99,14 @@ fn draw_3d_transparent(
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
-	let vp_extent = render_ctx.swapchain_dimensions();
 	let common_sets = [
 		light_manager.get_all_lights_set().clone(),
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
 	];
 
-	let cb_builder = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
-	let cb_built = mesh_manager.draw(cb_builder, camera_manager.projview(), None, true, false, false, &common_sets)?;
+	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), None, true, None, &common_sets)?;
 
-	render_ctx.get_transparency_renderer().add_transparency_cb(cb_built);
+	render_ctx.get_transparency_renderer().add_transparency_cb(cb);
 
 	Ok(())
 }

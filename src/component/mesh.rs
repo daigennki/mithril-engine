@@ -11,8 +11,9 @@ use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
+use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
@@ -234,24 +235,39 @@ impl MeshManager
 
 	pub fn draw(
 		&self,
-		mut cb: AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		render_ctx: &RenderContext,
 		projview: Mat4,
 		pipeline_override: Option<Arc<GraphicsPipeline>>,
 		transparency_pass: bool,
-		base_color_only: bool,
-		shadow_pass: bool,
+		shadow_pass: Option<(Format, [u32; 2])>,
 		common_sets: &[Arc<PersistentDescriptorSet>],
 	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		let pipeline = if let Some(pl) = pipeline_override {
-			pl
+		let (depth_format, viewport_extent) = shadow_pass
+			.unwrap_or_else(|| (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions()));
+	
+		let base_color_only = pipeline_override.is_some() && transparency_pass;
+		let color_formats: &[Format];
+		let pipeline;
+		if let Some(pl) = pipeline_override {
+			// assume OIT moments pass if pipeline override is `Some` and this is in a transparency pass
+			color_formats = transparency_pass
+				.then(|| [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT].as_slice())
+				.unwrap_or_default();
+			pipeline = pl;
 		} else if transparency_pass {
-			self.get_transparency_pipeline("PBR")
+			color_formats = &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
+			pipeline = self
+				.get_transparency_pipeline("PBR")
 				.ok_or("PBR transparency pipeline not loaded!")?
-				.clone()
+				.clone();
 		} else {
-			self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone()
+			color_formats = &[Format::R16G16B16A16_SFLOAT];
+			pipeline = self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone();
 		};
+
+		let mut cb = render_ctx.gather_commands(color_formats, Some(depth_format), None, viewport_extent)?;
+
 		let pipeline_layout = pipeline.layout().clone();
 
 		cb.bind_pipeline_graphics(pipeline.clone())?;
@@ -280,7 +296,7 @@ impl MeshManager
 
 			if continue_draw {
 				let projviewmodel = projview * mesh_resources.model_matrix;
-				if shadow_pass {
+				if shadow_pass.is_some() {
 					// TODO: also consider point lights, which require different matrices
 					cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 				} else {
@@ -302,7 +318,7 @@ impl MeshManager
 					&mesh_resources.material_resources,
 					transparency_pass,
 					base_color_only,
-					shadow_pass,
+					shadow_pass.is_some(),
 				)?;
 			}
 		}
