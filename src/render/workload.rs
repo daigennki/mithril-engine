@@ -5,15 +5,12 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use glam::*;
 use shipyard::{
 	iter::{IntoIter, IntoWithId},
 	UniqueView, UniqueViewMut, View, Workload,
 };
-use std::sync::Arc;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::format::Format;
-use vulkano::pipeline::{graphics::GraphicsPipeline, Pipeline, PipelineBindPoint};
+use vulkano::pipeline::Pipeline;
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
@@ -35,7 +32,6 @@ pub fn render() -> Workload
 // Render shadow maps.
 fn draw_shadows(
 	render_ctx: UniqueView<RenderContext>,
-	transforms: View<crate::component::Transform>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
@@ -50,55 +46,18 @@ fn draw_shadows(
 
 		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
 
-		for (eid, _) in transforms.iter().with_id() {
-			if mesh_manager.has_opaque_materials(eid) {
-				mesh_manager.draw(
-					eid,
-					&mut cb,
-					shadow_pipeline.layout().clone(),
-					layer_projview,
-					false,
-					false,
-					true,
-				)?;
-			}
-		}
+		mesh_manager.draw(
+			&mut cb,
+			layer_projview,
+			false,
+			None,
+			Some(shadow_pipeline.layout().clone()),
+			&[],
+		)?;
 
 		light_manager.add_dir_light_cb(cb.build()?);
 	}
 
-	Ok(())
-}
-
-// Draw 3D objects.
-// This will ignore anything without a `Transform` component, since it would be impossible to draw without one.
-fn draw_common(
-	command_buffer: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-	camera_manager: &CameraManager,
-	transforms: View<crate::component::Transform>,
-	mesh_manager: &crate::component::mesh::MeshManager,
-	pipeline: &Arc<GraphicsPipeline>,
-	transparency_pass: bool,
-	base_color_only: bool,
-) -> Result<(), GenericEngineError>
-{
-	let projview = camera_manager.projview();
-
-	for (eid, _) in transforms.iter().with_id() {
-		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass)
-			|| (mesh_manager.has_transparency(eid) && transparency_pass)
-		{
-			mesh_manager.draw(
-				eid,
-				command_buffer,
-				pipeline.layout().clone(),
-				projview,
-				transparency_pass,
-				base_color_only,
-				false,
-			)?;
-		}
-	}
 	Ok(())
 }
 
@@ -107,14 +66,13 @@ fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
 	skybox: UniqueView<super::skybox::Skybox>,
 	camera_manager: UniqueView<CameraManager>,
-	transforms: View<crate::component::Transform>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
 	let color_formats = [Format::R16G16B16A16_SFLOAT];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let light_set = vec![light_manager.get_all_lights_set().clone()];
+	let common_sets = [light_manager.get_all_lights_set().clone()];
 
 	let mut sky_cb = render_ctx.gather_commands(&color_formats, None, None, vp_extent)?;
 	skybox.draw(&mut sky_cb, camera_manager.sky_projview())?;
@@ -122,21 +80,7 @@ fn draw_3d(
 
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
-	let pbr_pipeline = mesh_manager.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?;
-
-	cb.bind_pipeline_graphics(pbr_pipeline.clone())?
-		.push_constants(pbr_pipeline.layout().clone(), 0, camera_manager.projview())?
-		.bind_descriptor_sets(PipelineBindPoint::Graphics, pbr_pipeline.layout().clone(), 1, light_set)?;
-
-	draw_common(
-		&mut cb,
-		&camera_manager,
-		transforms,
-		&mesh_manager,
-		pbr_pipeline,
-		false,
-		false,
-	)?;
+	mesh_manager.draw(&mut cb, camera_manager.projview(), false, None, None, &common_sets)?;
 
 	mesh_manager.add_cb(cb.build()?);
 	Ok(())
@@ -146,7 +90,6 @@ fn draw_3d(
 fn draw_3d_transparent_moments(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
-	transforms: View<crate::component::Transform>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 ) -> Result<(), GenericEngineError>
 {
@@ -160,7 +103,14 @@ fn draw_3d_transparent_moments(
 
 	cb.bind_pipeline_graphics(pipeline.clone())?;
 
-	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, true)?;
+	mesh_manager.draw(
+		&mut cb,
+		camera_manager.projview(),
+		true,
+		Some(pipeline.layout().clone()),
+		None,
+		&[],
+	)?;
 
 	render_ctx
 		.get_transparency_renderer()
@@ -173,16 +123,12 @@ fn draw_3d_transparent_moments(
 fn draw_3d_transparent(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
-	transforms: View<crate::component::Transform>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
 	let color_formats = [Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
 	let vp_extent = render_ctx.swapchain_dimensions();
-	let pipeline = mesh_manager
-		.get_transparency_pipeline("PBR")
-		.ok_or("PBR transparency pipeline not loaded!")?;
 	let common_sets = vec![
 		light_manager.get_all_lights_set().clone(),
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
@@ -190,14 +136,7 @@ fn draw_3d_transparent(
 
 	let mut cb = render_ctx.gather_commands(&color_formats, Some(super::MAIN_DEPTH_FORMAT), None, vp_extent)?;
 
-	cb.bind_pipeline_graphics(pipeline.clone())?.bind_descriptor_sets(
-		PipelineBindPoint::Graphics,
-		pipeline.layout().clone(),
-		1,
-		common_sets,
-	)?;
-
-	draw_common(&mut cb, &camera_manager, transforms, &mesh_manager, pipeline, true, false)?;
+	mesh_manager.draw(&mut cb, camera_manager.projview(), true, None, None, &common_sets)?;
 
 	render_ctx.get_transparency_renderer().add_transparency_cb(cb.build()?);
 

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
-use vulkano::pipeline::{GraphicsPipeline, PipelineLayout};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::material::Material;
@@ -81,6 +81,16 @@ struct PipelineData
 	material_set_layout: Arc<DescriptorSetLayout>,
 }
 
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
+#[repr(C)]
+pub struct MeshPushConstant
+{
+	projviewmodel: Mat4,
+	model_x: Vec4,
+	model_y: Vec4,
+	model_z: Vec4,
+}
+
 /// A single manager that manages the GPU resources for all `Mesh` components.
 #[derive(shipyard::Unique)]
 pub struct MeshManager
@@ -95,7 +105,7 @@ pub struct MeshManager
 	light_set_layout: Arc<DescriptorSetLayout>,
 
 	// The models and materials for each entity.
-	resources: BTreeMap<EntityId, MeshResources>,
+	resources: HashMap<EntityId, MeshResources>,
 
 	cb_3d: Mutex<VecDeque<Arc<SecondaryAutoCommandBuffer>>>,
 }
@@ -222,95 +232,87 @@ impl MeshManager
 		&mut self.resources.get_mut(&eid).unwrap().1
 	}*/
 
-	/// Check if any of the materials are enabled for transparency.
-	/// This may also return false if the entity ID is invalid.
-	pub fn has_transparency(&self, eid: EntityId) -> bool
-	{
-		// substitute the original material if no override was specified,
-		// then look for any materials with transparency enabled
-		match self.resources.get(&eid) {
-			Some(MeshResources {
-				model,
-				material_resources,
-				..
-			}) => {
-				let original_materials = model.get_materials();
-				material_resources
-					.iter()
-					.enumerate()
-					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
-					.any(|mat| mat.has_transparency())
-			}
-			None => false,
-		}
-	}
-
-	/// Check if there are any materials that are *not* enabled for transparency.
-	/// This may also return false if the entity ID is invalid.
-	pub fn has_opaque_materials(&self, eid: EntityId) -> bool
-	{
-		// substitute the original material if no override was specified,
-		// then look for any materials with transparency disabled
-		match self.resources.get(&eid) {
-			Some(MeshResources {
-				model,
-				material_resources,
-				..
-			}) => {
-				let original_materials = model.get_materials();
-				material_resources
-					.iter()
-					.enumerate()
-					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
-					.any(|mat| !mat.has_transparency())
-			}
-			None => false,
-		}
-	}
-
 	pub fn draw(
 		&self,
-		eid: EntityId,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_layout: Arc<PipelineLayout>,
 		projview: Mat4,
 		transparency_pass: bool,
-		base_color_only: bool,
-		shadow_pass: bool,
+		base_color_pipeline_layout: Option<Arc<PipelineLayout>>,
+		shadow_pass_pipeline_layout: Option<Arc<PipelineLayout>>,
+		common_sets: &[Arc<PersistentDescriptorSet>],
 	) -> Result<(), GenericEngineError>
 	{
-		// only draw if the model has completed loading
-		if let Some(mesh_resources) = self.resources.get(&eid) {
-			let projviewmodel = projview * mesh_resources.model_matrix;
-			if shadow_pass {
-				// TODO: also consider point lights, which require different matrices
-				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+		let pipeline_layout;
+		if let Some(shadow_pl_layout) = shadow_pass_pipeline_layout.clone() {
+			pipeline_layout = shadow_pl_layout;
+		} else if let Some(some_base_color_pl_layout) = base_color_pipeline_layout.clone() {
+			pipeline_layout = some_base_color_pl_layout;
+		} else {
+			let pipeline = if transparency_pass {
+				self.get_transparency_pipeline("PBR")
+					.ok_or("PBR transparency pipeline not loaded!")?
 			} else {
-				let model_matrix = mesh_resources.model_matrix;
-				let translation = model_matrix.w_axis.xyz();
-				let push_data = MeshPushConstant {
-					projviewmodel,
-					model_x: model_matrix.x_axis.xyz().extend(translation.x),
-					model_y: model_matrix.y_axis.xyz().extend(translation.y),
-					model_z: model_matrix.z_axis.xyz().extend(translation.z),
-				};
-				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
-			}
+				self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?
+			};
+			pipeline_layout = pipeline.layout().clone();
 
-			mesh_resources.model.draw(
-				cb,
-				pipeline_layout,
-				&projviewmodel,
-				&mesh_resources.material_resources,
-				transparency_pass,
-				base_color_only,
-				shadow_pass,
+			cb.bind_pipeline_graphics(pipeline.clone())?;
+			cb.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				pipeline_layout.clone(),
+				1,
+				Vec::from(common_sets),
 			)?;
+		}
+
+		// go through all the loaded meshes
+		for mesh_resources in self.resources.values() {
+			let original_materials = mesh_resources.model.get_materials();
+
+			// substitute the original material if no override was specified,
+			// then look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
+			let continue_draw = mesh_resources
+				.material_resources
+				.iter()
+				.enumerate()
+				.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
+				.any(|mat| mat.has_transparency() == transparency_pass);
+
+			if continue_draw {
+				let shadow_pass = shadow_pass_pipeline_layout.is_some();
+				let base_color_only = base_color_pipeline_layout.is_some();
+
+				let projviewmodel = projview * mesh_resources.model_matrix;
+				if shadow_pass {
+					// TODO: also consider point lights, which require different matrices
+					cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+				} else {
+					let model_matrix = mesh_resources.model_matrix;
+					let translation = model_matrix.w_axis.xyz();
+					let push_data = MeshPushConstant {
+						projviewmodel,
+						model_x: model_matrix.x_axis.xyz().extend(translation.x),
+						model_y: model_matrix.y_axis.xyz().extend(translation.y),
+						model_z: model_matrix.z_axis.xyz().extend(translation.z),
+					};
+					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+				}
+
+				mesh_resources.model.draw(
+					cb,
+					pipeline_layout.clone(),
+					&projviewmodel,
+					&mesh_resources.material_resources,
+					transparency_pass,
+					base_color_only,
+					shadow_pass,
+				)?;
+			}
 		}
 		Ok(())
 	}
 
-	/// Free resources for the given entity ID. Only call this when the entity was actually removed!
+	/// Free resources for the given entity ID. Only call this when the `Mesh` component was actually removed!
 	pub fn cleanup_removed(&mut self, eid: EntityId)
 	{
 		self.resources.remove(&eid);
@@ -325,14 +327,4 @@ impl MeshManager
 	{
 		std::mem::replace(&mut self.cb_3d.lock().unwrap(), VecDeque::with_capacity(2))
 	}
-}
-
-#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
-#[repr(C)]
-pub struct MeshPushConstant
-{
-	projviewmodel: Mat4,
-	model_x: Vec4,
-	model_y: Vec4,
-	model_z: Vec4,
 }
