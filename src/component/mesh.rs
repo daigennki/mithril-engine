@@ -37,13 +37,23 @@ impl WantsSystemAdded for Mesh
 		Some(update_meshes.into_workload_system().unwrap())
 	}
 }
-fn update_meshes(mut render_ctx: UniqueViewMut<RenderContext>, mut mesh_manager: UniqueViewMut<MeshManager>, meshes: View<Mesh>)
+fn update_meshes(
+	mut render_ctx: UniqueViewMut<RenderContext>,
+	mut mesh_manager: UniqueViewMut<MeshManager>,
+	meshes: View<Mesh>,
+	transforms: View<super::Transform>,
+)
 {
 	for (eid, mesh) in meshes.inserted().iter().with_id() {
 		if let Err(e) = mesh_manager.load(&mut render_ctx, eid, mesh) {
 			log::error!("Failed to run `MeshManager::load`: {}", e);
 		}
 	}
+
+	for (eid, (t, _)) in (transforms.inserted_or_modified(), &meshes).iter().with_id() {
+		mesh_manager.set_model_matrix(eid, t.get_matrix());
+	}
+
 	for eid in meshes.removed() {
 		mesh_manager.cleanup_removed(eid);
 	}
@@ -56,8 +66,15 @@ pub struct MaterialResources
 	pub mat_basecolor_only_set: Arc<PersistentDescriptorSet>, // used for OIT when only "base color" texture is needed
 }
 
+struct MeshResources
+{
+	model: Arc<Model>,
+	material_resources: Vec<MaterialResources>,
+	model_matrix: Mat4,
+}
+
 /// Pipeline for each material, as well as the descriptor set layout unique to each material.
-pub struct PipelineData
+struct PipelineData
 {
 	opaque_pipeline: Arc<GraphicsPipeline>,
 	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
@@ -77,8 +94,8 @@ pub struct MeshManager
 	transparency_input_layout: Arc<DescriptorSetLayout>,
 	light_set_layout: Arc<DescriptorSetLayout>,
 
-	// The models and material overrides for each entity.
-	resources: BTreeMap<EntityId, (Arc<Model>, Vec<MaterialResources>)>,
+	// The models and materials for each entity.
+	resources: BTreeMap<EntityId, MeshResources>,
 
 	cb_3d: Mutex<VecDeque<Arc<SecondaryAutoCommandBuffer>>>,
 }
@@ -161,12 +178,22 @@ impl MeshManager
 			});
 		}
 
-		let existing = self.resources.insert(eid, (model_data, material_resources));
+		let mesh_resources = MeshResources {
+			model: model_data,
+			material_resources,
+			model_matrix: Default::default(),
+		};
+		let existing = self.resources.insert(eid, mesh_resources);
 		if existing.is_some() {
 			log::warn!("`MeshManager::load` was called for an entity ID that was already loaded!");
 		}
 
 		Ok(())
+	}
+
+	pub fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
+	{
+		self.resources.get_mut(&eid).unwrap().model_matrix = model_matrix;
 	}
 
 	pub fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
@@ -184,7 +211,7 @@ impl MeshManager
 	/// This will panic if the entity ID is invalid!
 	pub fn get_materials(&mut self, eid: EntityId) -> &Vec<Box<dyn Material>>
 	{
-		self.resources.get(&eid).unwrap().0.get_materials()
+		self.resources.get(&eid).unwrap().model.get_materials()
 	}
 
 	/*/// Get the materials that override the model's material.
@@ -202,9 +229,13 @@ impl MeshManager
 		// substitute the original material if no override was specified,
 		// then look for any materials with transparency enabled
 		match self.resources.get(&eid) {
-			Some((model, material_overrides)) => {
+			Some(MeshResources {
+				model,
+				material_resources,
+				..
+			}) => {
 				let original_materials = model.get_materials();
-				material_overrides
+				material_resources
 					.iter()
 					.enumerate()
 					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
@@ -221,9 +252,13 @@ impl MeshManager
 		// substitute the original material if no override was specified,
 		// then look for any materials with transparency disabled
 		match self.resources.get(&eid) {
-			Some((model, material_overrides)) => {
+			Some(MeshResources {
+				model,
+				material_resources,
+				..
+			}) => {
 				let original_materials = model.get_materials();
-				material_overrides
+				material_resources
 					.iter()
 					.enumerate()
 					.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
@@ -238,34 +273,35 @@ impl MeshManager
 		eid: EntityId,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_layout: Arc<PipelineLayout>,
-		projviewmodel: Mat4,
-		model_notranslate: Mat3A,
-		translation: Vec3,
+		projview: Mat4,
 		transparency_pass: bool,
 		base_color_only: bool,
 		shadow_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// only draw if the model has completed loading
-		if let Some((model_loaded, mat_resources)) = self.resources.get(&eid) {
+		if let Some(mesh_resources) = self.resources.get(&eid) {
+			let projviewmodel = projview * mesh_resources.model_matrix;
 			if shadow_pass {
 				// TODO: also consider point lights, which require different matrices
 				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 			} else {
+				let model_matrix = mesh_resources.model_matrix;
+				let translation = model_matrix.w_axis.xyz();
 				let push_data = MeshPushConstant {
 					projviewmodel,
-					model_x: model_notranslate.x_axis.extend(translation.x),
-					model_y: model_notranslate.y_axis.extend(translation.y),
-					model_z: model_notranslate.z_axis.extend(translation.z),
+					model_x: model_matrix.x_axis.xyz().extend(translation.x),
+					model_y: model_matrix.y_axis.xyz().extend(translation.y),
+					model_z: model_matrix.z_axis.xyz().extend(translation.z),
 				};
 				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 			}
 
-			model_loaded.draw(
+			mesh_resources.model.draw(
 				cb,
 				pipeline_layout,
 				&projviewmodel,
-				mat_resources,
+				&mesh_resources.material_resources,
 				transparency_pass,
 				base_color_only,
 				shadow_pass,

@@ -50,19 +50,13 @@ fn draw_shadows(
 
 		cb.bind_pipeline_graphics(shadow_pipeline.clone())?;
 
-		for (eid, transform) in transforms.iter().with_id() {
+		for (eid, _) in transforms.iter().with_id() {
 			if mesh_manager.has_opaque_materials(eid) {
-				let model_matrix = transform.get_matrix();
-				let transform_mat = layer_projview * model_matrix;
-				let model_mat3a = Mat3A::from_mat4(model_matrix);
-
 				mesh_manager.draw(
 					eid,
 					&mut cb,
 					shadow_pipeline.layout().clone(),
-					transform_mat,
-					model_mat3a,
-					transform.position,
+					layer_projview,
 					false,
 					false,
 					true,
@@ -90,20 +84,15 @@ fn draw_common(
 {
 	let projview = camera_manager.projview();
 
-	for (eid, transform) in transforms.iter().with_id() {
+	for (eid, _) in transforms.iter().with_id() {
 		if (mesh_manager.has_opaque_materials(eid) && !transparency_pass)
 			|| (mesh_manager.has_transparency(eid) && transparency_pass)
 		{
-			let model_matrix = transform.get_matrix();
-			let transform_mat = projview * model_matrix;
-			let model_mat3a = Mat3A::from_mat4(model_matrix);
 			mesh_manager.draw(
 				eid,
 				command_buffer,
 				pipeline.layout().clone(),
-				transform_mat,
-				model_mat3a,
-				transform.position,
+				projview,
 				transparency_pass,
 				base_color_only,
 				false,
