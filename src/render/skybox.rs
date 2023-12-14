@@ -74,6 +74,7 @@ pub struct Skybox
 	cube_vbo: Subbuffer<[f32]>,
 	cube_ibo: Subbuffer<[u16]>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
+	command_buffer: Option<Arc<SecondaryAutoCommandBuffer>>,
 }
 impl Skybox
 {
@@ -145,14 +146,11 @@ impl Skybox
 			cube_vbo: render_ctx.new_buffer(&position, BufferUsage::VERTEX_BUFFER)?,
 			cube_ibo: render_ctx.new_buffer(&indices, BufferUsage::INDEX_BUFFER)?,
 			descriptor_set,
+			command_buffer: None,
 		})
 	}
 
-	pub fn draw(
-		&self,
-		render_ctx: &RenderContext,
-		sky_projview: Mat4,
-	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
+	pub fn draw(&mut self, render_ctx: &RenderContext, sky_projview: Mat4) -> Result<(), GenericEngineError>
 	{
 		let vp_extent = render_ctx.swapchain_dimensions();
 		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
@@ -169,6 +167,13 @@ impl Skybox
 			.bind_index_buffer(self.cube_ibo.clone())?
 			.draw_indexed(17, 1, 0, 0, 0)?;
 
-		Ok(cb.build()?)
+		assert!(self.command_buffer.replace(cb.build()?).is_none());
+
+		Ok(())
+	}
+
+	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
+	{
+		self.command_buffer.take()
 	}
 }

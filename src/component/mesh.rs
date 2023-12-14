@@ -8,7 +8,7 @@
 use glam::*;
 use serde::Deserialize;
 use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
@@ -108,7 +108,7 @@ pub struct MeshManager
 	// The models and materials for each entity.
 	resources: HashMap<EntityId, MeshResources>,
 
-	cb_3d: Mutex<VecDeque<Arc<SecondaryAutoCommandBuffer>>>,
+	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 }
 impl MeshManager
 {
@@ -125,7 +125,7 @@ impl MeshManager
 			transparency_input_layout,
 			light_set_layout,
 			resources: Default::default(),
-			cb_3d: Mutex::new(VecDeque::with_capacity(2)),
+			cb_3d: Default::default(),
 		}
 	}
 
@@ -243,9 +243,9 @@ impl MeshManager
 		common_sets: &[Arc<PersistentDescriptorSet>],
 	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		let (depth_format, viewport_extent) = shadow_pass
-			.unwrap_or_else(|| (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions()));
-	
+		let (depth_format, viewport_extent) =
+			shadow_pass.unwrap_or_else(|| (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions()));
+
 		let base_color_only = pipeline_override.is_some() && transparency_pass;
 		let color_formats: &[Format];
 		let pipeline;
@@ -334,11 +334,11 @@ impl MeshManager
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
-		self.cb_3d.lock().unwrap().push_back(cb);
+		assert!(self.cb_3d.lock().unwrap().replace(cb).is_none())
 	}
 
-	pub fn take_cb(&mut self) -> VecDeque<Arc<SecondaryAutoCommandBuffer>>
+	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
 	{
-		std::mem::replace(&mut self.cb_3d.lock().unwrap(), VecDeque::with_capacity(2))
+		self.cb_3d.lock().unwrap().take()
 	}
 }

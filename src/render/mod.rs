@@ -15,7 +15,7 @@ pub mod transparency;
 mod vulkan_init;
 pub mod workload;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -442,7 +442,8 @@ impl RenderContext
 	/// Submit all the command buffers for this frame to actually render them to the image.
 	pub fn submit_frame(
 		&mut self,
-		mut cb_3d: VecDeque<Arc<SecondaryAutoCommandBuffer>>,
+		sky_cb: Arc<SecondaryAutoCommandBuffer>,
+		cb_3d: Arc<SecondaryAutoCommandBuffer>,
 		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
 		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
 	) -> Result<(), GenericEngineError>
@@ -515,7 +516,7 @@ impl RenderContext
 			};
 			primary_cb_builder
 				.begin_rendering(sky_render_info)?
-				.execute_commands(cb_3d.pop_front().unwrap())?
+				.execute_commands(sky_cb)?
 				.end_rendering()?;
 
 			// 3D
@@ -536,7 +537,7 @@ impl RenderContext
 			};
 			primary_cb_builder
 				.begin_rendering(main_render_info)?
-				.execute_commands(cb_3d.pop_front().unwrap())?
+				.execute_commands(cb_3d)?
 				.end_rendering()?;
 
 			// 3D OIT

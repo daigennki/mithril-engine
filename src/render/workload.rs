@@ -58,13 +58,13 @@ fn draw_shadows(
 // Draw opaque 3D objects
 fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
-	skybox: UniqueView<super::skybox::Skybox>,
+	mut skybox: UniqueViewMut<super::skybox::Skybox>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	mesh_manager.add_cb(skybox.draw(&render_ctx, camera_manager.sky_projview())?);
+	skybox.draw(&render_ctx, camera_manager.sky_projview())?;
 
 	let common_sets = [light_manager.get_all_lights_set().clone()];
 	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), None, false, None, &common_sets)?;
@@ -143,10 +143,16 @@ fn draw_ui(
 
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
+	mut skybox: UniqueViewMut<super::skybox::Skybox>,
 	mut mesh_manager: UniqueViewMut<crate::component::mesh::MeshManager>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
 ) -> Result<(), GenericEngineError>
 {
-	render_ctx.submit_frame(mesh_manager.take_cb(), canvas.take_cb(), light_manager.drain_dir_light_cb())
+	let sky_cb = skybox.take_cb().unwrap();
+	let mesh_3d_cb = mesh_manager.take_cb().unwrap();
+	let ui_cb = canvas.take_cb();
+	let dir_light_cb = light_manager.drain_dir_light_cb();
+
+	render_ctx.submit_frame(sky_cb, mesh_3d_cb, ui_cb, dir_light_cb)
 }
