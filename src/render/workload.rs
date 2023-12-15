@@ -9,6 +9,7 @@ use shipyard::{UniqueView, UniqueViewMut, Workload};
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
+use crate::component::mesh::PassType;
 use crate::component::ui;
 use crate::GenericEngineError;
 
@@ -33,16 +34,14 @@ fn draw_shadows(
 {
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
 	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
-	let shadow_pipeline = light_manager.get_shadow_pipeline().clone();
-	let shadow_format = light_manager.get_dir_light_shadow().format();
+	let pipeline = light_manager.get_shadow_pipeline().clone();
+	let format = light_manager.get_dir_light_shadow().format();
 
 	for layer_projview in light_manager.get_dir_light_projviews() {
 		let cb = mesh_manager.draw(
 			&render_ctx,
 			layer_projview,
-			Some(shadow_pipeline.clone()),
-			false,
-			Some((shadow_format, viewport_extent)),
+			PassType::Shadow { pipeline: pipeline.clone(), format, viewport_extent },
 			&[],
 		)?;
 		light_manager.add_dir_light_cb(cb);
@@ -63,7 +62,7 @@ fn draw_3d(
 	skybox.draw(&render_ctx, camera_manager.sky_projview())?;
 
 	let common_sets = [light_manager.get_all_lights_set().clone()];
-	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), None, false, None, &common_sets)?;
+	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
 
 	mesh_manager.add_cb(cb);
 	Ok(())
@@ -80,7 +79,7 @@ fn draw_3d_transparent_moments(
 	// specific to materials (it only reads the alpha channel of each texture).
 	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline().clone();
 
-	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), Some(pipeline), true, None, &[])?;
+	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::TransparencyMoments(pipeline), &[])?;
 
 	render_ctx.get_transparency_renderer().add_transparency_moments_cb(cb);
 
@@ -100,7 +99,7 @@ fn draw_3d_transparent(
 		render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
 	];
 
-	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), None, true, None, &common_sets)?;
+	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Transparency, &common_sets)?;
 
 	render_ctx.get_transparency_renderer().add_transparency_cb(cb);
 

@@ -92,6 +92,30 @@ pub struct MeshPushConstant
 	model_z: Vec4,
 }
 
+pub enum PassType
+{
+	Shadow {
+		pipeline: Arc<GraphicsPipeline>,
+		format: Format,
+		viewport_extent: [u32; 2]
+	},
+	Opaque,
+	TransparencyMoments(Arc<GraphicsPipeline>),
+	Transparency,
+}
+impl PassType
+{
+	fn render_color_formats(&self) -> &'static [Format]
+	{
+		match self {
+			PassType::Shadow { .. } => &[],
+			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
+			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT],
+			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
+		}
+	}
+}
+
 /// A single manager that manages the GPU resources for all `Mesh` components.
 #[derive(shipyard::Unique)]
 pub struct MeshManager
@@ -237,33 +261,30 @@ impl MeshManager
 		&self,
 		render_ctx: &RenderContext,
 		projview: Mat4,
-		pipeline_override: Option<Arc<GraphicsPipeline>>,
-		transparency_pass: bool,
-		shadow_pass: Option<(Format, [u32; 2])>,
+		pass_type: PassType,
 		common_sets: &[Arc<PersistentDescriptorSet>],
 	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
-		let (depth_format, viewport_extent) =
-			shadow_pass.unwrap_or_else(|| (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions()));
+		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
+			PassType::Shadow { format, viewport_extent, .. } => (*format, *viewport_extent, true),
+			_ => (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions(), false),
+		};
 
-		let base_color_only = pipeline_override.is_some() && transparency_pass;
-		let color_formats: &[Format];
-		let pipeline;
-		if let Some(pl) = pipeline_override {
-			// assume OIT moments pass if pipeline override is `Some` and this is in a transparency pass
-			color_formats = transparency_pass
-				.then(|| [Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT].as_slice())
-				.unwrap_or_default();
-			pipeline = pl;
-		} else if transparency_pass {
-			color_formats = &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM];
-			pipeline = self
-				.get_transparency_pipeline("PBR")
-				.ok_or("PBR transparency pipeline not loaded!")?
-				.clone();
-		} else {
-			color_formats = &[Format::R16G16B16A16_SFLOAT];
-			pipeline = self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone();
+		let color_formats = pass_type.render_color_formats();
+		let (pipeline, transparency_pass, base_color_only) = match pass_type {
+			PassType::Shadow { pipeline, .. } => (pipeline, false, false),
+			PassType::Opaque => {
+				let pl = self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone();
+				(pl, false, false)
+			}
+			PassType::TransparencyMoments(pl) => (pl, true, true),
+			PassType::Transparency => {
+				let pl = self
+					.get_transparency_pipeline("PBR")
+					.ok_or("PBR transparency pipeline not loaded!")?
+					.clone();
+				(pl, true, false)
+			}
 		};
 
 		let mut cb = render_ctx.gather_commands(color_formats, Some(depth_format), None, viewport_extent)?;
@@ -296,7 +317,7 @@ impl MeshManager
 
 			if continue_draw {
 				let projviewmodel = projview * mesh_resources.model_matrix;
-				if shadow_pass.is_some() {
+				if shadow_pass {
 					// TODO: also consider point lights, which require different matrices
 					cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 				} else {
@@ -318,7 +339,7 @@ impl MeshManager
 					&mesh_resources.material_resources,
 					transparency_pass,
 					base_color_only,
-					shadow_pass.is_some(),
+					shadow_pass,
 				)?;
 			}
 		}
