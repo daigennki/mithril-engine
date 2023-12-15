@@ -113,10 +113,10 @@ impl RenderContext
 
 		// The counts below are multiplied by the number of swapchain images, to account for previous submissions.
 		// - Primary: One for graphics, another for async transfers, each on separate queue families.
-		// - Secondary: Only up to two should be created per thread.
+		// - Secondary: Only up to four should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: swapchain.image_count(),
-			secondary_buffer_count: 2 * swapchain.image_count(),
+			secondary_buffer_count: 4 * swapchain.image_count(),
 			..Default::default()
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
