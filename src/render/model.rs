@@ -172,38 +172,42 @@ impl Model
 		shadow_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
-		// determine which submeshes are visible
-		let mut visible_submeshes = self.submeshes.iter().filter(|submesh| submesh.cull(transform)).peekable();
+		// Determine which submeshes are visible.
+		// "Visible" here means its transparency mode matches the current render pass type,
+		// and the submesh passes frustum culling.
+		let mut visible_submeshes = self
+			.submeshes
+			.iter()
+			.filter(|submesh| {
+				let material_index = submesh.material_indices()[0];
+				let mat = &self.materials[material_index];
+				mat.has_transparency() == transparency_pass
+			})
+			.filter(|submesh| submesh.cull(transform))
+			.peekable();
 
-		// don't even bother with vertex/index buffer binds if no submeshes are visible
+		// Don't even bother with vertex/index buffer binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
-			if shadow_pass {
-				cb.bind_vertex_buffers(0, vec![self.vertex_subbuffers[0].clone()])?;
-			} else {
-				cb.bind_vertex_buffers(0, self.vertex_subbuffers.clone())?;
-			}
+			let vertex_subbuffers = shadow_pass
+				.then(|| vec![self.vertex_subbuffers[0].clone()])
+				.unwrap_or_else(|| self.vertex_subbuffers.clone());
+
+			cb.bind_vertex_buffers(0, vertex_subbuffers)?;
 			self.index_buffer.bind(cb)?;
 
 			for submesh in visible_submeshes {
-				// it's okay that we use panicking functions here, since the glTF loader validates the index for us
-				let material_index = submesh.material_indices()[0];
-				let mat_res = &material_resources[material_index];
-				let mat = mat_res
-					.mat_override
-					.as_ref()
-					.unwrap_or_else(|| &self.materials[material_index]);
+				if !shadow_pass {
+					// It's okay that we use panicking functions here, since the glTF loader validates the index for us.
+					let material_index = submesh.material_indices()[0];
+					let mat_res = &material_resources[material_index];
+					let set = base_color_only
+						.then_some(&mat_res.mat_basecolor_only_set)
+						.unwrap_or(&mat_res.mat_set)
+						.clone();
 
-				if mat.has_transparency() == transparency_pass {
-					if !shadow_pass {
-						let set = if base_color_only {
-							mat_res.mat_basecolor_only_set.clone()
-						} else {
-							mat_res.mat_set.clone()
-						};
-						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
-					}
-					submesh.draw(cb)?;
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
 				}
+				submesh.draw(cb)?;
 			}
 		}
 		Ok(())

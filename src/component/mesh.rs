@@ -62,7 +62,6 @@ fn update_meshes(
 
 pub struct MaterialResources
 {
-	pub mat_override: Option<Box<dyn Material>>,
 	pub mat_set: Arc<PersistentDescriptorSet>,
 	pub mat_basecolor_only_set: Arc<PersistentDescriptorSet>, // used for OIT when only "base color" texture is needed
 }
@@ -207,7 +206,6 @@ impl MeshManager
 			)?;
 
 			material_resources.push(MaterialResources {
-				mat_override: None,
 				mat_set,
 				mat_basecolor_only_set,
 			});
@@ -306,13 +304,9 @@ impl MeshManager
 		for mesh_resources in self.resources.values() {
 			let original_materials = mesh_resources.model.get_materials();
 
-			// substitute the original material if no override was specified,
-			// then look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
-			let continue_draw = mesh_resources
-				.material_resources
+			// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
+			let continue_draw = original_materials
 				.iter()
-				.enumerate()
-				.map(|(i, res)| res.mat_override.as_ref().unwrap_or_else(|| &original_materials[i]))
 				.any(|mat| mat.has_transparency() == transparency_pass);
 
 			if continue_draw {
