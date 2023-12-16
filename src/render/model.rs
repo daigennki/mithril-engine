@@ -11,7 +11,6 @@ use serde::Deserialize;
 use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
@@ -26,8 +25,8 @@ use crate::GenericEngineError;
 pub struct Model
 {
 	materials: Vec<(usize, Box<dyn Material>)>,
+	material_base_indices: BTreeMap<&'static str, usize>,
 	material_variants: Vec<String>,
-	shader_usage: BTreeMap<&'static str, RangeInclusive<usize>>,
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
@@ -55,6 +54,44 @@ impl Model
 				let mut indices_u32 = Vec::new();
 				let mut indices_type = DataType::U16;
 
+				let materials_unsorted: Vec<_> = doc
+					.materials()
+					.map(|mat| load_gltf_material(&mat, parent_folder))
+					.collect::<Result<_, _>>()?;
+
+				// Go through the materials and sort them by shader name.
+				// Since the order might change, they'll be stored with their original glTF material index.
+				let mut materials_sorted: Vec<(usize, _)> = materials_unsorted
+					.into_iter()
+					.enumerate()
+					.collect();
+				materials_sorted.sort_by_key(|(_, mat)| mat.material_name());
+
+				// Now go through the sorted materials, and get the first index where each shader is used.
+				let mut material_base_indices = BTreeMap::new();
+				for (i, (_, mat)) in materials_sorted.iter().enumerate() {
+					if !material_base_indices.contains_key(mat.material_name()) {
+						material_base_indices.insert(mat.material_name(), i);
+					}
+				}
+
+				// Collect material variants. If there are no material variants, only one material
+				// group will be set up in the end.
+				let material_variants: Vec<_> = doc
+					.variants()
+					.into_iter()
+					.flatten()
+					.map(|variant| variant.name().to_string())
+					.collect();
+
+				if material_variants.is_empty() {
+					log::debug!("no material variants in model");
+				} else {
+					log::debug!("material variants in model:");
+					material_variants.iter().for_each(|variant| log::debug!("- {}", &variant));
+				}
+
+				// Create submeshes from glTF "primitives".
 				let primitives = doc
 					.nodes()
 					.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
@@ -95,12 +132,41 @@ impl Model
 						other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
 					};
 
-					submeshes.push(SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?);
+					let mut submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
+
+					// Change the unsorted material index in each submesh to the *sorted* material index.
+					// TODO: Do this again if the material variant changes.
+					for mat_index in &mut submesh.mat_indices {
+						*mat_index = materials_sorted
+							.iter()
+							.position(|(unsorted_index, _)| *unsorted_index == *mat_index)
+							.unwrap()
+					}
+
+					submeshes.push(submesh);
 
 					first_index += indices_accessor.count() as u32;
 					vertex_offset += positions_accessor.count() as i32;
 				}
 
+				// Sort the submeshes by material shader, then list out the submesh ranges using each different shader.
+				// TODO: Do this again if the material variant changes, since the variant might use different shaders.
+				submeshes.sort_by_key(|submesh| {
+					let mat_index = submesh.mat_indices[0];
+					materials_sorted
+						.iter()
+						.find(|(i, _)| *i == mat_index)
+						.map(|(_, mat)| mat.material_name())
+						.unwrap()
+				});
+
+				log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
+				for shader_name in material_base_indices.keys() {
+					log::debug!("- {shader_name}");
+				}
+
+				// Combine the vertex data into a single buffer,
+				// then split it into subbuffers for different types of vertex data.
 				let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
 				combined_data.append(&mut positions);
 				let texcoords_offset: u64 = combined_data.len().try_into()?;
@@ -121,67 +187,10 @@ impl Model
 					_ => unreachable!(),
 				};
 
-				let materials_unsorted: Vec<_> = doc
-					.materials()
-					.map(|mat| load_gltf_material(&mat, parent_folder))
-					.collect::<Result<_, _>>()?;
-
-				// Go through the materials and sort them by shader name.
-				// Since the order might change, they'll be stored with their original glTF material index.
-				let mut materials_sorted: Vec<(usize, _)> = materials_unsorted
-					.into_iter()
-					.enumerate()
-					.collect();
-				materials_sorted.sort_by_key(|(_, mat)| mat.material_name());
-
-				// Collect material variants. If there are no material variants, only one material
-				// group will be set up in the end.
-				let material_variants: Vec<_> = doc
-					.variants()
-					.into_iter()
-					.flatten()
-					.map(|variant| variant.name().to_string())
-					.collect();
-
-				if material_variants.is_empty() {
-					log::debug!("no material variants in model");
-				} else {
-					log::debug!("material variants in model:");
-					material_variants.iter().for_each(|variant| log::debug!("- {}", &variant));
-				}
-
-				// Sort the submeshes by material shader, then list out the submesh ranges using each different shader.
-				// TODO: Do this again if the material variant changes, since the variant might use different shaders.
-				submeshes.sort_by_key(|submesh| {
-					let mat_index = submesh.mat_indices[0];
-					materials_sorted
-						.iter()
-						.find_map(|(i, mat)| (*i == mat_index).then(|| mat.material_name()))
-						.unwrap()
-				});
-				let mut shader_usage: BTreeMap<&'static str, RangeInclusive<usize>> = BTreeMap::new();
-				for (i, submesh) in submeshes.iter().enumerate() {
-					let mat_index = submesh.mat_indices[0];
-					let shader_name = materials_sorted
-						.iter()
-						.find_map(|(i, mat)| (*i == mat_index).then(|| mat.material_name()))
-						.unwrap();
-					if let Some(range) = shader_usage.get_mut(shader_name) {
-						*range = (*range.start())..=i;
-					} else {
-						shader_usage.insert(shader_name, i..=i);
-					}
-				}
-
-				log::debug!("Shader usage in model:");
-				for (name, range) in &shader_usage {
-					log::debug!("- {name}: submeshes {range:?}");
-				}
-
 				Ok(Model {
 					materials: materials_sorted,
+					material_base_indices,
 					material_variants,
-					shader_usage,
 					submeshes,
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer,
@@ -223,7 +232,7 @@ impl Model
 			.submeshes
 			.iter()
 			.filter(|submesh| {
-				let material_index = submesh.material_indices()[0];
+				let material_index = submesh.mat_indices[0];
 				let (_, mat) = &self.materials[material_index];
 				mat.has_transparency() == transparency_pass
 			})
@@ -241,42 +250,31 @@ impl Model
 
 			// The beginning index of each shader usage range will be subtracted from the submesh
 			// material index to work out the index in each descriptor set.
-			let mut shader_usage_iter = self.shader_usage.iter();
-			let mut current_shader: Option<(_, &RangeInclusive<usize>)> = None;
+			let mut prev_shader_name = "";
+			let mut mat_base_index = 0;
 
 			for submesh in visible_submeshes {
-				let material_index = submesh.material_indices()[0];
-				let sorted_material_index = self
-					.materials
-					.iter()
-					.enumerate()
-					.find_map(|(i, (unsorted_index, _))| (*unsorted_index == material_index).then_some(i))
-					.unwrap();
+				let sorted_material_index = submesh.mat_indices[0];
 
-				// If the sorted material index isn't in range of the current shader usage range,
-				// fast-forward to the corresponding range.
-				let mut shader_changed = false;
-				while current_shader.as_ref().map_or(true, |(_, range)| !range.contains(&sorted_material_index)) {
-					current_shader = shader_usage_iter.next();
-					shader_changed = true;
-				}
-				if shader_changed && !shadow_pass {
-					let cur_mat_res = material_resources
-						.get(current_shader.as_ref().unwrap().0)
-						.ok_or("Given material resources don't contain a descriptor set for the given material shader!")?;
+				let submesh_shader_name = self.materials[sorted_material_index].1.material_name();
+				if prev_shader_name != submesh_shader_name {
+					prev_shader_name = submesh_shader_name;
+					mat_base_index = *self.material_base_indices.get(submesh_shader_name).unwrap();
 
-					let set = base_color_only
-						.then_some(&cur_mat_res.mat_basecolor_only_set)
-						.unwrap_or(&cur_mat_res.mat_set)
-						.clone();
+					if !shadow_pass {
+						let cur_mat_res = material_resources.get(submesh_shader_name).unwrap();
+						let set = base_color_only
+							.then_some(&cur_mat_res.mat_basecolor_only_set)
+							.unwrap_or(&cur_mat_res.mat_set)
+							.clone();
 
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
+						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
+					}
 				}
 
-				let (_, current_shader_range) = current_shader.as_ref().unwrap();
-				let instance_index = sorted_material_index - *current_shader_range.start();
+				let instance_index = sorted_material_index - mat_base_index;
 
-				submesh.draw(cb, instance_index)?;
+				submesh.draw(cb, instance_index.try_into()?)?;
 			}
 		}
 		Ok(())
@@ -432,16 +430,11 @@ impl SubMesh
 		true
 	}
 
-	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: usize)
+	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
 		-> Result<(), GenericEngineError>
 	{
-		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index.try_into()?)?;
+		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
 		Ok(())
-	}
-
-	pub fn material_indices(&self) -> &Vec<usize>
-	{
-		&self.mat_indices
 	}
 }
 
