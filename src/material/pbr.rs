@@ -66,30 +66,28 @@ impl Material for PBR
 		Self::material_name_associated()
 	}
 
-	fn gen_descriptor_set_writes(
+	fn gen_descriptor_set_write(
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>
+	) -> Result<WriteDescriptorSet, GenericEngineError>
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![WriteDescriptorSet::image_view_array(1, 0, [base_color.view().clone()])];
+		let image_views = [base_color.view().clone()];
 
-		Ok(writes)
+		Ok(WriteDescriptorSet::image_view_array(1, 0, image_views))
 	}
 
-	fn gen_base_color_descriptor_set_writes(
+	fn gen_base_color_descriptor_set_write(
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>
+	) -> Result<WriteDescriptorSet, GenericEngineError>
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![WriteDescriptorSet::image_view_array(1, 0, [base_color.view().clone()])];
-
-		Ok(writes)
+		Ok(WriteDescriptorSet::image_view(1, base_color.view().clone()))
 	}
 
 	fn has_transparency(&self) -> bool

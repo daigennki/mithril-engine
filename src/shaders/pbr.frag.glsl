@@ -7,7 +7,14 @@
 
 /* Material parameters */
 layout(binding = 0) uniform sampler sampler0;
-layout(binding = 1) uniform texture2D base_color[];
+
+// All textures will be taken from here, with textures for different purposes being at different offsets.
+// The instance index multiplied by `TEXTURE_INDEX_STRIDE` will be added to the offset.
+layout(binding = 1) uniform texture2D textures[];
+
+#define TEXTURE_INDEX_STRIDE 1
+#define TEXTURE_INDEX_OFFSET_BASE_COLOR 0
+
 
 /* Lighting stuff */
 #define CSM_COUNT 3
@@ -77,7 +84,7 @@ vec3 calc_dl(vec3 tex_diffuse, vec3 normal)
 
 void main()
 {
-	vec4 tex_color = texture(sampler2D(base_color[instance_index], sampler0), texcoord);
+	vec4 tex_color = texture(sampler2D(textures[instance_index], sampler0), texcoord);
 
 #ifdef TRANSPARENCY_PASS
 	tex_color.rgb *= tex_color.a;

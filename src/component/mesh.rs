@@ -13,8 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::{
-	layout::{DescriptorBindingFlags, DescriptorSetLayout},
-	PersistentDescriptorSet, WriteDescriptorSet, WriteDescriptorSetElements
+	layout::DescriptorSetLayout, PersistentDescriptorSet, WriteDescriptorSet, WriteDescriptorSetElements
 };
 use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
@@ -192,56 +191,44 @@ impl MeshManager
 			// We use `unwrap` here since the material pipeline must've been loaded above.
 			let set_layout = self.material_pipelines.get(mat_name).unwrap().material_set_layout.clone();
 
-			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
-			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
+			let write = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+			let base_color_write = mat.gen_base_color_descriptor_set_write(parent_folder, render_ctx)?;
 
 			if !material_write_groups.contains_key(mat_name) {
-				// each `Vec` here will actually be `Vec<Vec<_>>`
 				material_write_groups.insert(mat_name, (Vec::new(), Vec::new(), set_layout));
 			}
 	
 			let (existing_writes, existing_base_color_writes, _) = material_write_groups.get_mut(mat_name).unwrap();
-			existing_writes.push(writes);
-			existing_base_color_writes.push(base_color_writes);
+			existing_writes.push(write);
+			existing_base_color_writes.push(base_color_write);
 		}
 
 		let mut material_resources = BTreeMap::new();
 		for (mat_name, (writes, base_color_writes, set_layout)) in material_write_groups {
-			// Reduce the writes into a single `Vec`, and create the descriptor sets.
-			let merged_writes = merge_descriptor_writes(writes);
-			let merged_base_color_writes = merge_descriptor_writes(base_color_writes);
+			// Reduce the writes into a single array write, and create the descriptor sets.
+			let merged_write = merge_descriptor_writes(writes);
+			let merged_base_color_write = merge_descriptor_writes(base_color_writes);
 
-			// figure out which binding has the variable descriptor count
-			let variable_descriptor_count_binding = set_layout
-				.bindings()
-				.iter()
-				.find(|(_, binding)| binding.binding_flags.contains(DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT))
-				.map(|(i, _)| *i)
-				.unwrap();
-			let variable_descriptor_count = merged_writes
-				.iter()
-				.find(|write| write.binding() == variable_descriptor_count_binding)
-				.map(|write| match write.elements() {
-					WriteDescriptorSetElements::Buffer(contents) => contents.len(),
-					WriteDescriptorSetElements::ImageView(contents) => contents.len(),
-					_ => unimplemented!(),
-				})
-				.unwrap()
-				.try_into()?;
+			// TODO: also get a separate count for the "base color-only" set,
+			// to account for shaders that take multiple textures for each material
+			let variable_descriptor_count = match merged_write.elements() {
+				WriteDescriptorSetElements::ImageView(contents) => contents.len().try_into()?,
+				_ => unimplemented!(),
+			};
 			log::debug!("variable descriptor count: {}", variable_descriptor_count);
 
 			let mat_set = PersistentDescriptorSet::new_variable(
 				render_ctx.descriptor_set_allocator(),
 				set_layout,
 				variable_descriptor_count,
-				merged_writes,
+				[merged_write],
 				[]
 			)?;
 			let mat_basecolor_only_set = PersistentDescriptorSet::new_variable(
 				render_ctx.descriptor_set_allocator(),
 				self.basecolor_only_set_layout.clone(),
 				variable_descriptor_count,
-				merged_base_color_writes,
+				[merged_base_color_write],
 				[],
 			)?;
 
@@ -401,39 +388,24 @@ impl MeshManager
 	}
 }
 
-fn merge_descriptor_writes(writes: Vec<Vec<WriteDescriptorSet>>) -> Vec<WriteDescriptorSet>
+// Merge descriptor writes for the binding with variable descriptor count.
+fn merge_descriptor_writes(writes: Vec<WriteDescriptorSet>) -> WriteDescriptorSet
 {
 	writes
 		.into_iter()
-		.reduce(|prev, cur| {
-			prev.iter()
-				.zip(cur.iter())
-				.map(|(prev_desc, cur_desc)| match prev_desc.elements() {
-					WriteDescriptorSetElements::Buffer(contents) => {
-						let prev_contents = contents.iter().map(|buf_info| buf_info.buffer.clone());
-						let cur_contents = match cur_desc.elements() {
-							WriteDescriptorSetElements::Buffer(c) => {
-								c.iter().map(|buf_info| buf_info.buffer.clone())
-							},
-							_ => unreachable!(),
-						};
-						let elements = prev_contents.chain(cur_contents);
-						WriteDescriptorSet::buffer_array(prev_desc.binding(), 0, elements)
-					}
-					WriteDescriptorSetElements::ImageView(contents) => {
-						let prev_contents = contents.iter().map(|img_info| img_info.image_view.clone());
-						let cur_contents = match cur_desc.elements() {
-							WriteDescriptorSetElements::ImageView(c) => {
-								c.iter().map(|img_info| img_info.image_view.clone())
-							},
-							_ => unreachable!(),
-						};
-						let elements = prev_contents.chain(cur_contents);
-						WriteDescriptorSet::image_view_array(prev_desc.binding(), 0, elements)
-					}
-					_ => unimplemented!(),
-				})
-				.collect()
+		.reduce(|prev, cur| match prev.elements() {
+			WriteDescriptorSetElements::ImageView(contents) => {
+				let prev_contents = contents.iter().map(|img_info| img_info.image_view.clone());
+				let cur_contents = match cur.elements() {
+					WriteDescriptorSetElements::ImageView(c) => {
+						c.iter().map(|img_info| img_info.image_view.clone())
+					},
+					_ => unreachable!(),
+				};
+				let elements = prev_contents.chain(cur_contents);
+				WriteDescriptorSet::image_view_array(prev.binding(), 0, elements)
+			}
+			_ => unimplemented!(),
 		})
-		.unwrap_or_default()
+		.unwrap()
 }

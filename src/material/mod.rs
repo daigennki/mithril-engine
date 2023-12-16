@@ -36,19 +36,19 @@ pub trait Material: Send + Sync
 
 	fn material_name(&self) -> &'static str;
 
-	/// Generate descriptor set writes for creating a descriptor set.
+	/// Generate the texture descriptor set write for creating a descriptor set.
 	/// Call this when the user (e.g. a `Mesh` component) is created, and when this material is modified.
-	fn gen_descriptor_set_writes(
+	fn gen_descriptor_set_write(
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
+	) -> Result<WriteDescriptorSet, GenericEngineError>;
 
-	fn gen_base_color_descriptor_set_writes(
+	fn gen_base_color_descriptor_set_write(
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<Vec<WriteDescriptorSet>, GenericEngineError>;
+	) -> Result<WriteDescriptorSet, GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
 
