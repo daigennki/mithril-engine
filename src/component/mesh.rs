@@ -12,12 +12,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
+use vulkano::descriptor_set::{
+	layout::{DescriptorBindingFlags, DescriptorSetLayout},
+	PersistentDescriptorSet, WriteDescriptorSet, WriteDescriptorSetElements
+};
 use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
-use crate::material::Material;
 use crate::render::{model::Model, RenderContext};
 use crate::GenericEngineError;
 
@@ -69,7 +71,7 @@ pub struct MaterialResources
 struct MeshResources
 {
 	model: Arc<Model>,
-	material_resources: Vec<MaterialResources>,
+	material_resources: BTreeMap<&'static str, MaterialResources>,
 	model_matrix: Mat4,
 }
 
@@ -167,16 +169,12 @@ impl MeshManager
 		};
 
 		let orig_materials = model_data.get_materials();
-		let material_count = orig_materials.len();
 
-		let mut material_resources = Vec::with_capacity(material_count);
-		for mat in orig_materials {
-			// TODO: if there's a material override, use that instead of the original material
-			// to create the descriptor set
-
-			let parent_folder = component.model_path.parent().unwrap();
-
+		// Get the sorted writes for each material, grouped by their respective shaders.
+		let mut material_write_groups = BTreeMap::new();
+		for (_, mat) in orig_materials {
 			let mat_name = mat.material_name();
+			let parent_folder = component.model_path.parent().unwrap();
 
 			// Load the pipeline if it hasn't already been loaded.
 			if !self.material_pipelines.contains_key(mat_name) {
@@ -195,20 +193,65 @@ impl MeshManager
 			let set_layout = self.material_pipelines.get(mat_name).unwrap().material_set_layout.clone();
 
 			let writes = mat.gen_descriptor_set_writes(parent_folder, render_ctx)?;
-			let mat_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
-
 			let base_color_writes = mat.gen_base_color_descriptor_set_writes(parent_folder, render_ctx)?;
-			let mat_basecolor_only_set = PersistentDescriptorSet::new(
+
+			if !material_write_groups.contains_key(mat_name) {
+				// each `Vec` here will actually be `Vec<Vec<_>>`
+				material_write_groups.insert(mat_name, (Vec::new(), Vec::new(), set_layout));
+			}
+	
+			let (existing_writes, existing_base_color_writes, _) = material_write_groups.get_mut(mat_name).unwrap();
+			existing_writes.push(writes);
+			existing_base_color_writes.push(base_color_writes);
+		}
+
+		let mut material_resources = BTreeMap::new();
+		for (mat_name, (writes, base_color_writes, set_layout)) in material_write_groups {
+			// Reduce the writes into a single `Vec`, and create the descriptor sets.
+			let merged_writes = merge_descriptor_writes(writes);
+			let merged_base_color_writes = merge_descriptor_writes(base_color_writes);
+
+			// figure out which binding has the variable descriptor count
+			let variable_descriptor_count_binding = set_layout
+				.bindings()
+				.iter()
+				.find(|(_, binding)| binding.binding_flags.contains(DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT))
+				.map(|(i, _)| *i)
+				.unwrap();
+			let variable_descriptor_count = merged_writes
+				.iter()
+				.find(|write| write.binding() == variable_descriptor_count_binding)
+				.map(|write| match write.elements() {
+					WriteDescriptorSetElements::Buffer(contents) => contents.len(),
+					WriteDescriptorSetElements::ImageView(contents) => contents.len(),
+					_ => unimplemented!(),
+				})
+				.unwrap()
+				.try_into()?;
+			log::debug!("variable descriptor count: {}", variable_descriptor_count);
+
+			let mat_set = PersistentDescriptorSet::new_variable(
+				render_ctx.descriptor_set_allocator(),
+				set_layout,
+				variable_descriptor_count,
+				merged_writes,
+				[]
+			)?;
+			let mat_basecolor_only_set = PersistentDescriptorSet::new_variable(
 				render_ctx.descriptor_set_allocator(),
 				self.basecolor_only_set_layout.clone(),
-				base_color_writes,
+				variable_descriptor_count,
+				merged_base_color_writes,
 				[],
 			)?;
 
-			material_resources.push(MaterialResources {
-				mat_set,
-				mat_basecolor_only_set,
-			});
+			material_resources.insert(
+				mat_name,
+				MaterialResources {
+					mat_set,
+					mat_basecolor_only_set,
+				},
+			);
 		}
 
 		let mesh_resources = MeshResources {
@@ -240,12 +283,12 @@ impl MeshManager
 			.and_then(|pl_data| pl_data.oit_pipeline.as_ref())
 	}
 
-	/// Get a reference to the original materials of the model.
+	/*/// Get a reference to the sorted materials of the model.
 	/// This will panic if the entity ID is invalid!
-	pub fn get_materials(&mut self, eid: EntityId) -> &Vec<Box<dyn Material>>
+	pub fn get_materials(&mut self, eid: EntityId) -> &Vec<(usize, Box<dyn Material>)>
 	{
 		self.resources.get(&eid).unwrap().model.get_materials()
-	}
+	}*/
 
 	/*/// Get the materials that override the model's material.
 	/// If a material slot is `None`, then that material slot will use the model's original material.
@@ -307,7 +350,7 @@ impl MeshManager
 			// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
 			let continue_draw = original_materials
 				.iter()
-				.any(|mat| mat.has_transparency() == transparency_pass);
+				.any(|(_, mat)| mat.has_transparency() == transparency_pass);
 
 			if continue_draw {
 				let projviewmodel = projview * mesh_resources.model_matrix;
@@ -356,4 +399,41 @@ impl MeshManager
 	{
 		self.cb_3d.lock().unwrap().take()
 	}
+}
+
+fn merge_descriptor_writes(writes: Vec<Vec<WriteDescriptorSet>>) -> Vec<WriteDescriptorSet>
+{
+	writes
+		.into_iter()
+		.reduce(|prev, cur| {
+			prev.iter()
+				.zip(cur.iter())
+				.map(|(prev_desc, cur_desc)| match prev_desc.elements() {
+					WriteDescriptorSetElements::Buffer(contents) => {
+						let prev_contents = contents.iter().map(|buf_info| buf_info.buffer.clone());
+						let cur_contents = match cur_desc.elements() {
+							WriteDescriptorSetElements::Buffer(c) => {
+								c.iter().map(|buf_info| buf_info.buffer.clone())
+							},
+							_ => unreachable!(),
+						};
+						let elements = prev_contents.chain(cur_contents);
+						WriteDescriptorSet::buffer_array(prev_desc.binding(), 0, elements)
+					}
+					WriteDescriptorSetElements::ImageView(contents) => {
+						let prev_contents = contents.iter().map(|img_info| img_info.image_view.clone());
+						let cur_contents = match cur_desc.elements() {
+							WriteDescriptorSetElements::ImageView(c) => {
+								c.iter().map(|img_info| img_info.image_view.clone())
+							},
+							_ => unreachable!(),
+						};
+						let elements = prev_contents.chain(cur_contents);
+						WriteDescriptorSet::image_view_array(prev_desc.binding(), 0, elements)
+					}
+					_ => unimplemented!(),
+				})
+				.collect()
+		})
+		.unwrap_or_default()
 }

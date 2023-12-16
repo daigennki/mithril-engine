@@ -13,6 +13,7 @@ layout(location = 2) in vec3 normal;
 layout(location = 0) out vec2 texcoord;
 layout(location = 1) out vec3 normal_transformed;
 layout(location = 2) out vec3 world_pos;
+layout(location = 3) flat out int instance_index;
 
 void main()
 {
@@ -24,4 +25,6 @@ void main()
 
 	normal_transformed = transform_notranslate * normal;
 	world_pos = transform_notranslate * pos + translation;
+
+	instance_index = gl_InstanceIndex;
 }

@@ -1,13 +1,15 @@
-#version 450
+#version 460
+#extension GL_EXT_nonuniform_qualifier: enable
 
 #ifdef TRANSPARENCY_PASS
 #include "mboit_weights.glsl"
 #endif
 
+/* Material parameters */
 layout(binding = 0) uniform sampler sampler0;
-layout(binding = 1) uniform texture2D base_color;
+layout(binding = 1) uniform texture2D base_color[];
 
-/* lighting stuff */
+/* Lighting stuff */
 #define CSM_COUNT 3
 
 layout(set = 1, binding = 0) uniform samplerShadow shadow_sampler;
@@ -28,6 +30,7 @@ layout(set = 1, binding = 2) uniform texture2DArray dir_light_shadow;
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec3 world_pos;
+layout(location = 3) flat in int instance_index;
 
 // If `TRANSPARENCY_PASS` is defined, the outputs in the OIT shader file included above will be used.
 #ifndef TRANSPARENCY_PASS
@@ -74,7 +77,7 @@ vec3 calc_dl(vec3 tex_diffuse, vec3 normal)
 
 void main()
 {
-	vec4 tex_color = texture(sampler2D(base_color, sampler0), texcoord);
+	vec4 tex_color = texture(sampler2D(base_color[instance_index], sampler0), texcoord);
 
 #ifdef TRANSPARENCY_PASS
 	tex_color.rgb *= tex_color.a;

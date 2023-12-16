@@ -10,7 +10,9 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
 use vulkano::descriptor_set::{
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	layout::{
+		DescriptorBindingFlags,DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType
+	},
 	WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
@@ -72,7 +74,7 @@ impl Material for PBR
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![WriteDescriptorSet::image_view(1, base_color.view().clone())];
+		let writes = vec![WriteDescriptorSet::image_view_array(1, 0, [base_color.view().clone()])];
 
 		Ok(writes)
 	}
@@ -85,7 +87,7 @@ impl Material for PBR
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let writes = vec![WriteDescriptorSet::image_view(1, base_color.view().clone())];
+		let writes = vec![WriteDescriptorSet::image_view_array(1, 0, [base_color.view().clone()])];
 
 		Ok(writes)
 	}
@@ -115,7 +117,9 @@ impl Material for PBR
 				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
 			},
 			DescriptorSetLayoutBinding {
-				// binding 1: base_color
+				// binding 1: textures
+				binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
+				descriptor_count: 32,
 				stages: ShaderStages::FRAGMENT,
 				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
 			},

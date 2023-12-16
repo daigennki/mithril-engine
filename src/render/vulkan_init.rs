@@ -265,12 +265,16 @@ pub fn vulkan_setup(
 
 	// The features enabled here are supported by basically any Vulkan device.
 	let enabled_features = vulkano::device::Features {
+		descriptor_binding_variable_descriptor_count: true,
+		descriptor_indexing: true,
 		dynamic_rendering: true,
 		image_cube_array: true,
 		independent_blend: true,
 		multi_draw_indirect: true,
+		runtime_descriptor_array: true,
 		sampler_anisotropy: true,
 		shader_draw_parameters: true,
+		shader_sampled_image_array_non_uniform_indexing: true,
 		texture_compression_bc: true,
 		..Default::default()
 	};

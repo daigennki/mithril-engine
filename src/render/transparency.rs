@@ -13,7 +13,9 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator,
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	layout::{
+		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType
+	},
 	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
@@ -348,6 +350,8 @@ impl MomentTransparencyRenderer
 			},
 			DescriptorSetLayoutBinding {
 				// binding 1: base_color
+				binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
+				descriptor_count: 32,
 				stages: ShaderStages::FRAGMENT,
 				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
 			},
