@@ -1,11 +1,13 @@
-#version 450
+#version 460
+#extension GL_EXT_nonuniform_qualifier: enable
 
 // The shader code used for moment-based OIT moment writes (stage 2).
 
 layout(binding = 0) uniform sampler sampler0;
-layout(binding = 1) uniform texture2D base_color;
+layout(binding = 1) uniform texture2D textures[];
 
 layout(location = 0) in vec2 texcoord;
+layout(location = 1) flat in int instance_index;
 
 layout(location = 0) out vec4 moments;
 layout(location = 1) out float optical_depth;
@@ -22,7 +24,7 @@ vec4 make_moments4(float z)
 }
 void main()
 {
-	float alpha = texture(sampler2D(base_color, sampler0), texcoord).a;
+	float alpha = texture(sampler2D(textures[instance_index], sampler0), texcoord).a;
 	float depth = gl_FragCoord.z;
 
 	// TODO: use a descriptor set here to reflect changes to the camera near/far planes

@@ -30,6 +30,8 @@ pub mod vs_3d_common
 #[typetag::deserialize]
 pub trait Material: Send + Sync
 {
+	fn tex_index_stride(&self) -> u32;
+
 	fn material_name_associated() -> &'static str
 	where
 		Self: Sized;
@@ -38,13 +40,10 @@ pub trait Material: Send + Sync
 
 	/// Generate the texture descriptor set write for creating a descriptor set.
 	/// Call this when the user (e.g. a `Mesh` component) is created, and when this material is modified.
+	///
+	/// The first image view in the image view array *must* be the "base color" image,
+	/// with an alpha channel representing transparency.
 	fn gen_descriptor_set_write(
-		&self,
-		parent_folder: &Path,
-		render_ctx: &mut RenderContext,
-	) -> Result<WriteDescriptorSet, GenericEngineError>;
-
-	fn gen_base_color_descriptor_set_write(
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
@@ -53,17 +52,19 @@ pub trait Material: Send + Sync
 	fn has_transparency(&self) -> bool;
 
 	fn load_pipeline_associated(
+		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), GenericEngineError>
 	where
 		Self: Sized;
 
 	fn load_pipeline(
 		&self,
+		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>, Arc<DescriptorSetLayout>), GenericEngineError>;
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), GenericEngineError>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.

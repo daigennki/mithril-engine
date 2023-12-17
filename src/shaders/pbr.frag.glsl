@@ -9,10 +9,9 @@
 layout(binding = 0) uniform sampler sampler0;
 
 // All textures will be taken from here, with textures for different purposes being at different offsets.
-// The instance index multiplied by `TEXTURE_INDEX_STRIDE` will be added to the offset.
+// The offsets will be added to the instance index so that the correct texture for the current material gets selected.
 layout(binding = 1) uniform texture2D textures[];
 
-#define TEXTURE_INDEX_STRIDE 1
 #define TEXTURE_INDEX_OFFSET_BASE_COLOR 0
 
 
@@ -84,7 +83,8 @@ vec3 calc_dl(vec3 tex_diffuse, vec3 normal)
 
 void main()
 {
-	vec4 tex_color = texture(sampler2D(textures[instance_index], sampler0), texcoord);
+	int base_color_index = instance_index + TEXTURE_INDEX_OFFSET_BASE_COLOR;
+	vec4 tex_color = texture(sampler2D(textures[base_color_index], sampler0), texcoord);
 
 #ifdef TRANSPARENCY_PASS
 	tex_color.rgb *= tex_color.a;

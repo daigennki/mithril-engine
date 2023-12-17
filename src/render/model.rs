@@ -12,10 +12,8 @@ use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::Path;
-use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
 
 use crate::material::{pbr::PBR, ColorInput, Material};
 use crate::render::RenderContext;
@@ -25,7 +23,6 @@ use crate::GenericEngineError;
 pub struct Model
 {
 	materials: Vec<(usize, Box<dyn Material>)>,
-	material_base_indices: BTreeMap<&'static str, usize>,
 	material_variants: Vec<String>,
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
@@ -66,14 +63,6 @@ impl Model
 					.enumerate()
 					.collect();
 				materials_sorted.sort_by_key(|(_, mat)| mat.material_name());
-
-				// Now go through the sorted materials, and get the first index where each shader is used.
-				let mut material_base_indices = BTreeMap::new();
-				for (i, (_, mat)) in materials_sorted.iter().enumerate() {
-					if !material_base_indices.contains_key(mat.material_name()) {
-						material_base_indices.insert(mat.material_name(), i);
-					}
-				}
 
 				// Collect material variants. If there are no material variants, only one material
 				// group will be set up in the end.
@@ -160,6 +149,13 @@ impl Model
 						.unwrap()
 				});
 
+				// Now go through the sorted materials, and get the first index where each shader is used.
+				let mut material_base_indices = BTreeMap::new();
+				for (i, (_, mat)) in materials_sorted.iter().enumerate() {
+					if !material_base_indices.contains_key(mat.material_name()) {
+						material_base_indices.insert(mat.material_name(), i);
+					}
+				}
 				log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
 				for shader_name in material_base_indices.keys() {
 					log::debug!("- {shader_name}");
@@ -189,7 +185,6 @@ impl Model
 
 				Ok(Model {
 					materials: materials_sorted,
-					material_base_indices,
 					material_variants,
 					submeshes,
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
@@ -217,14 +212,14 @@ impl Model
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_layout: Arc<PipelineLayout>,
 		transform: &Mat4,
-		material_resources: &BTreeMap<&'static str, crate::component::mesh::MaterialResources>,
+		mat_tex_base_indices: &[u32],
 		transparency_pass: bool,
-		base_color_only: bool,
 		shadow_pass: bool,
 	) -> Result<(), GenericEngineError>
 	{
+		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
+
 		// Determine which submeshes are visible.
 		// "Visible" here means its transparency mode matches the current render pass type,
 		// and the submesh passes frustum culling.
@@ -248,33 +243,11 @@ impl Model
 			cb.bind_vertex_buffers(0, vertex_subbuffers)?;
 			self.index_buffer.bind(cb)?;
 
-			// The beginning index of each shader usage range will be subtracted from the submesh
-			// material index to work out the index in each descriptor set.
-			let mut prev_shader_name = "";
-			let mut mat_base_index = 0;
-
 			for submesh in visible_submeshes {
 				let sorted_material_index = submesh.mat_indices[0];
+				let instance_index = mat_tex_base_indices[sorted_material_index];
 
-				let submesh_shader_name = self.materials[sorted_material_index].1.material_name();
-				if prev_shader_name != submesh_shader_name {
-					prev_shader_name = submesh_shader_name;
-					mat_base_index = *self.material_base_indices.get(submesh_shader_name).unwrap();
-
-					if !shadow_pass {
-						let cur_mat_res = material_resources.get(submesh_shader_name).unwrap();
-						let set = base_color_only
-							.then_some(&cur_mat_res.mat_basecolor_only_set)
-							.unwrap_or(&cur_mat_res.mat_set)
-							.clone();
-
-						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
-					}
-				}
-
-				let instance_index = sorted_material_index - mat_base_index;
-
-				submesh.draw(cb, instance_index.try_into()?)?;
+				submesh.draw(cb, instance_index)?;
 			}
 		}
 		Ok(())

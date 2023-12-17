@@ -11,9 +11,12 @@ layout(location = 1) in vec2 uv;
 layout(location = 2) in vec3 normal;
 
 layout(location = 0) out vec2 texcoord;
+layout(location = 1) flat out int instance_index;
 
 void main()
 {
     gl_Position = projviewmodel * vec4(pos, 1.0);
 	texcoord = uv;
+
+	instance_index = gl_InstanceIndex;
 } 

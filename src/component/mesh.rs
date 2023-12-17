@@ -61,16 +61,19 @@ fn update_meshes(
 	}
 }
 
-pub struct MaterialResources
-{
-	pub mat_set: Arc<PersistentDescriptorSet>,
-	pub mat_basecolor_only_set: Arc<PersistentDescriptorSet>, // used for OIT when only "base color" texture is needed
-}
-
 struct MeshResources
 {
 	model: Arc<Model>,
-	material_resources: BTreeMap<&'static str, MaterialResources>,
+
+	// Image views for each material in use by the current material group.
+	// Uses variable descriptor count.
+	textures_set: Arc<PersistentDescriptorSet>,
+	textures_count: u32, // The number of textures in the variable count descriptor.
+
+	// The texture base indices in the variable descriptor count of `textures_set`.
+	// (to get the texture base index, use the material index as an index to this)
+	mat_tex_base_indices: Vec<u32>,
+
 	model_matrix: Mat4,
 }
 
@@ -79,7 +82,6 @@ struct PipelineData
 {
 	opaque_pipeline: Arc<GraphicsPipeline>,
 	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
-	material_set_layout: Arc<DescriptorSetLayout>,
 }
 
 #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
@@ -125,7 +127,7 @@ pub struct MeshManager
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: BTreeMap<PathBuf, Arc<Model>>,
 
-	basecolor_only_set_layout: Arc<DescriptorSetLayout>, // Set layout for OIT when only "base color" texture is needed
+	material_textures_set_layout: Arc<DescriptorSetLayout>,
 	transparency_input_layout: Arc<DescriptorSetLayout>,
 	light_set_layout: Arc<DescriptorSetLayout>,
 
@@ -137,7 +139,7 @@ pub struct MeshManager
 impl MeshManager
 {
 	pub fn new(
-		basecolor_only_set_layout: Arc<DescriptorSetLayout>,
+		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		transparency_input_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 	) -> Self
@@ -145,7 +147,7 @@ impl MeshManager
 		MeshManager {
 			material_pipelines: Default::default(),
 			models: Default::default(),
-			basecolor_only_set_layout,
+			material_textures_set_layout,
 			transparency_input_layout,
 			light_set_layout,
 			resources: Default::default(),
@@ -167,83 +169,60 @@ impl MeshManager
 			}
 		};
 
-		let orig_materials = model_data.get_materials();
+		let original_materials = model_data.get_materials();
 
-		// Get the sorted writes for each material, grouped by their respective shaders.
-		let mut material_write_groups = BTreeMap::new();
-		for (_, mat) in orig_materials {
+		// Get the writes for each material, and calculate the base index in the variable descriptor count.
+		let (mut writes, mut mat_tex_base_indices) = (Vec::new(), vec![0]);
+		for (_, mat) in original_materials {
 			let mat_name = mat.material_name();
 			let parent_folder = component.model_path.parent().unwrap();
 
 			// Load the pipeline if it hasn't already been loaded.
 			if !self.material_pipelines.contains_key(mat_name) {
-				let (opaque_pipeline, oit_pipeline, material_set_layout) =
-					mat.load_pipeline(self.light_set_layout.clone(), self.transparency_input_layout.clone())?;
+				let (opaque_pipeline, oit_pipeline) =
+					mat.load_pipeline(
+						self.material_textures_set_layout.clone(),
+						self.light_set_layout.clone(),
+						self.transparency_input_layout.clone(),
+					)?;
 
 				let pipeline_data = PipelineData {
 					opaque_pipeline,
 					oit_pipeline,
-					material_set_layout,
 				};
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
 
-			// We use `unwrap` here since the material pipeline must've been loaded above.
-			let set_layout = self.material_pipelines.get(mat_name).unwrap().material_set_layout.clone();
-
 			let write = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
-			let base_color_write = mat.gen_base_color_descriptor_set_write(parent_folder, render_ctx)?;
+			writes.push(write);
 
-			if !material_write_groups.contains_key(mat_name) {
-				material_write_groups.insert(mat_name, (Vec::new(), Vec::new(), set_layout));
-			}
-	
-			let (existing_writes, existing_base_color_writes, _) = material_write_groups.get_mut(mat_name).unwrap();
-			existing_writes.push(write);
-			existing_base_color_writes.push(base_color_write);
+			let next_mat_tex_base_index = mat_tex_base_indices.last().unwrap() + mat.tex_index_stride();
+			mat_tex_base_indices.push(next_mat_tex_base_index);
 		}
+		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it.
+		mat_tex_base_indices.pop();
 
-		let mut material_resources = BTreeMap::new();
-		for (mat_name, (writes, base_color_writes, set_layout)) in material_write_groups {
-			// Reduce the writes into a single array write, and create the descriptor sets.
-			let merged_write = merge_descriptor_writes(writes);
-			let merged_base_color_write = merge_descriptor_writes(base_color_writes);
+		// Reduce the writes into a single array write, and create a single descriptor set.
+		let write = merge_descriptor_writes(writes.clone());
+		let variable_descriptor_count = match write.elements() {
+			WriteDescriptorSetElements::ImageView(contents) => contents.len().try_into()?,
+			_ => unimplemented!(),
+		};
+		log::debug!("variable descriptor count: {}", variable_descriptor_count);
 
-			// TODO: also get a separate count for the "base color-only" set,
-			// to account for shaders that take multiple textures for each material
-			let variable_descriptor_count = match merged_write.elements() {
-				WriteDescriptorSetElements::ImageView(contents) => contents.len().try_into()?,
-				_ => unimplemented!(),
-			};
-			log::debug!("variable descriptor count: {}", variable_descriptor_count);
-
-			let mat_set = PersistentDescriptorSet::new_variable(
-				render_ctx.descriptor_set_allocator(),
-				set_layout,
-				variable_descriptor_count,
-				[merged_write],
-				[]
-			)?;
-			let mat_basecolor_only_set = PersistentDescriptorSet::new_variable(
-				render_ctx.descriptor_set_allocator(),
-				self.basecolor_only_set_layout.clone(),
-				variable_descriptor_count,
-				[merged_base_color_write],
-				[],
-			)?;
-
-			material_resources.insert(
-				mat_name,
-				MaterialResources {
-					mat_set,
-					mat_basecolor_only_set,
-				},
-			);
-		}
+		let textures_set = PersistentDescriptorSet::new_variable(
+			render_ctx.descriptor_set_allocator(),
+			self.material_textures_set_layout.clone(),
+			variable_descriptor_count,
+			[write],
+			[]
+		)?;
 
 		let mesh_resources = MeshResources {
 			model: model_data,
-			material_resources,
+			textures_set,
+			textures_count: variable_descriptor_count,
+			mat_tex_base_indices,
 			model_matrix: Default::default(),
 		};
 		let existing = self.resources.insert(eid, mesh_resources);
@@ -299,19 +278,19 @@ impl MeshManager
 		};
 
 		let color_formats = pass_type.render_color_formats();
-		let (pipeline, transparency_pass, base_color_only) = match pass_type {
-			PassType::Shadow { pipeline, .. } => (pipeline, false, false),
+		let (pipeline, transparency_pass) = match pass_type {
+			PassType::Shadow { pipeline, .. } => (pipeline, false),
 			PassType::Opaque => {
 				let pl = self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone();
-				(pl, false, false)
+				(pl, false)
 			}
-			PassType::TransparencyMoments(pl) => (pl, true, true),
+			PassType::TransparencyMoments(pl) => (pl, true),
 			PassType::Transparency => {
 				let pl = self
 					.get_transparency_pipeline("PBR")
 					.ok_or("PBR transparency pipeline not loaded!")?
 					.clone();
-				(pl, true, false)
+				(pl, true)
 			}
 		};
 
@@ -322,50 +301,55 @@ impl MeshManager
 		cb.bind_pipeline_graphics(pipeline.clone())?;
 
 		if common_sets.len() > 0 {
-			cb.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				pipeline_layout.clone(),
-				1,
-				Vec::from(common_sets),
-			)?;
+			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, Vec::from(common_sets))?;
 		}
 
 		// go through all the loaded meshes
 		for mesh_resources in self.resources.values() {
-			let original_materials = mesh_resources.model.get_materials();
+			let materials = mesh_resources.model.get_materials();
 
 			// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
-			let continue_draw = original_materials
+			let draw_this_mesh = materials
 				.iter()
 				.any(|(_, mat)| mat.has_transparency() == transparency_pass);
-
-			if continue_draw {
-				let projviewmodel = projview * mesh_resources.model_matrix;
-				if shadow_pass {
-					// TODO: also consider point lights, which require different matrices
-					cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
-				} else {
-					let model_matrix = mesh_resources.model_matrix;
-					let translation = model_matrix.w_axis.xyz();
-					let push_data = MeshPushConstant {
-						projviewmodel,
-						model_x: model_matrix.x_axis.xyz().extend(translation.x),
-						model_y: model_matrix.y_axis.xyz().extend(translation.y),
-						model_z: model_matrix.z_axis.xyz().extend(translation.z),
-					};
-					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
-				}
-
-				mesh_resources.model.draw(
-					&mut cb,
-					pipeline_layout.clone(),
-					&projviewmodel,
-					&mesh_resources.material_resources,
-					transparency_pass,
-					base_color_only,
-					shadow_pass,
-				)?;
+			if !draw_this_mesh {
+				continue; // skip to the next mesh if none of the materials match this pass type
 			}
+
+			let projviewmodel = projview * mesh_resources.model_matrix;
+			if shadow_pass {
+				// TODO: also consider point lights, which require different matrices
+				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+			} else {
+				let model_matrix = mesh_resources.model_matrix;
+				let translation = model_matrix.w_axis.xyz();
+				let push_data = MeshPushConstant {
+					projviewmodel,
+					model_x: model_matrix.x_axis.xyz().extend(translation.x),
+					model_y: model_matrix.y_axis.xyz().extend(translation.y),
+					model_z: model_matrix.z_axis.xyz().extend(translation.z),
+				};
+				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+
+				let set = mesh_resources.textures_set.clone();
+				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
+			}
+
+			if let Some(last_mat_tex_base_index) = mesh_resources.mat_tex_base_indices.last() {
+				let last_mat_stride = materials[materials.len() - 1].1.tex_index_stride();
+
+				// Make sure that the shader doesn't overrun the variable count descriptor.
+				// Some very weird things (like crashing the entire computer) might happen if we don't check this!
+				assert!(last_mat_tex_base_index + last_mat_stride <= mesh_resources.textures_count);
+			}
+
+			mesh_resources.model.draw(
+				&mut cb,
+				&projviewmodel,
+				&mesh_resources.mat_tex_base_indices,
+				transparency_pass,
+				shadow_pass,
+			)?;
 		}
 
 		Ok(cb.build()?)
