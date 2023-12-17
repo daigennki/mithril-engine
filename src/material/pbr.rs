@@ -9,8 +9,9 @@ use glam::*;
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
-use vulkano::descriptor_set::{layout::DescriptorSetLayout, WriteDescriptorSet};
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::DeviceOwned;
+use vulkano::image::view::ImageView;
 use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, GraphicsPipeline};
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
@@ -68,13 +69,12 @@ impl Material for PBR
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<WriteDescriptorSet, GenericEngineError>
+	) -> Result<Vec<Arc<ImageView>>, GenericEngineError>
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
-		let image_views = [base_color.view().clone()];
-
-		Ok(WriteDescriptorSet::image_view_array(1, 0, image_views))
+		let image_views = vec![base_color.view().clone()];
+		Ok(image_views)
 	}
 
 	fn has_transparency(&self) -> bool
@@ -91,20 +91,14 @@ impl Material for PBR
 		let vk_dev = transparency_inputs.device().clone();
 
 		let vertex_shader = super::vs_3d_common::load(vk_dev.clone())?;
-		let pipeline = match crate::render::pipeline::new_for_material(
+		let pipeline = crate::render::pipeline::new_for_material(
 			vk_dev.clone(),
 			vertex_shader.clone(),
 			fs::load(vk_dev.clone())?,
 			None,
 			PrimitiveTopology::TriangleList,
 			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
-		) {
-			Ok(p) => p,
-			Err(e) => {
-				log::debug!("error: {}", e.source().unwrap());
-				return Err(e)
-			}
-		};
+		)?;
 		let transparency_pipeline = crate::render::pipeline::new_for_material_transparency(
 			vk_dev.clone(),
 			vertex_shader,

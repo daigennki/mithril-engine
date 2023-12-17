@@ -12,9 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use vulkano::descriptor_set::{
-	layout::DescriptorSetLayout, PersistentDescriptorSet, WriteDescriptorSet, WriteDescriptorSetElements
-};
+use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
@@ -171,8 +169,8 @@ impl MeshManager
 
 		let original_materials = model_data.get_materials();
 
-		// Get the writes for each material, and calculate the base index in the variable descriptor count.
-		let (mut writes, mut mat_tex_base_indices) = (Vec::new(), vec![0]);
+		// Get the image views for each material, and calculate the base index in the variable descriptor count.
+		let (mut image_view_writes, mut mat_tex_base_indices) = (Vec::new(), vec![0]);
 		for (_, mat) in original_materials {
 			let mat_name = mat.material_name();
 			let parent_folder = component.model_path.parent().unwrap();
@@ -193,28 +191,25 @@ impl MeshManager
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
 
-			let write = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
-			writes.push(write);
+			let mut mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+			image_view_writes.append(&mut mat_image_views);
 
 			let next_mat_tex_base_index = mat_tex_base_indices.last().unwrap() + mat.tex_index_stride();
 			mat_tex_base_indices.push(next_mat_tex_base_index);
 		}
 		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it.
 		mat_tex_base_indices.pop();
+		mat_tex_base_indices.shrink_to_fit();
 
-		// Reduce the writes into a single array write, and create a single descriptor set.
-		let write = merge_descriptor_writes(writes.clone());
-		let variable_descriptor_count = match write.elements() {
-			WriteDescriptorSetElements::ImageView(contents) => contents.len().try_into()?,
-			_ => unimplemented!(),
-		};
+		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
+		let variable_descriptor_count = image_view_writes.len().try_into()?;
 		log::debug!("variable descriptor count: {}", variable_descriptor_count);
 
 		let textures_set = PersistentDescriptorSet::new_variable(
 			render_ctx.descriptor_set_allocator(),
 			self.material_textures_set_layout.clone(),
 			variable_descriptor_count,
-			[write],
+			[WriteDescriptorSet::image_view_array(1, 0, image_view_writes)],
 			[]
 		)?;
 
@@ -372,24 +367,3 @@ impl MeshManager
 	}
 }
 
-// Merge descriptor writes for the binding with variable descriptor count.
-fn merge_descriptor_writes(writes: Vec<WriteDescriptorSet>) -> WriteDescriptorSet
-{
-	writes
-		.into_iter()
-		.reduce(|prev, cur| match prev.elements() {
-			WriteDescriptorSetElements::ImageView(contents) => {
-				let prev_contents = contents.iter().map(|img_info| img_info.image_view.clone());
-				let cur_contents = match cur.elements() {
-					WriteDescriptorSetElements::ImageView(c) => {
-						c.iter().map(|img_info| img_info.image_view.clone())
-					},
-					_ => unreachable!(),
-				};
-				let elements = prev_contents.chain(cur_contents);
-				WriteDescriptorSet::image_view_array(prev.binding(), 0, elements)
-			}
-			_ => unimplemented!(),
-		})
-		.unwrap()
-}

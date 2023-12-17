@@ -11,8 +11,9 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::descriptor_set::{layout::DescriptorSetLayout, WriteDescriptorSet};
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::format::Format;
+use vulkano::image::view::ImageView;
 use vulkano::pipeline::GraphicsPipeline;
 
 use crate::render::{texture::Texture, RenderContext};
@@ -47,7 +48,7 @@ pub trait Material: Send + Sync
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<WriteDescriptorSet, GenericEngineError>;
+	) -> Result<Vec<Arc<ImageView>>, GenericEngineError>;
 
 	fn has_transparency(&self) -> bool;
 
