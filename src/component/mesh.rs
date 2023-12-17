@@ -171,7 +171,7 @@ impl MeshManager
 
 		// Get the image views for each material, and calculate the base index in the variable descriptor count.
 		let (mut image_view_writes, mut mat_tex_base_indices) = (Vec::new(), vec![0]);
-		for (_, mat) in original_materials {
+		for mat in original_materials {
 			let mat_name = mat.material_name();
 			let parent_folder = component.model_path.parent().unwrap();
 
@@ -306,7 +306,7 @@ impl MeshManager
 			// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
 			let draw_this_mesh = materials
 				.iter()
-				.any(|(_, mat)| mat.has_transparency() == transparency_pass);
+				.any(|mat| mat.has_transparency() == transparency_pass);
 			if !draw_this_mesh {
 				continue; // skip to the next mesh if none of the materials match this pass type
 			}
@@ -331,7 +331,7 @@ impl MeshManager
 			}
 
 			if let Some(last_mat_tex_base_index) = mesh_resources.mat_tex_base_indices.last() {
-				let last_mat_stride = materials[materials.len() - 1].1.tex_index_stride();
+				let last_mat_stride = materials[materials.len() - 1].tex_index_stride();
 
 				// Make sure that the shader doesn't overrun the variable count descriptor.
 				// Some very weird things (like crashing the entire computer) might happen if we don't check this!

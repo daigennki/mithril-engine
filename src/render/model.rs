@@ -9,7 +9,7 @@ use gltf::accessor::DataType;
 use gltf::Semantic;
 use serde::Deserialize;
 use std::any::TypeId;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::Path;
 use vulkano::buffer::{BufferUsage, Subbuffer};
@@ -22,7 +22,7 @@ use crate::GenericEngineError;
 /// 3D model
 pub struct Model
 {
-	materials: Vec<(usize, Box<dyn Material>)>,
+	materials: Vec<Box<dyn Material>>,
 	material_variants: Vec<String>,
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
@@ -51,18 +51,10 @@ impl Model
 				let mut indices_u32 = Vec::new();
 				let mut indices_type = DataType::U16;
 
-				let materials_unsorted: Vec<_> = doc
+				let materials: Vec<_> = doc
 					.materials()
 					.map(|mat| load_gltf_material(&mat, parent_folder))
 					.collect::<Result<_, _>>()?;
-
-				// Go through the materials and sort them by shader name.
-				// Since the order might change, they'll be stored with their original glTF material index.
-				let mut materials_sorted: Vec<(usize, _)> = materials_unsorted
-					.into_iter()
-					.enumerate()
-					.collect();
-				materials_sorted.sort_by_key(|(_, mat)| mat.material_name());
 
 				// Collect material variants. If there are no material variants, only one material
 				// group will be set up in the end.
@@ -121,16 +113,7 @@ impl Model
 						other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
 					};
 
-					let mut submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
-
-					// Change the unsorted material index in each submesh to the *sorted* material index.
-					// TODO: Do this again if the material variant changes.
-					for mat_index in &mut submesh.mat_indices {
-						*mat_index = materials_sorted
-							.iter()
-							.position(|(unsorted_index, _)| *unsorted_index == *mat_index)
-							.unwrap()
-					}
+					let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
 
 					submeshes.push(submesh);
 
@@ -138,28 +121,15 @@ impl Model
 					vertex_offset += positions_accessor.count() as i32;
 				}
 
-				// Sort the submeshes by material shader, then list out the submesh ranges using each different shader.
-				// TODO: Do this again if the material variant changes, since the variant might use different shaders.
-				submeshes.sort_by_key(|submesh| {
-					let mat_index = submesh.mat_indices[0];
-					materials_sorted
-						.iter()
-						.find(|(i, _)| *i == mat_index)
-						.map(|(_, mat)| mat.material_name())
-						.unwrap()
-				});
-
-				// Now go through the sorted materials, and get the first index where each shader is used.
-				let mut material_base_indices = BTreeMap::new();
-				for (i, (_, mat)) in materials_sorted.iter().enumerate() {
-					if !material_base_indices.contains_key(mat.material_name()) {
-						material_base_indices.insert(mat.material_name(), i);
+				// Check what shaders are being used across all of the materials in this model.
+				let mut shader_names = BTreeSet::new();
+				for mat in &materials {
+					if !shader_names.contains(mat.material_name()) {
+						shader_names.insert(mat.material_name());
 					}
 				}
 				log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
-				for shader_name in material_base_indices.keys() {
-					log::debug!("- {shader_name}");
-				}
+				shader_names.iter().for_each(|shader_name| log::debug!("- {shader_name}"));
 
 				// Combine the vertex data into a single buffer,
 				// then split it into subbuffers for different types of vertex data.
@@ -184,7 +154,7 @@ impl Model
 				};
 
 				Ok(Model {
-					materials: materials_sorted,
+					materials,
 					material_variants,
 					submeshes,
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
@@ -196,10 +166,7 @@ impl Model
 	}
 
 	/// Get the materials of this model.
-	///
-	/// Note that these are not in the same order as the glTF document. The `usize` index provided
-	/// with each material is their original index in the glTF document.
-	pub fn get_materials(&self) -> &Vec<(usize, Box<dyn Material>)>
+	pub fn get_materials(&self) -> &Vec<Box<dyn Material>>
 	{
 		&self.materials
 	}
@@ -228,7 +195,7 @@ impl Model
 			.iter()
 			.filter(|submesh| {
 				let material_index = submesh.mat_indices[0];
-				let (_, mat) = &self.materials[material_index];
+				let mat = &self.materials[material_index];
 				mat.has_transparency() == transparency_pass
 			})
 			.filter(|submesh| submesh.cull(transform))
