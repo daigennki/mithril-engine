@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::{model::Model, RenderContext};
@@ -311,9 +311,9 @@ impl MeshResources
 			let translation = self.model_matrix.w_axis.xyz();
 			let push_data = MeshPushConstant {
 				projviewmodel,
-				model_x: model_matrix.x_axis.xyz().extend(translation.x),
-				model_y: model_matrix.y_axis.xyz().extend(translation.y),
-				model_z: model_matrix.z_axis.xyz().extend(translation.z),
+				model_x: self.model_matrix.x_axis.xyz().extend(translation.x),
+				model_y: self.model_matrix.y_axis.xyz().extend(translation.y),
+				model_z: self.model_matrix.z_axis.xyz().extend(translation.z),
 			};
 			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 
@@ -329,13 +329,7 @@ impl MeshResources
 			assert!(last_mat_tex_base_index + last_mat_stride <= self.textures_count);
 		}
 
-		self.model.draw(
-			&mut cb,
-			&projviewmodel,
-			&self.mat_tex_base_indices,
-			transparency_pass,
-			shadow_pass,
-		)?;
+		self.model.draw(cb, &projviewmodel, &self.mat_tex_base_indices, transparency_pass, shadow_pass)?;
 
 		Ok(())
 	}
