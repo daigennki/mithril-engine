@@ -11,7 +11,7 @@ use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
@@ -56,63 +56,6 @@ fn update_meshes(
 
 	for eid in meshes.removed() {
 		mesh_manager.cleanup_removed(eid);
-	}
-}
-
-struct MeshResources
-{
-	model: Arc<Model>,
-
-	// Image views for each material in use by the current material group.
-	// Uses variable descriptor count.
-	textures_set: Arc<PersistentDescriptorSet>,
-	textures_count: u32, // The number of textures in the variable count descriptor.
-
-	// The texture base indices in the variable descriptor count of `textures_set`.
-	// (to get the texture base index, use the material index as an index to this)
-	mat_tex_base_indices: Vec<u32>,
-
-	model_matrix: Mat4,
-}
-
-/// Pipeline for each material, as well as the descriptor set layout unique to each material.
-struct PipelineData
-{
-	opaque_pipeline: Arc<GraphicsPipeline>,
-	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
-}
-
-#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
-#[repr(C)]
-pub struct MeshPushConstant
-{
-	projviewmodel: Mat4,
-	model_x: Vec4,
-	model_y: Vec4,
-	model_z: Vec4,
-}
-
-pub enum PassType
-{
-	Shadow {
-		pipeline: Arc<GraphicsPipeline>,
-		format: Format,
-		viewport_extent: [u32; 2]
-	},
-	Opaque,
-	TransparencyMoments(Arc<GraphicsPipeline>),
-	Transparency,
-}
-impl PassType
-{
-	fn render_color_formats(&self) -> &'static [Format]
-	{
-		match self {
-			PassType::Shadow { .. } => &[],
-			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
-			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT],
-			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
-		}
 	}
 }
 
@@ -301,50 +244,7 @@ impl MeshManager
 
 		// go through all the loaded meshes
 		for mesh_resources in self.resources.values() {
-			let materials = mesh_resources.model.get_materials();
-
-			// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
-			let draw_this_mesh = materials
-				.iter()
-				.any(|mat| mat.has_transparency() == transparency_pass);
-			if !draw_this_mesh {
-				continue; // skip to the next mesh if none of the materials match this pass type
-			}
-
-			let projviewmodel = projview * mesh_resources.model_matrix;
-			if shadow_pass {
-				// TODO: also consider point lights, which require different matrices
-				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
-			} else {
-				let model_matrix = mesh_resources.model_matrix;
-				let translation = model_matrix.w_axis.xyz();
-				let push_data = MeshPushConstant {
-					projviewmodel,
-					model_x: model_matrix.x_axis.xyz().extend(translation.x),
-					model_y: model_matrix.y_axis.xyz().extend(translation.y),
-					model_z: model_matrix.z_axis.xyz().extend(translation.z),
-				};
-				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
-
-				let set = mesh_resources.textures_set.clone();
-				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
-			}
-
-			if let Some(last_mat_tex_base_index) = mesh_resources.mat_tex_base_indices.last() {
-				let last_mat_stride = materials[materials.len() - 1].tex_index_stride();
-
-				// Make sure that the shader doesn't overrun the variable count descriptor.
-				// Some very weird things (like crashing the entire computer) might happen if we don't check this!
-				assert!(last_mat_tex_base_index + last_mat_stride <= mesh_resources.textures_count);
-			}
-
-			mesh_resources.model.draw(
-				&mut cb,
-				&projviewmodel,
-				&mesh_resources.mat_tex_base_indices,
-				transparency_pass,
-				shadow_pass,
-			)?;
+			mesh_resources.draw(&mut cb, pipeline_layout.clone(), transparency_pass, shadow_pass, &projview)?;
 		}
 
 		Ok(cb.build()?)
@@ -364,6 +264,121 @@ impl MeshManager
 	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
 	{
 		self.cb_3d.lock().unwrap().take()
+	}
+}
+
+struct MeshResources
+{
+	model: Arc<Model>,
+
+	// Image views for each material in use by the current material group.
+	// Uses variable descriptor count.
+	textures_set: Arc<PersistentDescriptorSet>,
+	textures_count: u32, // The number of textures in the variable count descriptor.
+
+	// The texture base indices in the variable descriptor count of `textures_set`.
+	// (to get the texture base index, use the material index as an index to this)
+	mat_tex_base_indices: Vec<u32>,
+
+	model_matrix: Mat4,
+}
+impl MeshResources
+{
+	pub fn draw(
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_layout: Arc<PipelineLayout>,
+		transparency_pass: bool,
+		shadow_pass: bool,
+		projview: &Mat4,
+	) -> Result<(), GenericEngineError>
+	{
+		let materials = self.model.get_materials();
+
+		// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
+		let draw_this_mesh = materials
+			.iter()
+			.any(|mat| mat.has_transparency() == transparency_pass);
+		if !draw_this_mesh {
+			return Ok(()); // skip to the next mesh if none of the materials match this pass type
+		}
+
+		let projviewmodel = *projview * self.model_matrix;
+		if shadow_pass {
+			// TODO: also consider point lights, which require different matrices
+			cb.push_constants(pipeline_layout, 0, projviewmodel)?;
+		} else {
+			let translation = self.model_matrix.w_axis.xyz();
+			let push_data = MeshPushConstant {
+				projviewmodel,
+				model_x: model_matrix.x_axis.xyz().extend(translation.x),
+				model_y: model_matrix.y_axis.xyz().extend(translation.y),
+				model_z: model_matrix.z_axis.xyz().extend(translation.z),
+			};
+			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+
+			let set = self.textures_set.clone();
+			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
+		}
+
+		if let Some(last_mat_tex_base_index) = self.mat_tex_base_indices.last() {
+			let last_mat_stride = materials[materials.len() - 1].tex_index_stride();
+
+			// Make sure that the shader doesn't overrun the variable count descriptor.
+			// Some very weird things (like crashing the entire computer) might happen if we don't check this!
+			assert!(last_mat_tex_base_index + last_mat_stride <= self.textures_count);
+		}
+
+		self.model.draw(
+			&mut cb,
+			&projviewmodel,
+			&self.mat_tex_base_indices,
+			transparency_pass,
+			shadow_pass,
+		)?;
+
+		Ok(())
+	}
+}
+
+/// Pipeline for each material, as well as the descriptor set layout unique to each material.
+struct PipelineData
+{
+	opaque_pipeline: Arc<GraphicsPipeline>,
+	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
+}
+
+#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
+#[repr(C)]
+pub struct MeshPushConstant
+{
+	projviewmodel: Mat4,
+	model_x: Vec4,
+	model_y: Vec4,
+	model_z: Vec4,
+}
+
+pub enum PassType
+{
+	Shadow {
+		pipeline: Arc<GraphicsPipeline>,
+		format: Format,
+		viewport_extent: [u32; 2]
+	},
+	Opaque,
+	TransparencyMoments(Arc<GraphicsPipeline>),
+	Transparency,
+}
+impl PassType
+{
+	fn render_color_formats(&self) -> &'static [Format]
+	{
+		match self {
+			PassType::Shadow { .. } => &[],
+			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
+			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT],
+			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
+		}
 	}
 }
 
