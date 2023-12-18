@@ -13,9 +13,7 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::{
 	allocator::StandardDescriptorSetAllocator,
-	layout::{
-		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType
-	},
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
@@ -246,8 +244,6 @@ pub struct MomentTransparencyRenderer
 {
 	images: MomentImageBundle,
 
-	base_color_set_layout: Arc<DescriptorSetLayout>,
-
 	moments_pl: Arc<GraphicsPipeline>,
 	transparency_compositing_pl: Arc<GraphicsPipeline>,
 
@@ -262,6 +258,7 @@ impl MomentTransparencyRenderer
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
+		mat_tex_set_layout: Arc<DescriptorSetLayout>,
 		dimensions: [u32; 2],
 	) -> Result<Self, GenericEngineError>
 	{
@@ -336,32 +333,6 @@ impl MomentTransparencyRenderer
 		//
 		/* Stage 2: Calculate moments */
 		//
-		let sampler_info = SamplerCreateInfo {
-			anisotropy: Some(16.0),
-			..SamplerCreateInfo::simple_repeat_linear()
-		};
-		let sampler = Sampler::new(device.clone(), sampler_info)?;
-		let stage2_bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: sampler0
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: base_color
-				binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
-				descriptor_count: 32,
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			},
-		];
-		let base_color_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(stage2_bindings).collect(),
-			..Default::default()
-		};
-		let base_color_set_layout = DescriptorSetLayout::new(device.clone(), base_color_set_layout_info)?;
-
 		let moments_attachments = [
 			(
 				Format::R32G32B32A32_SFLOAT, // moments
@@ -401,7 +372,7 @@ impl MomentTransparencyRenderer
 				cull_mode: CullMode::Back,
 				..Default::default()
 			},
-			vec![base_color_set_layout.clone()],
+			vec![mat_tex_set_layout.clone()],
 			&moments_attachments,
 			Some((super::MAIN_DEPTH_FORMAT, moments_depth_state)),
 			None,
@@ -473,7 +444,6 @@ impl MomentTransparencyRenderer
 
 		Ok(MomentTransparencyRenderer {
 			images,
-			base_color_set_layout,
 			moments_pl,
 			transparency_compositing_pl,
 			stage3_inputs,
@@ -633,11 +603,6 @@ impl MomentTransparencyRenderer
 	pub fn get_moments_pipeline(&self) -> &Arc<GraphicsPipeline>
 	{
 		&self.moments_pl
-	}
-
-	pub fn get_base_color_only_set_layout(&self) -> &Arc<DescriptorSetLayout>
-	{
-		&self.base_color_set_layout
 	}
 
 	pub fn get_stage3_inputs(&self) -> &Arc<PersistentDescriptorSet>

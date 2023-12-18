@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
-use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout};
 
@@ -60,17 +60,13 @@ fn update_meshes(
 }
 
 /// A single manager that manages the GPU resources for all `Mesh` components.
-#[derive(shipyard::Unique)]
+#[derive(Default, shipyard::Unique)]
 pub struct MeshManager
 {
 	material_pipelines: HashMap<&'static str, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: BTreeMap<PathBuf, Arc<Model>>,
-
-	material_textures_set_layout: Arc<DescriptorSetLayout>,
-	transparency_input_layout: Arc<DescriptorSetLayout>,
-	light_set_layout: Arc<DescriptorSetLayout>,
 
 	// The models and materials for each entity.
 	resources: HashMap<EntityId, MeshResources>,
@@ -79,23 +75,6 @@ pub struct MeshManager
 }
 impl MeshManager
 {
-	pub fn new(
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		transparency_input_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-	) -> Self
-	{
-		MeshManager {
-			material_pipelines: Default::default(),
-			models: Default::default(),
-			material_textures_set_layout,
-			transparency_input_layout,
-			light_set_layout,
-			resources: Default::default(),
-			cb_3d: Default::default(),
-		}
-	}
-
 	/// Load the model for the given `Mesh`.
 	pub fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), GenericEngineError>
 	{
@@ -114,11 +93,12 @@ impl MeshManager
 		for mat in model_data.get_materials() {
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
+				let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
 				let (opaque_pipeline, oit_pipeline) =
 					mat.load_pipeline(
-						self.material_textures_set_layout.clone(),
-						self.light_set_layout.clone(),
-						self.transparency_input_layout.clone(),
+						render_ctx.get_material_textures_set_layout().clone(),
+						render_ctx.get_light_set_layout().clone(),
+						transparency_input_layout,
 					)?;
 
 				let pipeline_data = MaterialPipelines {
@@ -129,9 +109,7 @@ impl MeshManager
 			}
 		}
 		
-		let mesh_resources = MeshResources::new(render_ctx, model_data, self.material_textures_set_layout.clone())?;
-		
-		self.resources.insert(eid, mesh_resources);
+		self.resources.insert(eid, MeshResources::new(render_ctx, model_data)?);
 
 		Ok(())
 	}
@@ -249,8 +227,7 @@ struct MeshResources
 }
 impl MeshResources
 {
-	pub fn new(render_ctx: &mut RenderContext, model: Arc<Model>, mat_tex_set_layout: Arc<DescriptorSetLayout>)
-		-> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, model: Arc<Model>) -> Result<Self, GenericEngineError>
 	{
 		let parent_folder = model.path().parent().unwrap();
 		let original_materials = model.get_materials();
@@ -276,7 +253,7 @@ impl MeshResources
 
 		let textures_set = PersistentDescriptorSet::new_variable(
 			render_ctx.descriptor_set_allocator(),
-			mat_tex_set_layout,
+			render_ctx.get_material_textures_set_layout().clone(),
 			variable_descriptor_count,
 			[WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten())],
 			[]
