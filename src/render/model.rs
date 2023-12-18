@@ -73,7 +73,7 @@ impl Model
 					log::debug!("no material variants in model");
 				} else {
 					log::debug!("material variants in model:");
-					material_variants.iter().for_each(|variant| log::debug!("- {}", &variant));
+					material_variants.iter().enumerate().for_each(|(i, variant)| log::debug!("{i}: {}", &variant));
 				}
 
 				// Create submeshes from glTF "primitives".
@@ -170,9 +170,10 @@ impl Model
 		}
 	}
 
-	pub fn new_model_instance(self: Arc<Self>, render_ctx: &mut RenderContext) -> Result<ModelInstance, GenericEngineError>
+	pub fn new_model_instance(self: Arc<Self>, render_ctx: &mut RenderContext, material_variant: Option<String>)
+		-> Result<ModelInstance, GenericEngineError>
 	{
-		ModelInstance::new(render_ctx, self.clone())
+		ModelInstance::new(render_ctx, self.clone(), material_variant)
 	}
 
 	pub fn path(&self) -> &Path
@@ -465,7 +466,8 @@ pub struct ModelInstance
 }
 impl ModelInstance
 {
-	fn new(render_ctx: &mut RenderContext, model: Arc<Model>) -> Result<Self, GenericEngineError>
+	fn new(render_ctx: &mut RenderContext, model: Arc<Model>, material_variant: Option<String>)
+		-> Result<Self, GenericEngineError>
 	{
 		let parent_folder = model.path().parent().unwrap();
 		let original_materials = model.get_materials();
@@ -504,12 +506,28 @@ impl ModelInstance
 			[]
 		)?;
 
+		let material_variant_index = if let Some(selected_variant_name) = material_variant {
+			model
+				.material_variants
+				.iter()
+				.position(|variant_name| variant_name == &selected_variant_name)
+				.unwrap_or_else(|| {
+					log::warn!(
+						"Invalid material variant name '{}'! Falling back to default material.",
+						&selected_variant_name
+					);
+					0
+				})
+		} else {
+			0
+		};
+
 		Ok(Self {
 			model,
 			textures_set,
 			mat_tex_base_indices,
 			model_matrix: Default::default(),
-			material_variant: 0,
+			material_variant: material_variant_index,
 		})
 	}
 

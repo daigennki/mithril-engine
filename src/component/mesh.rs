@@ -25,6 +25,9 @@ use crate::GenericEngineError;
 pub struct Mesh
 {
 	pub model_path: PathBuf,
+
+	#[serde(default)]
+	pub material_variant: Option<String>,
 }
 impl WantsSystemAdded for Mesh
 {
@@ -109,7 +112,7 @@ impl MeshManager
 			}
 		}
 		
-		self.resources.insert(eid, model_data.new_model_instance(render_ctx)?);
+		self.resources.insert(eid, model_data.new_model_instance(render_ctx, component.material_variant.clone())?);
 
 		Ok(())
 	}

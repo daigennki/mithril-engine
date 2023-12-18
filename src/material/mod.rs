@@ -67,7 +67,7 @@ pub trait Material: Send + Sync
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum ColorInput
 {
