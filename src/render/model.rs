@@ -11,7 +11,7 @@ use serde::Deserialize;
 use std::any::TypeId;
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
@@ -27,6 +27,7 @@ pub struct Model
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
+	path: PathBuf,
 }
 impl Model
 {
@@ -159,10 +160,16 @@ impl Model
 					submeshes,
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer,
+					path: path.to_path_buf(),
 				})
 			}
 			_ => Err(format!("couldn't determine model file type of {}", path.display()).into()),
 		}
+	}
+
+	pub fn path(&self) -> &Path
+	{
+		self.path.as_path()
 	}
 
 	/// Get the materials of this model.

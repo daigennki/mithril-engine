@@ -63,7 +63,7 @@ fn update_meshes(
 #[derive(shipyard::Unique)]
 pub struct MeshManager
 {
-	material_pipelines: HashMap<&'static str, PipelineData>,
+	material_pipelines: HashMap<&'static str, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	models: BTreeMap<PathBuf, Arc<Model>>,
@@ -110,15 +110,9 @@ impl MeshManager
 			}
 		};
 
-		let original_materials = model_data.get_materials();
-
-		// Get the image views for each material, and calculate the base index in the variable descriptor count.
-		let (mut image_view_writes, mut mat_tex_base_indices) = (Vec::new(), vec![0]);
-		for mat in original_materials {
+		// Go through all the materials, and load the pipelines they need if they aren't already loaded.
+		for mat in model_data.get_materials() {
 			let mat_name = mat.material_name();
-			let parent_folder = component.model_path.parent().unwrap();
-
-			// Load the pipeline if it hasn't already been loaded.
 			if !self.material_pipelines.contains_key(mat_name) {
 				let (opaque_pipeline, oit_pipeline) =
 					mat.load_pipeline(
@@ -127,46 +121,17 @@ impl MeshManager
 						self.transparency_input_layout.clone(),
 					)?;
 
-				let pipeline_data = PipelineData {
+				let pipeline_data = MaterialPipelines {
 					opaque_pipeline,
 					oit_pipeline,
 				};
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
-
-			let mut mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
-			image_view_writes.append(&mut mat_image_views);
-
-			let next_mat_tex_base_index = mat_tex_base_indices.last().unwrap() + mat.tex_index_stride();
-			mat_tex_base_indices.push(next_mat_tex_base_index);
 		}
-		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it.
-		mat_tex_base_indices.pop();
-		mat_tex_base_indices.shrink_to_fit();
-
-		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-		let variable_descriptor_count = image_view_writes.len().try_into()?;
-		log::debug!("variable descriptor count: {}", variable_descriptor_count);
-
-		let textures_set = PersistentDescriptorSet::new_variable(
-			render_ctx.descriptor_set_allocator(),
-			self.material_textures_set_layout.clone(),
-			variable_descriptor_count,
-			[WriteDescriptorSet::image_view_array(1, 0, image_view_writes)],
-			[]
-		)?;
-
-		let mesh_resources = MeshResources {
-			model: model_data,
-			textures_set,
-			textures_count: variable_descriptor_count,
-			mat_tex_base_indices,
-			model_matrix: Default::default(),
-		};
-		let existing = self.resources.insert(eid, mesh_resources);
-		if existing.is_some() {
-			log::warn!("`MeshManager::load` was called for an entity ID that was already loaded!");
-		}
+		
+		let mesh_resources = MeshResources::new(render_ctx, model_data, self.material_textures_set_layout.clone())?;
+		
+		self.resources.insert(eid, mesh_resources);
 
 		Ok(())
 	}
@@ -284,6 +249,48 @@ struct MeshResources
 }
 impl MeshResources
 {
+	pub fn new(render_ctx: &mut RenderContext, model: Arc<Model>, mat_tex_set_layout: Arc<DescriptorSetLayout>)
+		-> Result<Self, GenericEngineError>
+	{
+		let parent_folder = model.path().parent().unwrap();
+		let original_materials = model.get_materials();
+
+		// Get the image views for each material, and calculate the base index in the variable descriptor count.
+		let mut image_view_writes = Vec::with_capacity(original_materials.len());
+		let mut mat_tex_base_indices = Vec::with_capacity(original_materials.len());
+		for mat in original_materials {
+			let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+			image_view_writes.push(mat_image_views);
+
+			let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + mat.tex_index_stride();
+			mat_tex_base_indices.push(next_mat_tex_base_index);
+		}
+		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
+		// then make sure the first material has a base texture index of 0.
+		mat_tex_base_indices.pop();
+		mat_tex_base_indices.insert(0, 0);
+
+		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
+		let variable_descriptor_count = image_view_writes.len().try_into()?;
+		log::debug!("variable descriptor count: {}", variable_descriptor_count);
+
+		let textures_set = PersistentDescriptorSet::new_variable(
+			render_ctx.descriptor_set_allocator(),
+			mat_tex_set_layout,
+			variable_descriptor_count,
+			[WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten())],
+			[]
+		)?;
+
+		Ok(MeshResources {
+			model,
+			textures_set,
+			textures_count: variable_descriptor_count,
+			mat_tex_base_indices,
+			model_matrix: Default::default(),
+		})
+	}
+
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
@@ -335,8 +342,7 @@ impl MeshResources
 	}
 }
 
-/// Pipeline for each material, as well as the descriptor set layout unique to each material.
-struct PipelineData
+struct MaterialPipelines
 {
 	opaque_pipeline: Arc<GraphicsPipeline>,
 	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
