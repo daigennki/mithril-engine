@@ -51,11 +51,6 @@ pub struct PBR
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn tex_index_stride(&self) -> u32
-	{
-		1
-	}
-
 	fn material_name_associated() -> &'static str
 	{
 		"PBR"

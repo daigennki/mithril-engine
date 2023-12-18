@@ -170,6 +170,11 @@ impl Model
 		}
 	}
 
+	pub fn new_model_instance(self: Arc<Self>, render_ctx: &mut RenderContext) -> Result<ModelInstance, GenericEngineError>
+	{
+		ModelInstance::new(render_ctx, self.clone())
+	}
+
 	pub fn path(&self) -> &Path
 	{
 		self.path.as_path()
@@ -186,16 +191,29 @@ impl Model
 	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
-	pub fn draw(
+	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		transform: &Mat4,
 		mat_tex_base_indices: &[u32],
 		transparency_pass: bool,
 		shadow_pass: bool,
+		material_variant: usize,
 	) -> Result<(), GenericEngineError>
 	{
 		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
+
+		// Make sure that the material variant index given is not out of range.
+		if let Some(first_submesh) = self.submeshes.first() {
+			if material_variant >= first_submesh.mat_indices.len() {
+				let err_str = format!(
+					"Material variant index {} is out of range (there are {} material variants)",
+					material_variant,
+					first_submesh.mat_indices.len(),
+				);
+				return Err(err_str.into());
+			}
+		}
 
 		// Determine which submeshes are visible.
 		// "Visible" here means its transparency mode matches the current render pass type,
@@ -204,7 +222,7 @@ impl Model
 			.submeshes
 			.iter()
 			.filter(|submesh| {
-				let material_index = submesh.mat_indices[0];
+				let material_index = submesh.mat_indices[material_variant];
 				let mat = &self.materials[material_index];
 				mat.has_transparency() == transparency_pass
 			})
@@ -221,18 +239,13 @@ impl Model
 			self.index_buffer.bind(cb)?;
 
 			for submesh in visible_submeshes {
-				let sorted_material_index = submesh.mat_indices[0];
-				let instance_index = mat_tex_base_indices[sorted_material_index];
+				let mat_index = submesh.mat_indices[material_variant];
+				let instance_index = mat_tex_base_indices[mat_index];
 
 				submesh.draw(cb, instance_index)?;
 			}
 		}
 		Ok(())
-	}
-
-	pub fn new_model_instance(self: Arc<Self>, render_ctx: &mut RenderContext) -> Result<ModelInstance, GenericEngineError>
-	{
-		ModelInstance::new(render_ctx, self.clone())
 	}
 }
 
@@ -441,13 +454,14 @@ pub struct ModelInstance
 	// Image views for each material in use by the current material group.
 	// Uses variable descriptor count.
 	textures_set: Arc<PersistentDescriptorSet>,
-	textures_count: u32, // The number of textures in the variable count descriptor.
 
 	// The texture base indices in the variable descriptor count of `textures_set`.
 	// (to get the texture base index, use the material index as an index to this)
 	mat_tex_base_indices: Vec<u32>,
 
 	model_matrix: Mat4,
+
+	material_variant: usize,
 }
 impl ModelInstance
 {
@@ -459,26 +473,33 @@ impl ModelInstance
 		// Get the image views for each material, and calculate the base index in the variable descriptor count.
 		let mut image_view_writes = Vec::with_capacity(original_materials.len());
 		let mut mat_tex_base_indices = Vec::with_capacity(original_materials.len());
+		let mut last_tex_index_stride = 0;
 		for mat in original_materials {
 			let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+			last_tex_index_stride = mat_image_views.len().try_into()?;
 			image_view_writes.push(mat_image_views);
 
-			let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + mat.tex_index_stride();
+			let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
 			mat_tex_base_indices.push(next_mat_tex_base_index);
 		}
 		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
-		// then make sure the first material has a base texture index of 0.
+		// then give the first material a base texture index of 0.
 		mat_tex_base_indices.pop();
 		mat_tex_base_indices.insert(0, 0);
 
-		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-		let variable_descriptor_count = image_view_writes.len().try_into()?;
-		log::debug!("variable descriptor count: {}", variable_descriptor_count);
+		let texture_count = image_view_writes.iter().flatten().count().try_into()?;
+		log::debug!("texture count (variable descriptor count): {}", texture_count);
 
+		// Make sure that the shader doesn't overrun the variable count descriptor.
+		// Some very weird things (like crashing the entire computer) might happen if we don't check this!
+		let last_mat_tex_base_index = mat_tex_base_indices.last().unwrap();
+		assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
+
+		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
 		let textures_set = PersistentDescriptorSet::new_variable(
 			render_ctx.descriptor_set_allocator(),
 			render_ctx.get_material_textures_set_layout().clone(),
-			variable_descriptor_count,
+			texture_count,
 			[WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten())],
 			[]
 		)?;
@@ -486,9 +507,9 @@ impl ModelInstance
 		Ok(Self {
 			model,
 			textures_set,
-			textures_count: variable_descriptor_count,
 			mat_tex_base_indices,
 			model_matrix: Default::default(),
+			material_variant: 0,
 		})
 	}
 
@@ -534,15 +555,14 @@ impl ModelInstance
 			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
 		}
 
-		if let Some(last_mat_tex_base_index) = self.mat_tex_base_indices.last() {
-			let last_mat_stride = materials[materials.len() - 1].tex_index_stride();
-
-			// Make sure that the shader doesn't overrun the variable count descriptor.
-			// Some very weird things (like crashing the entire computer) might happen if we don't check this!
-			assert!(last_mat_tex_base_index + last_mat_stride <= self.textures_count);
-		}
-
-		self.model.draw(cb, &projviewmodel, &self.mat_tex_base_indices, transparency_pass, shadow_pass)?;
+		self.model.draw(
+			cb,
+			&projviewmodel,
+			&self.mat_tex_base_indices,
+			transparency_pass,
+			shadow_pass,
+			self.material_variant,
+		)?;
 
 		Ok(())
 	}

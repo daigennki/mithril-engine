@@ -31,8 +31,6 @@ pub mod vs_3d_common
 #[typetag::deserialize]
 pub trait Material: Send + Sync
 {
-	fn tex_index_stride(&self) -> u32;
-
 	fn material_name_associated() -> &'static str
 	where
 		Self: Sized;
