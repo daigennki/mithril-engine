@@ -31,6 +31,14 @@ pub struct Model
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
 	path: PathBuf,
+
+	// Image views for all materials used by all material variants the glTF document comes with.
+	// Uses variable descriptor count.
+	textures_set: Arc<PersistentDescriptorSet>,
+
+	// The texture base indices in the variable descriptor count of `textures_set`.
+	// (to get the texture base index, use the material index as an index to this)
+	mat_tex_base_indices: Vec<u32>,
 }
 impl Model
 {
@@ -157,6 +165,40 @@ impl Model
 					_ => unreachable!(),
 				};
 
+				// Get the image views for each material, and calculate the base index in the variable descriptor count.
+				let mut image_view_writes = Vec::with_capacity(materials.len());
+				let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
+				let mut last_tex_index_stride = 0;
+				for mat in &materials {
+					let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+					last_tex_index_stride = mat_image_views.len().try_into()?;
+					image_view_writes.push(mat_image_views);
+
+					let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
+					mat_tex_base_indices.push(next_mat_tex_base_index);
+				}
+				// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
+				// then give the first material a base texture index of 0.
+				mat_tex_base_indices.pop();
+				mat_tex_base_indices.insert(0, 0);
+
+				let texture_count = image_view_writes.iter().flatten().count().try_into()?;
+				log::debug!("texture count (variable descriptor count): {}", texture_count);
+
+				// Make sure that the shader doesn't overrun the variable count descriptor.
+				// Some very weird things (like crashing the entire computer) might happen if we don't check this!
+				let last_mat_tex_base_index = mat_tex_base_indices.last().unwrap();
+				assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
+
+				// Make a single write out of the image views of all of the materials, and create a single descriptor set.
+				let textures_set = PersistentDescriptorSet::new_variable(
+					render_ctx.descriptor_set_allocator(),
+					render_ctx.get_material_textures_set_layout().clone(),
+					texture_count,
+					[WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten())],
+					[]
+				)?;
+
 				Ok(Model {
 					materials,
 					material_variants,
@@ -164,16 +206,18 @@ impl Model
 					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 					index_buffer,
 					path: path.to_path_buf(),
+					textures_set,
+					mat_tex_base_indices,
 				})
 			}
 			_ => Err(format!("couldn't determine model file type of {}", path.display()).into()),
 		}
 	}
 
-	pub fn new_model_instance(self: Arc<Self>, render_ctx: &mut RenderContext, material_variant: Option<String>)
+	pub fn new_model_instance(self: Arc<Self>, material_variant: Option<String>)
 		-> Result<ModelInstance, GenericEngineError>
 	{
-		ModelInstance::new(render_ctx, self.clone(), material_variant)
+		ModelInstance::new(self.clone(), material_variant)
 	}
 
 	pub fn path(&self) -> &Path
@@ -195,8 +239,8 @@ impl Model
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_layout: Arc<PipelineLayout>,
 		transform: &Mat4,
-		mat_tex_base_indices: &[u32],
 		transparency_pass: bool,
 		shadow_pass: bool,
 		material_variant: usize,
@@ -230,7 +274,7 @@ impl Model
 			.filter(|submesh| submesh.cull(transform))
 			.peekable();
 
-		// Don't even bother with vertex/index buffer binds if no submeshes are visible
+		// Don't even bother with binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
 			let vertex_subbuffers = shadow_pass
 				.then(|| vec![self.vertex_subbuffers[0].clone()])
@@ -239,9 +283,14 @@ impl Model
 			cb.bind_vertex_buffers(0, vertex_subbuffers)?;
 			self.index_buffer.bind(cb)?;
 
+			if !shadow_pass {
+				let set = self.textures_set.clone();
+				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
+			}
+
 			for submesh in visible_submeshes {
 				let mat_index = submesh.mat_indices[material_variant];
-				let instance_index = mat_tex_base_indices[mat_index];
+				let instance_index = self.mat_tex_base_indices[mat_index];
 
 				submesh.draw(cb, instance_index)?;
 			}
@@ -451,61 +500,14 @@ fn get_buf_data<'a, T: 'static>(
 pub struct ModelInstance
 {
 	model: Arc<Model>,
-
-	// Image views for each material in use by the current material group.
-	// Uses variable descriptor count.
-	textures_set: Arc<PersistentDescriptorSet>,
-
-	// The texture base indices in the variable descriptor count of `textures_set`.
-	// (to get the texture base index, use the material index as an index to this)
-	mat_tex_base_indices: Vec<u32>,
-
-	model_matrix: Mat4,
-
 	material_variant: usize,
+
+	pub model_matrix: Mat4,
 }
 impl ModelInstance
 {
-	fn new(render_ctx: &mut RenderContext, model: Arc<Model>, material_variant: Option<String>)
-		-> Result<Self, GenericEngineError>
+	fn new(model: Arc<Model>, material_variant: Option<String>) -> Result<Self, GenericEngineError>
 	{
-		let parent_folder = model.path().parent().unwrap();
-		let original_materials = model.get_materials();
-
-		// Get the image views for each material, and calculate the base index in the variable descriptor count.
-		let mut image_view_writes = Vec::with_capacity(original_materials.len());
-		let mut mat_tex_base_indices = Vec::with_capacity(original_materials.len());
-		let mut last_tex_index_stride = 0;
-		for mat in original_materials {
-			let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
-			last_tex_index_stride = mat_image_views.len().try_into()?;
-			image_view_writes.push(mat_image_views);
-
-			let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
-			mat_tex_base_indices.push(next_mat_tex_base_index);
-		}
-		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
-		// then give the first material a base texture index of 0.
-		mat_tex_base_indices.pop();
-		mat_tex_base_indices.insert(0, 0);
-
-		let texture_count = image_view_writes.iter().flatten().count().try_into()?;
-		log::debug!("texture count (variable descriptor count): {}", texture_count);
-
-		// Make sure that the shader doesn't overrun the variable count descriptor.
-		// Some very weird things (like crashing the entire computer) might happen if we don't check this!
-		let last_mat_tex_base_index = mat_tex_base_indices.last().unwrap();
-		assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
-
-		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-		let textures_set = PersistentDescriptorSet::new_variable(
-			render_ctx.descriptor_set_allocator(),
-			render_ctx.get_material_textures_set_layout().clone(),
-			texture_count,
-			[WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten())],
-			[]
-		)?;
-
 		let material_variant_index = if let Some(selected_variant_name) = material_variant {
 			model
 				.material_variants
@@ -524,16 +526,9 @@ impl ModelInstance
 
 		Ok(Self {
 			model,
-			textures_set,
-			mat_tex_base_indices,
-			model_matrix: Default::default(),
 			material_variant: material_variant_index,
+			model_matrix: Default::default(),
 		})
-	}
-
-	pub fn set_model_matrix(&mut self, mat: Mat4)
-	{
-		self.model_matrix = mat;
 	}
 
 	pub fn draw(
@@ -558,7 +553,7 @@ impl ModelInstance
 		let projviewmodel = *projview * self.model_matrix;
 		if shadow_pass {
 			// TODO: also consider point lights, which require different matrices
-			cb.push_constants(pipeline_layout, 0, projviewmodel)?;
+			cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 		} else {
 			let translation = self.model_matrix.w_axis.xyz();
 			let push_data = MeshPushConstant {
@@ -568,19 +563,9 @@ impl ModelInstance
 				model_z: self.model_matrix.z_axis.xyz().extend(translation.z),
 			};
 			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
-
-			let set = self.textures_set.clone();
-			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
 		}
 
-		self.model.draw(
-			cb,
-			&projviewmodel,
-			&self.mat_tex_base_indices,
-			transparency_pass,
-			shadow_pass,
-			self.material_variant,
-		)?;
+		self.model.draw(cb, pipeline_layout, &projviewmodel, transparency_pass, shadow_pass, self.material_variant)?;
 
 		Ok(())
 	}

@@ -111,15 +111,15 @@ impl MeshManager
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
 		}
-		
-		self.resources.insert(eid, model_data.new_model_instance(render_ctx, component.material_variant.clone())?);
+
+		self.resources.insert(eid, model_data.new_model_instance(component.material_variant.clone())?);
 
 		Ok(())
 	}
 
 	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
 	{
-		self.resources.get_mut(&eid).unwrap().set_model_matrix(model_matrix);
+		self.resources.get_mut(&eid).unwrap().model_matrix = model_matrix;
 	}
 
 	fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
