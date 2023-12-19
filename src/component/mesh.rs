@@ -125,17 +125,6 @@ impl MeshManager
 		self.resources.get_mut(&eid).unwrap().model_matrix = model_matrix;
 	}
 
-	fn get_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
-	{
-		self.material_pipelines.get(name).map(|pl_data| &pl_data.opaque_pipeline)
-	}
-	fn get_transparency_pipeline(&self, name: &str) -> Option<&Arc<GraphicsPipeline>>
-	{
-		self.material_pipelines
-			.get(name)
-			.and_then(|pl_data| pl_data.oit_pipeline.as_ref())
-	}
-
 	/// Free resources for the given entity ID. Only call this when the `Mesh` component was actually removed!
 	fn cleanup_removed(&mut self, eid: EntityId)
 	{
@@ -158,39 +147,50 @@ impl MeshManager
 		};
 
 		let color_formats = pass_type.render_color_formats();
-		let (pipeline, transparency_pass) = match pass_type {
-			PassType::Shadow { pipeline, .. } => (pipeline, false),
-			PassType::Opaque => {
-				let pl = self.get_pipeline("PBR").ok_or("PBR pipeline not loaded!")?.clone();
-				(pl, false)
-			}
-			PassType::TransparencyMoments(pl) => (pl, true),
-			PassType::Transparency => {
-				let pl = self
-					.get_transparency_pipeline("PBR")
-					.ok_or("PBR transparency pipeline not loaded!")?
-					.clone();
-				(pl, true)
-			}
-		};
 
 		let mut cb = render_ctx.gather_commands(color_formats, Some(depth_format), None, viewport_extent)?;
 
-		let pipeline_layout = pipeline.layout().clone();
+		let pipeline_override = pass_type.pipeline();
+		let transparency_pass = pass_type.transparency_pass();
 
-		cb.bind_pipeline_graphics(pipeline.clone())?;
+		for (pipeline_name, mat_pl) in &self.material_pipelines {
+			let pipeline = if let Some(pl) = pipeline_override {
+				pl.clone()
+			} else if transparency_pass {
+				if let Some(pl) = mat_pl.oit_pipeline.clone() {
+					pl
+				} else {
+					continue;
+				}
+			} else {
+				mat_pl.opaque_pipeline.clone()
+			};
 
-		if common_sets.len() > 0 {
-			cb.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				pipeline_layout.clone(),
-				1,
-				Vec::from(common_sets),
-			)?;
-		}
+			cb.bind_pipeline_graphics(pipeline.clone())?;
+			let pipeline_layout = pipeline.layout().clone();
 
-		for model_instance in self.resources.values() {
-			model_instance.draw(&mut cb, pipeline_layout.clone(), transparency_pass, shadow_pass, &projview)?;
+			if common_sets.len() > 0 {
+				let sets = Vec::from(common_sets);
+				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
+			}
+
+			// don't filter by material pipeline name if there is a pipeline override
+			let pipeline_name_option = pipeline_override.is_none().then_some(pipeline_name);
+
+			for model_instance in self.resources.values() {
+				model_instance.draw(
+					&mut cb,
+					pipeline_name_option.copied(),
+					pipeline_layout.clone(),
+					transparency_pass,
+					shadow_pass,
+					&projview,
+				)?;
+			}
+
+			if pipeline_override.is_some() {
+				break;
+			}
 		}
 
 		Ok(cb.build()?)
@@ -234,6 +234,20 @@ impl PassType
 			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
 			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT],
 			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
+		}
+	}
+	fn pipeline(&self) -> Option<&Arc<GraphicsPipeline>>
+	{
+		match self {
+			PassType::Shadow { pipeline, .. } | PassType::TransparencyMoments(pipeline) => Some(pipeline),
+			_ => None,
+		}
+	}
+	fn transparency_pass(&self) -> bool
+	{
+		match self {
+			PassType::TransparencyMoments(_) | PassType::Transparency => true,
+			_ => false,
 		}
 	}
 }

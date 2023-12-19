@@ -245,8 +245,10 @@ impl Model
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_name: Option<&str>,
 		pipeline_layout: Arc<PipelineLayout>,
-		transform: &Mat4,
+		projview: &Mat4,
+		model_matrix: &Mat4,
 		transparency_pass: bool,
 		shadow_pass: bool,
 		material_variant: usize,
@@ -266,8 +268,11 @@ impl Model
 			}
 		}
 
+		let projviewmodel = *projview * *model_matrix;
+
 		// Determine which submeshes are visible.
-		// "Visible" here means its transparency mode matches the current render pass type,
+		// "Visible" here means it uses the currently bound material pipeline,
+		// its transparency mode matches the current render pass type,
 		// and the submesh passes frustum culling.
 		let mut visible_submeshes = self
 			.submeshes
@@ -275,13 +280,32 @@ impl Model
 			.filter(|submesh| {
 				let material_index = submesh.mat_indices[material_variant];
 				let mat = &self.materials[material_index];
-				mat.has_transparency() == transparency_pass
+
+				// don't filter by material pipeline name if `None` was given
+				let pipeline_matches = pipeline_name
+					.map(|some_pl_name| mat.material_name() == some_pl_name)
+					.unwrap_or(true);
+
+				pipeline_matches && mat.has_transparency() == transparency_pass
 			})
-			.filter(|submesh| submesh.cull(transform))
+			.filter(|submesh| submesh.cull(&projviewmodel))
 			.peekable();
 
 		// Don't even bother with binds if no submeshes are visible
 		if visible_submeshes.peek().is_some() {
+			if shadow_pass {
+				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+			} else {
+				let translation = model_matrix.w_axis.xyz();
+				let push_data = MeshPushConstant {
+					projviewmodel,
+					model_x: model_matrix.x_axis.xyz().extend(translation.x),
+					model_y: model_matrix.y_axis.xyz().extend(translation.y),
+					model_z: model_matrix.z_axis.xyz().extend(translation.z),
+				};
+				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+			}
+
 			let vertex_subbuffers = shadow_pass
 				.then(|| vec![self.vertex_subbuffers[0].clone()])
 				.unwrap_or_else(|| self.vertex_subbuffers.clone());
@@ -543,39 +567,19 @@ impl ModelInstance
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_name: Option<&str>,
 		pipeline_layout: Arc<PipelineLayout>,
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &Mat4,
 	) -> Result<(), GenericEngineError>
 	{
-		let materials = self.model.get_materials();
-
-		// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
-		let draw_this_mesh = materials.iter().any(|mat| mat.has_transparency() == transparency_pass);
-		if !draw_this_mesh {
-			return Ok(()); // skip to the next mesh if none of the materials match this pass type
-		}
-
-		let projviewmodel = *projview * self.model_matrix;
-		if shadow_pass {
-			// TODO: also consider point lights, which require different matrices
-			cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
-		} else {
-			let translation = self.model_matrix.w_axis.xyz();
-			let push_data = MeshPushConstant {
-				projviewmodel,
-				model_x: self.model_matrix.x_axis.xyz().extend(translation.x),
-				model_y: self.model_matrix.y_axis.xyz().extend(translation.y),
-				model_z: self.model_matrix.z_axis.xyz().extend(translation.z),
-			};
-			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
-		}
-
 		self.model.draw(
 			cb,
+			pipeline_name,
 			pipeline_layout,
-			&projviewmodel,
+			&projview,
+			&self.model_matrix,
 			transparency_pass,
 			shadow_pass,
 			self.material_variant,
