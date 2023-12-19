@@ -12,7 +12,7 @@ use std::any::TypeId;
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
@@ -240,73 +240,65 @@ impl Model
 	{
 		&self.material_variants
 	}
-	pub fn count_submeshes(&self) -> usize
-	{
-		self.submeshes.len()
-	}
-
-	fn cull(
-		&self,
-		visibility: &mut [bool],
-		projviewmodel: &Mat4,
-		pipeline_name: Option<&str>,
-		transparency_pass: bool,
-		material_variant: usize
-	) {
-		// Make sure that the material variant index given is not out of range.
-		if let Some(first_submesh) = self.submeshes.first() {
-			if material_variant >= first_submesh.mat_indices.len() {
-				log::error!(
-					"Material variant index {} is out of range (there are {} material variants). Refusing to draw mesh.",
-					material_variant,
-					first_submesh.mat_indices.len(),
-				);
-				visibility.iter_mut().for_each(|visible| *visible = false);
-				return;
-			}
-		}
-
-		// Determine which submeshes are visible.
-		// "Visible" here means it uses the currently bound material pipeline,
-		// its transparency mode matches the current render pass type,
-		// and the submesh passes frustum culling.
-		for (submesh, passed) in self.submeshes.iter().zip(visibility.iter_mut()) {
-			let material_index = submesh.mat_indices[material_variant];
-			let mat = &self.materials[material_index];
-
-			// don't filter by material pipeline name if `None` was given
-			let pipeline_matches = pipeline_name
-				.map(|some_pl_name| mat.material_name() == some_pl_name)
-				.unwrap_or(true);
-
-			*passed = if pipeline_matches && mat.has_transparency() == transparency_pass {
-				submesh.cull(&projviewmodel)
-			} else {
-				false
-			};
-		}
-	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		visibility: &[bool],
+		pipeline_name: Option<&str>,
 		pipeline_layout: Arc<PipelineLayout>,
-		projviewmodel: &Mat4,
+		projview: &Mat4,
 		model_matrix: &Mat4,
+		transparency_pass: bool,
 		shadow_pass: bool,
 		material_variant: usize,
 	) -> Result<(), GenericEngineError>
 	{
+		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
+
+		// Make sure that the material variant index given is not out of range.
+		if let Some(first_submesh) = self.submeshes.first() {
+			if material_variant >= first_submesh.mat_indices.len() {
+				let err_str = format!(
+					"Material variant index {} is out of range (there are {} material variants)",
+					material_variant,
+					first_submesh.mat_indices.len(),
+				);
+				return Err(err_str.into());
+			}
+		}
+
+		let projviewmodel = *projview * *model_matrix;
+
+		// Determine which submeshes are visible.
+		// "Visible" here means it uses the currently bound material pipeline,
+		// its transparency mode matches the current render pass type,
+		// and the submesh passes frustum culling.
+		let mut visible_submeshes = self
+			.submeshes
+			.iter()
+			.filter(|submesh| {
+				let material_index = submesh.mat_indices[material_variant];
+				let mat = &self.materials[material_index];
+
+				// don't filter by material pipeline name if `None` was given
+				let pipeline_matches = pipeline_name
+					.map(|some_pl_name| mat.material_name() == some_pl_name)
+					.unwrap_or(true);
+
+				pipeline_matches && mat.has_transparency() == transparency_pass
+			})
+			.filter(|submesh| submesh.cull(&projviewmodel))
+			.peekable();
+
 		// Don't even bother with binds if no submeshes are visible
-		if visibility.iter().any(|visible| *visible) {
+		if visible_submeshes.peek().is_some() {
 			if shadow_pass {
-				cb.push_constants(pipeline_layout.clone(), 0, *projviewmodel)?;
+				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 			} else {
 				let translation = model_matrix.w_axis.xyz();
 				let push_data = MeshPushConstant {
-					projviewmodel: *projviewmodel,
+					projviewmodel,
 					model_x: model_matrix.x_axis.xyz().extend(translation.x),
 					model_y: model_matrix.y_axis.xyz().extend(translation.y),
 					model_z: model_matrix.z_axis.xyz().extend(translation.z),
@@ -326,13 +318,7 @@ impl Model
 				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
 			}
 
-			let visible_submeshes = self
-				.submeshes
-				.iter()
-				.zip(visibility.iter())
-				.filter(|(_, visible)| **visible);
-
-			for (submesh, _) in visible_submeshes {
+			for submesh in visible_submeshes {
 				let mat_index = submesh.mat_indices[material_variant];
 				let instance_index = self.mat_tex_base_indices[mat_index];
 
@@ -548,7 +534,6 @@ pub struct ModelInstance
 {
 	model: Arc<Model>,
 	material_variant: usize,
-	visibility: Mutex<Vec<bool>>,
 
 	pub model_matrix: Mat4,
 }
@@ -572,56 +557,30 @@ impl ModelInstance
 			0
 		};
 
-		let visibility = vec![false; model.count_submeshes()];
-
 		Ok(Self {
 			model,
 			material_variant: material_variant_index,
-			visibility: Mutex::new(visibility),
 			model_matrix: Default::default(),
 		})
 	}
 
-	// Check and mark visibility of model and its submeshes. Returns `true` if any of the submeshes passed culling.
-	/*fn cull(
-		&mut self,
-		projview: &Mat4,
-		material_pipeline_name: Option<&str>,
-		transparency_pass: bool,
-		shadow_pass: bool,
-	) -> bool
-	{
-		let projviewmodel = *projview * self.model_matrix;
-		self.model.cull(&mut self.visibility, &projviewmodel, material_pipeline_name, transparency_pass, shadow_pass);
-
-		self.visibility.iter().any(|visible| visible)
-	}*/
-
 	pub fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		material_pipeline_name: Option<&str>,
+		pipeline_name: Option<&str>,
 		pipeline_layout: Arc<PipelineLayout>,
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &Mat4,
 	) -> Result<(), GenericEngineError>
 	{
-		let projviewmodel = *projview * self.model_matrix;
-		let mut visibility = self.visibility.lock().unwrap();
-		self.model.cull(
-			&mut visibility,
-			&projviewmodel,
-			material_pipeline_name,
-			transparency_pass,
-			self.material_variant,
-		);
 		self.model.draw(
 			cb,
-			&visibility,
+			pipeline_name,
 			pipeline_layout,
-			&projviewmodel,
+			&projview,
 			&self.model_matrix,
+			transparency_pass,
 			shadow_pass,
 			self.material_variant,
 		)?;
@@ -638,47 +597,3 @@ struct MeshPushConstant
 	model_y: Vec4,
 	model_z: Vec4,
 }
-
-/*pub struct ManagedModel
-{
-	model: Arc<Model>,
-	users: HashMap<EntityId, Weak<ModelInstance>>,
-}
-impl ManagedModel
-{
-	pub fn new(model: Arc<Model>) -> Self
-	{
-		Self {
-			model,
-			users: Default::default()
-		}
-	}
-
-	pub fn new_instance(&self, eid: EntityId, material_variant: Vec<String>) -> Arc<ModelInstance>
-	{
-		let instance = model.new_model_instance(material_variant);
-		self.users.insert(eid, instance.downgrade());
-		instance
-	}
-
-	pub fn cull(&mut self, projview: &Mat4, material_pipeline_name: &str, transparency_pass: bool, shadow_pass: bool) -> bool
-	{
-		let mut any_passed = false;
-
-		// We *cannot* use `Iterator::any` here because the `cull` function also marks each submesh for
-		// drawing, and `Iterator::any` is short-circuiting.
-		for user in self.users {
-			if user.cull(projview, material_pipeline_name, transparency_pass, shadow_pass) {
-				any_passed = true;
-			}
-		}
-
-		any_passed
-	}
-
-	pub fn draw(&self, &mut cb: AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
-	{
-		self.users
-	}
-}*/
-
