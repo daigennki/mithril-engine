@@ -8,8 +8,9 @@ use glam::*;
 use gltf::accessor::DataType;
 use gltf::Semantic;
 use serde::Deserialize;
+use shipyard::EntityId;
 use std::any::TypeId;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -221,9 +222,9 @@ impl Model
 		}
 	}
 
-	pub fn new_model_instance(self: Arc<Self>, material_variant: Option<String>) -> Result<ModelInstance, GenericEngineError>
+	pub fn new_instance(self: Arc<Self>, material_variant: Option<String>) -> ModelInstance
 	{
-		ModelInstance::new(self.clone(), material_variant)
+		ModelInstance::new(self, material_variant)
 	}
 
 	pub fn path(&self) -> &Path
@@ -252,6 +253,7 @@ impl Model
 		transparency_pass: bool,
 		shadow_pass: bool,
 		material_variant: usize,
+		resources_bound: &mut bool,
 	) -> Result<(), GenericEngineError>
 	{
 		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
@@ -306,16 +308,21 @@ impl Model
 				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 			}
 
-			let vertex_subbuffers = shadow_pass
-				.then(|| vec![self.vertex_subbuffers[0].clone()])
-				.unwrap_or_else(|| self.vertex_subbuffers.clone());
+			if !*resources_bound {
+				let vbo;
+				if shadow_pass {
+					vbo = vec![self.vertex_subbuffers[0].clone()];
+				} else {
+					let set = self.textures_set.clone();
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
 
-			cb.bind_vertex_buffers(0, vertex_subbuffers)?;
-			self.index_buffer.bind(cb)?;
+					vbo = self.vertex_subbuffers.clone();
+				}
 
-			if !shadow_pass {
-				let set = self.textures_set.clone();
-				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
+				cb.bind_vertex_buffers(0, vbo)?;
+				self.index_buffer.bind(cb)?;
+
+				*resources_bound = true;
 			}
 
 			for submesh in visible_submeshes {
@@ -539,7 +546,7 @@ pub struct ModelInstance
 }
 impl ModelInstance
 {
-	fn new(model: Arc<Model>, material_variant: Option<String>) -> Result<Self, GenericEngineError>
+	fn new(model: Arc<Model>, material_variant: Option<String>) -> Self
 	{
 		let material_variant_index = if let Some(selected_variant_name) = material_variant {
 			model
@@ -557,11 +564,11 @@ impl ModelInstance
 			0
 		};
 
-		Ok(Self {
+		Self {
 			model,
 			material_variant: material_variant_index,
 			model_matrix: Default::default(),
-		})
+		}
 	}
 
 	pub fn draw(
@@ -572,6 +579,7 @@ impl ModelInstance
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &Mat4,
+		vbo_bound: &mut bool,
 	) -> Result<(), GenericEngineError>
 	{
 		self.model.draw(
@@ -583,6 +591,7 @@ impl ModelInstance
 			transparency_pass,
 			shadow_pass,
 			self.material_variant,
+			vbo_bound,
 		)?;
 
 		Ok(())
@@ -596,4 +605,70 @@ struct MeshPushConstant
 	model_x: Vec4,
 	model_y: Vec4,
 	model_z: Vec4,
+}
+
+pub struct ManagedModel
+{
+	model: Arc<Model>,
+	users: HashMap<EntityId, ModelInstance>,
+}
+impl ManagedModel
+{
+	pub fn new(model: Arc<Model>) -> Self
+	{
+		Self {
+			model,
+			users: Default::default(),
+		}
+	}
+
+	pub fn model(&self) -> &Arc<Model>
+	{
+		&self.model
+	}
+
+	pub fn new_user(&mut self, eid: EntityId, material_variant: Option<String>)
+	{
+		let model_instance = self.model.clone().new_instance(material_variant);
+		self.users.insert(eid, model_instance);
+	}
+
+	pub fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
+	{
+		self.users.get_mut(&eid).unwrap().model_matrix = model_matrix;
+	}
+
+	pub fn cleanup(&mut self, eid: EntityId)
+	{
+		self.users.remove(&eid);
+	}
+
+	pub fn draw(
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		pipeline_name: Option<&str>,
+		pipeline_layout: Arc<PipelineLayout>,
+		transparency_pass: bool,
+		shadow_pass: bool,
+		projview: &Mat4,
+	) -> Result<(), GenericEngineError>
+	{
+		// TODO: We should set a separate `bool` for the material descriptor set to false if a model
+		// instance has a custom material variant, so that the wrong resources don't get bound.
+		let mut resources_bound = false;
+
+		for user in self.users.values() {
+			user.draw(
+				cb,
+				pipeline_name,
+				pipeline_layout.clone(),
+				transparency_pass,
+				shadow_pass,
+				projview,
+				&mut resources_bound,
+			)?;
+		}
+
+		Ok(())
+	}
 }

@@ -18,7 +18,7 @@ use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::{
-	model::{Model, ModelInstance},
+	model::{ManagedModel, Model},
 	RenderContext,
 };
 use crate::GenericEngineError;
@@ -72,10 +72,11 @@ pub struct MeshManager
 	material_pipelines: BTreeMap<&'static str, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
-	models: HashMap<PathBuf, Arc<Model>>,
+	// Each "managed model" will also contain the model instance for each entity.
+	models: HashMap<PathBuf, ManagedModel>,
 
-	// The model and materials for each entity.
-	resources: HashMap<EntityId, ModelInstance>,
+	// A mapping between entity IDs and the model it uses.
+	resources: HashMap<EntityId, PathBuf>,
 
 	cb_3d: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 }
@@ -86,17 +87,18 @@ impl MeshManager
 	{
 		// Get a 3D model from `path`, relative to the current working directory.
 		// This attempts loading if it hasn't been loaded into memory yet.
-		let model_data = match self.models.get(&component.model_path) {
-			Some(model) => model.clone(),
+		let managed_model = match self.models.get_mut(&component.model_path) {
+			Some(m) => m,
 			None => {
 				let new_model = Arc::new(Model::new(render_ctx, &component.model_path)?);
-				self.models.insert(component.model_path.clone(), new_model.clone());
-				new_model
+				let managed = ManagedModel::new(new_model);
+				self.models.insert(component.model_path.clone(), managed);
+				self.models.get_mut(&component.model_path).unwrap()
 			}
 		};
 
 		// Go through all the materials, and load the pipelines they need if they aren't already loaded.
-		for mat in model_data.get_materials() {
+		for mat in managed_model.model().get_materials() {
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
 				let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
@@ -114,20 +116,23 @@ impl MeshManager
 			}
 		}
 
-		self.resources
-			.insert(eid, model_data.new_model_instance(component.material_variant.clone())?);
+		managed_model.new_user(eid, component.material_variant.clone());
+		self.resources.insert(eid, component.model_path.clone());
 
 		Ok(())
 	}
 
 	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
 	{
-		self.resources.get_mut(&eid).unwrap().model_matrix = model_matrix;
+		let path = self.resources.get(&eid).unwrap().as_path();
+		self.models.get_mut(path).unwrap().set_model_matrix(eid, model_matrix);
 	}
 
 	/// Free resources for the given entity ID. Only call this when the `Mesh` component was actually removed!
 	fn cleanup_removed(&mut self, eid: EntityId)
 	{
+		let path = self.resources.get(&eid).unwrap().as_path();
+		self.models.get_mut(path).unwrap().cleanup(eid);
 		self.resources.remove(&eid);
 	}
 
@@ -177,8 +182,8 @@ impl MeshManager
 			// don't filter by material pipeline name if there is a pipeline override
 			let pipeline_name_option = pipeline_override.is_none().then_some(pipeline_name);
 
-			for model_instance in self.resources.values() {
-				model_instance.draw(
+			for managed_model in self.models.values() {
+				managed_model.draw(
 					&mut cb,
 					pipeline_name_option.copied(),
 					pipeline_layout.clone(),
