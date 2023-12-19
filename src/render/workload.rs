@@ -41,7 +41,11 @@ fn draw_shadows(
 		let cb = mesh_manager.draw(
 			&render_ctx,
 			layer_projview,
-			PassType::Shadow { pipeline: pipeline.clone(), format, viewport_extent },
+			PassType::Shadow {
+				pipeline: pipeline.clone(),
+				format,
+				viewport_extent,
+			},
 			&[],
 		)?;
 		light_manager.add_dir_light_cb(cb);
@@ -79,7 +83,12 @@ fn draw_3d_transparent_moments(
 	// specific to materials (it only reads the alpha channel of each texture).
 	let pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline().clone();
 
-	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::TransparencyMoments(pipeline), &[])?;
+	let cb = mesh_manager.draw(
+		&render_ctx,
+		camera_manager.projview(),
+		PassType::TransparencyMoments(pipeline),
+		&[],
+	)?;
 
 	render_ctx.get_transparency_renderer().add_transparency_moments_cb(cb);
 

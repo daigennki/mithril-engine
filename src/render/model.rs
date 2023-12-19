@@ -81,7 +81,10 @@ impl Model
 					log::debug!("no material variants in model");
 				} else {
 					log::debug!("material variants in model:");
-					material_variants.iter().enumerate().for_each(|(i, variant)| log::debug!("{i}: {}", &variant));
+					material_variants
+						.iter()
+						.enumerate()
+						.for_each(|(i, variant)| log::debug!("{i}: {}", &variant));
 				}
 
 				// Create submeshes from glTF "primitives".
@@ -195,8 +198,12 @@ impl Model
 					render_ctx.descriptor_set_allocator(),
 					render_ctx.get_material_textures_set_layout().clone(),
 					texture_count,
-					[WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten())],
-					[]
+					[WriteDescriptorSet::image_view_array(
+						1,
+						0,
+						image_view_writes.into_iter().flatten(),
+					)],
+					[],
 				)?;
 
 				Ok(Model {
@@ -214,8 +221,7 @@ impl Model
 		}
 	}
 
-	pub fn new_model_instance(self: Arc<Self>, material_variant: Option<String>)
-		-> Result<ModelInstance, GenericEngineError>
+	pub fn new_model_instance(self: Arc<Self>, material_variant: Option<String>) -> Result<ModelInstance, GenericEngineError>
 	{
 		ModelInstance::new(self.clone(), material_variant)
 	}
@@ -448,8 +454,11 @@ impl SubMesh
 		true
 	}
 
-	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
-		-> Result<(), GenericEngineError>
+	pub fn draw(
+		&self,
+		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		instance_index: u32,
+	) -> Result<(), GenericEngineError>
 	{
 		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
 		Ok(())
@@ -543,9 +552,7 @@ impl ModelInstance
 		let materials = self.model.get_materials();
 
 		// look for any materials with transparency enabled or disabled (depending on `transparency_pass`)
-		let draw_this_mesh = materials
-			.iter()
-			.any(|mat| mat.has_transparency() == transparency_pass);
+		let draw_this_mesh = materials.iter().any(|mat| mat.has_transparency() == transparency_pass);
 		if !draw_this_mesh {
 			return Ok(()); // skip to the next mesh if none of the materials match this pass type
 		}
@@ -565,7 +572,14 @@ impl ModelInstance
 			cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 		}
 
-		self.model.draw(cb, pipeline_layout, &projviewmodel, transparency_pass, shadow_pass, self.material_variant)?;
+		self.model.draw(
+			cb,
+			pipeline_layout,
+			&projviewmodel,
+			transparency_pass,
+			shadow_pass,
+			self.material_variant,
+		)?;
 
 		Ok(())
 	}

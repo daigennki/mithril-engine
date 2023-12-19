@@ -17,7 +17,10 @@ use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
-use crate::render::{model::{Model, ModelInstance}, RenderContext};
+use crate::render::{
+	model::{Model, ModelInstance},
+	RenderContext,
+};
 use crate::GenericEngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
@@ -97,12 +100,11 @@ impl MeshManager
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
 				let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
-				let (opaque_pipeline, oit_pipeline) =
-					mat.load_pipeline(
-						render_ctx.get_material_textures_set_layout().clone(),
-						render_ctx.get_light_set_layout().clone(),
-						transparency_input_layout,
-					)?;
+				let (opaque_pipeline, oit_pipeline) = mat.load_pipeline(
+					render_ctx.get_material_textures_set_layout().clone(),
+					render_ctx.get_light_set_layout().clone(),
+					transparency_input_layout,
+				)?;
 
 				let pipeline_data = MaterialPipelines {
 					opaque_pipeline,
@@ -112,7 +114,8 @@ impl MeshManager
 			}
 		}
 
-		self.resources.insert(eid, model_data.new_model_instance(component.material_variant.clone())?);
+		self.resources
+			.insert(eid, model_data.new_model_instance(component.material_variant.clone())?);
 
 		Ok(())
 	}
@@ -148,7 +151,9 @@ impl MeshManager
 	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
 	{
 		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
-			PassType::Shadow { format, viewport_extent, .. } => (*format, *viewport_extent, true),
+			PassType::Shadow {
+				format, viewport_extent, ..
+			} => (*format, *viewport_extent, true),
 			_ => (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions(), false),
 		};
 
@@ -176,7 +181,12 @@ impl MeshManager
 		cb.bind_pipeline_graphics(pipeline.clone())?;
 
 		if common_sets.len() > 0 {
-			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, Vec::from(common_sets))?;
+			cb.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				pipeline_layout.clone(),
+				1,
+				Vec::from(common_sets),
+			)?;
 		}
 
 		for model_instance in self.resources.values() {
@@ -205,10 +215,11 @@ struct MaterialPipelines
 
 pub enum PassType
 {
-	Shadow {
+	Shadow
+	{
 		pipeline: Arc<GraphicsPipeline>,
 		format: Format,
-		viewport_extent: [u32; 2]
+		viewport_extent: [u32; 2],
 	},
 	Opaque,
 	TransparencyMoments(Arc<GraphicsPipeline>),
@@ -226,4 +237,3 @@ impl PassType
 		}
 	}
 }
-
