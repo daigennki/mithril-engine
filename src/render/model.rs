@@ -243,6 +243,7 @@ impl Model
 	}
 
 	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
+	/// Returns `Ok(true)` if any submeshes were drawn at all.
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
@@ -254,7 +255,7 @@ impl Model
 		shadow_pass: bool,
 		material_variant: usize,
 		resources_bound: &mut bool,
-	) -> Result<(), GenericEngineError>
+	) -> Result<bool, GenericEngineError>
 	{
 		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
 
@@ -293,8 +294,10 @@ impl Model
 			.filter(|submesh| submesh.cull(&projviewmodel))
 			.peekable();
 
+		let any_visible = visible_submeshes.peek().is_some();
+
 		// Don't even bother with binds if no submeshes are visible
-		if visible_submeshes.peek().is_some() {
+		if any_visible {
 			if shadow_pass {
 				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 			} else {
@@ -332,7 +335,8 @@ impl Model
 				submesh.draw(cb, instance_index)?;
 			}
 		}
-		Ok(())
+
+		Ok(any_visible)
 	}
 }
 
@@ -580,9 +584,9 @@ impl ModelInstance
 		shadow_pass: bool,
 		projview: &Mat4,
 		vbo_bound: &mut bool,
-	) -> Result<(), GenericEngineError>
+	) -> Result<bool, GenericEngineError>
 	{
-		self.model.draw(
+		let any_drawn = self.model.draw(
 			cb,
 			pipeline_name,
 			pipeline_layout,
@@ -593,8 +597,7 @@ impl ModelInstance
 			self.material_variant,
 			vbo_bound,
 		)?;
-
-		Ok(())
+		Ok(any_drawn)
 	}
 }
 #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
@@ -651,14 +654,16 @@ impl ManagedModel
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &Mat4,
-	) -> Result<(), GenericEngineError>
+	) -> Result<bool, GenericEngineError>
 	{
+		let mut any_drawn = false;
+
 		// TODO: We should set a separate `bool` for the material descriptor set to false if a model
 		// instance has a custom material variant, so that the wrong resources don't get bound.
 		let mut resources_bound = false;
 
 		for user in self.users.values() {
-			user.draw(
+			if user.draw(
 				cb,
 				pipeline_name,
 				pipeline_layout.clone(),
@@ -666,9 +671,11 @@ impl ManagedModel
 				shadow_pass,
 				projview,
 				&mut resources_bound,
-			)?;
+			)? {
+				any_drawn = true;
+			}
 		}
 
-		Ok(())
+		Ok(any_drawn)
 	}
 }

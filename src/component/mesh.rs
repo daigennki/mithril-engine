@@ -142,7 +142,7 @@ impl MeshManager
 		projview: Mat4,
 		pass_type: PassType,
 		common_sets: &[Arc<PersistentDescriptorSet>],
-	) -> Result<Arc<SecondaryAutoCommandBuffer>, GenericEngineError>
+	) -> Result<Option<Arc<SecondaryAutoCommandBuffer>>, GenericEngineError>
 	{
 		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
 			PassType::Shadow {
@@ -158,6 +158,7 @@ impl MeshManager
 		let pipeline_override = pass_type.pipeline();
 		let transparency_pass = pass_type.transparency_pass();
 
+		let mut any_drawn = false;
 		for (pipeline_name, mat_pl) in &self.material_pipelines {
 			let pipeline = if let Some(pl) = pipeline_override {
 				pl.clone()
@@ -183,14 +184,16 @@ impl MeshManager
 			let pipeline_name_option = pipeline_override.is_none().then_some(pipeline_name);
 
 			for managed_model in self.models.values() {
-				managed_model.draw(
+				if managed_model.draw(
 					&mut cb,
 					pipeline_name_option.copied(),
 					pipeline_layout.clone(),
 					transparency_pass,
 					shadow_pass,
 					&projview,
-				)?;
+				)? {
+					any_drawn = true;
+				}
 			}
 
 			if pipeline_override.is_some() {
@@ -198,7 +201,13 @@ impl MeshManager
 			}
 		}
 
-		Ok(cb.build()?)
+		// Don't bother building the command buffer if this is the OIT pass and no models were drawn.
+		let cb_return = if any_drawn || !transparency_pass || shadow_pass {
+			Some(cb.build()?)
+		} else {
+			None
+		};
+		Ok(cb_return)
 	}
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)

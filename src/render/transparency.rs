@@ -486,6 +486,15 @@ impl MomentTransparencyRenderer
 		let extent3 = self.images.moments.image().extent();
 		let img_extent = [extent3[0], extent3[1]];
 
+		let moments_cb;
+		if let Some(m_cb) = self.transparency_moments_cb.lock().unwrap().take() {
+			moments_cb = Arc::new(m_cb);
+		} else {
+			// Skip OIT processing if no transparent materials are in view
+			return Ok(());
+		}
+		let transparency_cb = Arc::new(self.transparency_cb.lock().unwrap().take().unwrap());
+
 		let stage2_rendering_info = RenderingInfo {
 			render_area_extent: img_extent,
 			color_attachments: vec![
@@ -549,14 +558,11 @@ impl MomentTransparencyRenderer
 
 		let stage4_rendering_info = RenderingInfo {
 			render_area_extent: img_extent,
-			color_attachments: vec![
-				//[color]
-				Some(RenderingAttachmentInfo {
-					load_op: AttachmentLoadOp::Load,
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(color_image.clone())
-				}),
-			],
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Load,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(color_image.clone())
+			})],
 			contents: SubpassContents::Inline,
 			..Default::default()
 		};
@@ -566,9 +572,6 @@ impl MomentTransparencyRenderer
 			extent: [img_extent[0] as f32, img_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
-
-		let moments_cb = Arc::new(self.transparency_moments_cb.lock().unwrap().take().unwrap());
-		let transparency_cb = Arc::new(self.transparency_cb.lock().unwrap().take().unwrap());
 
 		// draw the objects to the transparency framebuffer, then composite the transparency onto the main framebuffer
 		cb.begin_rendering(stage2_rendering_info)?
