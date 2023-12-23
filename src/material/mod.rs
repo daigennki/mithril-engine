@@ -31,10 +31,6 @@ pub mod vs_3d_common
 #[typetag::deserialize]
 pub trait Material: Send + Sync
 {
-	fn material_name_associated() -> &'static str
-	where
-		Self: Sized;
-
 	fn material_name(&self) -> &'static str;
 
 	/// Generate the texture descriptor set write for creating a descriptor set.
@@ -49,14 +45,6 @@ pub trait Material: Send + Sync
 	) -> Result<Vec<Arc<ImageView>>, EngineError>;
 
 	fn has_transparency(&self) -> bool;
-
-	fn load_pipeline_associated(
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
-	where
-		Self: Sized;
 
 	fn load_pipeline(
 		&self,

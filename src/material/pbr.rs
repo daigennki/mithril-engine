@@ -51,13 +51,9 @@ pub struct PBR
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn material_name_associated() -> &'static str
-	{
-		"PBR"
-	}
 	fn material_name(&self) -> &'static str
 	{
-		Self::material_name_associated()
+		"PBR"
 	}
 
 	fn gen_descriptor_set_write(
@@ -77,7 +73,8 @@ impl Material for PBR
 		self.transparent
 	}
 
-	fn load_pipeline_associated(
+	fn load_pipeline(
+		&self,
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
@@ -105,13 +102,4 @@ impl Material for PBR
 		Ok((pipeline, Some(transparency_pipeline)))
 	}
 
-	fn load_pipeline(
-		&self,
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
-	{
-		Self::load_pipeline_associated(material_textures_set_layout, light_set_layout, transparency_inputs)
-	}
 }
