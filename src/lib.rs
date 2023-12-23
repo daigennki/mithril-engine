@@ -221,7 +221,7 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, EngineError>
 
 	// Create the game data directory. Log, config, and save data files will be saved here.
 	if let Err(e) = std::fs::create_dir_all(&data_path) {
-		return Err(format!("Failed to create data directory: {e}").into());
+		return Err(EngineError::new("Failed to create data directory", e));
 	}
 
 	// set up logger
@@ -308,16 +308,6 @@ impl Error for EngineError
 impl From<&'static str> for EngineError
 {
 	fn from(string: &'static str) -> Self
-	{
-		Self {
-			source: string.into(),
-			context: "generic string error",
-		}
-	}
-}
-impl From<String> for EngineError
-{
-	fn from(string: String) -> Self
 	{
 		Self {
 			source: string.into(),

@@ -128,7 +128,10 @@ impl Model
 
 					indices_u32.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?);
 				}
-				other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
+				other => {
+					let e = InvalidIndicesType { got: other };
+					return Err(EngineError::new("failed to get index buffer data from glTF document", e));
+				}
 			};
 			positions.extend_from_slice(get_buf_data(&positions_accessor, &data_buffers)?);
 			texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
@@ -393,6 +396,26 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<
 	}
 }
 
+#[derive(Debug)]
+struct InvalidIndicesType
+{
+	got: DataType,
+}
+impl std::error::Error for InvalidIndicesType
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for InvalidIndicesType
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "expected u16 or u32 index buffer, got '{:?}'", self.got)
+	}
+}
+
 enum IndexBufferVariant
 {
 	U16(Subbuffer<[u16]>),
@@ -511,17 +534,37 @@ fn data_type_to_id(value: DataType) -> TypeId
 	}
 }
 
+#[derive(Debug)]
+struct BufferTypeMismatch
+{
+	expected: DataType,
+	got: &'static str,
+}
+impl std::error::Error for BufferTypeMismatch
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for BufferTypeMismatch
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "expected '{:?}', but given glTF buffer has `{:?}", self.expected, self.got)
+	}
+}
+
 /// Get a slice of the part of the buffer that the accessor points to.
 fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>)
 	-> Result<&'a [T], EngineError>
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
-		return Err(format!(
-			"expected '{:?}', but given glTF primitive has `{:?}`",
-			TypeId::of::<T>(),
-			accessor.data_type()
-		)
-		.into());
+		let mismatch_error = BufferTypeMismatch {
+			expected: accessor.data_type(),
+			got: std::any::type_name::<T>(),
+		};
+		return Err(EngineError::new("failed to validate glTF buffer type", mismatch_error));
 	}
 
 	let view = accessor

@@ -101,5 +101,4 @@ impl Material for PBR
 
 		Ok((pipeline, Some(transparency_pipeline)))
 	}
-
 }

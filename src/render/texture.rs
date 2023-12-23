@@ -267,12 +267,35 @@ fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineError
 		// even though the data itself appears to be in sRGB gamma
 		DxgiFormat::BC7_UNorm => Format::BC7_SRGB_BLOCK,
 		DxgiFormat::BC7_UNorm_sRGB => Format::BC7_SRGB_BLOCK,
-		f => return Err(format!("Unsupported DDS format '{:?}'!", f).into()),
+		format => {
+			let e = UnsupportedDdsFormat { format };
+			return Err(EngineError::new("failed to read DDS file", e));
+		}
 	};
 	let dim = [dds.get_width(), dds.get_height()];
 	let mip_count = dds.get_num_mipmap_levels();
 
 	Ok((vk_fmt, dim, mip_count, dds.data))
+}
+
+#[derive(Debug)]
+struct UnsupportedDdsFormat
+{
+	format: DxgiFormat,
+}
+impl std::error::Error for UnsupportedDdsFormat
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for UnsupportedDdsFormat
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "DDS format '{:?}' is unsupported", self.format)
+	}
 }
 
 fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
