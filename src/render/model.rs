@@ -47,193 +47,187 @@ impl Model
 	{
 		let parent_folder = path.parent().unwrap();
 
-		// determine model file type
-		match path.extension().and_then(|e| e.to_str()) {
-			Some("glb") | Some("gltf") => {
-				log::info!("Loading glTF file '{}'...", path.display());
-				let (doc, data_buffers, _) =
-					gltf::import(&path).map_err(|e| EngineError::new("failed to load glTF file", e))?;
+		log::info!("Loading glTF file '{}'...", path.display());
 
-				// Collect all of the vertex data into buffers shared by all submeshes to reduce the number of binds.
-				let mut first_index: u32 = 0;
-				let mut vertex_offset: i32 = 0;
-				let mut positions = Vec::new();
-				let mut texcoords = Vec::new();
-				let mut normals = Vec::new();
-				let mut submeshes = Vec::new();
-				let mut indices_u16 = Vec::new();
-				let mut indices_u32 = Vec::new();
-				let mut indices_type = DataType::U16;
+		let (doc, data_buffers, _) = gltf::import(&path).map_err(|e| EngineError::new("failed to load glTF file", e))?;
 
-				let materials: Vec<_> = doc
-					.materials()
-					.map(|mat| load_gltf_material(&mat, parent_folder))
-					.collect::<Result<_, _>>()?;
+		// Collect all of the vertex data into buffers shared by all submeshes to reduce the number of binds.
+		let mut first_index: u32 = 0;
+		let mut vertex_offset: i32 = 0;
+		let mut positions = Vec::new();
+		let mut texcoords = Vec::new();
+		let mut normals = Vec::new();
+		let mut submeshes = Vec::new();
+		let mut indices_u16 = Vec::new();
+		let mut indices_u32 = Vec::new();
+		let mut indices_type = DataType::U16;
 
-				// Collect material variants. If there are no material variants, only one material
-				// group will be set up in the end.
-				let material_variants: Vec<_> = doc
-					.variants()
-					.into_iter()
-					.flatten()
-					.map(|variant| variant.name().to_string())
-					.collect();
+		let materials: Vec<_> = doc
+			.materials()
+			.map(|mat| load_gltf_material(&mat, parent_folder))
+			.collect::<Result<_, _>>()?;
 
-				if material_variants.is_empty() {
-					log::debug!("no material variants in model");
-				} else {
-					log::debug!("material variants in model:");
-					material_variants
-						.iter()
-						.enumerate()
-						.for_each(|(i, variant)| log::debug!("{i}: {}", &variant));
-				}
+		// Collect material variants. If there are no material variants, only one material
+		// group will be set up in the end.
+		let material_variants: Vec<_> = doc
+			.variants()
+			.into_iter()
+			.flatten()
+			.map(|variant| variant.name().to_string())
+			.collect();
 
-				// Create submeshes from glTF "primitives".
-				let primitives = doc
-					.nodes()
-					.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-					.flatten();
-				for prim in primitives {
-					let positions_accessor = match prim.get(&Semantic::Positions) {
-						Some(accessor) => accessor,
-						None => continue,
-					};
-					let texcoords_accessor = match prim.get(&Semantic::TexCoords(0)) {
-						Some(accessor) => accessor,
-						None => continue,
-					};
-					let normals_accessor = match prim.get(&Semantic::Normals) {
-						Some(accessor) => accessor,
-						None => continue,
-					};
-					let indices_accessor = match prim.indices() {
-						Some(accessor) => accessor,
-						None => continue,
-					};
-					match indices_accessor.data_type() {
-						DataType::U16 => {
-							if indices_type == DataType::U32 {
-								// convert the indices to u32 if mixed with u32 indices
-								let slice_u16: &[u16] = get_buf_data(&indices_accessor, &data_buffers)?;
-								indices_u32.extend(slice_u16.iter().map(|index| *index as u32));
-							} else {
-								indices_u16.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?)
-							}
-						}
-						DataType::U32 => {
-							if indices_type == DataType::U16 {
-								// convert existing indices to u32 if they're u16
-								indices_type = DataType::U32;
-								indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
-								indices_u16 = Vec::new(); // free some memory
-							}
+		if material_variants.is_empty() {
+			log::debug!("no material variants in model");
+		} else {
+			log::debug!("material variants in model:");
+			material_variants
+				.iter()
+				.enumerate()
+				.for_each(|(i, variant)| log::debug!("{i}: {}", &variant));
+		}
 
-							indices_u32.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?);
-						}
-						other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
-					};
-					positions.extend_from_slice(get_buf_data(&positions_accessor, &data_buffers)?);
-					texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
-					normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
-
-					let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
-
-					submeshes.push(submesh);
-
-					first_index += indices_accessor.count() as u32;
-					vertex_offset += positions_accessor.count() as i32;
-				}
-
-				// Check what shaders are being used across all of the materials in this model.
-				let mut shader_names = BTreeSet::new();
-				for mat in &materials {
-					if !shader_names.contains(mat.material_name()) {
-						shader_names.insert(mat.material_name());
+		// Create submeshes from glTF "primitives".
+		let primitives = doc
+			.nodes()
+			.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
+			.flatten();
+		for prim in primitives {
+			let positions_accessor = match prim.get(&Semantic::Positions) {
+				Some(accessor) => accessor,
+				None => continue,
+			};
+			let texcoords_accessor = match prim.get(&Semantic::TexCoords(0)) {
+				Some(accessor) => accessor,
+				None => continue,
+			};
+			let normals_accessor = match prim.get(&Semantic::Normals) {
+				Some(accessor) => accessor,
+				None => continue,
+			};
+			let indices_accessor = match prim.indices() {
+				Some(accessor) => accessor,
+				None => continue,
+			};
+			match indices_accessor.data_type() {
+				DataType::U16 => {
+					if indices_type == DataType::U32 {
+						// convert the indices to u32 if mixed with u32 indices
+						let slice_u16: &[u16] = get_buf_data(&indices_accessor, &data_buffers)?;
+						indices_u32.extend(slice_u16.iter().map(|index| *index as u32));
+					} else {
+						indices_u16.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?)
 					}
 				}
-				log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
-				shader_names.iter().for_each(|shader_name| log::debug!("- {shader_name}"));
+				DataType::U32 => {
+					if indices_type == DataType::U16 {
+						// convert existing indices to u32 if they're u16
+						indices_type = DataType::U32;
+						indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
+						indices_u16 = Vec::new(); // free some memory
+					}
 
-				// Combine the vertex data into a single buffer,
-				// then split it into subbuffers for different types of vertex data.
-				let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
-				combined_data.append(&mut positions);
-				let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
-				combined_data.append(&mut texcoords);
-				let normals_offset: u64 = combined_data.len().try_into().unwrap();
-				combined_data.append(&mut normals);
-
-				let vert_buf_usage = BufferUsage::VERTEX_BUFFER;
-				let vertex_buffer = render_ctx.new_buffer(combined_data.as_slice(), vert_buf_usage)?;
-				let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
-				let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
-				let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
-
-				let index_buf_usage = BufferUsage::INDEX_BUFFER;
-				let index_buffer = match indices_type {
-					DataType::U16 => IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, index_buf_usage)?),
-					DataType::U32 => IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, index_buf_usage)?),
-					_ => unreachable!(),
-				};
-
-				// Get the image views for each material, and calculate the base index in the variable descriptor count.
-				let mut image_view_writes = Vec::with_capacity(materials.len());
-				let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
-				let mut last_tex_index_stride = 0;
-				for mat in &materials {
-					let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
-					last_tex_index_stride = mat_image_views.len().try_into().unwrap();
-					image_view_writes.push(mat_image_views);
-
-					let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
-					mat_tex_base_indices.push(next_mat_tex_base_index);
+					indices_u32.extend_from_slice(get_buf_data(&indices_accessor, &data_buffers)?);
 				}
-				// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
-				// then give the first material a base texture index of 0.
-				mat_tex_base_indices.pop();
-				mat_tex_base_indices.insert(0, 0);
+				other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
+			};
+			positions.extend_from_slice(get_buf_data(&positions_accessor, &data_buffers)?);
+			texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
+			normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
 
-				let texture_count = image_view_writes
-					.iter()
-					.flatten()
-					.count()
-					.try_into()
-					.expect("too many image writes");
-				log::debug!("texture count (variable descriptor count): {}", texture_count);
+			let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
 
-				// Make sure that the shader doesn't overrun the variable count descriptor.
-				// Some very weird things (like crashing the entire computer) might happen if we don't check this!
-				let last_mat_tex_base_index = mat_tex_base_indices.last().unwrap();
-				assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
+			submeshes.push(submesh);
 
-				// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-				let textures_set = PersistentDescriptorSet::new_variable(
-					render_ctx.descriptor_set_allocator(),
-					render_ctx.get_material_textures_set_layout().clone(),
-					texture_count,
-					[WriteDescriptorSet::image_view_array(
-						1,
-						0,
-						image_view_writes.into_iter().flatten(),
-					)],
-					[],
-				)
-				.map_err(|e| EngineError::vulkan_error("failed to create material textures descriptor set", e))?;
-
-				Ok(Model {
-					materials,
-					material_variants,
-					submeshes,
-					vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
-					index_buffer,
-					path: path.to_path_buf(),
-					textures_set,
-					mat_tex_base_indices,
-				})
-			}
-			_ => Err(format!("couldn't determine model file type of {}", path.display()).into()),
+			first_index += indices_accessor.count() as u32;
+			vertex_offset += positions_accessor.count() as i32;
 		}
+
+		// Check what shaders are being used across all of the materials in this model.
+		let mut shader_names = BTreeSet::new();
+		for mat in &materials {
+			if !shader_names.contains(mat.material_name()) {
+				shader_names.insert(mat.material_name());
+			}
+		}
+		log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
+		shader_names.iter().for_each(|shader_name| log::debug!("- {shader_name}"));
+
+		// Combine the vertex data into a single buffer,
+		// then split it into subbuffers for different types of vertex data.
+		let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
+		combined_data.append(&mut positions);
+		let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
+		combined_data.append(&mut texcoords);
+		let normals_offset: u64 = combined_data.len().try_into().unwrap();
+		combined_data.append(&mut normals);
+
+		let vert_buf_usage = BufferUsage::VERTEX_BUFFER;
+		let vertex_buffer = render_ctx.new_buffer(combined_data.as_slice(), vert_buf_usage)?;
+		let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
+		let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
+		let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
+
+		let index_buf_usage = BufferUsage::INDEX_BUFFER;
+		let index_buffer = match indices_type {
+			DataType::U16 => IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, index_buf_usage)?),
+			DataType::U32 => IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, index_buf_usage)?),
+			_ => unreachable!(),
+		};
+
+		// Get the image views for each material, and calculate the base index in the variable descriptor count.
+		let mut image_view_writes = Vec::with_capacity(materials.len());
+		let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
+		let mut last_tex_index_stride = 0;
+		for mat in &materials {
+			let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+			last_tex_index_stride = mat_image_views.len().try_into().unwrap();
+			image_view_writes.push(mat_image_views);
+
+			let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
+			mat_tex_base_indices.push(next_mat_tex_base_index);
+		}
+		// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
+		// then give the first material a base texture index of 0.
+		mat_tex_base_indices.pop();
+		mat_tex_base_indices.insert(0, 0);
+
+		let texture_count = image_view_writes
+			.iter()
+			.flatten()
+			.count()
+			.try_into()
+			.expect("too many image writes");
+		log::debug!("texture count (variable descriptor count): {}", texture_count);
+
+		// Make sure that the shader doesn't overrun the variable count descriptor.
+		// Some very weird things (like crashing the entire computer) might happen if we don't check this!
+		let last_mat_tex_base_index = mat_tex_base_indices.last().unwrap();
+		assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
+
+		// Make a single write out of the image views of all of the materials, and create a single descriptor set.
+		let textures_set = PersistentDescriptorSet::new_variable(
+			render_ctx.descriptor_set_allocator(),
+			render_ctx.get_material_textures_set_layout().clone(),
+			texture_count,
+			[WriteDescriptorSet::image_view_array(
+				1,
+				0,
+				image_view_writes.into_iter().flatten(),
+			)],
+			[],
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create material textures descriptor set", e))?;
+
+		Ok(Model {
+			materials,
+			material_variants,
+			submeshes,
+			vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
+			index_buffer,
+			path: path.to_path_buf(),
+			textures_set,
+			mat_tex_base_indices,
+		})
 	}
 
 	pub fn new_instance(self: Arc<Self>, material_variant: Option<String>) -> ModelInstance
