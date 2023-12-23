@@ -634,11 +634,11 @@ impl MomentTransparencyRenderer
 
 struct MomentImageBundle
 {
-	pub moments: Arc<ImageView>,
-	pub optical_depth: Arc<ImageView>,
-	pub min_depth: Arc<ImageView>,
-	pub accum: Arc<ImageView>,
-	pub revealage: Arc<ImageView>,
+	moments: Arc<ImageView>,
+	optical_depth: Arc<ImageView>,
+	min_depth: Arc<ImageView>,
+	accum: Arc<ImageView>,
+	revealage: Arc<ImageView>,
 }
 
 fn create_mboit_images(

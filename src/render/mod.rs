@@ -696,8 +696,8 @@ impl RenderContext
 
 struct UpdateBufferData<T: BufferContents + Copy>
 {
-	pub dst_buf: Subbuffer<[T]>,
-	pub data: Vec<T>,
+	dst_buf: Subbuffer<[T]>,
+	data: Vec<T>,
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {

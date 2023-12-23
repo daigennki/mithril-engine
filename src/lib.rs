@@ -152,8 +152,8 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Engine
 #[derive(Deserialize)]
 struct WorldData
 {
-	pub sky: String,
-	pub entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
+	sky: String,
+	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
 fn load_world(file: &str) -> Result<(World, String), EngineError>
 {
