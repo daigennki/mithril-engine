@@ -26,7 +26,7 @@ use vulkano::pipeline::{
 };
 use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
-use crate::GenericEngineError;
+use crate::EngineError;
 
 /// Create a new graphics pipeline using the given parameters.
 ///
@@ -41,7 +41,7 @@ pub fn new(
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
 	depth_attachment: Option<(Format, DepthState)>,
 	stencil_attachment: Option<(Format, StencilState)>,
-) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
+) -> Result<Arc<GraphicsPipeline>, EngineError>
 {
 	let primitive_restart_enable =
 		primitive_topology == PrimitiveTopology::TriangleStrip || primitive_topology == PrimitiveTopology::TriangleFan;
@@ -53,15 +53,18 @@ pub fn new(
 
 	let entry_points: Vec<_> = shader_modules
 		.iter()
-		.map(|sm| sm.entry_point("main").ok_or("no 'main' entry point in shader"))
+		.map(|sm| {
+			sm.entry_point("main")
+				.ok_or_else(|| EngineError::from("no 'main' entry point in shader"))
+		})
 		.collect::<Result<_, _>>()?;
 
 	let vertex_shader = entry_points
 		.iter()
 		.find(|entry_point| entry_point.info().execution_model == ExecutionModel::Vertex)
-		.ok_or("pipeline::new: no vertex shader was provided")?;
+		.ok_or_else(|| EngineError::from("pipeline::new: no vertex shader was provided"))?;
 
-	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader)?);
+	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader));
 
 	// Go through all the stages that have a push constant, combining the shader stage flags
 	// and getting the smallest range size to create a single `PushConstantRange`.
@@ -130,6 +133,8 @@ pub fn new(
 		.map(|e| PipelineShaderStageCreateInfo::new(e))
 		.collect();
 
+	let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)
+		.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
 		vertex_input_state,
@@ -141,10 +146,11 @@ pub fn new(
 		color_blend_state,
 		dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 		subpass: Some(rendering_info.into()),
-		..GraphicsPipelineCreateInfo::layout(PipelineLayout::new(vk_dev.clone(), layout_info)?)
+		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 	};
 
-	Ok(GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?)
+	GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)
+		.map_err(|e| EngineError::vulkan_error("failed to create graphics pipeline", e))
 }
 
 /// Create a pipeline for a material.
@@ -155,7 +161,7 @@ pub fn new_for_material(
 	attachment_blend: Option<AttachmentBlend>,
 	primitive_topology: PrimitiveTopology,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
-) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
+) -> Result<Arc<GraphicsPipeline>, EngineError>
 {
 	let rasterization_state = RasterizationState {
 		cull_mode: CullMode::Back,
@@ -181,7 +187,7 @@ pub fn new_for_material_transparency(
 	fragment_shader: Arc<ShaderModule>,
 	primitive_topology: PrimitiveTopology,
 	set_layouts: Vec<Arc<DescriptorSetLayout>>,
-) -> Result<Arc<GraphicsPipeline>, GenericEngineError>
+) -> Result<Arc<GraphicsPipeline>, EngineError>
 {
 	let rasterization_state = RasterizationState {
 		cull_mode: CullMode::Back,
@@ -220,7 +226,7 @@ pub fn new_for_material_transparency(
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
-fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, GenericEngineError>
+fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 {
 	log::debug!("Automatically generating VertexInputState:");
 	let vertex_input_state =
@@ -256,7 +262,7 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> Result<VertexInputState, 
 		log::debug!("- (empty)");
 	}
 
-	Ok(vertex_input_state)
+	vertex_input_state
 }
 
 fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format

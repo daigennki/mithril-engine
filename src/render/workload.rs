@@ -11,7 +11,7 @@ use super::RenderContext;
 use crate::component::camera::CameraManager;
 use crate::component::mesh::PassType;
 use crate::component::ui;
-use crate::GenericEngineError;
+use crate::EngineError;
 
 pub fn render() -> Workload
 {
@@ -29,7 +29,7 @@ fn draw_shadows(
 	render_ctx: UniqueView<RenderContext>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
-) -> Result<(), GenericEngineError>
+) -> Result<(), EngineError>
 {
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
 	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
@@ -60,7 +60,7 @@ fn draw_3d(
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	light_manager: UniqueView<crate::component::light::LightManager>,
-) -> Result<(), GenericEngineError>
+) -> Result<(), EngineError>
 {
 	skybox.draw(&render_ctx, camera_manager.sky_projview())?;
 
@@ -77,7 +77,7 @@ fn draw_3d_oit(
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	light_manager: UniqueView<crate::component::light::LightManager>,
-) -> Result<(), GenericEngineError>
+) -> Result<(), EngineError>
 {
 	// First, collect moments for Moment-based OIT.
 	// This will bind the pipeline for you, since it doesn't need to do anything
@@ -107,10 +107,7 @@ fn draw_3d_oit(
 }
 
 // Draw UI elements.
-fn draw_ui(
-	render_ctx: UniqueView<RenderContext>,
-	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
-) -> Result<(), GenericEngineError>
+fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<ui::canvas::Canvas>) -> Result<(), EngineError>
 {
 	canvas.draw(&render_ctx)
 }
@@ -121,7 +118,7 @@ fn submit_frame(
 	mut mesh_manager: UniqueViewMut<crate::component::mesh::MeshManager>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
-) -> Result<(), GenericEngineError>
+) -> Result<(), EngineError>
 {
 	let sky_cb = skybox.take_cb().unwrap();
 	let mesh_3d_cb = mesh_manager.take_cb().unwrap();

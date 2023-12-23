@@ -45,7 +45,7 @@ use vulkano::image::{
 	view::ImageView,
 };
 use vulkano::memory::{
-	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
+	allocator::{AllocationCreateInfo, MemoryAllocatorError, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport};
@@ -55,9 +55,9 @@ use vulkano::sync::{
 	future::{FenceSignalFuture, NowFuture},
 	GpuFuture,
 };
-use vulkano::{DeviceSize, Validated, VulkanError};
+use vulkano::DeviceSize;
 
-use crate::GenericEngineError;
+use crate::EngineError;
 use texture::Texture;
 
 // Format used for main depth buffer.
@@ -103,7 +103,7 @@ pub struct RenderContext
 }
 impl RenderContext
 {
-	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, GenericEngineError>
+	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, EngineError>
 	{
 		let (graphics_queue, transfer_queue, allow_direct_buffer_access) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
@@ -129,7 +129,8 @@ impl RenderContext
 			anisotropy: Some(16.0),
 			..SamplerCreateInfo::simple_repeat_linear()
 		};
-		let mat_tex_sampler = Sampler::new(vk_dev.clone(), mat_tex_sampler_info)?;
+		let mat_tex_sampler = Sampler::new(vk_dev.clone(), mat_tex_sampler_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let mat_tex_bindings = [
 			DescriptorSetLayoutBinding {
 				// binding 0: sampler0
@@ -149,7 +150,8 @@ impl RenderContext
 			bindings: (0..).zip(mat_tex_bindings).collect(),
 			..Default::default()
 		};
-		let mat_tex_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
+		let mat_tex_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		let main_render_target = render_target::RenderTarget::new(
 			memory_allocator.clone(),
@@ -172,7 +174,8 @@ impl RenderContext
 			compare: Some(CompareOp::LessOrEqual),
 			..Default::default()
 		};
-		let shadow_sampler = Sampler::new(vk_dev.clone(), shadow_sampler_info)?;
+		let shadow_sampler = Sampler::new(vk_dev.clone(), shadow_sampler_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let light_bindings = [
 			DescriptorSetLayoutBinding {
 				// binding 0: shadow sampler
@@ -195,7 +198,8 @@ impl RenderContext
 			bindings: (0..).zip(light_bindings).collect(),
 			..Default::default()
 		};
-		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)?;
+		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
 			arena_size: 8 * 1024 * 1024, // this should be adjusted based on actual memory usage
@@ -244,7 +248,7 @@ impl RenderContext
 
 	/// Load an image file as a texture into memory.
 	/// If the image was already loaded, it'll use the corresponding texture.
-	pub fn get_texture(&mut self, path: &Path) -> Result<Arc<Texture>, GenericEngineError>
+	pub fn get_texture(&mut self, path: &Path) -> Result<Arc<Texture>, EngineError>
 	{
 		match self.textures.get(path) {
 			Some(tex) => Ok(tex.clone()),
@@ -262,7 +266,7 @@ impl RenderContext
 		}
 	}
 
-	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, GenericEngineError>
+	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, EngineError>
 	{
 		let (tex, staging_work) = texture::CubemapTexture::new(
 			self.memory_allocator.clone(),
@@ -280,7 +284,7 @@ impl RenderContext
 		dimensions: [u32; 2],
 		mip: u32,
 		array_layers: u32,
-	) -> Result<texture::Texture, GenericEngineError>
+	) -> Result<texture::Texture, EngineError>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -299,11 +303,11 @@ impl RenderContext
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
-	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> Result<Subbuffer<[T]>, GenericEngineError>
+	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> Result<Subbuffer<[T]>, EngineError>
 	where
 		T: BufferContents + Copy,
 	{
-		let data_len = data.len().try_into()?;
+		let data_len = data.len().try_into().unwrap();
 		let data_size_bytes = data.len() * std::mem::size_of::<T>();
 		let buf;
 		if self.allow_direct_buffer_access {
@@ -323,7 +327,8 @@ impl RenderContext
 				},
 				..Default::default()
 			};
-			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
+			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)
+				.map_err(|e| EngineError::vulkan_error("failed to create buffer", e))?;
 			buf.write().unwrap().copy_from_slice(data);
 		} else {
 			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
@@ -333,7 +338,13 @@ impl RenderContext
 				.staging_buffer_allocator
 				.lock()
 				.unwrap()
-				.allocate_slice(data.len().try_into()?)?;
+				.allocate_slice(data.len().try_into().unwrap())
+				.map_err(|e| match e {
+					MemoryAllocatorError::AllocateDeviceMemory(validated_error) => {
+						EngineError::vulkan_error("failed to allocate staging buffer", validated_error)
+					}
+					other_error => EngineError::new("failed to allocate staging buffer", other_error),
+				})?;
 			staging_buf.write().unwrap().copy_from_slice(data);
 
 			let buf_info = BufferCreateInfo {
@@ -345,7 +356,8 @@ impl RenderContext
 				buf_info,
 				AllocationCreateInfo::default(),
 				data_len,
-			)?;
+			)
+			.map_err(|e| EngineError::vulkan_error("failed to create buffer", e))?;
 
 			self.add_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		}
@@ -353,7 +365,7 @@ impl RenderContext
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
-	pub fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>) -> Result<(), GenericEngineError>
+	pub fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>)
 	where
 		T: BufferContents + Copy,
 	{
@@ -369,8 +381,6 @@ impl RenderContext
 			dst_buf,
 			data: data.into(),
 		}));
-
-		Ok(())
 	}
 
 	/// Add staging work for new objects.
@@ -394,7 +404,7 @@ impl RenderContext
 	///
 	/// This does nothing if there is no asynchronous transfer queue. In such a case, the transfers will
 	/// instead be done at the beginning of the graphics submission on the graphics queue.
-	pub fn submit_async_transfers(&mut self) -> Result<(), GenericEngineError>
+	pub fn submit_async_transfers(&mut self) -> Result<(), EngineError>
 	{
 		if let Some(q) = self.transfer_queue.as_ref() {
 			if self.async_transfers.len() > 0 {
@@ -402,13 +412,20 @@ impl RenderContext
 					&self.command_buffer_allocator,
 					q.queue_family_index(),
 					CommandBufferUsage::OneTimeSubmit,
-				)?;
+				)
+				.map_err(|e| EngineError::vulkan_error("failed to create command buffer builder", e))?;
 
 				for work in self.async_transfers.drain(..) {
-					work.add_command(&mut cb)?;
+					work.add_command(&mut cb);
 				}
 
-				let transfer_future = cb.build()?.execute(q.clone())?.then_signal_fence_and_flush()?;
+				let transfer_future = cb
+					.build()
+					.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?
+					.execute(q.clone())
+					.unwrap()
+					.then_signal_fence_and_flush()
+					.map_err(|e| EngineError::vulkan_error("failed to submit command buffer", e))?;
 
 				// This panics here if there's an unused future, because it *must* have been used when
 				// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
@@ -429,7 +446,7 @@ impl RenderContext
 		depth_attachment_format: Option<Format>,
 		stencil_attachment_format: Option<Format>,
 		viewport_extent: [u32; 2],
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Validated<VulkanError>>
+	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, EngineError>
 	{
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
@@ -445,19 +462,20 @@ impl RenderContext
 				render_pass: Some(rendering_inheritance.into()),
 				..Default::default()
 			},
-		)?;
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create command buffer builder", e))?;
 
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
-		cb.set_viewport(0, [viewport].as_slice().into())?;
+		cb.set_viewport(0, [viewport].as_slice().into()).unwrap();
 
 		Ok(cb)
 	}
 
-	fn resize_everything_else(&mut self) -> Result<(), GenericEngineError>
+	fn resize_everything_else(&mut self) -> Result<(), EngineError>
 	{
 		// Update images to match the current swapchain image extent.
 		self.main_render_target = render_target::RenderTarget::new(
@@ -483,13 +501,14 @@ impl RenderContext
 		cb_3d: Arc<SecondaryAutoCommandBuffer>,
 		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
 		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
-	) -> Result<(), GenericEngineError>
+	) -> Result<(), EngineError>
 	{
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
-		)?;
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create command buffer", e))?;
 
 		// buffer updates
 		if self.buffer_updates.len() > 0 {
@@ -511,7 +530,7 @@ impl RenderContext
 
 		// do async transfers that couldn't be submitted earlier
 		for work in self.async_transfers.drain(..) {
-			work.add_command(&mut primary_cb_builder)?;
+			work.add_command(&mut primary_cb_builder);
 		}
 
 		let transfer_future = self.transfer_future.take();
@@ -536,9 +555,12 @@ impl RenderContext
 					..Default::default()
 				};
 				primary_cb_builder
-					.begin_rendering(shadow_render_info)?
-					.execute_commands(shadow_cb)?
-					.end_rendering()?;
+					.begin_rendering(shadow_render_info)
+					.unwrap()
+					.execute_commands(shadow_cb)
+					.unwrap()
+					.end_rendering()
+					.unwrap();
 			}
 
 			// skybox (effectively clears the image)
@@ -552,9 +574,12 @@ impl RenderContext
 				..Default::default()
 			};
 			primary_cb_builder
-				.begin_rendering(sky_render_info)?
-				.execute_commands(sky_cb)?
-				.end_rendering()?;
+				.begin_rendering(sky_render_info)
+				.unwrap()
+				.execute_commands(sky_cb)
+				.unwrap()
+				.end_rendering()
+				.unwrap();
 
 			// 3D
 			let main_render_info = RenderingInfo {
@@ -573,16 +598,19 @@ impl RenderContext
 				..Default::default()
 			};
 			primary_cb_builder
-				.begin_rendering(main_render_info)?
-				.execute_commands(cb_3d)?
-				.end_rendering()?;
+				.begin_rendering(main_render_info)
+				.unwrap()
+				.execute_commands(cb_3d)
+				.unwrap()
+				.end_rendering()
+				.unwrap();
 
 			// 3D OIT
 			self.transparency_renderer.process_transparency(
 				&mut primary_cb_builder,
 				self.main_render_target.color_image().clone(),
 				self.main_render_target.depth_image().clone(),
-			)?;
+			);
 
 			// UI
 			if let Some(some_ui_cb) = ui_cb {
@@ -596,19 +624,25 @@ impl RenderContext
 					..Default::default()
 				};
 				primary_cb_builder
-					.begin_rendering(ui_render_info)?
-					.execute_commands(some_ui_cb)?
-					.end_rendering()?;
+					.begin_rendering(ui_render_info)
+					.unwrap()
+					.execute_commands(some_ui_cb)
+					.unwrap()
+					.end_rendering()
+					.unwrap();
 			}
 
 			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
 			self.main_render_target
-				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
+				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view);
 		}
 
 		// submit the built command buffer, presenting it if possible
+		let built_primary_cb = primary_cb_builder
+			.build()
+			.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?;
 		self.swapchain
-			.submit(primary_cb_builder.build()?, self.graphics_queue.clone(), transfer_future)?;
+			.submit(built_primary_cb, self.graphics_queue.clone(), transfer_future)?;
 
 		Ok(())
 	}
@@ -676,13 +710,22 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
-	) -> Result<(), GenericEngineError>
+	) -> Result<(), EngineError>
 	{
-		let staging_buf = subbuffer_allocator.allocate_slice(self.data.len().try_into()?)?;
-		staging_buf.write()?.copy_from_slice(self.data.as_slice());
+		let staging_buf = subbuffer_allocator
+			.allocate_slice(self.data.len().try_into().unwrap())
+			.map_err(|e| match e {
+				MemoryAllocatorError::AllocateDeviceMemory(validated_error) => {
+					EngineError::vulkan_error("failed to allocate staging buffer", validated_error)
+				}
+				other_error => EngineError::new("failed to allocate staging buffer", other_error),
+			})?;
+		staging_buf.write().unwrap().copy_from_slice(self.data.as_slice());
 
 		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data
-		cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf.clone()))?;
+		cb_builder
+			.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf.clone()))
+			.unwrap();
 
 		Ok(())
 	}
@@ -695,7 +738,7 @@ trait UpdateBufferDataTrait: Send + Sync
 		&self,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		_: &mut SubbufferAllocator,
-	) -> Result<(), GenericEngineError>;
+	) -> Result<(), EngineError>;
 }
 
 enum StagingWork
@@ -706,13 +749,11 @@ enum StagingWork
 impl StagingWork
 {
 	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
-		-> Result<(), GenericEngineError>
 	{
 		match self {
-			StagingWork::CopyBuffer(info) => cb_builder.copy_buffer(info)?,
-			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info)?,
+			StagingWork::CopyBuffer(info) => cb_builder.copy_buffer(info).unwrap(),
+			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info).unwrap(),
 		};
-		Ok(())
 	}
 
 	fn buf_size(&self) -> DeviceSize

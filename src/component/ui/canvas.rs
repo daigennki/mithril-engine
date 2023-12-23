@@ -34,7 +34,7 @@ use vulkano::shader::ShaderStages;
 
 use super::mesh::MeshType;
 use crate::render::RenderContext;
-use crate::GenericEngineError;
+use crate::EngineError;
 
 mod ui_vs
 {
@@ -173,7 +173,7 @@ pub struct Canvas
 }
 impl Canvas
 {
-	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> Result<Self, EngineError>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
@@ -182,7 +182,8 @@ impl Canvas
 			min_filter: Filter::Linear,
 			..Default::default()
 		};
-		let sampler = Sampler::new(device.clone(), sampler_info)?;
+		let sampler =
+			Sampler::new(device.clone(), sampler_info).map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let image_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![sampler],
@@ -192,9 +193,11 @@ impl Canvas
 			bindings: [(0, image_binding)].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
-		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
+		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let text_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![text_sampler],
@@ -204,13 +207,14 @@ impl Canvas
 			bindings: [(0, text_binding)].into(),
 			..Default::default()
 		};
-		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
+		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		let color_attachments = [(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))];
 		let ui_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
+			&[ui_vs::load(device.clone()).unwrap(), ui_fs::load(device.clone()).unwrap()],
 			RasterizationState::default(),
 			vec![set_layout.clone()],
 			&color_attachments,
@@ -220,7 +224,10 @@ impl Canvas
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
+			&[
+				ui_text_vs::load(device.clone()).unwrap(),
+				ui_text_fs::load(device.clone()).unwrap(),
+			],
 			RasterizationState::default(),
 			vec![text_set_layout.clone()],
 			&color_attachments,
@@ -244,7 +251,8 @@ impl Canvas
 		let (quad_pos_buf, quad_uv_buf) = vert_buf.split_at(4);
 
 		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
-		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Error constructing font")?;
+		let default_font =
+			Font::try_from_bytes(font_data as &[u8]).ok_or_else(|| EngineError::from("Font has invalid data"))?;
 
 		let dim = render_ctx.swapchain_dimensions();
 
@@ -297,7 +305,7 @@ impl Canvas
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
 		text_vbo: Option<Subbuffer<[Vec4]>>,
-	) -> Result<UiGpuResources, GenericEngineError>
+	) -> Result<UiGpuResources, EngineError>
 	{
 		let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
 		let translation = transform.position.as_vec2() * self.canvas_scaling;
@@ -309,7 +317,8 @@ impl Canvas
 		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
 
 		let writes = [WriteDescriptorSet::image_view(0, image_view)];
-		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
+		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
 
 		Ok(UiGpuResources {
 			text_vbo,
@@ -328,7 +337,7 @@ impl Canvas
 		eid: EntityId,
 		transform: &super::UITransform,
 		mesh: &super::mesh::Mesh,
-	) -> Result<(), GenericEngineError>
+	) -> Result<(), EngineError>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
@@ -355,7 +364,7 @@ impl Canvas
 		eid: EntityId,
 		transform: &super::UITransform,
 		text: &super::text::UIText,
-	) -> Result<(), GenericEngineError>
+	) -> Result<(), EngineError>
 	{
 		let text_str = &text.text_str;
 
@@ -372,11 +381,13 @@ impl Canvas
 		let max_glyphs: usize = render_ctx
 			.device()
 			.physical_device()
-			.image_format_properties(image_format_info)?
+			.image_format_properties(image_format_info)
+			.map_err(|e| EngineError::vulkan_error("failed to get image format properties", e))?
 			.unwrap()
 			.max_array_layers
 			.min(2048)
-			.try_into()?;
+			.try_into()
+			.unwrap();
 		if text_str.chars().count() >= max_glyphs {
 			log::warn!(
 				"UI text string too long ({} chars, limit is {})! Refusing to render string: {}",
@@ -425,7 +436,8 @@ impl Canvas
 			text_pos_verts.push((top_left_corner, logical_quad_size).into());
 		}
 
-		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, glyph_count.try_into()?)?;
+		let layer_count = glyph_count.try_into().unwrap();
+		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, layer_count)?;
 
 		let colors = vec![text.color; glyph_count];
 
@@ -439,7 +451,7 @@ impl Canvas
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.text_resources.get(&eid).unwrap();
 			let some_vbo = resources.text_vbo.clone().unwrap();
-			render_ctx.update_buffer(&vbo_data, some_vbo.clone())?;
+			render_ctx.update_buffer(&vbo_data, some_vbo.clone());
 			some_vbo
 		} else {
 			render_ctx.new_buffer(&vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
@@ -458,27 +470,30 @@ impl Canvas
 		Ok(())
 	}
 
-	pub fn draw(&mut self, render_ctx: &RenderContext) -> Result<(), GenericEngineError>
+	pub fn draw(&mut self, render_ctx: &RenderContext) -> Result<(), EngineError>
 	{
 		// TODO: how do we respect the render order of each UI element?
 
 		let vp_extent = render_ctx.swapchain_dimensions();
 		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
 
-		cb.bind_pipeline_graphics(self.ui_pipeline.clone())?;
+		cb.bind_pipeline_graphics(self.ui_pipeline.clone()).unwrap();
 		for resources in self.mesh_resources.values() {
-			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
+			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)
+				.unwrap();
 			cb.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.ui_pipeline.layout().clone(),
 				0,
 				vec![resources.descriptor_set.clone()],
-			)?;
+			)
+			.unwrap();
 
 			match resources.mesh_type {
 				MeshType::Quad => {
-					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
-					cb.draw(4, 1, 0, 0)?;
+					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))
+						.unwrap();
+					cb.draw(4, 1, 0, 0).unwrap();
 				}
 				MeshType::Frame(_border_width) => {
 					todo!();
@@ -486,7 +501,7 @@ impl Canvas
 			}
 		}
 
-		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
+		cb.bind_pipeline_graphics(self.text_pipeline.clone()).unwrap();
 		for resources in self.text_resources.values() {
 			if let Some(vbo) = resources.text_vbo.clone() {
 				let mut push_constant_data: [f32; 8] = Default::default();
@@ -495,20 +510,26 @@ impl Canvas
 					.logical_texture_size_inv
 					.write_to_slice(&mut push_constant_data[6..8]);
 
-				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)?;
+				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)
+					.unwrap();
 				cb.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					self.text_pipeline.layout().clone(),
 					0,
 					vec![resources.descriptor_set.clone()],
-				)?;
+				)
+				.unwrap();
 				let glyph_count = vbo.len() / 2;
-				cb.bind_vertex_buffers(0, vbo.clone().split_at(glyph_count))?;
-				cb.draw(4, glyph_count as u32, 0, 0)?;
+				cb.bind_vertex_buffers(0, vbo.clone().split_at(glyph_count)).unwrap();
+				cb.draw(4, glyph_count as u32, 0, 0).unwrap();
 			}
 		}
 
-		assert!(self.ui_cb.replace(cb.build()?).is_none());
+		let built_cb = cb
+			.build()
+			.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?;
+
+		assert!(self.ui_cb.replace(built_cb).is_none());
 
 		Ok(())
 	}

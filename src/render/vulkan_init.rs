@@ -14,7 +14,7 @@ use vulkano::instance::{InstanceCreateInfo, InstanceExtensions};
 use vulkano::memory::{MemoryHeapFlags, MemoryPropertyFlags};
 use vulkano::swapchain::Surface;
 
-use crate::GenericEngineError;
+use crate::EngineError;
 
 enum DriverVersion
 {
@@ -63,9 +63,9 @@ impl std::fmt::Display for DriverVersion
 fn create_vulkan_instance(
 	game_name: &str,
 	event_loop: &winit::event_loop::EventLoop<()>,
-) -> Result<Arc<vulkano::instance::Instance>, GenericEngineError>
+) -> Result<Arc<vulkano::instance::Instance>, EngineError>
 {
-	let lib = vulkano::library::VulkanLibrary::new()?;
+	let lib = vulkano::library::VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
 
 	// We'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
 	// implementations like MoltenVK. For now, we can go without it.
@@ -100,15 +100,20 @@ fn create_vulkan_instance(
 	};
 	inst_create_info.engine_version = inst_create_info.application_version.clone();
 
-	Ok(vulkano::instance::Instance::new(lib, inst_create_info)?)
+	let instance = vulkano::instance::Instance::new(lib, inst_create_info)
+		.map_err(|e| EngineError::vulkan_error("failed to create Vulkan instance", e))?;
+	Ok(instance)
 }
 
 /// Get the most appropriate GPU, along with whether or not Resizable BAR is enabled on its largest `DEVICE_LOCAL` memory heap.
-fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc<PhysicalDevice>, bool), GenericEngineError>
+fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc<PhysicalDevice>, bool), EngineError>
 {
 	log::info!("Available Vulkan physical devices:");
 	let (mut dgpu, mut igpu) = (None, None);
-	for (i, pd) in vkinst.enumerate_physical_devices()?.enumerate() {
+	let physical_devices = vkinst
+		.enumerate_physical_devices()
+		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?;
+	for (i, pd) in physical_devices.enumerate() {
 		let properties = pd.properties();
 		let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
 		let driver_name = properties.driver_name.as_ref().map_or("unknown driver", |name| &name);
@@ -134,15 +139,13 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 		}
 	}
 
-	// If the "--prefer_igp" argument was provided, prefer the integrated GPU over the discrete GPU.
-	let prefer_igp = std::env::args().find(|arg| arg == "--prefer_igp").is_some();
-
-	let (i, physical_device) = if prefer_igp {
-		igpu.or(dgpu).ok_or("No GPUs were found!")?
-	} else {
-		// Try to use a discrete GPU. If there is no discrete GPU, use an integrated GPU instead.
-		dgpu.or(igpu).ok_or("No GPUs were found!")?
-	};
+	// By default, prefer the discrete GPU over the integrated GPU. However, if the "--prefer_igp"
+	// argument was provided, instead prefer the integrated GPU over the discrete GPU.
+	let (i, physical_device) = std::env::args()
+		.find(|arg| arg == "--prefer_igp")
+		.and_then(|_| igpu.clone().or_else(|| dgpu.clone()))
+		.or_else(|| dgpu.or(igpu))
+		.ok_or_else(|| EngineError::from("No GPUs were found!"))?;
 	log::info!("Using physical device {}: {}", i, physical_device.properties().device_name);
 
 	let mem_properties = physical_device.memory_properties();
@@ -160,7 +163,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 				.zip(0_u32..)
 				.filter(|(heap, _)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
 				.max_by_key(|(heap, _)| heap.size)
-				.ok_or("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!")?;
+				.ok_or_else(|| EngineError::from("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!"))?;
 
 			allow_direct_buffer_access = mem_properties
 				.memory_types
@@ -197,7 +200,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 }
 
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
-fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCreateInfo>, GenericEngineError>
+fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCreateInfo>, EngineError>
 {
 	let queue_family_properties = physical_device.queue_family_properties();
 
@@ -211,7 +214,7 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 		.iter()
 		.zip(0_u32..)
 		.find_map(|(q, i)| q.queue_flags.contains(QueueFlags::GRAPHICS).then_some(i))
-		.ok_or("No graphics queue family found!")?;
+		.ok_or_else(|| EngineError::from("No graphics queue family found!"))?;
 
 	// Get another queue family that is ideally specifically optimized for async transfers,
 	// by means of finding one with the TRANSFER flag set and least number of flags set.
@@ -244,7 +247,7 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 pub fn vulkan_setup(
 	game_name: &str,
 	event_loop: &winit::event_loop::EventLoop<()>,
-) -> Result<(Arc<Queue>, Option<Arc<Queue>>, bool), GenericEngineError>
+) -> Result<(Arc<Queue>, Option<Arc<Queue>>, bool), EngineError>
 {
 	let vkinst = create_vulkan_instance(game_name, event_loop)?;
 	let (physical_device, rebar_in_use) = get_physical_device(&vkinst)?;
@@ -286,7 +289,8 @@ pub fn vulkan_setup(
 		..Default::default()
 	};
 
-	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)?;
+	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)
+		.map_err(|e| EngineError::vulkan_error("failed to create Vulkan logical device", e))?;
 	let graphics_queue = queues.next().unwrap();
 	let transfer_queue = queues.next();
 	Ok((graphics_queue, transfer_queue, rebar_in_use))

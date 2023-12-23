@@ -14,7 +14,6 @@ use shipyard::{
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
-use crate::GenericEngineError;
 
 pub const CAMERA_NEAR: f32 = 0.25;
 pub const CAMERA_FAR: f32 = 500.0;
@@ -71,9 +70,7 @@ fn update_camera(
 {
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
-		if let Err(e) = camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov) {
-			log::error!("Failed to update camera: {}", e);
-		}
+		camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov);
 	}
 }
 
@@ -91,7 +88,7 @@ pub struct CameraManager
 }
 impl CameraManager
 {
-	pub fn new(render_ctx: &mut RenderContext, default_fov: CameraFov) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, default_fov: CameraFov) -> Self
 	{
 		let dim = render_ctx.swapchain_dimensions();
 		let aspect_ratio = dim[0] as f32 / dim[1] as f32;
@@ -107,7 +104,7 @@ impl CameraManager
 		let view = Mat4::look_to_lh(Vec3::ZERO, Vec3::Y, Vec3::NEG_Z);
 		let projview = proj * view;
 
-		Ok(CameraManager {
+		CameraManager {
 			active_camera: Default::default(),
 			default_fov,
 			view,
@@ -115,17 +112,11 @@ impl CameraManager
 			sky_projview: projview,
 			current_fov_y_rad: fov_y_rad,
 			current_aspect_ratio: aspect_ratio,
-		})
+		}
 	}
 
 	/// This function *must* be run every frame, before entities are rendered.
-	pub fn update(
-		&mut self,
-		render_ctx: &mut RenderContext,
-		current_pos: Vec3,
-		current_rotation: &Quat,
-		fov: Option<CameraFov>,
-	) -> Result<(), GenericEngineError>
+	pub fn update(&mut self, render_ctx: &mut RenderContext, current_pos: Vec3, current_rotation: &Quat, fov: Option<CameraFov>)
 	{
 		let direction = *current_rotation * Vec3::Y;
 		let dim = render_ctx.swapchain_dimensions();
@@ -145,7 +136,6 @@ impl CameraManager
 		self.sky_projview = proj * sky_view;
 		self.current_fov_y_rad = fov_y_rad;
 		self.current_aspect_ratio = aspect_ratio;
-		Ok(())
 	}
 
 	pub fn set_active(&mut self, eid: EntityId)

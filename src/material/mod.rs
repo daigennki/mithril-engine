@@ -17,7 +17,7 @@ use vulkano::image::view::ImageView;
 use vulkano::pipeline::GraphicsPipeline;
 
 use crate::render::{texture::Texture, RenderContext};
-use crate::GenericEngineError;
+use crate::EngineError;
 
 pub mod vs_3d_common
 {
@@ -46,7 +46,7 @@ pub trait Material: Send + Sync
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<Vec<Arc<ImageView>>, GenericEngineError>;
+	) -> Result<Vec<Arc<ImageView>>, EngineError>;
 
 	fn has_transparency(&self) -> bool;
 
@@ -54,7 +54,7 @@ pub trait Material: Send + Sync
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), GenericEngineError>
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
 	where
 		Self: Sized;
 
@@ -63,7 +63,7 @@ pub trait Material: Send + Sync
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), GenericEngineError>;
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
@@ -80,7 +80,7 @@ pub enum ColorInput
 }
 impl ColorInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, GenericEngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
 	{
 		match self {
 			ColorInput::Color(color) => {

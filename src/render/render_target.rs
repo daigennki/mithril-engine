@@ -29,7 +29,7 @@ use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 
-use crate::GenericEngineError;
+use crate::EngineError;
 
 mod vs_fill_viewport
 {
@@ -81,7 +81,7 @@ impl RenderTarget
 		dimensions: [u32; 2],
 		swapchain_format: Format,
 		swapchain_color_space: ColorSpace,
-	) -> Result<Self, GenericEngineError>
+	) -> Result<Self, EngineError>
 	{
 		let device = memory_allocator.device().clone();
 
@@ -95,8 +95,10 @@ impl RenderTarget
 			usage,
 			..Default::default()
 		};
-		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
-		let color_image_view = ImageView::new_default(color_image)?;
+		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
+		let color_image_view =
+			ImageView::new_default(color_image).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
 
 		let depth_create_info = ImageCreateInfo {
 			format: super::MAIN_DEPTH_FORMAT,
@@ -104,31 +106,40 @@ impl RenderTarget
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 			..Default::default()
 		};
-		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
-		let depth_image_view = ImageView::new_default(depth_image)?;
+		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
+		let depth_image_view =
+			ImageView::new_default(depth_image).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
 
+		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to crate sampler", e))?;
 		let input_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
-			immutable_samplers: vec![Sampler::new(device.clone(), SamplerCreateInfo::default())?],
+			immutable_samplers: vec![input_sampler],
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
 		};
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [(0, input_binding)].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 		let color_set = PersistentDescriptorSet::new(
 			descriptor_set_allocator,
 			set_layout.clone(),
 			[WriteDescriptorSet::image_view(0, color_image_view.clone())],
 			[],
-		)?;
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
 
 		let gamma_pipeline = if swapchain_color_space == ColorSpace::SrgbNonLinear {
 			Some(super::pipeline::new(
 				device.clone(),
 				PrimitiveTopology::TriangleList,
-				&[vs_fill_viewport::load(device.clone())?, fs_gamma::load(device)?],
+				&[
+					vs_fill_viewport::load(device.clone()).unwrap(),
+					fs_gamma::load(device).unwrap(),
+				],
 				RasterizationState::default(),
 				vec![set_layout],
 				&[(swapchain_format, None)],
@@ -160,7 +171,7 @@ impl RenderTarget
 		&self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		swapchain_image: Arc<ImageView>,
-	) -> Result<(), GenericEngineError>
+	)
 	{
 		if let Some(gamma_pipeline) = &self.gamma_pipeline {
 			// perform gamma correction and write to the swapchain image
@@ -180,25 +191,30 @@ impl RenderTarget
 				depth_range: 0.0..=1.0,
 			};
 
-			cb.begin_rendering(render_info)?
-				.set_viewport(0, [viewport].as_slice().into())?
-				.bind_pipeline_graphics(gamma_pipeline.clone())?
+			cb.begin_rendering(render_info)
+				.unwrap()
+				.set_viewport(0, [viewport].as_slice().into())
+				.unwrap()
+				.bind_pipeline_graphics(gamma_pipeline.clone())
+				.unwrap()
 				.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					gamma_pipeline.layout().clone(),
 					0,
 					vec![self.color_set.clone()],
-				)?
-				.draw(3, 1, 0, 0)?
-				.end_rendering()?;
+				)
+				.unwrap()
+				.draw(3, 1, 0, 0)
+				.unwrap()
+				.end_rendering()
+				.unwrap();
 		} else {
 			// blit to the swapchain image without gamma correction
 			cb.blit_image(BlitImageInfo::images(
 				self.color_image.image().clone(),
 				swapchain_image.image().clone(),
-			))?;
+			))
+			.unwrap();
 		}
-
-		Ok(())
 	}
 }

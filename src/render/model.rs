@@ -21,7 +21,7 @@ use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
 
 use crate::material::{pbr::PBR, ColorInput, Material};
 use crate::render::RenderContext;
-use crate::GenericEngineError;
+use crate::EngineError;
 
 /// 3D model
 pub struct Model
@@ -43,7 +43,7 @@ pub struct Model
 }
 impl Model
 {
-	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> Result<Self, EngineError>
 	{
 		let parent_folder = path.parent().unwrap();
 
@@ -51,7 +51,8 @@ impl Model
 		match path.extension().and_then(|e| e.to_str()) {
 			Some("glb") | Some("gltf") => {
 				log::info!("Loading glTF file '{}'...", path.display());
-				let (doc, data_buffers, _) = gltf::import(&path)?;
+				let (doc, data_buffers, _) =
+					gltf::import(&path).map_err(|e| EngineError::new("failed to load glTF file", e))?;
 
 				// Collect all of the vertex data into buffers shared by all submeshes to reduce the number of binds.
 				let mut first_index: u32 = 0;
@@ -94,18 +95,22 @@ impl Model
 					.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
 					.flatten();
 				for prim in primitives {
-					let positions_accessor = prim.get(&Semantic::Positions).ok_or("no positions in glTF primitive")?;
-					positions.extend_from_slice(get_buf_data(&positions_accessor, &data_buffers)?);
-
-					let texcoords_accessor = prim
-						.get(&Semantic::TexCoords(0))
-						.ok_or("no texture coordinates in glTF primitive")?;
-					texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
-
-					let normals_accessor = prim.get(&Semantic::Normals).ok_or("no normals in glTF primitive")?;
-					normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
-
-					let indices_accessor = prim.indices().ok_or("no indices in glTF primitive")?;
+					let positions_accessor = match prim.get(&Semantic::Positions) {
+						Some(accessor) => accessor,
+						None => continue,
+					};
+					let texcoords_accessor = match prim.get(&Semantic::TexCoords(0)) {
+						Some(accessor) => accessor,
+						None => continue,
+					};
+					let normals_accessor = match prim.get(&Semantic::Normals) {
+						Some(accessor) => accessor,
+						None => continue,
+					};
+					let indices_accessor = match prim.indices() {
+						Some(accessor) => accessor,
+						None => continue,
+					};
 					match indices_accessor.data_type() {
 						DataType::U16 => {
 							if indices_type == DataType::U32 {
@@ -128,6 +133,9 @@ impl Model
 						}
 						other => return Err(format!("expected u16 or u32 index buffer, got '{:?}'", other).into()),
 					};
+					positions.extend_from_slice(get_buf_data(&positions_accessor, &data_buffers)?);
+					texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, &data_buffers)?);
+					normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
 
 					let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
 
@@ -151,9 +159,9 @@ impl Model
 				// then split it into subbuffers for different types of vertex data.
 				let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
 				combined_data.append(&mut positions);
-				let texcoords_offset: u64 = combined_data.len().try_into()?;
+				let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
 				combined_data.append(&mut texcoords);
-				let normals_offset: u64 = combined_data.len().try_into()?;
+				let normals_offset: u64 = combined_data.len().try_into().unwrap();
 				combined_data.append(&mut normals);
 
 				let vert_buf_usage = BufferUsage::VERTEX_BUFFER;
@@ -175,7 +183,7 @@ impl Model
 				let mut last_tex_index_stride = 0;
 				for mat in &materials {
 					let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
-					last_tex_index_stride = mat_image_views.len().try_into()?;
+					last_tex_index_stride = mat_image_views.len().try_into().unwrap();
 					image_view_writes.push(mat_image_views);
 
 					let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
@@ -186,7 +194,12 @@ impl Model
 				mat_tex_base_indices.pop();
 				mat_tex_base_indices.insert(0, 0);
 
-				let texture_count = image_view_writes.iter().flatten().count().try_into()?;
+				let texture_count = image_view_writes
+					.iter()
+					.flatten()
+					.count()
+					.try_into()
+					.expect("too many image writes");
 				log::debug!("texture count (variable descriptor count): {}", texture_count);
 
 				// Make sure that the shader doesn't overrun the variable count descriptor.
@@ -205,7 +218,8 @@ impl Model
 						image_view_writes.into_iter().flatten(),
 					)],
 					[],
-				)?;
+				)
+				.map_err(|e| EngineError::vulkan_error("failed to create material textures descriptor set", e))?;
 
 				Ok(Model {
 					materials,
@@ -255,21 +269,9 @@ impl Model
 		shadow_pass: bool,
 		material_variant: usize,
 		resources_bound: &mut bool,
-	) -> Result<bool, GenericEngineError>
+	) -> bool
 	{
 		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
-
-		// Make sure that the material variant index given is not out of range.
-		if let Some(first_submesh) = self.submeshes.first() {
-			if material_variant >= first_submesh.mat_indices.len() {
-				let err_str = format!(
-					"Material variant index {} is out of range (there are {} material variants)",
-					material_variant,
-					first_submesh.mat_indices.len(),
-				);
-				return Err(err_str.into());
-			}
-		}
 
 		let projviewmodel = *projview * *model_matrix;
 
@@ -299,7 +301,7 @@ impl Model
 		// Don't even bother with binds if no submeshes are visible
 		if any_visible {
 			if shadow_pass {
-				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel).unwrap();
 			} else {
 				let translation = model_matrix.w_axis.xyz();
 				let push_data = MeshPushConstant {
@@ -308,7 +310,7 @@ impl Model
 					model_y: model_matrix.y_axis.xyz().extend(translation.y),
 					model_z: model_matrix.z_axis.xyz().extend(translation.z),
 				};
-				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+				cb.push_constants(pipeline_layout.clone(), 0, push_data).unwrap();
 			}
 
 			if !*resources_bound {
@@ -317,13 +319,14 @@ impl Model
 					vbo = vec![self.vertex_subbuffers[0].clone()];
 				} else {
 					let set = self.textures_set.clone();
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)
+						.unwrap();
 
 					vbo = self.vertex_subbuffers.clone();
 				}
 
-				cb.bind_vertex_buffers(0, vbo)?;
-				self.index_buffer.bind(cb)?;
+				cb.bind_vertex_buffers(0, vbo).unwrap();
+				self.index_buffer.bind(cb);
 
 				*resources_bound = true;
 			}
@@ -332,11 +335,11 @@ impl Model
 				let mat_index = submesh.mat_indices[material_variant];
 				let instance_index = self.mat_tex_base_indices[mat_index];
 
-				submesh.draw(cb, instance_index)?;
+				submesh.draw(cb, instance_index);
 			}
 		}
 
-		Ok(any_visible)
+		any_visible
 	}
 }
 
@@ -347,14 +350,20 @@ struct MaterialExtras
 	external: bool,
 }
 
-fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<dyn Material>, GenericEngineError>
+fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<dyn Material>, EngineError>
 {
 	// Use an external material file if specified in the extras.
 	// This can be specified in Blender by giving a material a custom property called "external"
 	// with a boolean value of `true` (box is checked).
 	let use_external = if let Some(extras) = mat.extras() {
-		let parsed_extras: MaterialExtras = serde_json::from_str(extras.get())?;
-		parsed_extras.external
+		let parse_result: Result<MaterialExtras, _> = serde_json::from_str(extras.get());
+		match parse_result {
+			Ok(parsed_extras) => parsed_extras.external,
+			Err(e) => {
+				log::error!("external materials unavailable because parsing glTF material extras failed: {e}");
+				false
+			}
+		}
 	} else {
 		false
 	};
@@ -362,7 +371,7 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<
 	if use_external {
 		let material_name = mat
 			.name()
-			.ok_or("model wants an external material, but the glTF mesh material has no name")?;
+			.ok_or_else(|| EngineError::from("model wants an external material, but the glTF mesh material has no name"))?;
 		let mat_path = search_folder.join(material_name).with_extension("yaml");
 
 		log::info!(
@@ -370,7 +379,9 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<
 			mat_path.display()
 		);
 
-		let deserialized_mat: Box<dyn Material> = serde_yaml::from_reader(File::open(&mat_path)?)?;
+		let mat_file = File::open(&mat_path).map_err(|e| EngineError::new("failed to open material file", e))?;
+		let deserialized_mat: Box<dyn Material> =
+			serde_yaml::from_reader(mat_file).map_err(|e| EngineError::new("failed to parse material file", e))?;
 
 		Ok(deserialized_mat)
 	} else {
@@ -395,13 +406,13 @@ enum IndexBufferVariant
 }
 impl IndexBufferVariant
 {
-	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> Result<(), GenericEngineError>
+	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
 	{
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
 			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
-		}?;
-		Ok(())
+		}
+		.unwrap();
 	}
 }
 
@@ -416,13 +427,11 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(
-		primitive: &gltf::Primitive,
-		first_index: u32,
-		vertex_offset: i32,
-	) -> Result<Self, GenericEngineError>
+	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Result<Self, EngineError>
 	{
-		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
+		let indices = primitive
+			.indices()
+			.ok_or_else(|| EngineError::from("no indices in glTF primitive"))?;
 
 		// Get the material index for each material variant. If this glTF document doesn't have
 		// material variants, `mat_indices` will contain exactly one index, the material index
@@ -438,7 +447,7 @@ impl SubMesh
 
 		Ok(SubMesh {
 			first_index,
-			index_count: indices.count().try_into()?,
+			index_count: indices.count().try_into().unwrap(),
 			vertex_offset,
 			mat_indices,
 			corner_min: primitive.bounding_box().min.into(),
@@ -489,14 +498,10 @@ impl SubMesh
 		true
 	}
 
-	pub fn draw(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		instance_index: u32,
-	) -> Result<(), GenericEngineError>
+	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
 	{
-		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
-		Ok(())
+		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)
+			.unwrap();
 	}
 }
 
@@ -513,10 +518,8 @@ fn data_type_to_id(value: DataType) -> TypeId
 }
 
 /// Get a slice of the part of the buffer that the accessor points to.
-fn get_buf_data<'a, T: 'static>(
-	accessor: &gltf::Accessor,
-	buffers: &'a Vec<gltf::buffer::Data>,
-) -> Result<&'a [T], GenericEngineError>
+fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>)
+	-> Result<&'a [T], EngineError>
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
 		return Err(format!(
@@ -527,7 +530,9 @@ fn get_buf_data<'a, T: 'static>(
 		.into());
 	}
 
-	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
+	let view = accessor
+		.view()
+		.ok_or_else(|| EngineError::from("unexpected sparse accessor in glTF file"))?;
 	if view.stride().is_some() {
 		return Err("unexpected interleaved data in glTF file".into());
 	}
@@ -584,9 +589,9 @@ impl ModelInstance
 		shadow_pass: bool,
 		projview: &Mat4,
 		vbo_bound: &mut bool,
-	) -> Result<bool, GenericEngineError>
+	) -> bool
 	{
-		let any_drawn = self.model.draw(
+		self.model.draw(
 			cb,
 			pipeline_name,
 			pipeline_layout,
@@ -596,8 +601,7 @@ impl ModelInstance
 			shadow_pass,
 			self.material_variant,
 			vbo_bound,
-		)?;
-		Ok(any_drawn)
+		)
 	}
 }
 #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
@@ -654,7 +658,7 @@ impl ManagedModel
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &Mat4,
-	) -> Result<bool, GenericEngineError>
+	) -> bool
 	{
 		let mut any_drawn = false;
 
@@ -671,11 +675,11 @@ impl ManagedModel
 				shadow_pass,
 				projview,
 				&mut resources_bound,
-			)? {
+			) {
 				any_drawn = true;
 			}
 		}
 
-		Ok(any_drawn)
+		any_drawn
 	}
 }

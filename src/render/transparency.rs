@@ -36,7 +36,7 @@ use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use crate::GenericEngineError;
+use crate::EngineError;
 
 /// A renderer that implements Weight-Based Order-Independent Transparency (WBOIT).
 /*pub struct TransparencyRenderer
@@ -260,7 +260,7 @@ impl MomentTransparencyRenderer
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		mat_tex_set_layout: Arc<DescriptorSetLayout>,
 		dimensions: [u32; 2],
-	) -> Result<Self, GenericEngineError>
+	) -> Result<Self, EngineError>
 	{
 		// The render pass from back when we didn't use dynamic rendering.
 		// This is left commented out here so we can get an idea of where each image gets used.
@@ -367,7 +367,10 @@ impl MomentTransparencyRenderer
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			&[vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())?],
+			&[
+				vs_nonorm::load(device.clone()).unwrap(),
+				fs_moments::load(device.clone()).unwrap(),
+			],
 			RasterizationState {
 				cull_mode: CullMode::Back,
 				..Default::default()
@@ -388,9 +391,11 @@ impl MomentTransparencyRenderer
 			stages: ShaderStages::FRAGMENT,
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
 		};
+		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let oit_sampler_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
-			immutable_samplers: vec![Sampler::new(device.clone(), SamplerCreateInfo::default())?],
+			immutable_samplers: vec![input_sampler],
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
 		};
 		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
@@ -403,7 +408,8 @@ impl MomentTransparencyRenderer
 			.into(),
 			..Default::default()
 		};
-		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)?;
+		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		//
 		/* Stage 4: Composite transparency image onto opaque image */
@@ -417,14 +423,15 @@ impl MomentTransparencyRenderer
 			.into(),
 			..Default::default()
 		};
-		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
+		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[
-				vs_fill_viewport::load(device.clone())?,
-				fs_oit_compositing::load(device.clone())?,
+				vs_fill_viewport::load(device.clone()).unwrap(),
+				fs_oit_compositing::load(device.clone()).unwrap(),
 			],
 			RasterizationState::default(),
 			vec![stage4_inputs_layout.clone()],
@@ -459,7 +466,7 @@ impl MomentTransparencyRenderer
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		dimensions: [u32; 2],
-	) -> Result<(), GenericEngineError>
+	) -> Result<(), EngineError>
 	{
 		let (moments_images, stage3_inputs, stage4_inputs) = create_mboit_images(
 			memory_allocator,
@@ -481,7 +488,7 @@ impl MomentTransparencyRenderer
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		color_image: Arc<ImageView>,
 		depth_image: Arc<ImageView>,
-	) -> Result<(), GenericEngineError>
+	)
 	{
 		let extent3 = self.images.moments.image().extent();
 		let img_extent = [extent3[0], extent3[1]];
@@ -491,7 +498,7 @@ impl MomentTransparencyRenderer
 			moments_cb = Arc::new(m_cb);
 		} else {
 			// Skip OIT processing if no transparent materials are in view
-			return Ok(());
+			return;
 		}
 		let transparency_cb = Arc::new(self.transparency_cb.lock().unwrap().take().unwrap());
 
@@ -574,24 +581,35 @@ impl MomentTransparencyRenderer
 		};
 
 		// draw the objects to the transparency framebuffer, then composite the transparency onto the main framebuffer
-		cb.begin_rendering(stage2_rendering_info)?
-			.execute_commands(moments_cb)?
-			.end_rendering()?
-			.begin_rendering(stage3_rendering_info)?
-			.execute_commands(transparency_cb)?
-			.end_rendering()?
-			.begin_rendering(stage4_rendering_info)?
-			.set_viewport(0, [viewport].as_slice().into())?
-			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
+		cb.begin_rendering(stage2_rendering_info)
+			.unwrap()
+			.execute_commands(moments_cb)
+			.unwrap()
+			.end_rendering()
+			.unwrap()
+			.begin_rendering(stage3_rendering_info)
+			.unwrap()
+			.execute_commands(transparency_cb)
+			.unwrap()
+			.end_rendering()
+			.unwrap()
+			.begin_rendering(stage4_rendering_info)
+			.unwrap()
+			.set_viewport(0, [viewport].as_slice().into())
+			.unwrap()
+			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())
+			.unwrap()
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.transparency_compositing_pl.layout().clone(),
 				0,
 				vec![self.stage4_inputs.clone()],
-			)?
-			.draw(3, 1, 0, 0)?
-			.end_rendering()?;
-		Ok(())
+			)
+			.unwrap()
+			.draw(3, 1, 0, 0)
+			.unwrap()
+			.end_rendering()
+			.unwrap();
 	}
 
 	pub fn add_transparency_moments_cb(&self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
@@ -629,74 +647,77 @@ fn create_mboit_images(
 	extent: [u32; 2],
 	stage3_inputs_layout: Arc<DescriptorSetLayout>,
 	stage4_inputs_layout: Arc<DescriptorSetLayout>,
-) -> Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), GenericEngineError>
+) -> Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), EngineError>
 {
-	let mut image_create_info = ImageCreateInfo {
+	let image_create_info = ImageCreateInfo {
 		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
 		format: Format::R32G32B32A32_SFLOAT,
 		extent: [extent[0], extent[1], 1],
 		..Default::default()
 	};
-	let moments_img = Image::new(
-		memory_allocator.clone(),
+	let image_create_infos = [
+		// moments
 		image_create_info.clone(),
-		AllocationCreateInfo::default(),
-	)?;
-	image_create_info.format = Format::R32_SFLOAT;
-	let od_img = Image::new(
-		memory_allocator.clone(),
-		image_create_info.clone(),
-		AllocationCreateInfo::default(),
-	)?;
-	image_create_info.format = Format::R32_SFLOAT;
-	let min_depth_img = Image::new(
-		memory_allocator.clone(),
-		image_create_info.clone(),
-		AllocationCreateInfo::default(),
-	)?;
-	image_create_info.format = Format::R16G16B16A16_SFLOAT;
-	let accum = Image::new(
-		memory_allocator.clone(),
-		image_create_info.clone(),
-		AllocationCreateInfo::default(),
-	)?;
-	image_create_info.format = Format::R8_UNORM;
-	let revealage = Image::new(memory_allocator, image_create_info, AllocationCreateInfo::default())?;
-
-	let moments_view = ImageView::new_default(moments_img)?;
-	let od_view = ImageView::new_default(od_img)?;
-	let min_depth_view = ImageView::new_default(min_depth_img)?;
-	let accum_view = ImageView::new_default(accum)?;
-	let revealage_view = ImageView::new_default(revealage)?;
+		// optical_depth
+		ImageCreateInfo {
+			format: Format::R32_SFLOAT,
+			..image_create_info.clone()
+		},
+		// min_depth
+		ImageCreateInfo {
+			format: Format::R32_SFLOAT,
+			..image_create_info.clone()
+		},
+		// accum
+		ImageCreateInfo {
+			format: Format::R16G16B16A16_SFLOAT,
+			..image_create_info.clone()
+		},
+		// revealage
+		ImageCreateInfo {
+			format: Format::R8_UNORM,
+			..image_create_info
+		},
+	];
+	let mut views = Vec::with_capacity(5);
+	for info in image_create_infos {
+		let new_image = Image::new(memory_allocator.clone(), info.clone(), AllocationCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
+		let image_view =
+			ImageView::new_default(new_image).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+		views.push(image_view);
+	}
 
 	let image_bundle = MomentImageBundle {
-		moments: moments_view.clone(),
-		optical_depth: od_view.clone(),
-		min_depth: min_depth_view.clone(),
-		accum: accum_view.clone(),
-		revealage: revealage_view.clone(),
+		moments: views[0].clone(),
+		optical_depth: views[1].clone(),
+		min_depth: views[2].clone(),
+		accum: views[3].clone(),
+		revealage: views[4].clone(),
 	};
 
 	let stage3_inputs = PersistentDescriptorSet::new(
 		descriptor_set_allocator,
 		stage3_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(1, moments_view),
-			WriteDescriptorSet::image_view(2, od_view),
-			WriteDescriptorSet::image_view(3, min_depth_view),
+			WriteDescriptorSet::image_view(1, views[0].clone()),
+			WriteDescriptorSet::image_view(2, views[1].clone()),
+			WriteDescriptorSet::image_view(3, views[2].clone()),
 		],
 		[],
-	)?;
+	)
+	.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
 
 	let stage4_inputs = PersistentDescriptorSet::new(
 		descriptor_set_allocator,
 		stage4_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(1, accum_view),
-			WriteDescriptorSet::image_view(2, revealage_view),
+			WriteDescriptorSet::image_view(1, views[3].clone()),
+			WriteDescriptorSet::image_view(2, views[4].clone()),
 		],
 		[],
-	)?;
+	)
+	.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
 
 	Ok((image_bundle, stage3_inputs, stage4_inputs))
 }

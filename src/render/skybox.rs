@@ -21,7 +21,7 @@ use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
-use crate::GenericEngineError;
+use crate::EngineError;
 
 mod vs
 {
@@ -82,11 +82,12 @@ impl Skybox
 	/// The format string should have an asterisk in it, for example "sky/Daylight Box_*.png", which will be replaced
 	/// with the face name.
 	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
-	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, EngineError>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
-		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
+		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())
+			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let tex_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![cubemap_sampler],
@@ -96,12 +97,13 @@ impl Skybox
 			bindings: [(0, tex_binding)].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
-			&[vs::load(device.clone())?, fs::load(device.clone())?],
+			&[vs::load(device.clone()).unwrap(), fs::load(device.clone()).unwrap()],
 			RasterizationState::default(),
 			vec![set_layout.clone()],
 			&[(Format::R16G16B16A16_SFLOAT, None)],
@@ -119,7 +121,8 @@ impl Skybox
 			set_layout,
 			[WriteDescriptorSet::image_view(0, sky_cubemap.view().clone())],
 			[],
-		)?;
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
 
 		// sky cube, consisting of two fans with the "center" being opposite corners of the cube
 		#[rustfmt::skip]
@@ -150,24 +153,34 @@ impl Skybox
 		})
 	}
 
-	pub fn draw(&mut self, render_ctx: &RenderContext, sky_projview: Mat4) -> Result<(), GenericEngineError>
+	pub fn draw(&mut self, render_ctx: &RenderContext, sky_projview: Mat4) -> Result<(), EngineError>
 	{
 		let vp_extent = render_ctx.swapchain_dimensions();
 		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
 
-		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?
+		cb.bind_pipeline_graphics(self.sky_pipeline.clone())
+			.unwrap()
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.sky_pipeline.layout().clone(),
 				0,
 				vec![self.descriptor_set.clone()],
-			)?
-			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?
-			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?
-			.bind_index_buffer(self.cube_ibo.clone())?
-			.draw_indexed(17, 1, 0, 0, 0)?;
+			)
+			.unwrap()
+			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)
+			.unwrap()
+			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])
+			.unwrap()
+			.bind_index_buffer(self.cube_ibo.clone())
+			.unwrap()
+			.draw_indexed(17, 1, 0, 0, 0)
+			.unwrap();
 
-		assert!(self.command_buffer.replace(cb.build()?).is_none());
+		let built_cb = cb
+			.build()
+			.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?;
+
+		assert!(self.command_buffer.replace(built_cb).is_none());
 
 		Ok(())
 	}

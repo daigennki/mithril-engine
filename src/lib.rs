@@ -14,8 +14,10 @@ use serde::Deserialize;
 use shipyard::{UniqueView, UniqueViewMut, Workload, World};
 use simplelog::*;
 use std::collections::BTreeMap;
+use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
+use vulkano::Validated;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -24,8 +26,6 @@ use winit_input_helper::WinitInputHelper;
 use component::camera::{CameraFov, CameraManager};
 use component::ui::canvas::Canvas;
 use render::RenderContext;
-
-type GenericEngineError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Run the game. This should be called from your `main.rs`.
 /// `org_name` and `game_name` will be used for the data directory.
@@ -36,7 +36,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 	let event_loop = match winit::event_loop::EventLoop::new() {
 		Ok(el) => el,
 		Err(e) => {
-			log_error(Box::new(e));
+			log_error(&e);
 			return;
 		}
 	};
@@ -46,7 +46,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 	let mut world = match init_world(org_name, game_name, start_map, &event_loop) {
 		Ok(w) => w,
 		Err(e) => {
-			log_error(e);
+			log_error(&e);
 			return;
 		}
 	};
@@ -55,11 +55,11 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 		Ok(true) => window_target.exit(),
 		Ok(false) => (),
 		Err(e) => {
-			log_error(e);
+			log_error(&e);
 			window_target.exit();
 		}
 	}) {
-		log_error(Box::new(e));
+		log_error(&e);
 	}
 }
 
@@ -74,7 +74,7 @@ fn init_world(
 	game_name: &str,
 	start_map: &str,
 	event_loop: &winit::event_loop::EventLoop<()>,
-) -> Result<World, GenericEngineError>
+) -> Result<World, EngineError>
 {
 	setup_log(org_name, game_name)?;
 
@@ -84,7 +84,7 @@ fn init_world(
 
 	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
-	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees()))?);
+	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees())));
 	world.add_unique(component::mesh::MeshManager::default());
 	world.add_unique(component::light::LightManager::new(&mut render_ctx)?);
 	world.add_unique(InputHelperWrapper::default());
@@ -94,7 +94,7 @@ fn init_world(
 }
 
 // returns true if the application should exit
-fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, GenericEngineError>
+fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, EngineError>
 {
 	world.run(|mut wrapper: UniqueViewMut<InputHelperWrapper>| wrapper.inner.update(event));
 
@@ -111,7 +111,9 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Generi
 			// window in physical pixels should be exactly the same (dot-by-dot) as the swapchain's image extent.
 			// It would look blurry if we don't do this.
 			let extent = world.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
-			inner_size_writer.request_inner_size(extent.into())?;
+			inner_size_writer
+				.request_inner_size(extent.into())
+				.map_err(|e| EngineError::new("failed to request window inner size", e))?;
 		}
 		Event::WindowEvent {
 			event: WindowEvent::KeyboardInput { event: key_event, .. },
@@ -130,14 +132,16 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, Generi
 		Event::AboutToWait => {
 			// Game logic: run systems usually specific to custom components in a project
 			if world.contains_workload("Game logic") {
-				world.run_workload("Game logic")?;
+				world.run_workload("Game logic").unwrap();
 			}
 
 			// Pre-render: update GPU resources for various components, to reflect the changes made in game logic systems
-			world.run_workload("Pre-render")?;
+			world.run_workload("Pre-render").unwrap();
 
 			// Main rendering: build the command buffers, then submit them for presentation
-			world.run_workload(render::workload::render)?;
+			world
+				.run_workload(render::workload::render)
+				.map_err(|e| EngineError::new("failed to run render workload", e))?;
 		}
 		_ => (),
 	}
@@ -151,9 +155,12 @@ struct WorldData
 	pub sky: String,
 	pub entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
-fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
+fn load_world(file: &str) -> Result<(World, String), EngineError>
 {
-	let world_data: WorldData = serde_yaml::from_reader(File::open(file)?)?;
+	log::info!("Loading world map file '{file}'...");
+	let world_file = File::open(file).map_err(|e| EngineError::new("failed to open world map file", e))?;
+	let world_data: WorldData =
+		serde_yaml::from_reader(world_file).map_err(|e| EngineError::new("failed to parse world map file", e))?;
 	let mut world = World::new();
 	let mut systems = BTreeMap::new();
 	let mut prerender_systems = BTreeMap::new();
@@ -186,13 +193,15 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 		systems
 			.into_values()
 			.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
-			.add_to_world(&world)?;
+			.add_to_world(&world)
+			.expect("failed to add game logic workload to world");
 	}
 
 	prerender_systems
 		.into_values()
 		.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
-		.add_to_world(&world)?;
+		.add_to_world(&world)
+		.expect("failed to add pre-render workload to world");
 
 	// TODO: clean up removed components
 
@@ -202,7 +211,7 @@ fn load_world(file: &str) -> Result<(World, String), GenericEngineError>
 }
 
 // Get data path, set up logging, and return the data path.
-fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineError>
+fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, EngineError>
 {
 	let data_path = dirs::data_dir()
 		.ok_or("Failed to get data directory")?
@@ -211,12 +220,9 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 	println!("Using data directory: {}", data_path.display());
 
 	// Create the game data directory. Log, config, and save data files will be saved here.
-	std::fs::create_dir_all(&data_path).map_err(|e| format!("Failed to create data directory: {e}"))?;
-
-	// open log file
-	let log_file_path = data_path.join("game.log");
-	let log_file =
-		std::fs::File::create(&log_file_path).map_err(|e| format!("Failed to create '{}': {}", log_file_path.display(), e))?;
+	if let Err(e) = std::fs::create_dir_all(&data_path) {
+		return Err(format!("Failed to create data directory: {e}").into());
+	}
 
 	// set up logger
 	let logger_config = ConfigBuilder::new()
@@ -235,15 +241,92 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, GenericEngineEr
 		TerminalMode::Mixed,
 		ColorChoice::Auto,
 	);
-	let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
-	CombinedLogger::init(vec![term_logger, write_logger])?;
+
+	// open log file
+	let log_file_path = data_path.join("game.log");
+	let loggers: Vec<Box<dyn SharedLogger>> = match std::fs::File::create(&log_file_path) {
+		Ok(log_file) => {
+			let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
+			vec![term_logger, write_logger]
+		}
+		Err(e) => {
+			println!("ERROR: Failed to create log file '{}': {}", log_file_path.display(), e);
+			vec![term_logger]
+		}
+	};
+
+	CombinedLogger::init(loggers).unwrap();
 
 	log::info!("--- Initializing MithrilEngine... ---");
 
 	Ok(data_path)
 }
 
-fn log_error(e: GenericEngineError)
+#[derive(Debug)]
+pub struct EngineError
+{
+	source: Box<dyn Error + Send + Sync>,
+	context: &'static str,
+}
+impl EngineError
+{
+	pub fn new<E>(context: &'static str, error: E) -> Self
+	where
+		E: Error + Send + Sync + 'static,
+	{
+		Self {
+			source: Box::new(error),
+			context,
+		}
+	}
+	pub fn vulkan_error<E>(context: &'static str, error: Validated<E>) -> Self
+	where
+		E: Error + Send + Sync + 'static,
+	{
+		match error {
+			Validated::Error(source) => Self::new::<E>(context, source.into()),
+			Validated::ValidationError(validation_error) => {
+				panic!("{}: a validation error has occurred!: {validation_error}", context);
+			}
+		}
+	}
+}
+impl std::fmt::Display for EngineError
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "{}: {}", self.context, self.source)
+	}
+}
+impl Error for EngineError
+{
+	fn source(&self) -> Option<&(dyn Error + 'static)>
+	{
+		self.source.source()
+	}
+}
+impl From<&'static str> for EngineError
+{
+	fn from(string: &'static str) -> Self
+	{
+		Self {
+			source: string.into(),
+			context: "generic string error",
+		}
+	}
+}
+impl From<String> for EngineError
+{
+	fn from(string: String) -> Self
+	{
+		Self {
+			source: string.into(),
+			context: "generic string error",
+		}
+	}
+}
+
+fn log_error(e: &dyn std::error::Error)
 {
 	let mut error_string = format!("{e}");
 	log::debug!("top level error: {e:?}");

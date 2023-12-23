@@ -21,7 +21,7 @@ use crate::render::{
 	model::{ManagedModel, Model},
 	RenderContext,
 };
-use crate::GenericEngineError;
+use crate::EngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -83,7 +83,7 @@ pub struct MeshManager
 impl MeshManager
 {
 	/// Load the model for the given `Mesh`.
-	fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), GenericEngineError>
+	fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), EngineError>
 	{
 		// Get a 3D model from `path`, relative to the current working directory.
 		// This attempts loading if it hasn't been loaded into memory yet.
@@ -142,7 +142,7 @@ impl MeshManager
 		projview: Mat4,
 		pass_type: PassType,
 		common_sets: &[Arc<PersistentDescriptorSet>],
-	) -> Result<Option<Arc<SecondaryAutoCommandBuffer>>, GenericEngineError>
+	) -> Result<Option<Arc<SecondaryAutoCommandBuffer>>, EngineError>
 	{
 		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
 			PassType::Shadow {
@@ -172,12 +172,13 @@ impl MeshManager
 				mat_pl.opaque_pipeline.clone()
 			};
 
-			cb.bind_pipeline_graphics(pipeline.clone())?;
+			cb.bind_pipeline_graphics(pipeline.clone()).unwrap();
 			let pipeline_layout = pipeline.layout().clone();
 
 			if common_sets.len() > 0 {
 				let sets = Vec::from(common_sets);
-				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
+				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)
+					.unwrap();
 			}
 
 			// don't filter by material pipeline name if there is a pipeline override
@@ -191,7 +192,7 @@ impl MeshManager
 					transparency_pass,
 					shadow_pass,
 					&projview,
-				)? {
+				) {
 					any_drawn = true;
 				}
 			}
@@ -203,7 +204,10 @@ impl MeshManager
 
 		// Don't bother building the command buffer if this is the OIT pass and no models were drawn.
 		let cb_return = if any_drawn || !transparency_pass || shadow_pass {
-			Some(cb.build()?)
+			Some(
+				cb.build()
+					.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?,
+			)
 		} else {
 			None
 		};

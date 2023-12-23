@@ -20,7 +20,7 @@ use vulkano::{Validated, VulkanError};
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
 
-use crate::GenericEngineError;
+use crate::EngineError;
 
 // Pairs of format and color space we can support.
 const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
@@ -58,15 +58,22 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> Result<Self, GenericEngineError>
+	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> Result<Self, EngineError>
 	{
 		let window = create_window(event_loop, window_title)?;
-		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
+		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())
+			.map_err(|e| EngineError::vulkan_error("failed to create surface", e))?;
 
 		let pd = vk_dev.physical_device();
-		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
-		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
-		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
+		let surface_caps = pd
+			.surface_capabilities(&surface, SurfaceInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to query surface capabilities", e))?;
+		let surface_formats = pd
+			.surface_formats(&surface, SurfaceInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to query surface formats", e))?;
+		let surface_present_modes = pd
+			.surface_present_modes(&surface, SurfaceInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to query surface present modes", e))?;
 
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("- {f:?}"));
@@ -94,7 +101,8 @@ impl Swapchain
 			present_mode: PresentMode::Fifo,
 			..Default::default()
 		};
-		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)?;
+		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create swapchain", e))?;
 		log::info!(
 			"Created a swapchain with {} images (format {:?}, color space {:?})",
 			images.len(),
@@ -104,11 +112,12 @@ impl Swapchain
 
 		let mut image_views = Vec::with_capacity(images.len());
 		for img in images {
-			image_views.push(ImageView::new_default(img)?);
+			let view = ImageView::new_default(img).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+			image_views.push(view);
 		}
 
 		// Set the framerate limit
-		let fps_max_regex = regex::Regex::new("--fps_max=(?<value>\\d+)")?;
+		let fps_max_regex = regex::Regex::new("--fps_max=(?<value>\\d+)").unwrap();
 		let fps_max = std::env::args()
 			.collect::<Vec<_>>()
 			.iter()
@@ -147,7 +156,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> Result<Option<Arc<ImageView>>, GenericEngineError>
+	pub fn get_next_image(&mut self) -> Result<Option<Arc<ImageView>>, EngineError>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -183,11 +192,16 @@ impl Swapchain
 				image_extent: new_inner_size,
 				..self.swapchain.create_info()
 			};
-			let (new_swapchain, new_images) = self.swapchain.recreate(create_info)?;
+			let (new_swapchain, new_images) = self
+				.swapchain
+				.recreate(create_info)
+				.map_err(|e| EngineError::vulkan_error("failed to recreate swapchain", e))?;
 
 			let mut new_image_views = Vec::with_capacity(new_images.len());
 			for img in new_images {
-				new_image_views.push(ImageView::new_default(img)?);
+				let view =
+					ImageView::new_default(img).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+				new_image_views.push(view);
 			}
 
 			self.swapchain = new_swapchain;
@@ -209,7 +223,7 @@ impl Swapchain
 			Err(Validated::Error(VulkanError::Timeout)) => {
 				return Err("Swapchain image took too long to become available!".into())
 			}
-			Err(e) => return Err(Box::new(e)),
+			Err(e) => return Err(EngineError::vulkan_error("failed to acquire swapchain image", e)),
 		};
 		if suboptimal {
 			log::warn!("Swapchain is suboptimal! Recreate pending...");
@@ -232,7 +246,7 @@ impl Swapchain
 		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
 		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
-	) -> Result<(), GenericEngineError>
+	) -> Result<(), EngineError>
 	{
 		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
 
@@ -241,7 +255,7 @@ impl Swapchain
 			match f.wait(Some(std::time::Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => return Err("Graphics submission took too long!".into()),
-				Err(e) => return Err(Box::new(e)),
+				Err(e) => return Err(EngineError::vulkan_error("failed to wait for fence", e)),
 			}
 			joined_futures = Box::new(joined_futures.join(f));
 		}
@@ -251,7 +265,7 @@ impl Swapchain
 			match f.wait(Some(Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => return Err("Transfer submission took too long!".into()),
-				Err(e) => return Err(Box::new(e)),
+				Err(e) => return Err(EngineError::vulkan_error("failed to wait for fence", e)),
 			}
 			joined_futures = Box::new(joined_futures.join(f));
 		}
@@ -265,7 +279,8 @@ impl Swapchain
 
 				let submit_result = joined_futures
 					.join(acquire_future)
-					.then_execute(queue.clone(), cb)?
+					.then_execute(queue.clone(), cb)
+					.unwrap()
 					.then_swapchain_present(queue, present_info)
 					.boxed_send_sync()
 					.then_signal_fence_and_flush();
@@ -279,14 +294,21 @@ impl Swapchain
 						self.recreate_pending = true;
 						None
 					}
-					Err(e) => return Err(e.into()),
+					Err(e) => {
+						return Err(EngineError::vulkan_error(
+							"failed to submit command buffer/swapchain presentation",
+							e,
+						))
+					}
 				}
 			}
 			None => Some(
 				joined_futures
-					.then_execute(queue.clone(), cb)?
+					.then_execute(queue.clone(), cb)
+					.unwrap()
 					.boxed_send_sync()
-					.then_signal_fence_and_flush()?,
+					.then_signal_fence_and_flush()
+					.map_err(|e| EngineError::vulkan_error("failed to submit command buffer", e))?,
 			),
 		};
 		self.submission_future = submission_future;
@@ -341,12 +363,12 @@ impl Swapchain
 	}
 }
 
-fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<Window>, GenericEngineError>
+fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<Window>, EngineError>
 {
 	let mon = event_loop
 		.primary_monitor()
 		.or_else(|| event_loop.available_monitors().next())
-		.ok_or("No monitors are available!")?;
+		.ok_or_else(|| EngineError::from("No monitors are available!"))?;
 
 	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
 	let mon_size: [u32; 2] = mon.size().into();
@@ -372,7 +394,8 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<W
 		.with_title(window_title)
 		.with_fullscreen(fullscreen)
 		.with_decorations(std::env::args().find(|arg| arg == "--noborder").is_none())
-		.build(&event_loop)?;
+		.build(&event_loop)
+		.map_err(|e| EngineError::new("failed to create window", e))?;
 
 	// Center the window on the primary monitor.
 	//
@@ -380,10 +403,10 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<W
 	// but that shouldn't be a problem since Wayland already centers the window by default
 	// (albeit on the "current" monitor rather than the "primary" monitor).
 	let mon_pos: [i32; 2] = mon.position().into();
-	let mon_size_half: IVec2 = (UVec2::from(mon_size) / 2).try_into()?;
+	let mon_size_half: IVec2 = (UVec2::from(mon_size) / 2).try_into().unwrap();
 	let mon_center = IVec2::from(mon_pos) + mon_size_half;
 	let outer_size: [u32; 2] = window.outer_size().into();
-	let outer_size_half: IVec2 = (UVec2::from(outer_size) / 2).try_into()?;
+	let outer_size_half: IVec2 = (UVec2::from(outer_size) / 2).try_into().unwrap();
 	let outer_pos = winit::dpi::Position::Physical((mon_center - outer_size_half).to_array().into());
 	window.set_outer_position(outer_pos);
 

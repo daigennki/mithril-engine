@@ -16,7 +16,7 @@ use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, GraphicsPip
 
 use super::{ColorInput, /*SingleChannelInput,*/ Material};
 use crate::render::RenderContext;
-use crate::GenericEngineError;
+use crate::EngineError;
 
 pub mod fs
 {
@@ -64,7 +64,7 @@ impl Material for PBR
 		&self,
 		parent_folder: &Path,
 		render_ctx: &mut RenderContext,
-	) -> Result<Vec<Arc<ImageView>>, GenericEngineError>
+	) -> Result<Vec<Arc<ImageView>>, EngineError>
 	{
 		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
 
@@ -81,15 +81,15 @@ impl Material for PBR
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), GenericEngineError>
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
 	{
 		let vk_dev = transparency_inputs.device().clone();
 
-		let vertex_shader = super::vs_3d_common::load(vk_dev.clone())?;
+		let vertex_shader = super::vs_3d_common::load(vk_dev.clone()).unwrap();
 		let pipeline = crate::render::pipeline::new_for_material(
 			vk_dev.clone(),
 			vertex_shader.clone(),
-			fs::load(vk_dev.clone())?,
+			fs::load(vk_dev.clone()).unwrap(),
 			None,
 			PrimitiveTopology::TriangleList,
 			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
@@ -97,7 +97,7 @@ impl Material for PBR
 		let transparency_pipeline = crate::render::pipeline::new_for_material_transparency(
 			vk_dev.clone(),
 			vertex_shader,
-			fs_oit::load(vk_dev)?,
+			fs_oit::load(vk_dev).unwrap(),
 			PrimitiveTopology::TriangleList,
 			vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs],
 		)?;
@@ -110,7 +110,7 @@ impl Material for PBR
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), GenericEngineError>
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
 	{
 		Self::load_pipeline_associated(material_textures_set_layout, light_set_layout, transparency_inputs)
 	}

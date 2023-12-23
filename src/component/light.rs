@@ -27,7 +27,7 @@ use vulkano::pipeline::graphics::{
 };
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
-use crate::{render::RenderContext, GenericEngineError};
+use crate::{render::RenderContext, EngineError};
 
 /// These are various components that represent light sources in the world.
 ///
@@ -70,12 +70,7 @@ fn update_directional_light(
 			near = fars[i];
 		}
 
-		if let Err(e) = light_manager.update_dir_light(&mut render_ctx, dl, t, cut_frustums) {
-			log::error!(
-				"update_directional_light: Failed to update `DirectionalLight` GPU buffer: {}",
-				e
-			);
-		}
+		light_manager.update_dir_light(&mut render_ctx, dl, t, cut_frustums);
 	}
 }
 
@@ -142,7 +137,7 @@ pub struct LightManager
 }
 impl LightManager
 {
-	pub fn new(render_ctx: &mut RenderContext) -> Result<Self, GenericEngineError>
+	pub fn new(render_ctx: &mut RenderContext) -> Result<Self, EngineError>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
@@ -164,12 +159,14 @@ impl LightManager
 			render_ctx.memory_allocator().clone(),
 			image_info.clone(),
 			AllocationCreateInfo::default(),
-		)?;
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create image for directional light", e))?;
 		let dir_light_shadow_view_info = ImageViewCreateInfo {
 			usage: ImageUsage::SAMPLED,
 			..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
 		};
-		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
+		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create image view for directional light", e))?;
 
 		let mut dir_light_shadow_layers = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
 		for i in 0..dir_light_shadow_img.array_layers() {
@@ -182,7 +179,8 @@ impl LightManager
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
 			};
-			let layer_view = ImageView::new(dir_light_shadow_img.clone(), layer_info)?;
+			let layer_view = ImageView::new(dir_light_shadow_img.clone(), layer_info)
+				.map_err(|e| EngineError::vulkan_error("failed to create image view for directional light layer", e))?;
 			dir_light_shadow_layers.push(layer_view);
 		}
 
@@ -195,7 +193,8 @@ impl LightManager
 				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),
 			],
 			[],
-		)?;
+		)
+		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set for lights", e))?;
 
 		/* shadow pipeline */
 		let rasterization_state = RasterizationState {
@@ -205,7 +204,7 @@ impl LightManager
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			&[vs_shadow::load(device.clone())?],
+			&[vs_shadow::load(device.clone()).map_err(|e| EngineError::vulkan_error("failed to load shader", e))?],
 			rasterization_state,
 			vec![],
 			&[],
@@ -230,7 +229,7 @@ impl LightManager
 		light: &DirectionalLight,
 		transform: &Transform,
 		cut_camera_frustums: [Mat4; 3],
-	) -> Result<(), GenericEngineError>
+	)
 	{
 		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
 
@@ -293,8 +292,7 @@ impl LightManager
 			direction,
 			color_intensity: light.color.extend(light.intensity),
 		};
-		render_ctx.update_buffer(&[dir_light_data], self.dir_light_buf.clone())?;
-		Ok(())
+		render_ctx.update_buffer(&[dir_light_data], self.dir_light_buf.clone());
 	}
 
 	pub fn add_dir_light_cb(&mut self, cb: Arc<SecondaryAutoCommandBuffer>)

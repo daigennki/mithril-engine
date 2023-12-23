@@ -15,10 +15,10 @@ use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
 	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryAllocatorError, StandardMemoryAllocator};
 use vulkano::DeviceSize;
 
-use crate::GenericEngineError;
+use crate::EngineError;
 
 pub struct Texture
 {
@@ -30,7 +30,7 @@ impl Texture
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		subbuffer_allocator: &mut SubbufferAllocator,
 		path: &Path,
-	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
 	{
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
@@ -54,7 +54,7 @@ impl Texture
 		dimensions: [u32; 2],
 		mip_levels: u32,
 		array_layers: u32,
-	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -68,9 +68,11 @@ impl Texture
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
+		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
 
-		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
+		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))
+			.map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
 
 		// generate copies for every mipmap level
 		let mut regions = Vec::with_capacity(mip_levels as usize);
@@ -124,7 +126,7 @@ impl CubemapTexture
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		subbuffer_allocator: &mut SubbufferAllocator,
 		faces: [PathBuf; 6],
-	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
 	{
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt = None;
@@ -162,7 +164,7 @@ impl CubemapTexture
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
-	) -> Result<(Self, CopyBufferToImageInfo), GenericEngineError>
+	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -176,13 +178,15 @@ impl CubemapTexture
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
+		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())
+			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
 
 		let view_create_info = ImageViewCreateInfo {
 			view_type: ImageViewType::Cube,
 			..ImageViewCreateInfo::from_image(&image)
 		};
-		let view = ImageView::new(image.clone(), view_create_info)?;
+		let view = ImageView::new(image.clone(), view_create_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
 
 		let copy_to_image = CopyBufferToImageInfo::buffer_image(staging_buf, image);
 
@@ -199,49 +203,61 @@ fn get_tex_staging_buf<Px>(
 	subbuffer_allocator: &mut SubbufferAllocator,
 	data: &[Px],
 	format: Format,
-) -> Result<Subbuffer<[Px]>, GenericEngineError>
+) -> Result<Subbuffer<[Px]>, EngineError>
 where
 	Px: BufferContents + Copy,
 {
 	// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
 	// of the format.
-	let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into()?;
+	let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
 	let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
-		.ok_or("Texture::new_from_slice: given slice is empty or alignment is not a power of two")?;
+		.ok_or_else(|| EngineError::from("Texture::new_from_slice: slice is empty or alignment is not a power of two"))?;
 
-	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
+	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator
+		.allocate(device_layout)
+		.map_err(|e| match e {
+			MemoryAllocatorError::AllocateDeviceMemory(validated) => {
+				EngineError::vulkan_error("failed to allocate staging buffer", validated)
+			}
+			other => EngineError::new("failed to allocate staging buffer", other),
+		})?
+		.reinterpret();
 
 	staging_buf.write().unwrap().copy_from_slice(data);
 
 	Ok(staging_buf)
 }
 
-fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngineError>
+fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineError>
 {
 	log::info!("Loading texture file '{}'...", path.display());
 
 	let file_ext = path
 		.extension()
-		.ok_or("Could not determine texture file extension!")?
+		.ok_or_else(|| EngineError::from("Could not determine texture file extension!"))?
 		.to_str();
 
 	match file_ext {
 		Some("dds") => Ok(load_dds(path)?),
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
-			let img = image::io::Reader::open(path)?.decode()?.into_rgba8();
+			let img = image::io::Reader::open(path)
+				.map_err(|e| EngineError::new("failed to open image file", e))?
+				.decode()
+				.map_err(|e| EngineError::new("failed to decode image file", e))?
+				.into_rgba8();
 			Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
 		}
 	}
 }
-fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), GenericEngineError>
+fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineError>
 {
-	let dds_file = std::fs::File::open(path).map_err(|e| format!("Could not open '{}': {}", path.display(), e))?;
+	let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
 
-	let dds = ddsfile::Dds::read(dds_file)?;
+	let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
 	let dds_format = dds
 		.get_dxgi_format()
-		.ok_or("Could not determine DDS image format! Make sure it has a DXGI format.")?;
+		.ok_or_else(|| EngineError::from("Could not determine DDS image format! Make sure it has a DXGI format."))?;
 
 	let vk_fmt = match dds_format {
 		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,
