@@ -21,13 +21,13 @@ image = { version = "0.24", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.34"
 vulkano-shaders = "0.34"
-glam = { version = "0.24", features = ["bytemuck", "serde"] }
+glam = { version = "0.25", features = ["bytemuck", "serde"] }
 msgbox = "0.7"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 simplelog = "0.12"
 shipyard = "0.6"
 bytemuck = "1.9"
-dirs = "4.0"
+dirs = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = { version = "1.0", features = ["raw_value"] }
