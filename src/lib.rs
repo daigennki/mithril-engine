@@ -265,7 +265,7 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, EngineError>
 #[derive(Debug)]
 pub struct EngineError
 {
-	source: Box<dyn Error + Send + Sync>,
+	source: Box<dyn Error + Send + Sync + 'static>,
 	context: &'static str,
 }
 impl EngineError
@@ -295,14 +295,14 @@ impl std::fmt::Display for EngineError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "{}: {}", self.context, self.source)
+		write!(f, "{}", self.context)
 	}
 }
 impl Error for EngineError
 {
 	fn source(&self) -> Option<&(dyn Error + 'static)>
 	{
-		self.source.source()
+		Some(self.source.as_ref())
 	}
 }
 impl From<&'static str> for EngineError
@@ -311,30 +311,26 @@ impl From<&'static str> for EngineError
 	{
 		Self {
 			source: string.into(),
-			context: "generic string error",
+			context: "a generic engine error has occurred",
 		}
 	}
 }
 
 fn log_error(e: &dyn std::error::Error)
 {
-	let mut error_string = format!("{e}");
 	log::debug!("top level error: {e:?}");
-
 	let mut next_err_source = e.source();
 	while let Some(src) = next_err_source {
-		error_string += &format!("\ncaused by: {src}");
 		log::debug!("caused by: {src:?}");
 		next_err_source = src.source();
 	}
 
 	if log::log_enabled!(log::Level::Error) {
-		log::error!("{error_string}");
+		log::error!("{e}");
 	} else {
-		println!("{error_string}");
+		println!("{e}");
 	}
-
-	if let Err(mbe) = msgbox::create("Engine Error", &error_string, msgbox::common::IconType::Error) {
+	if let Err(mbe) = msgbox::create("Engine Error", &format!("{e}"), msgbox::common::IconType::Error) {
 		log::error!("Failed to create error message box: {mbe}");
 	}
 }
