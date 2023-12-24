@@ -25,6 +25,11 @@ use vulkano::pipeline::graphics::{
 	rasterization::{DepthBiasState, RasterizationState},
 	GraphicsPipeline,
 };
+use vulkano::pipeline::{
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	PipelineLayout,
+};
+use vulkano::shader::ShaderStages;
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
 use crate::{render::RenderContext, EngineError};
@@ -201,12 +206,22 @@ impl LightManager
 			depth_bias: Some(DepthBiasState::default()),
 			..Default::default()
 		};
+		let pipeline_layout_info = PipelineLayoutCreateInfo {
+			push_constant_ranges: vec![PushConstantRange {
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+			}],
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[vs_shadow::load(device.clone()).map_err(|e| EngineError::vulkan_error("failed to load shader", e))?],
 			rasterization_state,
-			vec![],
+			pipeline_layout,
 			&[],
 			Some((Format::D16_UNORM, DepthState::simple())),
 			None,

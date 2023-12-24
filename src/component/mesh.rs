@@ -12,10 +12,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
-use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet};
+use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
+use vulkano::pipeline::{
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
+};
+use vulkano::shader::ShaderStages;
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::material::MaterialPipelines;
@@ -68,9 +72,12 @@ fn update_meshes(
 }
 
 /// A single manager that manages the GPU resources for all `Mesh` components.
-#[derive(Default, shipyard::Unique)]
+#[derive(shipyard::Unique)]
 pub struct MeshManager
 {
+	pipeline_layout: Arc<PipelineLayout>,
+	pipeline_layout_oit: Arc<PipelineLayout>,
+
 	material_pipelines: BTreeMap<&'static str, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
@@ -84,6 +91,46 @@ pub struct MeshManager
 }
 impl MeshManager
 {
+	pub fn new(
+		material_textures_set_layout: Arc<DescriptorSetLayout>,
+		light_set_layout: Arc<DescriptorSetLayout>,
+		transparency_inputs: Arc<DescriptorSetLayout>,
+	) -> Result<Self, EngineError>
+	{
+		let vk_dev = light_set_layout.device().clone();
+
+		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
+		let push_constant_range = PushConstantRange {
+			stages: ShaderStages::VERTEX,
+			offset: 0,
+			size: push_constant_size.try_into().unwrap(),
+		};
+		let layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![material_textures_set_layout.clone(), light_set_layout.clone()],
+			push_constant_ranges: vec![push_constant_range],
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
+		let layout_info_oit = PipelineLayoutCreateInfo {
+			set_layouts: vec![material_textures_set_layout, light_set_layout, transparency_inputs],
+			push_constant_ranges: vec![push_constant_range],
+			..Default::default()
+		};
+		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
+		Ok(Self {
+			pipeline_layout,
+			pipeline_layout_oit,
+			material_pipelines: Default::default(),
+			models: Default::default(),
+			resources: Default::default(),
+			cb_3d: Default::default(),
+		})
+	}
+
 	/// Load the model for the given `Mesh`.
 	fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), EngineError>
 	{
@@ -103,13 +150,9 @@ impl MeshManager
 		for mat in managed_model.model().get_materials() {
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
-				let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
-				let pipeline_config = mat.load_shaders(transparency_input_layout.device().clone());
-				let pipeline_data = pipeline_config.into_pipelines(
-					render_ctx.get_material_textures_set_layout().clone(),
-					render_ctx.get_light_set_layout().clone(),
-					transparency_input_layout,
-				)?;
+				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone());
+				let pipeline_data =
+					pipeline_config.into_pipelines(self.pipeline_layout.clone(), self.pipeline_layout_oit.clone())?;
 
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}

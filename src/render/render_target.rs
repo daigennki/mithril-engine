@@ -23,7 +23,8 @@ use vulkano::image::{
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
 	graphics::{input_assembly::PrimitiveTopology, rasterization::RasterizationState, viewport::Viewport},
-	GraphicsPipeline, Pipeline, PipelineBindPoint,
+	layout::PipelineLayoutCreateInfo,
+	GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
@@ -132,6 +133,13 @@ impl RenderTarget
 		)
 		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
 
+		let pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![set_layout.clone()],
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
 		let gamma_pipeline = if swapchain_color_space == ColorSpace::SrgbNonLinear {
 			Some(super::pipeline::new(
 				device.clone(),
@@ -141,7 +149,7 @@ impl RenderTarget
 					fs_gamma::load(device).unwrap(),
 				],
 				RasterizationState::default(),
-				vec![set_layout],
+				pipeline_layout,
 				&[(swapchain_format, None)],
 				None,
 				None,

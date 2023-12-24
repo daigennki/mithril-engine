@@ -150,7 +150,7 @@ impl RenderContext
 			bindings: (0..).zip(mat_tex_bindings).collect(),
 			..Default::default()
 		};
-		let mat_tex_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)
+		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)
 			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
 		let main_render_target = render_target::RenderTarget::new(
@@ -163,7 +163,7 @@ impl RenderContext
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
 			memory_allocator.clone(),
 			&descriptor_set_allocator,
-			mat_tex_set_layout.clone(),
+			material_textures_set_layout.clone(),
 			swapchain.dimensions(),
 		)?;
 
@@ -222,7 +222,7 @@ impl RenderContext
 			command_buffer_allocator,
 			main_render_target,
 			transparency_renderer,
-			material_textures_set_layout: mat_tex_set_layout,
+			material_textures_set_layout,
 			light_set_layout,
 			textures: HashMap::new(),
 			allow_direct_buffer_access,

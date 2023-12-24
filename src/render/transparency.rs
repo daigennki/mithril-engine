@@ -32,6 +32,10 @@ use vulkano::pipeline::graphics::{
 	viewport::Viewport,
 	GraphicsPipeline,
 };
+use vulkano::pipeline::{
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	PipelineLayout,
+};
 use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
@@ -364,6 +368,19 @@ impl MomentTransparencyRenderer
 			compare_op: CompareOp::Less,
 		};
 
+		let stage2_push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
+		let stage2_pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![mat_tex_set_layout.clone()],
+			push_constant_ranges: vec![PushConstantRange {
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: stage2_push_constant_size.try_into().unwrap(),
+			}],
+			..Default::default()
+		};
+		let stage2_pipeline_layout = PipelineLayout::new(device.clone(), stage2_pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -375,7 +392,7 @@ impl MomentTransparencyRenderer
 				cull_mode: CullMode::Back,
 				..Default::default()
 			},
-			vec![mat_tex_set_layout.clone()],
+			stage2_pipeline_layout,
 			&moments_attachments,
 			Some((super::MAIN_DEPTH_FORMAT, moments_depth_state)),
 			None,
@@ -426,6 +443,13 @@ impl MomentTransparencyRenderer
 		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)
 			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
+		let stage4_pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![stage4_inputs_layout.clone()],
+			..Default::default()
+		};
+		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -434,7 +458,7 @@ impl MomentTransparencyRenderer
 				fs_oit_compositing::load(device.clone()).unwrap(),
 			],
 			RasterizationState::default(),
-			vec![stage4_inputs_layout.clone()],
+			stage4_pipeline_layout,
 			&[(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))],
 			None,
 			None,

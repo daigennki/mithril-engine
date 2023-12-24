@@ -28,7 +28,8 @@ use vulkano::pipeline::{
 	graphics::{
 		color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
 	},
-	Pipeline, PipelineBindPoint,
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	Pipeline, PipelineBindPoint, PipelineLayout,
 };
 use vulkano::shader::ShaderStages;
 
@@ -196,6 +197,32 @@ impl Canvas
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
 			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
+		let push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>();
+		let pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![set_layout.clone()],
+			push_constant_ranges: vec![PushConstantRange {
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: push_constant_size.try_into().unwrap(),
+			}],
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
+		let color_attachments = [(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))];
+		let ui_pipeline = crate::render::pipeline::new(
+			device.clone(),
+			PrimitiveTopology::TriangleStrip,
+			&[ui_vs::load(device.clone()).unwrap(), ui_fs::load(device.clone()).unwrap()],
+			RasterizationState::default(),
+			pipeline_layout,
+			&color_attachments,
+			None,
+			None,
+		)?;
+
+		/* UI text pipeline */
 		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
 			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
 		let text_binding = DescriptorSetLayoutBinding {
@@ -210,17 +237,19 @@ impl Canvas
 		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)
 			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
-		let color_attachments = [(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))];
-		let ui_pipeline = crate::render::pipeline::new(
-			device.clone(),
-			PrimitiveTopology::TriangleStrip,
-			&[ui_vs::load(device.clone()).unwrap(), ui_fs::load(device.clone()).unwrap()],
-			RasterizationState::default(),
-			vec![set_layout.clone()],
-			&color_attachments,
-			None,
-			None,
-		)?;
+		let text_push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>() * 2;
+		let pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![text_set_layout.clone()],
+			push_constant_ranges: vec![PushConstantRange {
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: text_push_constant_size.try_into().unwrap(),
+			}],
+			..Default::default()
+		};
+		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
@@ -229,7 +258,7 @@ impl Canvas
 				ui_text_fs::load(device.clone()).unwrap(),
 			],
 			RasterizationState::default(),
-			vec![text_set_layout.clone()],
+			text_pipeline_layout,
 			&color_attachments,
 			None,
 			None,

@@ -6,7 +6,6 @@
 ----------------------------------------------------------------------------- */
 
 use std::sync::Arc;
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
 use vulkano::pipeline::graphics::{
@@ -20,10 +19,7 @@ use vulkano::pipeline::graphics::{
 	viewport::ViewportState,
 	GraphicsPipelineCreateInfo,
 };
-use vulkano::pipeline::{
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
-};
+use vulkano::pipeline::{DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
 use crate::EngineError;
@@ -37,7 +33,7 @@ pub fn new(
 	primitive_topology: PrimitiveTopology,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
-	set_layouts: Vec<Arc<DescriptorSetLayout>>,
+	pipeline_layout: Arc<PipelineLayout>,
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
 	depth_attachment: Option<(Format, DepthState)>,
 	stencil_attachment: Option<(Format, StencilState)>,
@@ -65,24 +61,6 @@ pub fn new(
 		.ok_or_else(|| EngineError::from("pipeline::new: no vertex shader was provided"))?;
 
 	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader));
-
-	// Go through all the stages that have a push constant, combining the shader stage flags
-	// and getting the smallest range size to create a single `PushConstantRange`.
-	let push_constant_range = entry_points
-		.iter()
-		.filter_map(|entry_point| entry_point.info().push_constant_requirements)
-		.reduce(|acc, stage_range| PushConstantRange {
-			stages: acc.stages.union(stage_range.stages),
-			offset: 0,
-			size: acc.size.min(stage_range.size),
-		});
-
-	let layout_info = PipelineLayoutCreateInfo {
-		set_layouts,
-		push_constant_ranges: push_constant_range.into_iter().collect(),
-		..Default::default()
-	};
-	print_pipeline_layout(&layout_info);
 
 	let (color_attachment_formats, color_blend_attachment_states) = color_attachments
 		.iter()
@@ -133,8 +111,6 @@ pub fn new(
 		.map(|e| PipelineShaderStageCreateInfo::new(e))
 		.collect();
 
-	let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)
-		.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
 		vertex_input_state,
@@ -217,29 +193,4 @@ fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 	};
 	let format_index = (ty.num_components - 1) as usize;
 	possible_formats[format_index]
-}
-fn print_pipeline_layout(layout_info: &PipelineLayoutCreateInfo)
-{
-	log::debug!("Pipeline layout has:");
-	for (i, set) in layout_info.set_layouts.iter().enumerate() {
-		let bindings = set.bindings();
-		for (binding_i, binding) in bindings {
-			log::debug!(
-				"- set {}, binding {}: {}x {:?} for {:?} shader(s)",
-				i,
-				binding_i,
-				binding.descriptor_count,
-				binding.descriptor_type,
-				binding.stages,
-			);
-		}
-	}
-	for range in layout_info.push_constant_ranges.iter() {
-		log::debug!(
-			"- push constant range at offset {} with size {} for {:?} shader(s)",
-			range.offset,
-			range.size,
-			range.stages
-		);
-	}
 }

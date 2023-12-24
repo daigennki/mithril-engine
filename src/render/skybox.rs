@@ -17,7 +17,8 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::pipeline::graphics::{input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline};
-use vulkano::pipeline::{Pipeline, PipelineBindPoint};
+use vulkano::pipeline::layout::{PipelineLayoutCreateInfo, PushConstantRange};
+use vulkano::pipeline::{Pipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
@@ -100,12 +101,24 @@ impl Skybox
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
 			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
 
+		let pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![set_layout.clone()],
+			push_constant_ranges: vec![PushConstantRange {
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+			}],
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
+			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone()).unwrap(), fs::load(device.clone()).unwrap()],
 			RasterizationState::default(),
-			vec![set_layout.clone()],
+			pipeline_layout,
 			&[(Format::R16G16B16A16_SFLOAT, None)],
 			None,
 			None,

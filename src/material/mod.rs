@@ -11,7 +11,6 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::pipeline::{
@@ -21,7 +20,7 @@ use vulkano::pipeline::{
 		input_assembly::PrimitiveTopology,
 		rasterization::{CullMode, RasterizationState},
 	},
-	GraphicsPipeline,
+	GraphicsPipeline, PipelineLayout,
 };
 use vulkano::shader::ShaderModule;
 
@@ -181,12 +180,11 @@ impl MaterialPipelineConfig
 {
 	pub fn into_pipelines(
 		self,
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-		transparency_inputs: Arc<DescriptorSetLayout>,
+		pipeline_layout: Arc<PipelineLayout>,
+		pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> Result<MaterialPipelines, EngineError>
 	{
-		let vk_dev = material_textures_set_layout.device().clone();
+		let vk_dev = pipeline_layout.device().clone();
 
 		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
@@ -202,7 +200,7 @@ impl MaterialPipelineConfig
 			primitive_topology,
 			&[self.vertex_shader.clone(), self.fragment_shader],
 			rasterization_state.clone(),
-			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
+			pipeline_layout,
 			&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
 			Some((crate::render::MAIN_DEPTH_FORMAT, DepthState::simple())),
 			None,
@@ -230,13 +228,12 @@ impl MaterialPipelineConfig
 					(Format::R16G16B16A16_SFLOAT, Some(accum_blend)),
 					(Format::R8_UNORM, Some(revealage_blend)),
 				];
-				let set_layouts = vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs];
 				crate::render::pipeline::new(
 					vk_dev,
 					primitive_topology,
 					&[self.vertex_shader, fs],
 					rasterization_state,
-					set_layouts,
+					pipeline_layout_oit,
 					&color_attachments,
 					Some((crate::render::MAIN_DEPTH_FORMAT, depth_state)),
 					None,
