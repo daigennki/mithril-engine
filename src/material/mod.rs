@@ -164,6 +164,13 @@ impl MaterialTransparencyMode
 		}
 	}
 }
+
+pub struct MaterialPipelines
+{
+	pub opaque_pipeline: Arc<GraphicsPipeline>,
+	pub oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
+}
+
 pub struct MaterialPipelineConfig
 {
 	pub vertex_shader: Arc<ShaderModule>,
@@ -177,7 +184,7 @@ impl MaterialPipelineConfig
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
+	) -> Result<MaterialPipelines, EngineError>
 	{
 		let vk_dev = material_textures_set_layout.device().clone();
 
@@ -190,7 +197,7 @@ impl MaterialPipelineConfig
 		};
 
 		// Create the opaque pass pipeline.
-		let pipeline = crate::render::pipeline::new(
+		let opaque_pipeline = crate::render::pipeline::new(
 			vk_dev.clone(),
 			primitive_topology,
 			&[self.vertex_shader.clone(), self.fragment_shader],
@@ -202,7 +209,7 @@ impl MaterialPipelineConfig
 		)?;
 
 		// Create the transparency pass pipeline.
-		let transparency_pipeline = fs_oit
+		let oit_pipeline = fs_oit
 			.map(|fs| {
 				let depth_state = DepthState {
 					write_enable: false,
@@ -237,6 +244,9 @@ impl MaterialPipelineConfig
 			})
 			.transpose()?;
 
-		Ok((pipeline, transparency_pipeline))
+		Ok(MaterialPipelines {
+			opaque_pipeline,
+			oit_pipeline,
+		})
 	}
 }

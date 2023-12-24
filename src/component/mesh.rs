@@ -18,6 +18,7 @@ use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::material::MaterialPipelines;
 use crate::render::{
 	model::{ManagedModel, Model},
 	RenderContext,
@@ -104,16 +105,12 @@ impl MeshManager
 			if !self.material_pipelines.contains_key(mat_name) {
 				let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
 				let pipeline_config = mat.load_shaders(transparency_input_layout.device().clone());
-				let (opaque_pipeline, oit_pipeline) = pipeline_config.into_pipelines(
+				let pipeline_data = pipeline_config.into_pipelines(
 					render_ctx.get_material_textures_set_layout().clone(),
 					render_ctx.get_light_set_layout().clone(),
 					transparency_input_layout,
 				)?;
 
-				let pipeline_data = MaterialPipelines {
-					opaque_pipeline,
-					oit_pipeline,
-				};
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
 		}
@@ -225,12 +222,6 @@ impl MeshManager
 	{
 		self.cb_3d.lock().unwrap().take()
 	}
-}
-
-struct MaterialPipelines
-{
-	opaque_pipeline: Arc<GraphicsPipeline>,
-	oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
 }
 
 pub enum PassType
