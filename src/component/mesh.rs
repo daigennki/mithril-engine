@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet};
+use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 
@@ -102,7 +103,8 @@ impl MeshManager
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
 				let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
-				let (opaque_pipeline, oit_pipeline) = mat.load_pipeline(
+				let pipeline_config = mat.load_pipeline(transparency_input_layout.device().clone());
+				let (opaque_pipeline, oit_pipeline) = pipeline_config.load_pipeline(
 					render_ctx.get_material_textures_set_layout().clone(),
 					render_ctx.get_light_set_layout().clone(),
 					transparency_input_layout,

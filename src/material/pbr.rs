@@ -8,12 +8,10 @@
 use glam::*;
 use serde::Deserialize;
 use std::sync::Arc;
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::device::DeviceOwned;
-use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, GraphicsPipeline};
+use vulkano::device::Device;
+use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 
-use super::{ColorInput, ShaderInput, Material};
-use crate::EngineError;
+use super::{ColorInput, ShaderInput, Material, MaterialPipelineConfig, MaterialTransparencyMode};
 
 pub mod fs
 {
@@ -63,32 +61,13 @@ impl Material for PBR
 		self.transparent
 	}
 
-	fn load_pipeline(
-		&self,
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
+	fn load_pipeline(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig
 	{
-		let vk_dev = transparency_inputs.device().clone();
-
-		let vertex_shader = super::vs_3d_common::load(vk_dev.clone()).unwrap();
-		let pipeline = crate::render::pipeline::new_for_material(
-			vk_dev.clone(),
-			vertex_shader.clone(),
-			fs::load(vk_dev.clone()).unwrap(),
-			None,
-			PrimitiveTopology::TriangleList,
-			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
-		)?;
-		let transparency_pipeline = crate::render::pipeline::new_for_material_transparency(
-			vk_dev.clone(),
-			vertex_shader,
-			fs_oit::load(vk_dev).unwrap(),
-			PrimitiveTopology::TriangleList,
-			vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs],
-		)?;
-
-		Ok((pipeline, Some(transparency_pipeline)))
+		MaterialPipelineConfig {
+			primitive_topology: PrimitiveTopology::TriangleList,
+			vertex_shader: super::vs_3d_common::load(vk_dev.clone()).unwrap(),
+			fragment_shader: fs::load(vk_dev.clone()).unwrap(),
+			transparency: MaterialTransparencyMode::OIT(fs_oit::load(vk_dev).unwrap()),
+		}
 	}
 }

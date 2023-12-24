@@ -12,8 +12,13 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
+use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
-use vulkano::pipeline::GraphicsPipeline;
+use vulkano::pipeline::{
+	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology},
+	GraphicsPipeline
+};
+use vulkano::shader::ShaderModule;
 
 use crate::render::{texture::Texture, RenderContext};
 use crate::EngineError;
@@ -41,12 +46,7 @@ pub trait Material: Send + Sync
 
 	fn has_transparency(&self) -> bool;
 
-	fn load_pipeline(
-		&self,
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>;
+	fn load_pipeline(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig;
 }
 
 #[derive(Debug)]
@@ -139,5 +139,66 @@ impl GreyscaleInput
 			}
 			Self::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
+	}
+}
+
+pub enum MaterialTransparencyMode
+{
+	NoTransparency,
+	Blend(AttachmentBlend),
+	OIT(Arc<ShaderModule>),
+}
+impl MaterialTransparencyMode
+{
+	fn get_blend_or_shader(&self) -> (Option<AttachmentBlend>, Option<Arc<ShaderModule>>)
+	{
+		match self {
+			Self::NoTransparency => (None, None),
+			Self::Blend(blend) => (Some(blend.clone()), None),
+			Self::OIT(fs_oit) => (None, Some(fs_oit.clone())),
+		}
+	}
+}
+pub struct MaterialPipelineConfig
+{
+	pub primitive_topology: PrimitiveTopology,
+	pub vertex_shader: Arc<ShaderModule>,
+	pub fragment_shader: Arc<ShaderModule>,
+	pub transparency: MaterialTransparencyMode,
+}
+impl MaterialPipelineConfig
+{
+	pub fn load_pipeline(
+		&self,
+		material_textures_set_layout: Arc<DescriptorSetLayout>,
+		light_set_layout: Arc<DescriptorSetLayout>,
+		transparency_inputs: Arc<DescriptorSetLayout>,
+	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>
+	{
+		let vk_dev = material_textures_set_layout.device().clone();
+
+		let (color_blend_state, fs_oit) = self.transparency.get_blend_or_shader();
+
+		let pipeline = crate::render::pipeline::new_for_material(
+			vk_dev.clone(),
+			self.vertex_shader.clone(),
+			self.fragment_shader.clone(),
+			color_blend_state,
+			self.primitive_topology,
+			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
+		)?;
+		let transparency_pipeline = fs_oit
+			.map(|fs| {
+				crate::render::pipeline::new_for_material_transparency(
+					vk_dev,
+					self.vertex_shader.clone(),
+					fs,
+					self.primitive_topology,
+					vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs],
+				)
+			})
+			.transpose()?;
+
+		Ok((pipeline, transparency_pipeline))
 	}
 }
