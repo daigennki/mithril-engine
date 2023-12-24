@@ -24,6 +24,18 @@ use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryTyp
 
 use crate::EngineError;
 
+// Some notes regarding observed support for depth/stencil formats:
+//
+// - `D16_UNORM`: Supported on all GPUs.
+// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
+// - `X8_D24_UNORM_PACK32`: Only supported on NVIDIA and Intel GPUs.
+// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
+// - `D32_SFLOAT`: Supported on all GPUs.
+// - `D32_SFLOAT_S8_UINT`: Supported on all GPUs.
+// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
+//
+// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+
 /// Create a new graphics pipeline using the given parameters.
 ///
 /// NOTE: In the vertex shader, giving vertex inputs a name that ends with '_INSTANCE' will apply
@@ -47,29 +59,29 @@ pub fn new(
 		..Default::default()
 	});
 
-	let entry_points: Vec<_> = shader_modules
+	let stages: smallvec::SmallVec<[PipelineShaderStageCreateInfo; 5]> = shader_modules
 		.iter()
 		.map(|sm| {
 			sm.entry_point("main")
-				.ok_or_else(|| EngineError::from("no 'main' entry point in shader"))
+				.map(|e| PipelineShaderStageCreateInfo::new(e))
+				.ok_or("no 'main' entry point in shader")
 		})
 		.collect::<Result<_, _>>()?;
 
-	let vertex_shader = entry_points
+	let vertex_input_state = stages
 		.iter()
-		.find(|entry_point| entry_point.info().execution_model == ExecutionModel::Vertex)
-		.ok_or_else(|| EngineError::from("pipeline::new: no vertex shader was provided"))?;
-
-	let vertex_input_state = Some(gen_vertex_input_state(&vertex_shader));
+		.find(|stage| stage.entry_point.info().execution_model == ExecutionModel::Vertex)
+		.map(|vs_stage| gen_vertex_input_state(&vs_stage.entry_point));
 
 	let (color_attachment_formats, color_blend_attachment_states) = color_attachments
 		.iter()
+		.copied()
 		.map(|(format, blend)| {
 			let blend_attachment_state = ColorBlendAttachmentState {
-				blend: *blend,
+				blend,
 				..Default::default()
 			};
-			(Some(*format), blend_attachment_state)
+			(Some(format), blend_attachment_state)
 		})
 		.unzip();
 
@@ -78,20 +90,8 @@ pub fn new(
 		..Default::default()
 	});
 
-	// Some notes regarding observed support for depth/stencil formats:
-	//
-	// - `D16_UNORM`: Supported on all GPUs.
-	// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
-	// - `X8_D24_UNORM_PACK32`: Only supported on NVIDIA and Intel GPUs.
-	// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
-	// - `D32_SFLOAT`: Supported on all GPUs.
-	// - `D32_SFLOAT_S8_UINT`: Supported on all GPUs.
-	// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
-	//
-	// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
 	let (depth_attachment_format, depth_state) = depth_attachment.unzip();
 	let (stencil_attachment_format, stencil_state) = stencil_attachment.unzip();
-
 	let depth_stencil_state =
 		(depth_attachment_format.is_some() || stencil_attachment_format.is_some()).then(|| DepthStencilState {
 			depth: depth_state,
@@ -105,11 +105,6 @@ pub fn new(
 		stencil_attachment_format,
 		..Default::default()
 	};
-
-	let stages = entry_points
-		.into_iter()
-		.map(|e| PipelineShaderStageCreateInfo::new(e))
-		.collect();
 
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
