@@ -16,7 +16,7 @@ use simplelog::*;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::Path;
 use vulkano::descriptor_set::DescriptorSet;
 use vulkano::Validated;
 use winit::event::{Event, WindowEvent};
@@ -77,7 +77,15 @@ fn init_world(
 	event_loop: &winit::event_loop::EventLoop<()>,
 ) -> crate::Result<World>
 {
-	setup_log(org_name, game_name)?;
+	// Create the game data directory. Log, config, and save data files will be saved here.
+	let data_path = dirs::data_dir()
+		.ok_or("Failed to get data directory")?
+		.join(org_name)
+		.join(game_name);
+	println!("Using data directory: {}", data_path.display());
+	std::fs::create_dir_all(&data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
+
+	setup_log(&data_path);
 
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 
@@ -216,20 +224,8 @@ fn load_world(file: &str) -> crate::Result<(World, String)>
 	Ok((world, world_data.sky))
 }
 
-// Get data path, set up logging, and return the data path.
-fn setup_log(org_name: &str, game_name: &str) -> crate::Result<PathBuf>
+fn setup_log(data_path: &Path)
 {
-	let data_path = dirs::data_dir()
-		.ok_or("Failed to get data directory")?
-		.join(org_name)
-		.join(game_name);
-	println!("Using data directory: {}", data_path.display());
-
-	// Create the game data directory. Log, config, and save data files will be saved here.
-	if let Err(e) = std::fs::create_dir_all(&data_path) {
-		return Err(EngineError::new("Failed to create data directory", e));
-	}
-
 	// set up logger
 	let logger_config = ConfigBuilder::new()
 		.set_time_offset_to_local()
@@ -264,8 +260,6 @@ fn setup_log(org_name: &str, game_name: &str) -> crate::Result<PathBuf>
 	CombinedLogger::init(loggers).unwrap();
 
 	log::info!("--- Initializing MithrilEngine... ---");
-
-	Ok(data_path)
 }
 
 type Result<T> = std::result::Result<T, EngineError>;
