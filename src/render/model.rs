@@ -182,7 +182,12 @@ impl Model
 		let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
 		let mut last_tex_index_stride = 0;
 		for mat in &materials {
-			let mat_image_views = mat.gen_descriptor_set_write(parent_folder, render_ctx)?;
+			let mat_shader_inputs = mat.get_shader_inputs();
+			let mut mat_image_views = Vec::with_capacity(mat_shader_inputs.len());
+			for input in mat_shader_inputs {
+				let tex = input.into_texture(parent_folder, render_ctx)?;
+				mat_image_views.push(tex.view().clone());
+			}
 			last_tex_index_stride = mat_image_views.len().try_into().unwrap();
 			image_view_writes.push(mat_image_views);
 

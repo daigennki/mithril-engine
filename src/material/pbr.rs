@@ -7,15 +7,12 @@
 
 use glam::*;
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::DeviceOwned;
-use vulkano::image::view::ImageView;
 use vulkano::pipeline::{graphics::input_assembly::PrimitiveTopology, GraphicsPipeline};
 
-use super::{ColorInput, /*SingleChannelInput,*/ Material};
-use crate::render::RenderContext;
+use super::{ColorInput, ShaderInput, Material};
 use crate::EngineError;
 
 pub mod fs
@@ -41,9 +38,9 @@ pub struct PBR
 	pub base_color: ColorInput,
 
 	// TODO: roughness and specular textures
-	//pub roughness: SingleChannelInput,
+	//pub roughness: GreyscaleInput,
+	//pub specular: GreyscaleInput,
 
-	//pub specular: SingleChannelInput,
 	#[serde(default)]
 	pub transparent: bool,
 }
@@ -56,16 +53,9 @@ impl Material for PBR
 		"PBR"
 	}
 
-	fn gen_descriptor_set_write(
-		&self,
-		parent_folder: &Path,
-		render_ctx: &mut RenderContext,
-	) -> Result<Vec<Arc<ImageView>>, EngineError>
+	fn get_shader_inputs(&self) -> Vec<ShaderInput>
 	{
-		let base_color = self.base_color.into_texture(parent_folder, render_ctx)?;
-
-		let image_views = vec![base_color.view().clone()];
-		Ok(image_views)
+		vec![self.base_color.clone().into()]
 	}
 
 	fn has_transparency(&self) -> bool

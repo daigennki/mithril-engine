@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::format::Format;
-use vulkano::image::view::ImageView;
 use vulkano::pipeline::GraphicsPipeline;
 
 use crate::render::{texture::Texture, RenderContext};
@@ -33,16 +32,12 @@ pub trait Material: Send + Sync
 {
 	fn material_name(&self) -> &'static str;
 
-	/// Generate the texture descriptor set write for creating a descriptor set.
-	/// Call this when the user (e.g. a `Mesh` component) is created, and when this material is modified.
+	/// Return the list of colors/image files that should be loaded into a texture and then written
+	/// into the descriptor set image view array.
 	///
-	/// The first image view in the image view array *must* be the "base color" image,
-	/// with an alpha channel representing transparency.
-	fn gen_descriptor_set_write(
-		&self,
-		parent_folder: &Path,
-		render_ctx: &mut RenderContext,
-	) -> Result<Vec<Arc<ImageView>>, EngineError>;
+	/// The first entry in the `Vec` returned *must* be the "base color" image, with an alpha
+	/// channel representing transparency.
+	fn get_shader_inputs(&self) -> Vec<ShaderInput>;
 
 	fn has_transparency(&self) -> bool;
 
@@ -54,13 +49,45 @@ pub trait Material: Send + Sync
 	) -> Result<(Arc<GraphicsPipeline>, Option<Arc<GraphicsPipeline>>), EngineError>;
 }
 
+#[derive(Debug)]
+pub enum ShaderInput
+{
+	Color(ColorInput),
+	Greyscale(GreyscaleInput),
+}
+impl ShaderInput
+{
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
+	{
+		match self {
+			Self::Color(input) => input.into_texture(path_prefix, render_ctx),
+			Self::Greyscale(input) => input.into_texture(path_prefix, render_ctx),
+		}
+	}
+}
+impl From<ColorInput> for ShaderInput
+{
+	fn from(input: ColorInput) -> Self
+	{
+		Self::Color(input)
+	}
+}
+impl From<GreyscaleInput> for ShaderInput
+{
+	fn from(input: GreyscaleInput) -> Self
+	{
+		Self::Greyscale(input)
+	}
+}
+
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum ColorInput
 {
-	/// Single color value. This is in linear color space (*not* gamma corrected) for consistency with Blender's RGB color
-	/// picker (https://docs.blender.org/manual/en/latest/interface/controls/templates/color_picker.html).
+	/// Single color value. This is in linear color space (*not* gamma corrected) for consistency
+	/// with Blender's RGB color picker.
+	/// (https://docs.blender.org/manual/en/latest/interface/controls/templates/color_picker.html)
 	Color(Vec4),
 
 	/// A texture image file.
@@ -71,7 +98,7 @@ impl ColorInput
 	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
 	{
 		match self {
-			ColorInput::Color(color) => {
+			Self::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
 				Ok(Arc::new(render_ctx.new_texture_from_slice(
 					&[*color],
@@ -81,29 +108,36 @@ impl ColorInput
 					1,
 				)?))
 			}
-			ColorInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
+			Self::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
 	}
 }
 
-/*/// A representation of the possible shader greyscale inputs, like those on the shader nodes in Blender.
-#[derive(Deserialize)]
+/// A representation of the possible shader greyscale inputs, like those on the shader nodes in Blender.
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
-pub enum SingleChannelInput
+pub enum GreyscaleInput
 {
 	Value(f32),
 	Texture(PathBuf),
 }
-impl SingleChannelInput
+impl GreyscaleInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, GenericEngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
 	{
 		match self {
-			SingleChannelInput::Value(value) => {
-				// If the input is a single value, make a 1x1 greyscale texture with just the value.
-				Ok(Arc::new(render_ctx.new_texture_from_iter([*value], Format::R32_SFLOAT, [ 1, 1 ], 1)?))
+			Self::Value(value) => {
+				// If the input is a single value, make a 2x2 greyscale texture with just the value.
+				// (we make it 2x2 here so that it's aligned to 16 bytes)
+				Ok(Arc::new(render_ctx.new_texture_from_slice(
+					&vec![*value; 4],
+					Format::R32_SFLOAT,
+					[2, 2],
+					1,
+					1,
+				)?))
 			}
-			SingleChannelInput::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
+			Self::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
 		}
 	}
-}*/
+}
