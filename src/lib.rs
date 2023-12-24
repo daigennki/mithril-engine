@@ -288,7 +288,7 @@ impl EngineError
 		match error {
 			Validated::Error(source) => Self::new::<E>(context, source.into()),
 			Validated::ValidationError(validation_error) => {
-				panic!("{}: a validation error has occurred!: {validation_error}", context);
+				panic!("{context}: a validation error has occurred!: {validation_error}");
 			}
 		}
 	}
@@ -297,7 +297,7 @@ impl std::fmt::Display for EngineError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "{}", self.context)
+		write!(f, "{}: {}", self.context, self.source)
 	}
 }
 impl Error for EngineError
