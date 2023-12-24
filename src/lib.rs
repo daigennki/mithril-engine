@@ -285,12 +285,7 @@ impl EngineError
 	where
 		E: Error + Send + Sync + 'static,
 	{
-		match error {
-			Validated::Error(source) => Self::new::<E>(context, source.into()),
-			Validated::ValidationError(validation_error) => {
-				panic!("{context}: a validation error has occurred!: {validation_error}");
-			}
-		}
+		Self::new(context, error.unwrap())
 	}
 }
 impl std::fmt::Display for EngineError
