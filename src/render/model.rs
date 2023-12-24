@@ -373,7 +373,7 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<
 	if use_external {
 		let material_name = mat
 			.name()
-			.ok_or_else(|| EngineError::from("model wants an external material, but the glTF mesh material has no name"))?;
+			.ok_or("model wants an external material, but the glTF material has no name")?;
 		let mat_path = search_folder.join(material_name).with_extension("yaml");
 
 		log::info!(
@@ -451,9 +451,7 @@ impl SubMesh
 {
 	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Result<Self, EngineError>
 	{
-		let indices = primitive
-			.indices()
-			.ok_or_else(|| EngineError::from("no indices in glTF primitive"))?;
+		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
 
 		// Get the material index for each material variant. If this glTF document doesn't have
 		// material variants, `mat_indices` will contain exactly one index, the material index
@@ -572,9 +570,7 @@ fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf
 		return Err(EngineError::new("failed to validate glTF buffer type", mismatch_error));
 	}
 
-	let view = accessor
-		.view()
-		.ok_or_else(|| EngineError::from("unexpected sparse accessor in glTF file"))?;
+	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
 	if view.stride().is_some() {
 		return Err("unexpected interleaved data in glTF file".into());
 	}

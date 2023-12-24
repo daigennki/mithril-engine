@@ -145,7 +145,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 		.find(|arg| arg == "--prefer_igp")
 		.and_then(|_| igpu.clone().or_else(|| dgpu.clone()))
 		.or_else(|| dgpu.or(igpu))
-		.ok_or_else(|| EngineError::from("No GPUs were found!"))?;
+		.ok_or("No GPUs were found!")?;
 	log::info!("Using physical device {}: {}", i, physical_device.properties().device_name);
 
 	let mem_properties = physical_device.memory_properties();
@@ -163,7 +163,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 				.zip(0_u32..)
 				.filter(|(heap, _)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
 				.max_by_key(|(heap, _)| heap.size)
-				.ok_or_else(|| EngineError::from("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!"))?;
+				.ok_or("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!")?;
 
 			allow_direct_buffer_access = mem_properties
 				.memory_types
@@ -214,7 +214,7 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 		.iter()
 		.zip(0_u32..)
 		.find_map(|(q, i)| q.queue_flags.contains(QueueFlags::GRAPHICS).then_some(i))
-		.ok_or_else(|| EngineError::from("No graphics queue family found!"))?;
+		.ok_or("No graphics queue family found!")?;
 
 	// Get another queue family that is ideally specifically optimized for async transfers,
 	// by means of finding one with the TRANSFER flag set and least number of flags set.

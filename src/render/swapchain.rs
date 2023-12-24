@@ -368,7 +368,7 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<W
 	let mon = event_loop
 		.primary_monitor()
 		.or_else(|| event_loop.available_monitors().next())
-		.ok_or_else(|| EngineError::from("No monitors are available!"))?;
+		.ok_or("No monitors are available!")?;
 
 	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
 	let mon_size: [u32; 2] = mon.size().into();

@@ -211,7 +211,7 @@ where
 	// of the format.
 	let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
 	let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
-		.ok_or_else(|| EngineError::from("Texture::new_from_slice: slice is empty or alignment is not a power of two"))?;
+		.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
 
 	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator
 		.allocate(device_layout)
@@ -234,7 +234,7 @@ fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineE
 
 	let file_ext = path
 		.extension()
-		.ok_or_else(|| EngineError::from("Could not determine texture file extension!"))?
+		.ok_or("Could not determine texture file extension!")?
 		.to_str();
 
 	match file_ext {
@@ -257,7 +257,7 @@ fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineError
 	let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
 	let dds_format = dds
 		.get_dxgi_format()
-		.ok_or_else(|| EngineError::from("Could not determine DDS image format! Make sure it has a DXGI format."))?;
+		.ok_or("Could not determine DDS image format! Make sure it has a DXGI format.")?;
 
 	let vk_fmt = match dds_format {
 		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,

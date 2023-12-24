@@ -280,8 +280,7 @@ impl Canvas
 		let (quad_pos_buf, quad_uv_buf) = vert_buf.split_at(4);
 
 		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
-		let default_font =
-			Font::try_from_bytes(font_data as &[u8]).ok_or_else(|| EngineError::from("Font has invalid data"))?;
+		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Font has invalid data")?;
 
 		let dim = render_ctx.swapchain_dimensions();
 
