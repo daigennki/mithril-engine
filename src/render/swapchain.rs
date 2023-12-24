@@ -58,7 +58,7 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> Result<Self, EngineError>
+	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
 	{
 		let window = create_window(event_loop, window_title)?;
 		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())
@@ -156,7 +156,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> Result<Option<Arc<ImageView>>, EngineError>
+	pub fn get_next_image(&mut self) -> crate::Result<Option<Arc<ImageView>>>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -246,7 +246,7 @@ impl Swapchain
 		cb: Arc<PrimaryAutoCommandBuffer>,
 		queue: Arc<Queue>,
 		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
-	) -> Result<(), EngineError>
+	) -> crate::Result<()>
 	{
 		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
 
@@ -363,7 +363,7 @@ impl Swapchain
 	}
 }
 
-fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> Result<Arc<Window>, EngineError>
+fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Arc<Window>>
 {
 	let mon = event_loop
 		.primary_monitor()

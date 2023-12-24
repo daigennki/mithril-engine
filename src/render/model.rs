@@ -43,7 +43,7 @@ pub struct Model
 }
 impl Model
 {
-	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> Result<Self, EngineError>
+	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Self>
 	{
 		let parent_folder = path.parent().unwrap();
 
@@ -352,7 +352,7 @@ struct MaterialExtras
 	external: bool,
 }
 
-fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Result<Box<dyn Material>, EngineError>
+fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> crate::Result<Box<dyn Material>>
 {
 	// Use an external material file if specified in the extras.
 	// This can be specified in Blender by giving a material a custom property called "external"
@@ -449,7 +449,7 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Result<Self, EngineError>
+	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> crate::Result<Self>
 	{
 		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
 
@@ -560,7 +560,7 @@ impl std::fmt::Display for BufferTypeMismatch
 
 /// Get a slice of the part of the buffer that the accessor points to.
 fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>)
-	-> Result<&'a [T], EngineError>
+	-> crate::Result<&'a [T]>
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
 		let mismatch_error = BufferTypeMismatch {

@@ -83,7 +83,7 @@ impl Skybox
 	/// The format string should have an asterisk in it, for example "sky/Daylight Box_*.png", which will be replaced
 	/// with the face name.
 	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
-	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> Result<Self, EngineError>
+	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> crate::Result<Self>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
@@ -166,7 +166,7 @@ impl Skybox
 		})
 	}
 
-	pub fn draw(&mut self, render_ctx: &RenderContext, sky_projview: Mat4) -> Result<(), EngineError>
+	pub fn draw(&mut self, render_ctx: &RenderContext, sky_projview: Mat4) -> crate::Result<()>
 	{
 		let vp_extent = render_ctx.swapchain_dimensions();
 		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;

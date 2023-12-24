@@ -25,7 +25,6 @@ use vulkano::pipeline::{
 use vulkano::shader::ShaderModule;
 
 use crate::render::{texture::Texture, RenderContext};
-use crate::EngineError;
 
 pub mod vs_3d_common
 {
@@ -61,7 +60,7 @@ pub enum ShaderInput
 }
 impl ShaderInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<Texture>>
 	{
 		match self {
 			Self::Color(input) => input.into_texture(path_prefix, render_ctx),
@@ -99,7 +98,7 @@ pub enum ColorInput
 }
 impl ColorInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<Texture>>
 	{
 		match self {
 			Self::Color(color) => {
@@ -127,7 +126,7 @@ pub enum GreyscaleInput
 }
 impl GreyscaleInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> Result<Arc<Texture>, EngineError>
+	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<Texture>>
 	{
 		match self {
 			Self::Value(value) => {
@@ -182,7 +181,7 @@ impl MaterialPipelineConfig
 		self,
 		pipeline_layout: Arc<PipelineLayout>,
 		pipeline_layout_oit: Arc<PipelineLayout>,
-	) -> Result<MaterialPipelines, EngineError>
+	) -> crate::Result<MaterialPipelines>
 	{
 		let vk_dev = pipeline_layout.device().clone();
 

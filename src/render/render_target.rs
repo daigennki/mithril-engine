@@ -82,7 +82,7 @@ impl RenderTarget
 		dimensions: [u32; 2],
 		swapchain_format: Format,
 		swapchain_color_space: ColorSpace,
-	) -> Result<Self, EngineError>
+	) -> crate::Result<Self>
 	{
 		let device = memory_allocator.device().clone();
 

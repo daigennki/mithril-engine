@@ -95,7 +95,7 @@ impl MeshManager
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> Result<Self, EngineError>
+	) -> crate::Result<Self>
 	{
 		let vk_dev = light_set_layout.device().clone();
 
@@ -132,7 +132,7 @@ impl MeshManager
 	}
 
 	/// Load the model for the given `Mesh`.
-	fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> Result<(), EngineError>
+	fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> crate::Result<()>
 	{
 		// Get a 3D model from `path`, relative to the current working directory.
 		// This attempts loading if it hasn't been loaded into memory yet.
@@ -184,7 +184,7 @@ impl MeshManager
 		projview: Mat4,
 		pass_type: PassType,
 		common_sets: &[Arc<PersistentDescriptorSet>],
-	) -> Result<Option<Arc<SecondaryAutoCommandBuffer>>, EngineError>
+	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>
 	{
 		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
 			PassType::Shadow {

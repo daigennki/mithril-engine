@@ -49,7 +49,7 @@ pub fn new(
 	color_attachments: &[(Format, Option<AttachmentBlend>)],
 	depth_attachment: Option<(Format, DepthState)>,
 	stencil_attachment: Option<(Format, StencilState)>,
-) -> Result<Arc<GraphicsPipeline>, EngineError>
+) -> crate::Result<Arc<GraphicsPipeline>>
 {
 	let primitive_restart_enable =
 		primitive_topology == PrimitiveTopology::TriangleStrip || primitive_topology == PrimitiveTopology::TriangleFan;

@@ -142,7 +142,7 @@ pub struct LightManager
 }
 impl LightManager
 {
-	pub fn new(render_ctx: &mut RenderContext) -> Result<Self, EngineError>
+	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 

@@ -264,7 +264,7 @@ impl MomentTransparencyRenderer
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		mat_tex_set_layout: Arc<DescriptorSetLayout>,
 		dimensions: [u32; 2],
-	) -> Result<Self, EngineError>
+	) -> crate::Result<Self>
 	{
 		// The render pass from back when we didn't use dynamic rendering.
 		// This is left commented out here so we can get an idea of where each image gets used.
@@ -490,7 +490,7 @@ impl MomentTransparencyRenderer
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		dimensions: [u32; 2],
-	) -> Result<(), EngineError>
+	) -> crate::Result<()>
 	{
 		let (moments_images, stage3_inputs, stage4_inputs) = create_mboit_images(
 			memory_allocator,
@@ -671,7 +671,7 @@ fn create_mboit_images(
 	extent: [u32; 2],
 	stage3_inputs_layout: Arc<DescriptorSetLayout>,
 	stage4_inputs_layout: Arc<DescriptorSetLayout>,
-) -> Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>), EngineError>
+) -> crate::Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>)>
 {
 	let image_create_info = ImageCreateInfo {
 		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,

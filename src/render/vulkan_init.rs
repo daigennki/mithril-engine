@@ -63,7 +63,7 @@ impl std::fmt::Display for DriverVersion
 fn create_vulkan_instance(
 	game_name: &str,
 	event_loop: &winit::event_loop::EventLoop<()>,
-) -> Result<Arc<vulkano::instance::Instance>, EngineError>
+) -> crate::Result<Arc<vulkano::instance::Instance>>
 {
 	let lib = vulkano::library::VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
 
@@ -106,7 +106,7 @@ fn create_vulkan_instance(
 }
 
 /// Get the most appropriate GPU, along with whether or not Resizable BAR is enabled on its largest `DEVICE_LOCAL` memory heap.
-fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc<PhysicalDevice>, bool), EngineError>
+fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Result<(Arc<PhysicalDevice>, bool)>
 {
 	log::info!("Available Vulkan physical devices:");
 	let (mut dgpu, mut igpu) = (None, None);
@@ -200,7 +200,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> Result<(Arc
 }
 
 /// Get a graphics queue family and an optional transfer queue family, then genereate queue create infos for each.
-fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCreateInfo>, EngineError>
+fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> crate::Result<Vec<QueueCreateInfo>>
 {
 	let queue_family_properties = physical_device.queue_family_properties();
 
@@ -247,7 +247,7 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> Result<Vec<QueueCrea
 pub fn vulkan_setup(
 	game_name: &str,
 	event_loop: &winit::event_loop::EventLoop<()>,
-) -> Result<(Arc<Queue>, Option<Arc<Queue>>, bool), EngineError>
+) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>, bool)>
 {
 	let vkinst = create_vulkan_instance(game_name, event_loop)?;
 	let (physical_device, rebar_in_use) = get_physical_device(&vkinst)?;

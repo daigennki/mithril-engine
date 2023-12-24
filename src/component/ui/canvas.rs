@@ -174,7 +174,7 @@ pub struct Canvas
 }
 impl Canvas
 {
-	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> Result<Self, EngineError>
+	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> crate::Result<Self>
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
@@ -333,7 +333,7 @@ impl Canvas
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
 		text_vbo: Option<Subbuffer<[Vec4]>>,
-	) -> Result<UiGpuResources, EngineError>
+	) -> crate::Result<UiGpuResources>
 	{
 		let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
 		let translation = transform.position.as_vec2() * self.canvas_scaling;
@@ -365,7 +365,7 @@ impl Canvas
 		eid: EntityId,
 		transform: &super::UITransform,
 		mesh: &super::mesh::Mesh,
-	) -> Result<(), EngineError>
+	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.get_texture(&mesh.image_path)?;
@@ -392,7 +392,7 @@ impl Canvas
 		eid: EntityId,
 		transform: &super::UITransform,
 		text: &super::text::UIText,
-	) -> Result<(), EngineError>
+	) -> crate::Result<()>
 	{
 		let text_str = &text.text_str;
 
@@ -498,7 +498,7 @@ impl Canvas
 		Ok(())
 	}
 
-	pub fn draw(&mut self, render_ctx: &RenderContext) -> Result<(), EngineError>
+	pub fn draw(&mut self, render_ctx: &RenderContext) -> crate::Result<()>
 	{
 		// TODO: how do we respect the render order of each UI element?
 

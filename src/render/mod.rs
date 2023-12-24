@@ -103,7 +103,7 @@ pub struct RenderContext
 }
 impl RenderContext
 {
-	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> Result<Self, EngineError>
+	pub fn new(game_name: &str, event_loop: &winit::event_loop::EventLoop<()>) -> crate::Result<Self>
 	{
 		let (graphics_queue, transfer_queue, allow_direct_buffer_access) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
@@ -248,7 +248,7 @@ impl RenderContext
 
 	/// Load an image file as a texture into memory.
 	/// If the image was already loaded, it'll use the corresponding texture.
-	pub fn get_texture(&mut self, path: &Path) -> Result<Arc<Texture>, EngineError>
+	pub fn get_texture(&mut self, path: &Path) -> crate::Result<Arc<Texture>>
 	{
 		match self.textures.get(path) {
 			Some(tex) => Ok(tex.clone()),
@@ -266,7 +266,7 @@ impl RenderContext
 		}
 	}
 
-	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> Result<texture::CubemapTexture, EngineError>
+	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> crate::Result<texture::CubemapTexture>
 	{
 		let (tex, staging_work) = texture::CubemapTexture::new(
 			self.memory_allocator.clone(),
@@ -284,7 +284,7 @@ impl RenderContext
 		dimensions: [u32; 2],
 		mip: u32,
 		array_layers: u32,
-	) -> Result<texture::Texture, EngineError>
+	) -> crate::Result<texture::Texture>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -303,7 +303,7 @@ impl RenderContext
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
-	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> Result<Subbuffer<[T]>, EngineError>
+	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
 	where
 		T: BufferContents + Copy,
 	{
@@ -404,7 +404,7 @@ impl RenderContext
 	///
 	/// This does nothing if there is no asynchronous transfer queue. In such a case, the transfers will
 	/// instead be done at the beginning of the graphics submission on the graphics queue.
-	pub fn submit_async_transfers(&mut self) -> Result<(), EngineError>
+	pub fn submit_async_transfers(&mut self) -> crate::Result<()>
 	{
 		if let Some(q) = self.transfer_queue.as_ref() {
 			if self.async_transfers.len() > 0 {
@@ -446,7 +446,7 @@ impl RenderContext
 		depth_attachment_format: Option<Format>,
 		stencil_attachment_format: Option<Format>,
 		viewport_extent: [u32; 2],
-	) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, EngineError>
+	) -> crate::Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>>
 	{
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
@@ -475,7 +475,7 @@ impl RenderContext
 		Ok(cb)
 	}
 
-	fn resize_everything_else(&mut self) -> Result<(), EngineError>
+	fn resize_everything_else(&mut self) -> crate::Result<()>
 	{
 		// Update images to match the current swapchain image extent.
 		self.main_render_target = render_target::RenderTarget::new(
@@ -501,7 +501,7 @@ impl RenderContext
 		cb_3d: Arc<SecondaryAutoCommandBuffer>,
 		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
 		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
-	) -> Result<(), EngineError>
+	) -> crate::Result<()>
 	{
 		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 			&self.command_buffer_allocator,
@@ -710,7 +710,7 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
-	) -> Result<(), EngineError>
+	) -> crate::Result<()>
 	{
 		let staging_buf = subbuffer_allocator
 			.allocate_slice(self.data.len().try_into().unwrap())
@@ -738,7 +738,7 @@ trait UpdateBufferDataTrait: Send + Sync
 		&self,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		_: &mut SubbufferAllocator,
-	) -> Result<(), EngineError>;
+	) -> crate::Result<()>;
 }
 
 enum StagingWork

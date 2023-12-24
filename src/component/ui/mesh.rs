@@ -82,13 +82,3 @@ fn update_mesh(
 	}
 }
 
-/*impl Mesh
-{
-	pub fn new(render_ctx: &mut RenderContext, tex: Arc<Texture>) -> Result<Self, GenericEngineError>
-	{
-		// resize position vertices according to texture dimensions
-		let dimensions = UVec2::from_array(tex.dimensions()).as_vec2();
-		let half_dimensions = dimensions * 0.5;
-		Self::new_from_corners(render_ctx, -half_dimensions, half_dimensions, tex)
-	}
-}*/

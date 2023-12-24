@@ -5,7 +5,6 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use glam::*;
 use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::device::Device;

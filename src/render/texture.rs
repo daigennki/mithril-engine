@@ -30,7 +30,7 @@ impl Texture
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		subbuffer_allocator: &mut SubbufferAllocator,
 		path: &Path,
-	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
+	) -> crate::Result<(Self, CopyBufferToImageInfo)>
 	{
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
@@ -54,7 +54,7 @@ impl Texture
 		dimensions: [u32; 2],
 		mip_levels: u32,
 		array_layers: u32,
-	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
+	) -> crate::Result<(Self, CopyBufferToImageInfo)>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -126,7 +126,7 @@ impl CubemapTexture
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		subbuffer_allocator: &mut SubbufferAllocator,
 		faces: [PathBuf; 6],
-	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
+	) -> crate::Result<(Self, CopyBufferToImageInfo)>
 	{
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt = None;
@@ -164,7 +164,7 @@ impl CubemapTexture
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
-	) -> Result<(Self, CopyBufferToImageInfo), EngineError>
+	) -> crate::Result<(Self, CopyBufferToImageInfo)>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -203,7 +203,7 @@ fn get_tex_staging_buf<Px>(
 	subbuffer_allocator: &mut SubbufferAllocator,
 	data: &[Px],
 	format: Format,
-) -> Result<Subbuffer<[Px]>, EngineError>
+) -> crate::Result<Subbuffer<[Px]>>
 where
 	Px: BufferContents + Copy,
 {
@@ -228,7 +228,7 @@ where
 	Ok(staging_buf)
 }
 
-fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineError>
+fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 {
 	log::info!("Loading texture file '{}'...", path.display());
 
@@ -250,7 +250,7 @@ fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineE
 		}
 	}
 }
-fn load_dds(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), EngineError>
+fn load_dds(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 {
 	let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
 

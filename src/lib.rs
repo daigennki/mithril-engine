@@ -75,7 +75,7 @@ fn init_world(
 	game_name: &str,
 	start_map: &str,
 	event_loop: &winit::event_loop::EventLoop<()>,
-) -> Result<World, EngineError>
+) -> crate::Result<World>
 {
 	setup_log(org_name, game_name)?;
 
@@ -100,7 +100,7 @@ fn init_world(
 }
 
 // returns true if the application should exit
-fn handle_event(world: &mut World, event: &mut Event<()>) -> Result<bool, EngineError>
+fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 {
 	world.run(|mut wrapper: UniqueViewMut<InputHelperWrapper>| wrapper.inner.update(event));
 
@@ -161,7 +161,7 @@ struct WorldData
 	sky: String,
 	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
 }
-fn load_world(file: &str) -> Result<(World, String), EngineError>
+fn load_world(file: &str) -> crate::Result<(World, String)>
 {
 	log::info!("Loading world map file '{file}'...");
 	let world_file = File::open(file).map_err(|e| EngineError::new("failed to open world map file", e))?;
@@ -217,7 +217,7 @@ fn load_world(file: &str) -> Result<(World, String), EngineError>
 }
 
 // Get data path, set up logging, and return the data path.
-fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, EngineError>
+fn setup_log(org_name: &str, game_name: &str) -> crate::Result<PathBuf>
 {
 	let data_path = dirs::data_dir()
 		.ok_or("Failed to get data directory")?
@@ -267,6 +267,8 @@ fn setup_log(org_name: &str, game_name: &str) -> Result<PathBuf, EngineError>
 
 	Ok(data_path)
 }
+
+type Result<T> = std::result::Result<T, EngineError>;
 
 #[derive(Debug)]
 pub struct EngineError
