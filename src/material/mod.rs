@@ -161,7 +161,6 @@ impl MaterialTransparencyMode
 }
 pub struct MaterialPipelineConfig
 {
-	pub primitive_topology: PrimitiveTopology,
 	pub vertex_shader: Arc<ShaderModule>,
 	pub fragment_shader: Arc<ShaderModule>,
 	pub transparency: MaterialTransparencyMode,
@@ -184,7 +183,7 @@ impl MaterialPipelineConfig
 			self.vertex_shader.clone(),
 			self.fragment_shader.clone(),
 			color_blend_state,
-			self.primitive_topology,
+			PrimitiveTopology::TriangleList,
 			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
 		)?;
 		let transparency_pipeline = fs_oit
@@ -193,7 +192,7 @@ impl MaterialPipelineConfig
 					vk_dev,
 					self.vertex_shader.clone(),
 					fs,
-					self.primitive_topology,
+					PrimitiveTopology::TriangleList,
 					vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs],
 				)
 			})

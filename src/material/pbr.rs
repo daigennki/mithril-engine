@@ -9,7 +9,6 @@ use glam::*;
 use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::device::Device;
-use vulkano::pipeline::graphics::input_assembly::PrimitiveTopology;
 
 use super::{ColorInput, ShaderInput, Material, MaterialPipelineConfig, MaterialTransparencyMode};
 
@@ -64,7 +63,6 @@ impl Material for PBR
 	fn load_pipeline(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig
 	{
 		MaterialPipelineConfig {
-			primitive_topology: PrimitiveTopology::TriangleList,
 			vertex_shader: super::vs_3d_common::load(vk_dev.clone()).unwrap(),
 			fragment_shader: fs::load(vk_dev.clone()).unwrap(),
 			transparency: MaterialTransparencyMode::OIT(fs_oit::load(vk_dev).unwrap()),
