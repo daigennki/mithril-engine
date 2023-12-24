@@ -16,11 +16,12 @@ use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::{AttachmentBlend, BlendFactor, BlendOp}, 
-		depth_stencil::{DepthState, CompareOp},
-		input_assembly::PrimitiveTopology, rasterization::{RasterizationState, CullMode},
+		color_blend::{AttachmentBlend, BlendFactor, BlendOp},
+		depth_stencil::{CompareOp, DepthState},
+		input_assembly::PrimitiveTopology,
+		rasterization::{CullMode, RasterizationState},
 	},
-	GraphicsPipeline
+	GraphicsPipeline,
 };
 use vulkano::shader::ShaderModule;
 
@@ -50,7 +51,7 @@ pub trait Material: Send + Sync
 
 	fn has_transparency(&self) -> bool;
 
-	fn load_pipeline(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig;
+	fn load_shaders(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig;
 }
 
 #[derive(Debug)]
@@ -154,7 +155,7 @@ pub enum MaterialTransparencyMode
 }
 impl MaterialTransparencyMode
 {
-	fn get_blend_or_shader(&self) -> (Option<AttachmentBlend>, Option<Arc<ShaderModule>>)
+	fn into_blend_or_shader(self) -> (Option<AttachmentBlend>, Option<Arc<ShaderModule>>)
 	{
 		match self {
 			Self::NoTransparency => (None, None),
@@ -171,8 +172,8 @@ pub struct MaterialPipelineConfig
 }
 impl MaterialPipelineConfig
 {
-	pub fn load_pipeline(
-		&self,
+	pub fn into_pipelines(
+		self,
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		light_set_layout: Arc<DescriptorSetLayout>,
 		transparency_inputs: Arc<DescriptorSetLayout>,
@@ -180,7 +181,7 @@ impl MaterialPipelineConfig
 	{
 		let vk_dev = material_textures_set_layout.device().clone();
 
-		let (attachment_blend, fs_oit) = self.transparency.get_blend_or_shader();
+		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
 		let primitive_topology = PrimitiveTopology::TriangleList;
 		let rasterization_state = RasterizationState {
@@ -192,7 +193,7 @@ impl MaterialPipelineConfig
 		let pipeline = crate::render::pipeline::new(
 			vk_dev.clone(),
 			primitive_topology,
-			&[self.vertex_shader.clone(), self.fragment_shader.clone()],
+			&[self.vertex_shader.clone(), self.fragment_shader],
 			rasterization_state.clone(),
 			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
 			&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
@@ -226,7 +227,7 @@ impl MaterialPipelineConfig
 				crate::render::pipeline::new(
 					vk_dev,
 					primitive_topology,
-					&[self.vertex_shader.clone(), fs],
+					&[self.vertex_shader, fs],
 					rasterization_state,
 					set_layouts,
 					&color_attachments,

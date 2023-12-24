@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::device::Device;
 
-use super::{ColorInput, ShaderInput, Material, MaterialPipelineConfig, MaterialTransparencyMode};
+use super::{ColorInput, Material, MaterialPipelineConfig, MaterialTransparencyMode, ShaderInput};
 
 pub mod fs
 {
@@ -37,7 +37,6 @@ pub struct PBR
 	// TODO: roughness and specular textures
 	//pub roughness: GreyscaleInput,
 	//pub specular: GreyscaleInput,
-
 	#[serde(default)]
 	pub transparent: bool,
 }
@@ -60,7 +59,7 @@ impl Material for PBR
 		self.transparent
 	}
 
-	fn load_pipeline(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig
+	fn load_shaders(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig
 	{
 		MaterialPipelineConfig {
 			vertex_shader: super::vs_3d_common::load(vk_dev.clone()).unwrap(),
