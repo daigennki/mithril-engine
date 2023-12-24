@@ -10,11 +10,11 @@ use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilState},
+	color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
+	depth_stencil::{DepthState, DepthStencilState, StencilState},
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
 	multisample::MultisampleState,
-	rasterization::{CullMode, RasterizationState},
+	rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo,
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
 	viewport::ViewportState,
@@ -151,78 +151,6 @@ pub fn new(
 
 	GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)
 		.map_err(|e| EngineError::vulkan_error("failed to create graphics pipeline", e))
-}
-
-/// Create a pipeline for a material.
-pub fn new_for_material(
-	vk_dev: Arc<Device>,
-	vertex_shader: Arc<ShaderModule>,
-	fragment_shader: Arc<ShaderModule>,
-	attachment_blend: Option<AttachmentBlend>,
-	primitive_topology: PrimitiveTopology,
-	set_layouts: Vec<Arc<DescriptorSetLayout>>,
-) -> Result<Arc<GraphicsPipeline>, EngineError>
-{
-	let rasterization_state = RasterizationState {
-		cull_mode: CullMode::Back,
-		..Default::default()
-	};
-
-	new(
-		vk_dev,
-		primitive_topology,
-		&[vertex_shader, fragment_shader],
-		rasterization_state,
-		set_layouts,
-		&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
-		Some((super::MAIN_DEPTH_FORMAT, DepthState::simple())),
-		None,
-	)
-}
-
-/// Create a pipeline for a material, assuming that the fragment shader is specfically for OIT.
-pub fn new_for_material_transparency(
-	vk_dev: Arc<Device>,
-	vertex_shader: Arc<ShaderModule>,
-	fragment_shader: Arc<ShaderModule>,
-	primitive_topology: PrimitiveTopology,
-	set_layouts: Vec<Arc<DescriptorSetLayout>>,
-) -> Result<Arc<GraphicsPipeline>, EngineError>
-{
-	let rasterization_state = RasterizationState {
-		cull_mode: CullMode::Back,
-		..Default::default()
-	};
-	let depth_state = DepthState {
-		write_enable: false,
-		compare_op: CompareOp::Less,
-	};
-
-	let accum_blend = AttachmentBlend {
-		alpha_blend_op: BlendOp::Add,
-		..AttachmentBlend::additive()
-	};
-	let revealage_blend = AttachmentBlend {
-		color_blend_op: BlendOp::Add,
-		src_color_blend_factor: BlendFactor::Zero,
-		dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-		..Default::default()
-	};
-	let color_attachments = [
-		(Format::R16G16B16A16_SFLOAT, Some(accum_blend)),
-		(Format::R8_UNORM, Some(revealage_blend)),
-	];
-
-	new(
-		vk_dev,
-		primitive_topology,
-		&[vertex_shader, fragment_shader],
-		rasterization_state,
-		set_layouts,
-		&color_attachments,
-		Some((super::MAIN_DEPTH_FORMAT, depth_state)),
-		None,
-	)
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.

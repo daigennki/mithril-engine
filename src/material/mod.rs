@@ -15,7 +15,11 @@ use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::pipeline::{
-	graphics::{color_blend::AttachmentBlend, input_assembly::PrimitiveTopology},
+	graphics::{
+		color_blend::{AttachmentBlend, BlendFactor, BlendOp}, 
+		depth_stencil::{DepthState, CompareOp},
+		input_assembly::PrimitiveTopology, rasterization::{RasterizationState, CullMode},
+	},
 	GraphicsPipeline
 };
 use vulkano::shader::ShaderModule;
@@ -176,24 +180,58 @@ impl MaterialPipelineConfig
 	{
 		let vk_dev = material_textures_set_layout.device().clone();
 
-		let (color_blend_state, fs_oit) = self.transparency.get_blend_or_shader();
+		let (attachment_blend, fs_oit) = self.transparency.get_blend_or_shader();
 
-		let pipeline = crate::render::pipeline::new_for_material(
+		let primitive_topology = PrimitiveTopology::TriangleList;
+		let rasterization_state = RasterizationState {
+			cull_mode: CullMode::Back,
+			..Default::default()
+		};
+
+		// Create the opaque pass pipeline.
+		let pipeline = crate::render::pipeline::new(
 			vk_dev.clone(),
-			self.vertex_shader.clone(),
-			self.fragment_shader.clone(),
-			color_blend_state,
-			PrimitiveTopology::TriangleList,
+			primitive_topology,
+			&[self.vertex_shader.clone(), self.fragment_shader.clone()],
+			rasterization_state.clone(),
 			vec![material_textures_set_layout.clone(), light_set_layout.clone()],
+			&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
+			Some((crate::render::MAIN_DEPTH_FORMAT, DepthState::simple())),
+			None,
 		)?;
+
+		// Create the transparency pass pipeline.
 		let transparency_pipeline = fs_oit
 			.map(|fs| {
-				crate::render::pipeline::new_for_material_transparency(
+				let depth_state = DepthState {
+					write_enable: false,
+					compare_op: CompareOp::Less,
+				};
+
+				let accum_blend = AttachmentBlend {
+					alpha_blend_op: BlendOp::Add,
+					..AttachmentBlend::additive()
+				};
+				let revealage_blend = AttachmentBlend {
+					color_blend_op: BlendOp::Add,
+					src_color_blend_factor: BlendFactor::Zero,
+					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+					..Default::default()
+				};
+				let color_attachments = [
+					(Format::R16G16B16A16_SFLOAT, Some(accum_blend)),
+					(Format::R8_UNORM, Some(revealage_blend)),
+				];
+				let set_layouts = vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs];
+				crate::render::pipeline::new(
 					vk_dev,
-					self.vertex_shader.clone(),
-					fs,
-					PrimitiveTopology::TriangleList,
-					vec![material_textures_set_layout.clone(), light_set_layout, transparency_inputs],
+					primitive_topology,
+					&[self.vertex_shader.clone(), fs],
+					rasterization_state,
+					set_layouts,
+					&color_attachments,
+					Some((crate::render::MAIN_DEPTH_FORMAT, depth_state)),
+					None,
 				)
 			})
 			.transpose()?;
