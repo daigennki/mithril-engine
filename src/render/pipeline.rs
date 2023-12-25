@@ -42,7 +42,7 @@ use crate::EngineError;
 /// `VertexInputRate::Instance` for that input. Otherwise, `VertexInputRate::Vertex` will be used.
 pub fn new(
 	vk_dev: Arc<Device>,
-	primitive_topology: PrimitiveTopology,
+	topology: PrimitiveTopology,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
 	pipeline_layout: Arc<PipelineLayout>,
@@ -51,22 +51,16 @@ pub fn new(
 	stencil_attachment: Option<(Format, StencilState)>,
 ) -> crate::Result<Arc<GraphicsPipeline>>
 {
-	let primitive_restart_enable =
-		primitive_topology == PrimitiveTopology::TriangleStrip || primitive_topology == PrimitiveTopology::TriangleFan;
 	let input_assembly_state = Some(InputAssemblyState {
-		topology: primitive_topology,
-		primitive_restart_enable,
+		topology,
+		primitive_restart_enable: topology == PrimitiveTopology::TriangleStrip || topology == PrimitiveTopology::TriangleFan,
 		..Default::default()
 	});
 
 	let stages: smallvec::SmallVec<[PipelineShaderStageCreateInfo; 5]> = shader_modules
 		.iter()
-		.map(|sm| {
-			sm.entry_point("main")
-				.map(|e| PipelineShaderStageCreateInfo::new(e))
-				.ok_or("no 'main' entry point in shader")
-		})
-		.collect::<Result<_, _>>()?;
+		.map(|sm| PipelineShaderStageCreateInfo::new(sm.entry_point("main").expect("no 'main' entry point in shader")))
+		.collect();
 
 	let vertex_input_state = stages
 		.iter()
