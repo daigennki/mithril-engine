@@ -226,6 +226,13 @@ impl Model
 		)
 		.map_err(|e| EngineError::vulkan_error("failed to create material textures descriptor set", e))?;
 
+		if material_variants.is_empty() && submeshes.len() > materials.len() {
+			log::warn!(
+				r"There are more meshes than materials in the model, even though there are no material variants!
+This model may be inefficient to draw, so consider joining the meshes."
+			);
+		}
+
 		Ok(Model {
 			materials,
 			material_variants,
@@ -559,8 +566,7 @@ impl std::fmt::Display for BufferTypeMismatch
 }
 
 /// Get a slice of the part of the buffer that the accessor points to.
-fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>)
-	-> crate::Result<&'a [T]>
+fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>) -> crate::Result<&'a [T]>
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
 		let mismatch_error = BufferTypeMismatch {
