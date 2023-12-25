@@ -98,7 +98,7 @@ impl Swapchain
 			image_format,
 			image_color_space,
 			image_usage,
-			present_mode: PresentMode::Fifo,
+			present_mode: PresentMode::Immediate,
 			..Default::default()
 		};
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)

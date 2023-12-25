@@ -10,12 +10,13 @@ use gltf::Semantic;
 use serde::Deserialize;
 use shipyard::EntityId;
 use std::any::TypeId;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use vulkano::DeviceSize;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndexedIndirectCommand, SecondaryAutoCommandBuffer};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::pipeline::{PipelineBindPoint, PipelineLayout};
 
@@ -26,12 +27,27 @@ use crate::EngineError;
 /// 3D model
 pub struct Model
 {
+	path: PathBuf,
+
 	materials: Vec<Box<dyn Material>>,
 	material_variants: Vec<String>,
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBufferVariant,
-	path: PathBuf,
+
+	// The bounding box for the entire model.
+	corner_min: Vec3,
+	corner_max: Vec3,
+
+	// Indirect draw buffer used when frustum culling is performed on the entire `Model`.
+	// This may also be empty if there is only a single submesh.
+	indirect_buffer: Option<Subbuffer<[DrawIndexedIndirectCommand]>>,
+
+	// The offsets and draw count in `indirect_buffer` for each shader.
+	// Organized by: material variant -> shader name -> (offset, length)
+	shader_indirect_offsets_opaque: Vec<BTreeMap<&'static str, (DeviceSize, DeviceSize)>>,
+	shader_indirect_offsets_transparent: Vec<BTreeMap<&'static str, (DeviceSize, DeviceSize)>>,
+	all_transparent_commands_offset: (DeviceSize, DeviceSize),
 
 	// Image views for all materials used by all material variants the glTF document comes with.
 	// Uses variable descriptor count.
@@ -61,6 +77,8 @@ impl Model
 		let mut indices_u16 = Vec::new();
 		let mut indices_u32 = Vec::new();
 		let mut indices_type = DataType::U16;
+		let mut corner_min: Option<Vec3> = None;
+		let mut corner_max: Option<Vec3> = None;
 
 		let materials: Vec<_> = doc
 			.materials()
@@ -138,6 +156,17 @@ impl Model
 			normals.extend_from_slice(get_buf_data(&normals_accessor, &data_buffers)?);
 
 			let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
+
+			if let Some(c_min) = corner_min.as_mut() {
+				*c_min = c_min.min(submesh.corner_min);
+			} else {
+				corner_min = Some(submesh.corner_min);
+			}
+			if let Some(c_max) = corner_max.as_mut() {
+				*c_max = c_max.max(submesh.corner_max);
+			} else {
+				corner_max = Some(submesh.corner_max);
+			}
 
 			submeshes.push(submesh);
 
@@ -226,13 +255,114 @@ impl Model
 		)
 		.map_err(|e| EngineError::vulkan_error("failed to create material textures descriptor set", e))?;
 
+		// If frustum culling should be performed once on the entire model, and there is more than one
+		// submesh, then create an indirect draw command buffer.
+		let submesh_culling = false;
+		let (shader_indirect_offsets_opaque, shader_indirect_offsets_transparent);
+		let all_transparent_commands_offset: (DeviceSize, DeviceSize);
+		let indirect_buffer = if !submesh_culling && submeshes.len() > 1 {
+			// Organized by: material variant (`Vec`) -> shader name (`BTreeMap`) -> submeshes (`Vec`)
+			let mut indirect_commands_opaque = Vec::with_capacity(material_variants.len().max(1));
+			let mut indirect_commands_transparent = Vec::with_capacity(material_variants.len().max(1));
+			let mut total_command_count = 0;
+			for v in 0..material_variants.len().max(1) {
+				let mut variant_btreemap: BTreeMap<&'static str, Vec<_>> = BTreeMap::new();
+				let mut variant_btreemap_transparent: BTreeMap<&'static str, Vec<_>> = BTreeMap::new();
+				for submesh in &submeshes {
+					let mat_index = submesh.mat_indices[v]; // get the material index for this material variant
+					let instance_index = mat_tex_base_indices[mat_index];
+					let command = DrawIndexedIndirectCommand {
+						index_count: submesh.index_count,
+						instance_count: 1,
+						first_index: submesh.first_index,
+						vertex_offset: submesh.vertex_offset.try_into().unwrap(),
+						first_instance: instance_index,
+					};
+
+					let mat = &materials[mat_index];
+					let mat_name = mat.material_name();
+
+					if mat.has_transparency() {
+						if let Some(shader_specific_commands) = variant_btreemap_transparent.get_mut(mat_name) {
+							shader_specific_commands.push(command);
+						} else {
+							variant_btreemap_transparent.insert(mat_name, vec![command]);
+						}
+					} else {
+						if let Some(shader_specific_commands) = variant_btreemap.get_mut(mat_name) {
+							shader_specific_commands.push(command);
+						} else {
+							variant_btreemap.insert(mat_name, vec![command]);
+						}
+					}
+					total_command_count += 1;
+				}
+				indirect_commands_opaque.push(variant_btreemap);
+				indirect_commands_transparent.push(variant_btreemap_transparent);
+			}
+
+			let mut commands_linear = Vec::with_capacity(total_command_count);
+			let mut indirect_offsets_opaque = Vec::with_capacity(material_variants.len().max(1));
+			let mut offset = 0;
+			for variant_btreemap in indirect_commands_opaque {
+				let this_shader_indirect_offsets = variant_btreemap
+					.iter()
+					.map(|(mat_name, commands)| {
+						let command_count = commands.len();
+						let this_offset = offset;
+						offset += command_count;
+						commands_linear.extend_from_slice(commands);
+						(*mat_name, (this_offset as DeviceSize, command_count as DeviceSize))
+					})
+					.collect();
+				indirect_offsets_opaque.push(this_shader_indirect_offsets);
+			}
+			let transparent_draws_offset = offset;
+			let mut indirect_offsets_transparent = Vec::with_capacity(material_variants.len().max(1));
+			for variant_btreemap in indirect_commands_transparent {
+				let this_shader_indirect_offsets = variant_btreemap
+					.iter()
+					.map(|(mat_name, commands)| {
+						let command_count = commands.len();
+						let this_offset = offset;
+						offset += command_count;
+						commands_linear.extend_from_slice(commands);
+						(*mat_name, (this_offset as DeviceSize, command_count as DeviceSize))
+					})
+					.collect();
+				indirect_offsets_transparent.push(this_shader_indirect_offsets);
+			}
+
+			let indirect_buf = render_ctx.new_buffer(&commands_linear, BufferUsage::INDIRECT_BUFFER)?;
+
+			shader_indirect_offsets_opaque = indirect_offsets_opaque;
+			shader_indirect_offsets_transparent = indirect_offsets_transparent;
+			all_transparent_commands_offset = (
+				transparent_draws_offset as DeviceSize,
+				(commands_linear.len() - transparent_draws_offset) as DeviceSize,
+			);
+
+			Some(indirect_buf)
+		} else {
+			shader_indirect_offsets_opaque = Vec::new();
+			shader_indirect_offsets_transparent = Vec::new();
+			all_transparent_commands_offset = (0, 0);
+			None
+		};
+
 		Ok(Model {
+			path: path.to_path_buf(),
 			materials,
 			material_variants,
 			submeshes,
 			vertex_subbuffers: vec![vbo_positions, vbo_texcoords, vbo_normals],
 			index_buffer,
-			path: path.to_path_buf(),
+			corner_min: corner_min.unwrap(),
+			corner_max: corner_max.unwrap(),
+			indirect_buffer,
+			shader_indirect_offsets_opaque,
+			shader_indirect_offsets_transparent,
+			all_transparent_commands_offset,
 			textures_set,
 			mat_tex_base_indices,
 		})
@@ -277,29 +407,39 @@ impl Model
 
 		let projviewmodel = *projview * *model_matrix;
 
-		// Determine which submeshes are visible.
-		// "Visible" here means it uses the currently bound material pipeline,
-		// its transparency mode matches the current render pass type,
-		// and the submesh passes frustum culling.
-		let mut visible_submeshes = self
-			.submeshes
-			.iter()
-			.filter(|submesh| {
-				let material_index = submesh.mat_indices[material_variant];
-				let mat = &self.materials[material_index];
+		let any_visible;
+		let visible_submeshes = if self.indirect_buffer.is_some() {
+			// Perform frustum culling only once and then use indirect draw, if requested.
+			any_visible = frustum_culling(self.corner_min, self.corner_max, &projviewmodel);
+			None	
+		} else {
+			// Determine which submeshes are visible.
+			// "Visible" here means it uses the currently bound material pipeline,
+			// its transparency mode matches the current render pass type,
+			// and the submesh passes frustum culling.
+			let mut iter = self
+				.submeshes
+				.iter()
+				.filter(|submesh| {
+					let material_index = submesh.mat_indices[material_variant];
+					let mat = &self.materials[material_index];
 
-				// don't filter by material pipeline name if `None` was given
-				let pipeline_matches = pipeline_name
-					.map(|some_pl_name| mat.material_name() == some_pl_name)
-					.unwrap_or(true);
+					// don't filter by material pipeline name if `None` was given
+					let pipeline_matches = pipeline_name
+						.map(|some_pl_name| mat.material_name() == some_pl_name)
+						.unwrap_or(true);
 
-				pipeline_matches && mat.has_transparency() == transparency_pass
-			})
-			.filter(|submesh| submesh.cull(&projviewmodel))
-			.peekable();
+					pipeline_matches && mat.has_transparency() == transparency_pass
+				})
+				.filter(|submesh| submesh.cull(&projviewmodel))
+				.peekable();
 
-		let any_visible = visible_submeshes.peek().is_some();
+			any_visible = iter.peek().is_some();
 
+			Some(iter)
+		};
+
+		
 		// Don't even bother with binds if no submeshes are visible
 		if any_visible {
 			if shadow_pass {
@@ -333,11 +473,38 @@ impl Model
 				*resources_bound = true;
 			}
 
-			for submesh in visible_submeshes {
-				let mat_index = submesh.mat_indices[material_variant];
-				let instance_index = self.mat_tex_base_indices[mat_index];
+			if let Some(indirect) = &self.indirect_buffer {
+				let range = if let Some(pl_name) = pipeline_name.as_ref() {
+					let offset_and_size = if transparency_pass {
+						self.shader_indirect_offsets_transparent[material_variant].get(pl_name)
+					} else {
+						self.shader_indirect_offsets_opaque[material_variant].get(pl_name)
+					};
+					if let Some((offset, size)) = offset_and_size.copied() {
+						let end = offset + size;
+						offset..end
+					} else {
+						0..0
+					}
+				} else {
+					if transparency_pass {
+						let begin = self.all_transparent_commands_offset.0;
+						let end = begin + self.all_transparent_commands_offset.1;
+						begin..end
+					} else {
+						0..(self.all_transparent_commands_offset.0)
+					}
+				};
+				if !range.is_empty() {
+					cb.draw_indexed_indirect(indirect.clone().slice(range)).unwrap();
+				}
+			} else {
+				for submesh in visible_submeshes.unwrap() {
+					let mat_index = submesh.mat_indices[material_variant];
+					let instance_index = self.mat_tex_base_indices[mat_index];
 
-				submesh.draw(cb, instance_index);
+					submesh.draw(cb, instance_index);
+				}
 			}
 		}
 
@@ -478,44 +645,7 @@ impl SubMesh
 	/// Perform frustum culling. Returns `true` if visible.
 	pub fn cull(&self, projviewmodel: &Mat4) -> bool
 	{
-		// generate vertices for all 8 corners of this bounding box
-		let mut bb_verts: [Vec4; 8] = Default::default();
-		bb_verts[0..4].fill(self.corner_min.extend(1.0));
-		bb_verts[4..8].fill(self.corner_max.extend(1.0));
-		bb_verts[1].x = self.corner_max.x;
-		bb_verts[2].x = self.corner_max.x;
-		bb_verts[2].y = self.corner_max.y;
-		bb_verts[3].y = self.corner_max.y;
-		bb_verts[5].x = self.corner_min.x;
-		bb_verts[6].x = self.corner_min.x;
-		bb_verts[6].y = self.corner_min.y;
-		bb_verts[7].y = self.corner_min.y;
-
-		for vert in &mut bb_verts {
-			*vert = *projviewmodel * *vert;
-		}
-
-		// check if all vertices are on the outside of any plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
-		let mut neg_axis = true;
-		for eval_axis in [0, 0, 1, 1, 2, 2] {
-			// `outside` will only be true here if all vertices are outside of the plane being evaluated
-			let outside = bb_verts.iter().all(|vert| {
-				let mut axis_coord = vert[eval_axis];
-
-				// negate coordinate when evaluating against negative planes so outside coordinates are greater than +W
-				if neg_axis {
-					axis_coord = -axis_coord;
-				}
-
-				axis_coord > vert.w // vertex is outside of plane if coordinate on plane axis is greater than +W
-			});
-			if outside {
-				return false;
-			}
-
-			neg_axis = !neg_axis;
-		}
-		true
+		frustum_culling(self.corner_min, self.corner_max, projviewmodel)
 	}
 
 	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
@@ -523,6 +653,48 @@ impl SubMesh
 		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)
 			.unwrap();
 	}
+}
+
+fn frustum_culling(corner_min: Vec3, corner_max: Vec3, projviewmodel: &Mat4) -> bool
+{
+	// generate vertices for all 8 corners of this bounding box
+	let mut bb_verts: [Vec4; 8] = Default::default();
+	bb_verts[0..4].fill(corner_min.extend(1.0));
+	bb_verts[4..8].fill(corner_max.extend(1.0));
+	bb_verts[1].x = corner_max.x;
+	bb_verts[2].x = corner_max.x;
+	bb_verts[2].y = corner_max.y;
+	bb_verts[3].y = corner_max.y;
+	bb_verts[5].x = corner_min.x;
+	bb_verts[6].x = corner_min.x;
+	bb_verts[6].y = corner_min.y;
+	bb_verts[7].y = corner_min.y;
+
+	for vert in &mut bb_verts {
+		*vert = *projviewmodel * *vert;
+	}
+
+	// check if all vertices are on the outside of any plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
+	let mut neg_axis = true;
+	for eval_axis in [0, 0, 1, 1, 2, 2] {
+		// `outside` will only be true here if all vertices are outside of the plane being evaluated
+		let outside = bb_verts.iter().all(|vert| {
+			let mut axis_coord = vert[eval_axis];
+
+			// negate coordinate when evaluating against negative planes so outside coordinates are greater than +W
+			if neg_axis {
+				axis_coord = -axis_coord;
+			}
+
+			axis_coord > vert.w // vertex is outside of plane if coordinate on plane axis is greater than +W
+		});
+		if outside {
+			return false;
+		}
+
+		neg_axis = !neg_axis;
+	}
+	true
 }
 
 fn data_type_to_id(value: DataType) -> TypeId
@@ -559,8 +731,7 @@ impl std::fmt::Display for BufferTypeMismatch
 }
 
 /// Get a slice of the part of the buffer that the accessor points to.
-fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>)
-	-> crate::Result<&'a [T]>
+fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a Vec<gltf::buffer::Data>) -> crate::Result<&'a [T]>
 {
 	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
 		let mismatch_error = BufferTypeMismatch {
