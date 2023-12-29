@@ -505,23 +505,20 @@ impl Canvas
 		let vp_extent = render_ctx.swapchain_dimensions();
 		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
 
-		cb.bind_pipeline_graphics(self.ui_pipeline.clone()).unwrap();
+		cb.bind_pipeline_graphics(self.ui_pipeline.clone())?;
 		for resources in self.mesh_resources.values() {
-			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)
-				.unwrap();
+			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
 			cb.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.ui_pipeline.layout().clone(),
 				0,
 				vec![resources.descriptor_set.clone()],
-			)
-			.unwrap();
+			)?;
 
 			match resources.mesh_type {
 				MeshType::Quad => {
-					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))
-						.unwrap();
-					cb.draw(4, 1, 0, 0).unwrap();
+					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
+					cb.draw(4, 1, 0, 0)?;
 				}
 				MeshType::Frame(_border_width) => {
 					todo!();
@@ -529,7 +526,7 @@ impl Canvas
 			}
 		}
 
-		cb.bind_pipeline_graphics(self.text_pipeline.clone()).unwrap();
+		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
 		for resources in self.text_resources.values() {
 			if let Some(vbo) = resources.text_vbo.clone() {
 				let mut push_constant_data: [f32; 8] = Default::default();
@@ -538,18 +535,16 @@ impl Canvas
 					.logical_texture_size_inv
 					.write_to_slice(&mut push_constant_data[6..8]);
 
-				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)
-					.unwrap();
+				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)?;
 				cb.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					self.text_pipeline.layout().clone(),
 					0,
 					vec![resources.descriptor_set.clone()],
-				)
-				.unwrap();
+				)?;
 				let glyph_count = vbo.len() / 2;
-				cb.bind_vertex_buffers(0, vbo.clone().split_at(glyph_count)).unwrap();
-				cb.draw(4, glyph_count as u32, 0, 0).unwrap();
+				cb.bind_vertex_buffers(0, vbo.clone().split_at(glyph_count))?;
+				cb.draw(4, glyph_count as u32, 0, 0)?;
 			}
 		}
 

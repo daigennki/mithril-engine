@@ -18,7 +18,7 @@ use std::error::Error;
 use std::fs::File;
 use std::path::Path;
 use vulkano::descriptor_set::DescriptorSet;
-use vulkano::Validated;
+use vulkano::{Validated, ValidationError};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -310,6 +310,13 @@ impl From<&'static str> for EngineError
 			source: string.into(),
 			context: "a generic engine error has occurred",
 		}
+	}
+}
+impl From<Box<ValidationError>> for EngineError
+{
+	fn from(error: Box<ValidationError>) -> Self
+	{
+		panic!("{error}");
 	}
 }
 

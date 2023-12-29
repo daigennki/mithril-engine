@@ -470,7 +470,7 @@ impl RenderContext
 			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
-		cb.set_viewport(0, [viewport].as_slice().into()).unwrap();
+		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		Ok(cb)
 	}
@@ -555,12 +555,9 @@ impl RenderContext
 					..Default::default()
 				};
 				primary_cb_builder
-					.begin_rendering(shadow_render_info)
-					.unwrap()
-					.execute_commands(shadow_cb)
-					.unwrap()
-					.end_rendering()
-					.unwrap();
+					.begin_rendering(shadow_render_info)?
+					.execute_commands(shadow_cb)?
+					.end_rendering()?;
 			}
 
 			// skybox (effectively clears the image)
@@ -574,12 +571,9 @@ impl RenderContext
 				..Default::default()
 			};
 			primary_cb_builder
-				.begin_rendering(sky_render_info)
-				.unwrap()
-				.execute_commands(sky_cb)
-				.unwrap()
-				.end_rendering()
-				.unwrap();
+				.begin_rendering(sky_render_info)?
+				.execute_commands(sky_cb)?
+				.end_rendering()?;
 
 			// 3D
 			let main_render_info = RenderingInfo {
@@ -598,12 +592,9 @@ impl RenderContext
 				..Default::default()
 			};
 			primary_cb_builder
-				.begin_rendering(main_render_info)
-				.unwrap()
-				.execute_commands(cb_3d)
-				.unwrap()
-				.end_rendering()
-				.unwrap();
+				.begin_rendering(main_render_info)?
+				.execute_commands(cb_3d)?
+				.end_rendering()?;
 
 			// 3D OIT
 			self.transparency_renderer.process_transparency(
@@ -624,12 +615,9 @@ impl RenderContext
 					..Default::default()
 				};
 				primary_cb_builder
-					.begin_rendering(ui_render_info)
-					.unwrap()
-					.execute_commands(some_ui_cb)
-					.unwrap()
-					.end_rendering()
-					.unwrap();
+					.begin_rendering(ui_render_info)?
+					.execute_commands(some_ui_cb)?
+					.end_rendering()?;
 			}
 
 			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
@@ -723,9 +711,7 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		staging_buf.write().unwrap().copy_from_slice(self.data.as_slice());
 
 		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data
-		cb_builder
-			.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf.clone()))
-			.unwrap();
+		cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf.clone()))?;
 
 		Ok(())
 	}

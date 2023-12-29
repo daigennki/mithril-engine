@@ -214,13 +214,12 @@ impl MeshManager
 				mat_pl.opaque_pipeline.clone()
 			};
 
-			cb.bind_pipeline_graphics(pipeline.clone()).unwrap();
+			cb.bind_pipeline_graphics(pipeline.clone())?;
 			let pipeline_layout = pipeline.layout().clone();
 
 			if common_sets.len() > 0 {
 				let sets = Vec::from(common_sets);
-				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)
-					.unwrap();
+				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
 			}
 
 			// don't filter by material pipeline name if there is a pipeline override

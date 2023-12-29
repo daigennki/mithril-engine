@@ -171,23 +171,17 @@ impl Skybox
 		let vp_extent = render_ctx.swapchain_dimensions();
 		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
 
-		cb.bind_pipeline_graphics(self.sky_pipeline.clone())
-			.unwrap()
+		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.sky_pipeline.layout().clone(),
 				0,
 				vec![self.descriptor_set.clone()],
-			)
-			.unwrap()
-			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)
-			.unwrap()
-			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])
-			.unwrap()
-			.bind_index_buffer(self.cube_ibo.clone())
-			.unwrap()
-			.draw_indexed(17, 1, 0, 0, 0)
-			.unwrap();
+			)?
+			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?
+			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?
+			.bind_index_buffer(self.cube_ibo.clone())?
+			.draw_indexed(17, 1, 0, 0, 0)?;
 
 		let built_cb = cb
 			.build()

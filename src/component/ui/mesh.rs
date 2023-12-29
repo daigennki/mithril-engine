@@ -81,4 +81,3 @@ fn update_mesh(
 		}
 	}
 }
-
