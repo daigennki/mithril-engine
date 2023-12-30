@@ -15,7 +15,7 @@ use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
 	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryAllocatorError, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, StandardMemoryAllocator};
 use vulkano::DeviceSize;
 
 use crate::EngineError;
@@ -68,11 +68,9 @@ impl Texture
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
+		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
 
-		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))
-			.map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
 
 		// generate copies for every mipmap level
 		let mut regions = Vec::with_capacity(mip_levels as usize);
@@ -178,15 +176,13 @@ impl CubemapTexture
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
+		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
 
 		let view_create_info = ImageViewCreateInfo {
 			view_type: ImageViewType::Cube,
 			..ImageViewCreateInfo::from_image(&image)
 		};
-		let view = ImageView::new(image.clone(), view_create_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+		let view = ImageView::new(image.clone(), view_create_info)?;
 
 		let copy_to_image = CopyBufferToImageInfo::buffer_image(staging_buf, image);
 
@@ -214,13 +210,7 @@ where
 		.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
 
 	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator
-		.allocate(device_layout)
-		.map_err(|e| match e {
-			MemoryAllocatorError::AllocateDeviceMemory(validated) => {
-				EngineError::vulkan_error("failed to allocate staging buffer", validated)
-			}
-			other => EngineError::new("failed to allocate staging buffer", other),
-		})?
+		.allocate(device_layout)?
 		.reinterpret();
 
 	staging_buf.write().unwrap().copy_from_slice(data);

@@ -22,7 +22,6 @@ use vulkano::pipeline::{Pipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
-use crate::EngineError;
 
 mod vs
 {
@@ -87,8 +86,7 @@ impl Skybox
 	{
 		let device = render_ctx.descriptor_set_allocator().device().clone();
 
-		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())
-			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
+		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
 		let tex_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![cubemap_sampler],
@@ -98,8 +96,7 @@ impl Skybox
 			bindings: [(0, tex_binding)].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![set_layout.clone()],
@@ -110,8 +107,7 @@ impl Skybox
 			}],
 			..Default::default()
 		};
-		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
@@ -134,8 +130,7 @@ impl Skybox
 			set_layout,
 			[WriteDescriptorSet::image_view(0, sky_cubemap.view().clone())],
 			[],
-		)
-		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
+		)?;
 
 		// sky cube, consisting of two fans with the "center" being opposite corners of the cube
 		#[rustfmt::skip]
@@ -183,11 +178,7 @@ impl Skybox
 			.bind_index_buffer(self.cube_ibo.clone())?
 			.draw_indexed(17, 1, 0, 0, 0)?;
 
-		let built_cb = cb
-			.build()
-			.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?;
-
-		assert!(self.command_buffer.replace(built_cb).is_none());
+		assert!(self.command_buffer.replace(cb.build()?).is_none());
 
 		Ok(())
 	}

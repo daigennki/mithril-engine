@@ -421,8 +421,7 @@ fn descriptor_set_from_materials(
 			image_view_writes.into_iter().flatten(),
 		)],
 		[],
-	)
-	.map_err(|e| EngineError::vulkan_error("failed to create material textures descriptor set", e))?;
+	)?;
 
 	Ok((textures_set, mat_tex_base_indices))
 }

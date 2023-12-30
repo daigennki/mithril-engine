@@ -101,7 +101,7 @@ fn create_vulkan_instance(
 	inst_create_info.engine_version = inst_create_info.application_version.clone();
 
 	let instance = vulkano::instance::Instance::new(lib, inst_create_info)
-		.map_err(|e| EngineError::vulkan_error("failed to create Vulkan instance", e))?;
+		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?;
 	Ok(instance)
 }
 
@@ -290,7 +290,7 @@ pub fn vulkan_setup(
 	};
 
 	let (_, mut queues) = vulkano::device::Device::new(physical_device, dev_create_info)
-		.map_err(|e| EngineError::vulkan_error("failed to create Vulkan logical device", e))?;
+		.map_err(|e| EngineError::new("failed to create Vulkan logical device", e.unwrap()))?;
 	let graphics_queue = queues.next().unwrap();
 	let transfer_queue = queues.next();
 	Ok((graphics_queue, transfer_queue, rebar_in_use))

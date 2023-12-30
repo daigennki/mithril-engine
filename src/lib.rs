@@ -17,8 +17,11 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
+use vulkano::buffer::AllocateBufferError;
 use vulkano::descriptor_set::DescriptorSet;
-use vulkano::{Validated, ValidationError};
+use vulkano::image::AllocateImageError;
+use vulkano::memory::allocator::MemoryAllocatorError;
+use vulkano::{Validated, ValidationError, VulkanError};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -281,12 +284,6 @@ impl EngineError
 			context,
 		}
 	}
-	pub fn vulkan_error<E>(context: &'static str, error: Validated<E>) -> Self
-	where
-		E: Error + Send + Sync + 'static,
-	{
-		Self::new(context, error.unwrap())
-	}
 }
 impl std::fmt::Display for EngineError
 {
@@ -317,6 +314,79 @@ impl From<Box<ValidationError>> for EngineError
 	fn from(error: Box<ValidationError>) -> Self
 	{
 		panic!("{error}");
+	}
+}
+impl From<Validated<VulkanError>> for EngineError
+{
+	fn from(error: Validated<VulkanError>) -> Self
+	{
+		Self {
+			source: Box::new(error.unwrap()),
+			context: "a Vulkan error has occurred",
+		}
+	}
+}
+impl From<Validated<AllocateImageError>> for EngineError
+{
+	fn from(error: Validated<AllocateImageError>) -> Self
+	{
+		let (context, source): (_, Box<dyn Error + Send + Sync + 'static>) = match error.unwrap() {
+			AllocateImageError::CreateImage(source) => {
+				("failed to create a Vulkan image", Box::new(source))
+			}
+			AllocateImageError::AllocateMemory(source) => {
+				return Self {
+					context: "failed to allocate memory for a Vulkan image",
+					..source.into()
+				}
+			}
+			AllocateImageError::BindMemory(source) => {
+				("failed to bind memory to a Vulkan image", Box::new(source))
+			}
+		};
+		Self {
+			source,
+			context,
+		}
+	}
+}
+impl From<Validated<AllocateBufferError>> for EngineError
+{
+	fn from(error: Validated<AllocateBufferError>) -> Self
+	{
+		let (context, source): (_, Box<dyn Error + Send + Sync + 'static>) = match error.unwrap() {
+			AllocateBufferError::CreateBuffer(source) => {
+				("failed to create a Vulkan buffer", Box::new(source))
+			}
+			AllocateBufferError::AllocateMemory(source) => {
+				return Self {
+					context: "failed to allocate memory for a Vulkan buffer",
+					..source.into()
+				}
+			}
+			AllocateBufferError::BindMemory(source) => {
+				("failed to bind memory to a Vulkan buffer", Box::new(source))
+			}
+		};
+		Self {
+			source,
+			context,
+		}
+	}
+}
+impl From<MemoryAllocatorError> for EngineError
+{
+	fn from(error: MemoryAllocatorError) -> Self
+	{
+		let source: Box<dyn Error + Send + Sync + 'static> = match error {
+			MemoryAllocatorError::AllocateDeviceMemory(inner) => Box::new(inner.unwrap()),
+			other => Box::new(other),
+		};
+
+		Self {
+			source,
+			context: "Vulkan memory allocation failed",
+		}
 	}
 }
 

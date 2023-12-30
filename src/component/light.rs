@@ -32,7 +32,7 @@ use vulkano::pipeline::{
 use vulkano::shader::ShaderStages;
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
-use crate::{render::RenderContext, EngineError};
+use crate::render::RenderContext;
 
 /// These are various components that represent light sources in the world.
 ///
@@ -164,14 +164,12 @@ impl LightManager
 			render_ctx.memory_allocator().clone(),
 			image_info.clone(),
 			AllocationCreateInfo::default(),
-		)
-		.map_err(|e| EngineError::vulkan_error("failed to create image for directional light", e))?;
+		)?;
 		let dir_light_shadow_view_info = ImageViewCreateInfo {
 			usage: ImageUsage::SAMPLED,
 			..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
 		};
-		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create image view for directional light", e))?;
+		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
 
 		let mut dir_light_shadow_layers = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
 		for i in 0..dir_light_shadow_img.array_layers() {
@@ -184,8 +182,7 @@ impl LightManager
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
 			};
-			let layer_view = ImageView::new(dir_light_shadow_img.clone(), layer_info)
-				.map_err(|e| EngineError::vulkan_error("failed to create image view for directional light layer", e))?;
+			let layer_view = ImageView::new(dir_light_shadow_img.clone(), layer_info)?;
 			dir_light_shadow_layers.push(layer_view);
 		}
 
@@ -198,8 +195,7 @@ impl LightManager
 				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),
 			],
 			[],
-		)
-		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set for lights", e))?;
+		)?;
 
 		/* shadow pipeline */
 		let rasterization_state = RasterizationState {
@@ -214,12 +210,11 @@ impl LightManager
 			}],
 			..Default::default()
 		};
-		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			&[vs_shadow::load(device.clone()).map_err(|e| EngineError::vulkan_error("failed to load shader", e))?],
+			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
 			pipeline_layout,
 			&[],

@@ -30,8 +30,6 @@ use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 
-use crate::EngineError;
-
 mod vs_fill_viewport
 {
 	vulkano_shaders::shader! {
@@ -96,10 +94,8 @@ impl RenderTarget
 			usage,
 			..Default::default()
 		};
-		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
-		let color_image_view =
-			ImageView::new_default(color_image).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+		let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
+		let color_image_view = ImageView::new_default(color_image)?;
 
 		let depth_create_info = ImageCreateInfo {
 			format: super::MAIN_DEPTH_FORMAT,
@@ -107,13 +103,10 @@ impl RenderTarget
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 			..Default::default()
 		};
-		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
-		let depth_image_view =
-			ImageView::new_default(depth_image).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
+		let depth_image = Image::new(memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
+		let depth_image_view = ImageView::new_default(depth_image)?;
 
-		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to crate sampler", e))?;
+		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
 		let input_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![input_sampler],
@@ -123,22 +116,19 @@ impl RenderTarget
 			bindings: [(0, input_binding)].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 		let color_set = PersistentDescriptorSet::new(
 			descriptor_set_allocator,
 			set_layout.clone(),
 			[WriteDescriptorSet::image_view(0, color_image_view.clone())],
 			[],
-		)
-		.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
+		)?;
 
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![set_layout.clone()],
 			..Default::default()
 		};
-		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let gamma_pipeline = if swapchain_color_space == ColorSpace::SrgbNonLinear {
 			Some(super::pipeline::new(

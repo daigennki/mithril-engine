@@ -59,8 +59,11 @@ pub fn new(
 
 	let stages: smallvec::SmallVec<[PipelineShaderStageCreateInfo; 5]> = shader_modules
 		.iter()
-		.map(|sm| PipelineShaderStageCreateInfo::new(sm.entry_point("main").expect("no 'main' entry point in shader")))
-		.collect();
+		.map(|sm| {
+			let entry_point = sm.entry_point("main").ok_or("no 'main' entry point in shader")?;
+			Ok(PipelineShaderStageCreateInfo::new(entry_point))
+		})
+		.collect::<Result<_, EngineError>>()?;
 
 	let vertex_input_state = stages
 		.iter()
@@ -114,8 +117,7 @@ pub fn new(
 		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 	};
 
-	GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)
-		.map_err(|e| EngineError::vulkan_error("failed to create graphics pipeline", e))
+	Ok(GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?)
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.

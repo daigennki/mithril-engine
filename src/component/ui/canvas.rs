@@ -35,7 +35,6 @@ use vulkano::shader::ShaderStages;
 
 use super::mesh::MeshType;
 use crate::render::RenderContext;
-use crate::EngineError;
 
 mod ui_vs
 {
@@ -183,8 +182,7 @@ impl Canvas
 			min_filter: Filter::Linear,
 			..Default::default()
 		};
-		let sampler =
-			Sampler::new(device.clone(), sampler_info).map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
+		let sampler = Sampler::new(device.clone(), sampler_info)?;
 		let image_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![sampler],
@@ -194,8 +192,7 @@ impl Canvas
 			bindings: [(0, image_binding)].into(),
 			..Default::default()
 		};
-		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
 		let push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>();
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
@@ -207,8 +204,7 @@ impl Canvas
 			}],
 			..Default::default()
 		};
-		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let color_attachments = [(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))];
 		let ui_pipeline = crate::render::pipeline::new(
@@ -223,8 +219,7 @@ impl Canvas
 		)?;
 
 		/* UI text pipeline */
-		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
+		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
 		let text_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![text_sampler],
@@ -234,8 +229,7 @@ impl Canvas
 			bindings: [(0, text_binding)].into(),
 			..Default::default()
 		};
-		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
 
 		let text_push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>() * 2;
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
@@ -247,8 +241,7 @@ impl Canvas
 			}],
 			..Default::default()
 		};
-		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
@@ -345,8 +338,7 @@ impl Canvas
 		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
 
 		let writes = [WriteDescriptorSet::image_view(0, image_view)];
-		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
+		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
 
 		Ok(UiGpuResources {
 			text_vbo,
@@ -409,9 +401,8 @@ impl Canvas
 		let max_glyphs: usize = render_ctx
 			.device()
 			.physical_device()
-			.image_format_properties(image_format_info)
-			.map_err(|e| EngineError::vulkan_error("failed to get image format properties", e))?
-			.unwrap()
+			.image_format_properties(image_format_info)?
+			.ok_or("text image format is not supported by the physical device")?
 			.max_array_layers
 			.min(2048)
 			.try_into()
@@ -548,11 +539,7 @@ impl Canvas
 			}
 		}
 
-		let built_cb = cb
-			.build()
-			.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?;
-
-		assert!(self.ui_cb.replace(built_cb).is_none());
+		assert!(self.ui_cb.replace(cb.build()?).is_none());
 
 		Ok(())
 	}

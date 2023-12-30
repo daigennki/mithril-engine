@@ -49,7 +49,7 @@ pub trait Material: Send + Sync
 
 	fn has_transparency(&self) -> bool;
 
-	fn load_shaders(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig;
+	fn load_shaders(&self, vk_dev: Arc<Device>) -> crate::Result<MaterialPipelineConfig>;
 }
 
 #[derive(Debug)]

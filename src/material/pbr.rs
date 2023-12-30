@@ -58,12 +58,12 @@ impl Material for PBR
 		self.transparent
 	}
 
-	fn load_shaders(&self, vk_dev: Arc<Device>) -> MaterialPipelineConfig
+	fn load_shaders(&self, vk_dev: Arc<Device>) -> crate::Result<MaterialPipelineConfig>
 	{
-		MaterialPipelineConfig {
-			vertex_shader: super::vs_3d_common::load(vk_dev.clone()).unwrap(),
-			fragment_shader: fs::load(vk_dev.clone()).unwrap(),
-			transparency: MaterialTransparencyMode::OIT(fs_oit::load(vk_dev).unwrap()),
-		}
+		Ok(MaterialPipelineConfig {
+			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
+			fragment_shader: fs::load(vk_dev.clone())?,
+			transparency: MaterialTransparencyMode::OIT(fs_oit::load(vk_dev)?),
+		})
 	}
 }

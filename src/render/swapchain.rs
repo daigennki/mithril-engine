@@ -61,19 +61,12 @@ impl Swapchain
 	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
 	{
 		let window = create_window(event_loop, window_title)?;
-		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())
-			.map_err(|e| EngineError::vulkan_error("failed to create surface", e))?;
+		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
 
 		let pd = vk_dev.physical_device();
-		let surface_caps = pd
-			.surface_capabilities(&surface, SurfaceInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to query surface capabilities", e))?;
-		let surface_formats = pd
-			.surface_formats(&surface, SurfaceInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to query surface formats", e))?;
-		let surface_present_modes = pd
-			.surface_present_modes(&surface, SurfaceInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to query surface present modes", e))?;
+		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
+		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
+		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
 
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("- {f:?}"));
@@ -102,7 +95,7 @@ impl Swapchain
 			..Default::default()
 		};
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create swapchain", e))?;
+			.map_err(|e| EngineError::new("failed to create swapchain", e.unwrap()))?;
 		log::info!(
 			"Created a swapchain with {} images (format {:?}, color space {:?})",
 			images.len(),
@@ -112,8 +105,7 @@ impl Swapchain
 
 		let mut image_views = Vec::with_capacity(images.len());
 		for img in images {
-			let view = ImageView::new_default(img).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
-			image_views.push(view);
+			image_views.push(ImageView::new_default(img)?);
 		}
 
 		// Set the framerate limit
@@ -195,13 +187,11 @@ impl Swapchain
 			let (new_swapchain, new_images) = self
 				.swapchain
 				.recreate(create_info)
-				.map_err(|e| EngineError::vulkan_error("failed to recreate swapchain", e))?;
+				.map_err(|e| EngineError::new("failed to recreate swapchain", e.unwrap()))?;
 
 			let mut new_image_views = Vec::with_capacity(new_images.len());
 			for img in new_images {
-				let view =
-					ImageView::new_default(img).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
-				new_image_views.push(view);
+				new_image_views.push(ImageView::new_default(img)?);
 			}
 
 			self.swapchain = new_swapchain;
@@ -223,7 +213,7 @@ impl Swapchain
 			Err(Validated::Error(VulkanError::Timeout)) => {
 				return Err("Swapchain image took too long to become available!".into())
 			}
-			Err(e) => return Err(EngineError::vulkan_error("failed to acquire swapchain image", e)),
+			Err(e) => return Err(e.into()),
 		};
 		if suboptimal {
 			log::warn!("Swapchain is suboptimal! Recreate pending...");
@@ -255,7 +245,7 @@ impl Swapchain
 			match f.wait(Some(std::time::Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => return Err("Graphics submission took too long!".into()),
-				Err(e) => return Err(EngineError::vulkan_error("failed to wait for fence", e)),
+				Err(e) => return Err(e.into()),
 			}
 			joined_futures = Box::new(joined_futures.join(f));
 		}
@@ -265,7 +255,7 @@ impl Swapchain
 			match f.wait(Some(Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => return Err("Transfer submission took too long!".into()),
-				Err(e) => return Err(EngineError::vulkan_error("failed to wait for fence", e)),
+				Err(e) => return Err(e.into()),
 			}
 			joined_futures = Box::new(joined_futures.join(f));
 		}
@@ -294,22 +284,18 @@ impl Swapchain
 						self.recreate_pending = true;
 						None
 					}
-					Err(e) => {
-						return Err(EngineError::vulkan_error(
-							"failed to submit command buffer/swapchain presentation",
-							e,
-						))
-					}
+					Err(e) => return Err(e.into()),
 				}
 			}
-			None => Some(
-				joined_futures
+			None => {
+				let f = joined_futures
 					.then_execute(queue.clone(), cb)
 					.unwrap()
 					.boxed_send_sync()
-					.then_signal_fence_and_flush()
-					.map_err(|e| EngineError::vulkan_error("failed to submit command buffer", e))?,
-			),
+					.then_signal_fence_and_flush()?;
+
+				Some(f)
+			},
 		};
 		self.submission_future = submission_future;
 

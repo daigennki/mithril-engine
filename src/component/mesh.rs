@@ -27,7 +27,6 @@ use crate::render::{
 	model::{ManagedModel, Model},
 	RenderContext,
 };
-use crate::EngineError;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -110,16 +109,14 @@ impl MeshManager
 			push_constant_ranges: vec![push_constant_range],
 			..Default::default()
 		};
-		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 
 		let layout_info_oit = PipelineLayoutCreateInfo {
 			set_layouts: vec![material_textures_set_layout, light_set_layout, transparency_inputs],
 			push_constant_ranges: vec![push_constant_range],
 			..Default::default()
 		};
-		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;
 
 		Ok(Self {
 			pipeline_layout,
@@ -150,7 +147,7 @@ impl MeshManager
 		for mat in managed_model.model().get_materials() {
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
-				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone());
+				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
 				let pipeline_data =
 					pipeline_config.into_pipelines(self.pipeline_layout.clone(), self.pipeline_layout_oit.clone())?;
 
@@ -245,10 +242,7 @@ impl MeshManager
 
 		// Don't bother building the command buffer if this is the OIT pass and no models were drawn.
 		let cb_return = if any_drawn || !transparency_pass || shadow_pass {
-			Some(
-				cb.build()
-					.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?,
-			)
+			Some(cb.build()?)
 		} else {
 			None
 		};

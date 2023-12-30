@@ -45,7 +45,7 @@ use vulkano::image::{
 	view::ImageView,
 };
 use vulkano::memory::{
-	allocator::{AllocationCreateInfo, MemoryAllocatorError, MemoryTypeFilter, StandardMemoryAllocator},
+	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport};
@@ -57,7 +57,6 @@ use vulkano::sync::{
 };
 use vulkano::DeviceSize;
 
-use crate::EngineError;
 use texture::Texture;
 
 // Format used for main depth buffer.
@@ -129,8 +128,7 @@ impl RenderContext
 			anisotropy: Some(16.0),
 			..SamplerCreateInfo::simple_repeat_linear()
 		};
-		let mat_tex_sampler = Sampler::new(vk_dev.clone(), mat_tex_sampler_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
+		let mat_tex_sampler = Sampler::new(vk_dev.clone(), mat_tex_sampler_info)?;
 		let mat_tex_bindings = [
 			DescriptorSetLayoutBinding {
 				// binding 0: sampler0
@@ -150,8 +148,7 @@ impl RenderContext
 			bindings: (0..).zip(mat_tex_bindings).collect(),
 			..Default::default()
 		};
-		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
 
 		let main_render_target = render_target::RenderTarget::new(
 			memory_allocator.clone(),
@@ -174,8 +171,7 @@ impl RenderContext
 			compare: Some(CompareOp::LessOrEqual),
 			..Default::default()
 		};
-		let shadow_sampler = Sampler::new(vk_dev.clone(), shadow_sampler_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
+		let shadow_sampler = Sampler::new(vk_dev.clone(), shadow_sampler_info)?;
 		let light_bindings = [
 			DescriptorSetLayoutBinding {
 				// binding 0: shadow sampler
@@ -198,8 +194,7 @@ impl RenderContext
 			bindings: (0..).zip(light_bindings).collect(),
 			..Default::default()
 		};
-		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)?;
 
 		let pool_create_info = SubbufferAllocatorCreateInfo {
 			arena_size: 8 * 1024 * 1024, // this should be adjusted based on actual memory usage
@@ -327,8 +322,7 @@ impl RenderContext
 				},
 				..Default::default()
 			};
-			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)
-				.map_err(|e| EngineError::vulkan_error("failed to create buffer", e))?;
+			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
 			buf.write().unwrap().copy_from_slice(data);
 		} else {
 			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
@@ -338,13 +332,7 @@ impl RenderContext
 				.staging_buffer_allocator
 				.lock()
 				.unwrap()
-				.allocate_slice(data.len().try_into().unwrap())
-				.map_err(|e| match e {
-					MemoryAllocatorError::AllocateDeviceMemory(validated_error) => {
-						EngineError::vulkan_error("failed to allocate staging buffer", validated_error)
-					}
-					other_error => EngineError::new("failed to allocate staging buffer", other_error),
-				})?;
+				.allocate_slice(data.len().try_into().unwrap())?;
 			staging_buf.write().unwrap().copy_from_slice(data);
 
 			let buf_info = BufferCreateInfo {
@@ -356,8 +344,7 @@ impl RenderContext
 				buf_info,
 				AllocationCreateInfo::default(),
 				data_len,
-			)
-			.map_err(|e| EngineError::vulkan_error("failed to create buffer", e))?;
+			)?;
 
 			self.add_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
 		}
@@ -412,20 +399,17 @@ impl RenderContext
 					&self.command_buffer_allocator,
 					q.queue_family_index(),
 					CommandBufferUsage::OneTimeSubmit,
-				)
-				.map_err(|e| EngineError::vulkan_error("failed to create command buffer builder", e))?;
+				)?;
 
 				for work in self.async_transfers.drain(..) {
 					work.add_command(&mut cb);
 				}
 
 				let transfer_future = cb
-					.build()
-					.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?
+					.build()?
 					.execute(q.clone())
 					.unwrap()
-					.then_signal_fence_and_flush()
-					.map_err(|e| EngineError::vulkan_error("failed to submit command buffer", e))?;
+					.then_signal_fence_and_flush()?;
 
 				// This panics here if there's an unused future, because it *must* have been used when
 				// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
@@ -462,8 +446,7 @@ impl RenderContext
 				render_pass: Some(rendering_inheritance.into()),
 				..Default::default()
 			},
-		)
-		.map_err(|e| EngineError::vulkan_error("failed to create command buffer builder", e))?;
+		)?;
 
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
@@ -507,8 +490,7 @@ impl RenderContext
 			&self.command_buffer_allocator,
 			self.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
-		)
-		.map_err(|e| EngineError::vulkan_error("failed to create command buffer", e))?;
+		)?;
 
 		// buffer updates
 		if self.buffer_updates.len() > 0 {
@@ -626,11 +608,8 @@ impl RenderContext
 		}
 
 		// submit the built command buffer, presenting it if possible
-		let built_primary_cb = primary_cb_builder
-			.build()
-			.map_err(|e| EngineError::vulkan_error("failed to build command buffer", e))?;
-		self.swapchain
-			.submit(built_primary_cb, self.graphics_queue.clone(), transfer_future)?;
+		let built_primary_cb = primary_cb_builder.build()?;
+		self.swapchain.submit(built_primary_cb, self.graphics_queue.clone(), transfer_future)?;
 
 		Ok(())
 	}
@@ -700,14 +679,7 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		subbuffer_allocator: &mut SubbufferAllocator,
 	) -> crate::Result<()>
 	{
-		let staging_buf = subbuffer_allocator
-			.allocate_slice(self.data.len().try_into().unwrap())
-			.map_err(|e| match e {
-				MemoryAllocatorError::AllocateDeviceMemory(validated_error) => {
-					EngineError::vulkan_error("failed to allocate staging buffer", validated_error)
-				}
-				other_error => EngineError::new("failed to allocate staging buffer", other_error),
-			})?;
+		let staging_buf = subbuffer_allocator.allocate_slice(self.data.len().try_into().unwrap())?;
 		staging_buf.write().unwrap().copy_from_slice(self.data.as_slice());
 
 		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data

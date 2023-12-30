@@ -40,8 +40,6 @@ use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use crate::EngineError;
-
 /// A renderer that implements Weight-Based Order-Independent Transparency (WBOIT).
 /*pub struct TransparencyRenderer
 {
@@ -378,15 +376,14 @@ impl MomentTransparencyRenderer
 			}],
 			..Default::default()
 		};
-		let stage2_pipeline_layout = PipelineLayout::new(device.clone(), stage2_pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let stage2_pipeline_layout = PipelineLayout::new(device.clone(), stage2_pipeline_layout_info)?;
 
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[
-				vs_nonorm::load(device.clone()).unwrap(),
-				fs_moments::load(device.clone()).unwrap(),
+				vs_nonorm::load(device.clone())?,
+				fs_moments::load(device.clone())?,
 			],
 			RasterizationState {
 				cull_mode: CullMode::Back,
@@ -408,8 +405,7 @@ impl MomentTransparencyRenderer
 			stages: ShaderStages::FRAGMENT,
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
 		};
-		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create sampler", e))?;
+		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
 		let oit_sampler_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			immutable_samplers: vec![input_sampler],
@@ -425,8 +421,7 @@ impl MomentTransparencyRenderer
 			.into(),
 			..Default::default()
 		};
-		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)?;
 
 		//
 		/* Stage 4: Composite transparency image onto opaque image */
@@ -440,22 +435,20 @@ impl MomentTransparencyRenderer
 			.into(),
 			..Default::default()
 		};
-		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create descriptor set layout", e))?;
+		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
 
 		let stage4_pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![stage4_inputs_layout.clone()],
 			..Default::default()
 		};
-		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)
-			.map_err(|e| EngineError::vulkan_error("failed to create pipeline layout", e))?;
+		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)?;
 
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[
-				vs_fill_viewport::load(device.clone()).unwrap(),
-				fs_oit_compositing::load(device.clone()).unwrap(),
+				vs_fill_viewport::load(device.clone())?,
+				fs_oit_compositing::load(device.clone())?,
 			],
 			RasterizationState::default(),
 			stage4_pipeline_layout,
@@ -705,11 +698,8 @@ fn create_mboit_images(
 	];
 	let mut views = Vec::with_capacity(5);
 	for info in image_create_infos {
-		let new_image = Image::new(memory_allocator.clone(), info.clone(), AllocationCreateInfo::default())
-			.map_err(|e| EngineError::vulkan_error("failed to create image", e))?;
-		let image_view =
-			ImageView::new_default(new_image).map_err(|e| EngineError::vulkan_error("failed to create image view", e))?;
-		views.push(image_view);
+		let new_image = Image::new(memory_allocator.clone(), info.clone(), AllocationCreateInfo::default())?;
+		views.push(ImageView::new_default(new_image)?);
 	}
 
 	let image_bundle = MomentImageBundle {
@@ -729,8 +719,7 @@ fn create_mboit_images(
 			WriteDescriptorSet::image_view(3, views[2].clone()),
 		],
 		[],
-	)
-	.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
+	)?;
 
 	let stage4_inputs = PersistentDescriptorSet::new(
 		descriptor_set_allocator,
@@ -740,8 +729,7 @@ fn create_mboit_images(
 			WriteDescriptorSet::image_view(2, views[4].clone()),
 		],
 		[],
-	)
-	.map_err(|e| EngineError::vulkan_error("failed to create descriptor set", e))?;
+	)?;
 
 	Ok((image_bundle, stage3_inputs, stage4_inputs))
 }
