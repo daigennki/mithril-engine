@@ -295,7 +295,7 @@ impl Swapchain
 					.then_signal_fence_and_flush()?;
 
 				Some(f)
-			},
+			}
 		};
 		self.submission_future = submission_future;
 

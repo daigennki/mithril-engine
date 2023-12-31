@@ -299,9 +299,9 @@ impl Error for EngineError
 {
 	fn source(&self) -> Option<&(dyn Error + 'static)>
 	{
-		self.source.as_ref().map(|src_box| -> &(dyn Error + 'static) {
-			src_box.as_ref()
-		})
+		self.source
+			.as_ref()
+			.map(|src_box| -> &(dyn Error + 'static) { src_box.as_ref() })
 	}
 }
 impl From<&'static str> for EngineError
@@ -335,23 +335,19 @@ impl From<Validated<AllocateImageError>> for EngineError
 {
 	fn from(error: Validated<AllocateImageError>) -> Self
 	{
-		let (context, source): (_, Box<dyn Error + Send + Sync + 'static>) = match error.unwrap() {
-			AllocateImageError::CreateImage(source) => {
-				("failed to create a Vulkan image", Box::new(source))
-			}
-			AllocateImageError::AllocateMemory(source) => {
-				return Self {
-					context: "failed to allocate memory for a Vulkan image",
-					..source.into()
-				}
-			}
-			AllocateImageError::BindMemory(source) => {
-				("failed to bind memory to a Vulkan image", Box::new(source))
-			}
-		};
-		Self {
-			source: Some(source),
-			context,
+		match error.unwrap() {
+			AllocateImageError::CreateImage(source) => Self {
+				context: "failed to create a Vulkan image",
+				source: Some(Box::new(source)),
+			},
+			AllocateImageError::AllocateMemory(source) => Self {
+				context: "failed to allocate memory for a Vulkan image",
+				..source.into()
+			},
+			AllocateImageError::BindMemory(source) => Self {
+				context: "failed to bind memory to a Vulkan image",
+				source: Some(Box::new(source)),
+			},
 		}
 	}
 }
@@ -359,23 +355,19 @@ impl From<Validated<AllocateBufferError>> for EngineError
 {
 	fn from(error: Validated<AllocateBufferError>) -> Self
 	{
-		let (context, source): (_, Box<dyn Error + Send + Sync + 'static>) = match error.unwrap() {
-			AllocateBufferError::CreateBuffer(source) => {
-				("failed to create a Vulkan buffer", Box::new(source))
-			}
-			AllocateBufferError::AllocateMemory(source) => {
-				return Self {
-					context: "failed to allocate memory for a Vulkan buffer",
-					..source.into()
-				}
-			}
-			AllocateBufferError::BindMemory(source) => {
-				("failed to bind memory to a Vulkan buffer", Box::new(source))
-			}
-		};
-		Self {
-			source: Some(source),
-			context,
+		match error.unwrap() {
+			AllocateBufferError::CreateBuffer(source) => Self {
+				context: "failed to create a Vulkan buffer",
+				source: Some(Box::new(source)),
+			},
+			AllocateBufferError::AllocateMemory(source) => Self {
+				context: "failed to allocate memory for a Vulkan buffer",
+				..source.into()
+			},
+			AllocateBufferError::BindMemory(source) => Self {
+				context: "failed to bind memory to a Vulkan buffer",
+				source: Some(Box::new(source)),
+			},
 		}
 	}
 }

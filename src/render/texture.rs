@@ -209,9 +209,7 @@ where
 	let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
 		.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
 
-	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator
-		.allocate(device_layout)?
-		.reinterpret();
+	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
 
 	staging_buf.write().unwrap().copy_from_slice(data);
 

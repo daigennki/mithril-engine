@@ -381,10 +381,7 @@ impl MomentTransparencyRenderer
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
-			&[
-				vs_nonorm::load(device.clone())?,
-				fs_moments::load(device.clone())?,
-			],
+			&[vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())?],
 			RasterizationState {
 				cull_mode: CullMode::Back,
 				..Default::default()

@@ -405,11 +405,7 @@ impl RenderContext
 					work.add_command(&mut cb);
 				}
 
-				let transfer_future = cb
-					.build()?
-					.execute(q.clone())
-					.unwrap()
-					.then_signal_fence_and_flush()?;
+				let transfer_future = cb.build()?.execute(q.clone()).unwrap().then_signal_fence_and_flush()?;
 
 				// This panics here if there's an unused future, because it *must* have been used when
 				// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
@@ -609,7 +605,8 @@ impl RenderContext
 
 		// submit the built command buffer, presenting it if possible
 		let built_primary_cb = primary_cb_builder.build()?;
-		self.swapchain.submit(built_primary_cb, self.graphics_queue.clone(), transfer_future)?;
+		self.swapchain
+			.submit(built_primary_cb, self.graphics_queue.clone(), transfer_future)?;
 
 		Ok(())
 	}
