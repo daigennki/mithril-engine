@@ -141,7 +141,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 		shadow_pass: bool,
 		material_variant: usize,
 		resources_bound: &mut bool,
-	) -> bool
+	) -> crate::Result<bool>
 	{
 		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
 
@@ -173,7 +173,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 		// Don't even bother with binds if no submeshes are visible
 		if any_visible {
 			if shadow_pass {
-				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel).unwrap();
+				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 			} else {
 				let translation = model_matrix.w_axis.xyz();
 				let push_data = MeshPushConstant {
@@ -182,7 +182,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 					model_y: model_matrix.y_axis.xyz().extend(translation.y),
 					model_z: model_matrix.z_axis.xyz().extend(translation.z),
 				};
-				cb.push_constants(pipeline_layout.clone(), 0, push_data).unwrap();
+				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 			}
 
 			if !*resources_bound {
@@ -191,14 +191,13 @@ This model may be inefficient to draw, so consider joining the meshes."
 					vbo = vec![self.vertex_subbuffers[0].clone()];
 				} else {
 					let set = self.textures_set.clone();
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)
-						.unwrap();
+					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
 
 					vbo = self.vertex_subbuffers.clone();
 				}
 
-				cb.bind_vertex_buffers(0, vbo).unwrap();
-				self.index_buffer.bind(cb);
+				cb.bind_vertex_buffers(0, vbo)?;
+				self.index_buffer.bind(cb)?;
 
 				*resources_bound = true;
 			}
@@ -211,7 +210,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 			}
 		}
 
-		any_visible
+		Ok(any_visible)
 	}
 }
 
@@ -433,13 +432,13 @@ enum IndexBufferVariant
 }
 impl IndexBufferVariant
 {
-	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
+	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> crate::Result<()>
 	{
 		match self {
 			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
 			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
-		}
-		.unwrap();
+		}?;
+		Ok(())
 	}
 }
 
@@ -631,7 +630,7 @@ impl ModelInstance
 		shadow_pass: bool,
 		projview: &Mat4,
 		vbo_bound: &mut bool,
-	) -> bool
+	) -> crate::Result<bool>
 	{
 		self.model.draw(
 			cb,
@@ -700,7 +699,7 @@ impl ManagedModel
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &Mat4,
-	) -> bool
+	) -> crate::Result<bool>
 	{
 		let mut any_drawn = false;
 
@@ -717,11 +716,11 @@ impl ManagedModel
 				shadow_pass,
 				projview,
 				&mut resources_bound,
-			) {
+			)? {
 				any_drawn = true;
 			}
 		}
 
-		any_drawn
+		Ok(any_drawn)
 	}
 }

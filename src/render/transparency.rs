@@ -505,7 +505,7 @@ impl MomentTransparencyRenderer
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		color_image: Arc<ImageView>,
 		depth_image: Arc<ImageView>,
-	)
+	) -> crate::Result<()>
 	{
 		let extent3 = self.images.moments.image().extent();
 		let img_extent = [extent3[0], extent3[1]];
@@ -515,7 +515,7 @@ impl MomentTransparencyRenderer
 			moments_cb = Arc::new(m_cb);
 		} else {
 			// Skip OIT processing if no transparent materials are in view
-			return;
+			return Ok(());
 		}
 		let transparency_cb = Arc::new(self.transparency_cb.lock().unwrap().take().unwrap());
 
@@ -598,35 +598,24 @@ impl MomentTransparencyRenderer
 		};
 
 		// draw the objects to the transparency framebuffer, then composite the transparency onto the main framebuffer
-		cb.begin_rendering(stage2_rendering_info)
-			.unwrap()
-			.execute_commands(moments_cb)
-			.unwrap()
-			.end_rendering()
-			.unwrap()
-			.begin_rendering(stage3_rendering_info)
-			.unwrap()
-			.execute_commands(transparency_cb)
-			.unwrap()
-			.end_rendering()
-			.unwrap()
-			.begin_rendering(stage4_rendering_info)
-			.unwrap()
-			.set_viewport(0, [viewport].as_slice().into())
-			.unwrap()
-			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())
-			.unwrap()
+		cb.begin_rendering(stage2_rendering_info)?
+			.execute_commands(moments_cb)?
+			.end_rendering()?
+			.begin_rendering(stage3_rendering_info)?
+			.execute_commands(transparency_cb)?
+			.end_rendering()?
+			.begin_rendering(stage4_rendering_info)?
+			.set_viewport(0, [viewport].as_slice().into())?
+			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.transparency_compositing_pl.layout().clone(),
 				0,
 				vec![self.stage4_inputs.clone()],
-			)
-			.unwrap()
-			.draw(3, 1, 0, 0)
-			.unwrap()
-			.end_rendering()
-			.unwrap();
+			)?
+			.draw(3, 1, 0, 0)?;
+
+		Ok(())
 	}
 
 	pub fn add_transparency_moments_cb(&self, command_buffer: Arc<SecondaryAutoCommandBuffer>)

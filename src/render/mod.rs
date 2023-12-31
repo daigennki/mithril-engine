@@ -391,7 +391,7 @@ impl RenderContext
 	///
 	/// This does nothing if there is no asynchronous transfer queue. In such a case, the transfers will
 	/// instead be done at the beginning of the graphics submission on the graphics queue.
-	pub fn submit_async_transfers(&mut self) -> crate::Result<()>
+	fn submit_async_transfers(&mut self) -> crate::Result<()>
 	{
 		if let Some(q) = self.transfer_queue.as_ref() {
 			if self.async_transfers.len() > 0 {
@@ -478,7 +478,7 @@ impl RenderContext
 	}
 
 	/// Submit all the command buffers for this frame to actually render them to the image.
-	pub fn submit_frame(
+	fn submit_frame(
 		&mut self,
 		sky_cb: Arc<SecondaryAutoCommandBuffer>,
 		cb_3d: Arc<SecondaryAutoCommandBuffer>,
@@ -583,7 +583,7 @@ impl RenderContext
 				&mut primary_cb_builder,
 				self.main_render_target.color_image().clone(),
 				self.main_render_target.depth_image().clone(),
-			);
+			)?;
 
 			// UI
 			if let Some(some_ui_cb) = ui_cb {
@@ -604,7 +604,7 @@ impl RenderContext
 
 			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
 			self.main_render_target
-				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view);
+				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
 		}
 
 		// submit the built command buffer, presenting it if possible

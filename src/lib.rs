@@ -128,9 +128,9 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			// window in physical pixels should be exactly the same (dot-by-dot) as the swapchain's image extent.
 			// It would look blurry if we don't do this.
 			let extent = world.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
-			inner_size_writer
-				.request_inner_size(extent.into())
-				.map_err(|e| EngineError::new("failed to request window inner size", e))?;
+			if let Err(e) = inner_size_writer.request_inner_size(extent.into()) {
+				log::error!("failed to request window inner size: {e}");
+			}
 		}
 		Event::WindowEvent {
 			event: WindowEvent::KeyboardInput { event: key_event, .. },
@@ -270,17 +270,17 @@ type Result<T> = std::result::Result<T, EngineError>;
 #[derive(Debug)]
 pub struct EngineError
 {
-	source: Box<dyn Error + Send + Sync + 'static>,
+	source: Option<Box<dyn Error + Send + Sync + 'static>>,
 	context: &'static str,
 }
 impl EngineError
 {
-	pub fn new<E>(context: &'static str, error: E) -> Self
+	fn new<E>(context: &'static str, error: E) -> Self
 	where
 		E: Error + Send + Sync + 'static,
 	{
 		Self {
-			source: Box::new(error),
+			source: Some(Box::new(error)),
 			context,
 		}
 	}
@@ -289,14 +289,19 @@ impl std::fmt::Display for EngineError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "{}: {}", self.context, self.source)
+		match &self.source {
+			Some(e) => write!(f, "{}: {}", self.context, e),
+			None => write!(f, "{}", self.context),
+		}
 	}
 }
 impl Error for EngineError
 {
 	fn source(&self) -> Option<&(dyn Error + 'static)>
 	{
-		Some(self.source.as_ref())
+		self.source.as_ref().map(|src_box| -> &(dyn Error + 'static) {
+			src_box.as_ref()
+		})
 	}
 }
 impl From<&'static str> for EngineError
@@ -304,8 +309,8 @@ impl From<&'static str> for EngineError
 	fn from(string: &'static str) -> Self
 	{
 		Self {
-			source: string.into(),
-			context: "a generic engine error has occurred",
+			source: None,
+			context: string,
 		}
 	}
 }
@@ -321,7 +326,7 @@ impl From<Validated<VulkanError>> for EngineError
 	fn from(error: Validated<VulkanError>) -> Self
 	{
 		Self {
-			source: Box::new(error.unwrap()),
+			source: Some(Box::new(error.unwrap())),
 			context: "a Vulkan error has occurred",
 		}
 	}
@@ -345,7 +350,7 @@ impl From<Validated<AllocateImageError>> for EngineError
 			}
 		};
 		Self {
-			source,
+			source: Some(source),
 			context,
 		}
 	}
@@ -369,7 +374,7 @@ impl From<Validated<AllocateBufferError>> for EngineError
 			}
 		};
 		Self {
-			source,
+			source: Some(source),
 			context,
 		}
 	}
@@ -384,7 +389,7 @@ impl From<MemoryAllocatorError> for EngineError
 		};
 
 		Self {
-			source,
+			source: Some(source),
 			context: "Vulkan memory allocation failed",
 		}
 	}

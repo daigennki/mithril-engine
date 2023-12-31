@@ -230,7 +230,7 @@ impl MeshManager
 					transparency_pass,
 					shadow_pass,
 					&projview,
-				) {
+				)? {
 					any_drawn = true;
 				}
 			}

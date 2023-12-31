@@ -169,7 +169,7 @@ impl RenderTarget
 		&self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		swapchain_image: Arc<ImageView>,
-	)
+	) -> crate::Result<()>
 	{
 		if let Some(gamma_pipeline) = &self.gamma_pipeline {
 			// perform gamma correction and write to the swapchain image
@@ -189,30 +189,25 @@ impl RenderTarget
 				depth_range: 0.0..=1.0,
 			};
 
-			cb.begin_rendering(render_info)
-				.unwrap()
-				.set_viewport(0, [viewport].as_slice().into())
-				.unwrap()
-				.bind_pipeline_graphics(gamma_pipeline.clone())
-				.unwrap()
+			cb.begin_rendering(render_info)?
+				.set_viewport(0, [viewport].as_slice().into())?
+				.bind_pipeline_graphics(gamma_pipeline.clone())?
 				.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					gamma_pipeline.layout().clone(),
 					0,
 					vec![self.color_set.clone()],
-				)
-				.unwrap()
-				.draw(3, 1, 0, 0)
-				.unwrap()
-				.end_rendering()
-				.unwrap();
+				)?
+				.draw(3, 1, 0, 0)?
+				.end_rendering()?;
 		} else {
 			// blit to the swapchain image without gamma correction
 			cb.blit_image(BlitImageInfo::images(
 				self.color_image.image().clone(),
 				swapchain_image.image().clone(),
-			))
-			.unwrap();
+			))?;
 		}
+
+		Ok(())
 	}
 }

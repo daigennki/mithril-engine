@@ -210,7 +210,7 @@ impl Canvas
 		let ui_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			&[ui_vs::load(device.clone()).unwrap(), ui_fs::load(device.clone()).unwrap()],
+			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
 			pipeline_layout,
 			&color_attachments,
@@ -246,10 +246,7 @@ impl Canvas
 		let text_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
-			&[
-				ui_text_vs::load(device.clone()).unwrap(),
-				ui_text_fs::load(device.clone()).unwrap(),
-			],
+			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			text_pipeline_layout,
 			&color_attachments,

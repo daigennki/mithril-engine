@@ -112,7 +112,7 @@ impl Skybox
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
-			&[vs::load(device.clone()).unwrap(), fs::load(device.clone()).unwrap()],
+			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),
 			pipeline_layout,
 			&[(Format::R16G16B16A16_SFLOAT, None)],
