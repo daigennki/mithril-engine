@@ -456,7 +456,7 @@ impl RenderContext
 	fn resize_everything_else(&mut self) -> crate::Result<()>
 	{
 		// Update images to match the current swapchain image extent.
-		self.main_render_target = render_target::RenderTarget::new(
+		self.main_render_target.resize(
 			self.memory_allocator.clone(),
 			&self.descriptor_set_allocator,
 			self.swapchain.get_images(),
