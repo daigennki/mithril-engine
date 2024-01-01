@@ -123,41 +123,44 @@ pub fn new(
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
 fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 {
-	log::debug!("Automatically generating VertexInputState:");
-	let vertex_input_state =
-		entry_point
-			.info()
-			.input_interface
-			.elements()
-			.iter()
-			.fold(VertexInputState::new(), |accum, input| {
-				let binding = input.location;
-				let format = format_from_interface_type(&input.ty);
-				let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
-				let name = input.name.as_ref().map(|n| n.as_ref()).unwrap_or("[unknown]");
-
-				log::debug!("- binding + attribute {binding} '{name}': {format:?} (stride {stride})");
-
-				// If the input name ends with "_INSTANCE", use `VertexInputRate::Instance` for that input.
-				let input_rate = name
-					.ends_with("_INSTANCE")
-					.then_some(VertexInputRate::Instance { divisor: 1 })
-					.unwrap_or(VertexInputRate::Vertex);
-
-				let binding_desc = VertexInputBindingDescription { stride, input_rate };
-				let attribute_desc = VertexInputAttributeDescription {
-					binding,
-					format,
-					offset: 0,
-				};
-				accum.binding(binding, binding_desc).attribute(binding, attribute_desc)
-			});
-
-	if vertex_input_state.attributes.is_empty() {
-		log::debug!("- (empty)");
+	if entry_point.info().input_interface.elements().len() > 0 {
+		log::debug!("Automatically generating VertexInputState:");
 	}
 
-	vertex_input_state
+	let (bindings, attributes) = entry_point
+		.info()
+		.input_interface
+		.elements()
+		.iter()
+		.map(|input| {
+			let binding = input.location;
+			let format = format_from_interface_type(&input.ty);
+			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
+			let name = input.name.as_ref().map(|n| n.as_ref()).unwrap_or("[unknown]");
+
+			log::debug!("- binding + attribute {binding} '{name}': {format:?} (stride {stride})");
+
+			// If the input name ends with "_INSTANCE", use `VertexInputRate::Instance` for that input.
+			let input_rate = name
+				.ends_with("_INSTANCE")
+				.then_some(VertexInputRate::Instance { divisor: 1 })
+				.unwrap_or(VertexInputRate::Vertex);
+
+			let binding_desc = VertexInputBindingDescription { stride, input_rate };
+			let attribute_desc = VertexInputAttributeDescription {
+				binding,
+				format,
+				offset: 0,
+			};
+			((binding, binding_desc), (binding, attribute_desc))
+		})
+		.unzip();
+
+	VertexInputState {
+		bindings,
+		attributes,
+		..Default::default()
+	}
 }
 
 fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
