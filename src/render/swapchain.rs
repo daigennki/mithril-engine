@@ -82,7 +82,7 @@ impl Swapchain
 			.unwrap();
 
 		let image_usage = (image_color_space == ColorSpace::SrgbNonLinear)
-			.then_some(ImageUsage::COLOR_ATTACHMENT)
+			.then_some(ImageUsage::STORAGE)
 			.unwrap_or(ImageUsage::TRANSFER_DST);
 
 		let create_info = SwapchainCreateInfo {
@@ -148,7 +148,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> crate::Result<Option<Arc<ImageView>>>
+	pub fn get_next_image(&mut self) -> crate::Result<Option<(u32, Arc<ImageView>)>>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -221,7 +221,7 @@ impl Swapchain
 		}
 		self.acquire_future = Some(acquire_future);
 
-		Ok(Some(self.image_views[image_num as usize].clone()))
+		Ok(Some((image_num, self.image_views[image_num as usize].clone())))
 	}
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
@@ -322,10 +322,11 @@ impl Swapchain
 		self.image_views.len()
 	}
 
-	pub fn format(&self) -> Format
+	pub fn get_images(&self) -> &Vec<Arc<ImageView>>
 	{
-		self.swapchain.image_format()
+		&self.image_views
 	}
+
 	pub fn color_space(&self) -> ColorSpace
 	{
 		self.swapchain.image_color_space()

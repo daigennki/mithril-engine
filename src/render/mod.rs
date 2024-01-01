@@ -153,8 +153,7 @@ impl RenderContext
 		let main_render_target = render_target::RenderTarget::new(
 			memory_allocator.clone(),
 			&descriptor_set_allocator,
-			swapchain.dimensions(),
-			swapchain.format(),
+			swapchain.get_images(),
 			swapchain.color_space(),
 		)?;
 		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
@@ -460,8 +459,7 @@ impl RenderContext
 		self.main_render_target = render_target::RenderTarget::new(
 			self.memory_allocator.clone(),
 			&self.descriptor_set_allocator,
-			self.swapchain.dimensions(),
-			self.swapchain.format(),
+			self.swapchain.get_images(),
 			self.swapchain.color_space(),
 		)?;
 		self.transparency_renderer.resize_image(
@@ -515,7 +513,7 @@ impl RenderContext
 
 		// Sometimes no image may be returned because the image is out of date or the window is minimized,
 		// in which case, don't present.
-		if let Some(swapchain_image_view) = self.swapchain.get_next_image()? {
+		if let Some((swapchain_image_num, swapchain_image_view)) = self.swapchain.get_next_image()? {
 			if self.swapchain.extent_changed() {
 				self.resize_everything_else()?;
 			}
@@ -600,7 +598,7 @@ impl RenderContext
 
 			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
 			self.main_render_target
-				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view)?;
+				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view, swapchain_image_num)?;
 		}
 
 		// submit the built command buffer, presenting it if possible
