@@ -6,7 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use std::sync::Arc;
-use vulkano::device::{Device, DeviceOwned};
+use vulkano::device::Device;
 use vulkano::format::{Format, NumericType};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
@@ -19,10 +19,7 @@ use vulkano::pipeline::graphics::{
 	viewport::ViewportState,
 	GraphicsPipelineCreateInfo,
 };
-use vulkano::pipeline::{
-	compute::ComputePipelineCreateInfo, ComputePipeline, DynamicState, GraphicsPipeline, PipelineLayout,
-	PipelineShaderStageCreateInfo,
-};
+use vulkano::pipeline::{DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderModule};
 
 use crate::EngineError;
@@ -192,11 +189,3 @@ fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 	possible_formats[format_index]
 }
 
-pub fn new_compute(shader: Arc<ShaderModule>, layout: Arc<PipelineLayout>) -> crate::Result<Arc<ComputePipeline>>
-{
-	let entry_point = shader.entry_point("main").ok_or("no 'main' entry point in compute shader")?;
-	let stage = PipelineShaderStageCreateInfo::new(entry_point);
-	let create_info = ComputePipelineCreateInfo::stage_layout(stage, layout);
-
-	Ok(ComputePipeline::new(shader.device().clone(), None, create_info)?)
-}

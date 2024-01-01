@@ -15,7 +15,10 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
-use vulkano::pipeline::{layout::PipelineLayoutCreateInfo, ComputePipeline, Pipeline, PipelineBindPoint, PipelineLayout};
+use vulkano::pipeline::{
+	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo,
+	ComputePipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+};
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 
@@ -93,14 +96,16 @@ impl RenderTarget
 			swapchain_images,
 			swapchain_color_space
 		)?;
-		
+
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![set_layout.clone()],
 			..Default::default()
 		};
 		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
-
-		let gamma_pipeline = super::pipeline::new_compute(compute_gamma::load(device)?, pipeline_layout)?;
+		let entry_point = compute_gamma::load(device.clone())?.entry_point("main").unwrap();
+		let stage = PipelineShaderStageCreateInfo::new(entry_point);
+		let pipeline_create_info = ComputePipelineCreateInfo::stage_layout(stage, pipeline_layout);
+		let gamma_pipeline = ComputePipeline::new(device, None, pipeline_create_info)?;
 
 		Ok(Self {
 			color_image: color_image_view,
@@ -131,6 +136,7 @@ impl RenderTarget
 			swapchain_images,
 			swapchain_color_space,
 		)?;
+
 		Ok(())
 	}
 
