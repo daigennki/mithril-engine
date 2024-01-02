@@ -513,7 +513,7 @@ impl RenderContext
 
 		// Sometimes no image may be returned because the image is out of date or the window is minimized,
 		// in which case, don't present.
-		if let Some((swapchain_image_num, swapchain_image_view)) = self.swapchain.get_next_image()? {
+		if let Some(swapchain_image_num) = self.swapchain.get_next_image()? {
 			if self.swapchain.extent_changed() {
 				self.resize_everything_else()?;
 			}
@@ -598,7 +598,7 @@ impl RenderContext
 
 			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
 			self.main_render_target
-				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_view, swapchain_image_num)?;
+				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_num)?;
 		}
 
 		// submit the built command buffer, presenting it if possible

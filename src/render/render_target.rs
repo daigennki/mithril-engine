@@ -16,8 +16,8 @@ use vulkano::format::Format;
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
-	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo,
-	ComputePipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo, ComputePipeline, Pipeline, PipelineBindPoint,
+	PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
@@ -56,6 +56,9 @@ pub struct RenderTarget
 	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
 	depth_image: Arc<ImageView>,
 
+	// Swapchain images as obtained from the swapchain.
+	swapchain_images: Vec<Arc<ImageView>>,
+
 	// The pipeline used to apply gamma correction.
 	// Only used when the output color space is `SrgbNonLinear`.
 	gamma_pipeline: Arc<ComputePipeline>,
@@ -88,13 +91,13 @@ impl RenderTarget
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
-		
+
 		let sets = create_descriptor_sets(
 			descriptor_set_allocator,
 			&set_layout,
 			&color_image_view,
 			swapchain_images,
-			swapchain_color_space
+			swapchain_color_space,
 		)?;
 
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
@@ -110,6 +113,7 @@ impl RenderTarget
 		Ok(Self {
 			color_image: color_image_view,
 			depth_image: depth_image_view,
+			swapchain_images: swapchain_images.clone(),
 			gamma_pipeline,
 			set_layout,
 			color_sets: sets,
@@ -126,9 +130,10 @@ impl RenderTarget
 	{
 		let extent = swapchain_images.first().unwrap().image().extent();
 		let (color_image_view, depth_image_view) = create_images(memory_allocator.clone(), extent, swapchain_color_space)?;
+
 		self.color_image = color_image_view;
 		self.depth_image = depth_image_view;
-
+		self.swapchain_images = swapchain_images.clone();
 		self.color_sets = create_descriptor_sets(
 			descriptor_set_allocator,
 			&self.set_layout,
@@ -152,7 +157,6 @@ impl RenderTarget
 	pub fn blit_to_swapchain(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		swapchain_image: Arc<ImageView>,
 		swapchain_image_num: u32,
 	) -> crate::Result<()>
 	{
@@ -169,10 +173,9 @@ impl RenderTarget
 				.dispatch([workgroups_x, image_extent[1], 1])?;
 		} else {
 			// for rendering to anything else, blit to the swapchain image without gamma correction
-			cb.blit_image(BlitImageInfo::images(
-				self.color_image.image().clone(),
-				swapchain_image.image().clone(),
-			))?;
+			let input_image = self.color_image.image().clone();
+			let output_image = self.swapchain_images[swapchain_image_num as usize].image().clone();
+			cb.blit_image(BlitImageInfo::images(input_image, output_image))?;
 		}
 
 		Ok(())

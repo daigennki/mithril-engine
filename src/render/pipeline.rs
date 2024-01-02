@@ -188,4 +188,3 @@ fn format_from_interface_type(ty: &ShaderInterfaceEntryType) -> Format
 	let format_index = (ty.num_components - 1) as usize;
 	possible_formats[format_index]
 }
-

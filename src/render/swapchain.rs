@@ -148,7 +148,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> crate::Result<Option<(u32, Arc<ImageView>)>>
+	pub fn get_next_image(&mut self) -> crate::Result<Option<u32>>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -221,11 +221,11 @@ impl Swapchain
 		}
 		self.acquire_future = Some(acquire_future);
 
-		Ok(Some((image_num, self.image_views[image_num as usize].clone())))
+		Ok(Some(image_num))
 	}
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
-	/// swapchain image, usually blitting to it) and then present the resulting image.
+	/// swapchain image) and then present the resulting image.
 	/// Optionally, a future `after` to wait for (usually for joining submitted transfers on another queue) can be given, so
 	/// that graphics operations don't begin until after that future is reached.
 	///
