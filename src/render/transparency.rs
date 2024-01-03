@@ -509,12 +509,12 @@ impl MomentTransparencyRenderer
 
 		let moments_cb;
 		if let Some(m_cb) = self.transparency_moments_cb.lock().unwrap().take() {
-			moments_cb = Arc::new(m_cb);
+			moments_cb = m_cb;
 		} else {
 			// Skip OIT processing if no transparent materials are in view
 			return Ok(());
 		}
-		let transparency_cb = Arc::new(self.transparency_cb.lock().unwrap().take().unwrap());
+		let transparency_cb = self.transparency_cb.lock().unwrap().take().unwrap();
 
 		let stage2_rendering_info = RenderingInfo {
 			render_area_extent: img_extent,
