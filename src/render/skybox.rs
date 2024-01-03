@@ -67,6 +67,35 @@ mod fs
 	}
 }
 
+#[derive(Copy, Clone, bytemuck::AnyBitPattern)]
+#[repr(C)]
+struct SkyCubeData
+{
+	position: [f32; 24],
+	indices: [u16; 17],
+}
+const SKY_CUBE_DATA: SkyCubeData = SkyCubeData {
+	// Sky cube, consisting of two fans with the "center" being opposite corners of the cube.
+	// Relative to camera at default state, -X is left, +Y is forward, and +Z is up.
+	#[rustfmt::skip]
+	position: [
+		-1.0, -1.0, -1.0,
+		-1.0, -1.0, 1.0,
+		1.0, -1.0, 1.0,
+		1.0, -1.0, -1.0,
+		1.0, 1.0, -1.0,
+		-1.0, 1.0, -1.0,
+		-1.0, 1.0, 1.0,
+		1.0, 1.0, 1.0,
+	],
+
+	#[rustfmt::skip]
+	indices: [
+		0, 1, 2, 3, 4, 5, 6, 1, u16::MAX,
+		7, 1, 2, 3, 4, 5, 6, 1,
+	],
+};
+
 #[derive(shipyard::Unique)]
 pub struct Skybox
 {
@@ -124,7 +153,6 @@ impl Skybox
 		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = render_ctx.new_cubemap_texture(face_paths)?;
-
 		let descriptor_set = PersistentDescriptorSet::new(
 			render_ctx.descriptor_set_allocator(),
 			set_layout,
@@ -132,30 +160,13 @@ impl Skybox
 			[],
 		)?;
 
-		// sky cube, consisting of two fans with the "center" being opposite corners of the cube
-		#[rustfmt::skip]
-		let indices: [u16; 17] = [
-			0, 1, 2, 3, 4, 5, 6, 1, u16::MAX,
-			7, 1, 2, 3, 4, 5, 6, 1,
-		];
-
-		// relative to camera at default state, -X is left, +Y is forward, and +Z is up
-		#[rustfmt::skip]
-		let position: [f32; 24] = [
-			-1.0, -1.0, -1.0,
-			-1.0, -1.0, 1.0,
-			1.0, -1.0, 1.0,
-			1.0, -1.0, -1.0,
-			1.0, 1.0, -1.0,
-			-1.0, 1.0, -1.0,
-			-1.0, 1.0, 1.0,
-			1.0, 1.0, 1.0,
-		];
+		let cube_buffer = render_ctx.new_buffer(&[SKY_CUBE_DATA], BufferUsage::VERTEX_BUFFER | BufferUsage::INDEX_BUFFER)?;
+		let (cube_vbo_bytes, cube_ibo_bytes) = cube_buffer.into_bytes().split_at(std::mem::size_of::<[f32; 24]>() as u64);
 
 		Ok(Skybox {
 			sky_pipeline,
-			cube_vbo: render_ctx.new_buffer(&position, BufferUsage::VERTEX_BUFFER)?,
-			cube_ibo: render_ctx.new_buffer(&indices, BufferUsage::INDEX_BUFFER)?,
+			cube_vbo: cube_vbo_bytes.reinterpret(),
+			cube_ibo: cube_ibo_bytes.reinterpret(),
 			descriptor_set,
 			command_buffer: None,
 		})
