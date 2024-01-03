@@ -610,7 +610,8 @@ impl MomentTransparencyRenderer
 				0,
 				vec![self.stage4_inputs.clone()],
 			)?
-			.draw(3, 1, 0, 0)?;
+			.draw(3, 1, 0, 0)?
+			.end_rendering()?;
 
 		Ok(())
 	}
