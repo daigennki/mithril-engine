@@ -25,10 +25,11 @@ use vulkano::image::{
 };
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp},
-	depth_stencil::{CompareOp, DepthState},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
+	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
+	subpass::PipelineRenderingCreateInfo,
 	viewport::Viewport,
 	GraphicsPipeline,
 };
@@ -335,35 +336,55 @@ impl MomentTransparencyRenderer
 		//
 		/* Stage 2: Calculate moments */
 		//
-		let moments_attachments = [
-			(
-				Format::R32G32B32A32_SFLOAT, // moments
-				Some(AttachmentBlend {
+		let moments_formats = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![
+				Some(Format::R32G32B32A32_SFLOAT),
+				Some(Format::R32_SFLOAT),
+				Some(Format::R32_SFLOAT),
+			],
+			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
+			..Default::default()
+		};
+
+		let moments_blends = vec![
+			ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend {
+					// moments
 					alpha_blend_op: BlendOp::Add,
 					..AttachmentBlend::additive()
 				}),
-			),
-			(
-				Format::R32_SFLOAT, // optical_depth
-				Some(AttachmentBlend {
+				..Default::default()
+			},
+			ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend {
+					// optical_depth
 					alpha_blend_op: BlendOp::Add,
 					..AttachmentBlend::additive()
 				}),
-			),
-			(
-				Format::R32_SFLOAT, // min_depth
-				Some(AttachmentBlend {
+				..Default::default()
+			},
+			ColorBlendAttachmentState {
+				blend: Some(AttachmentBlend {
+					// min_depth
 					color_blend_op: BlendOp::Min,
 					src_color_blend_factor: BlendFactor::One,
 					dst_color_blend_factor: BlendFactor::One,
 					..Default::default()
 				}),
-			),
+				..Default::default()
+			},
 		];
+		let moments_color_blend_state = ColorBlendState {
+			attachments: moments_blends,
+			..Default::default()
+		};
 
-		let moments_depth_state = DepthState {
-			write_enable: false,
-			compare_op: CompareOp::Less,
+		let moments_depth_stencil_state = DepthStencilState {
+			depth: Some(DepthState {
+				write_enable: false,
+				compare_op: CompareOp::Less,
+			}),
+			..Default::default()
 		};
 
 		let stage2_push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
@@ -387,9 +408,9 @@ impl MomentTransparencyRenderer
 				..Default::default()
 			},
 			stage2_pipeline_layout,
-			&moments_attachments,
-			Some((super::MAIN_DEPTH_FORMAT, moments_depth_state)),
-			None,
+			moments_formats,
+			Some(moments_color_blend_state),
+			Some(moments_depth_stencil_state),
 		)?;
 
 		//
@@ -440,6 +461,16 @@ impl MomentTransparencyRenderer
 		};
 		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)?;
 
+		let stage4_blend = ColorBlendAttachmentState {
+			blend: Some(AttachmentBlend::alpha()),
+			..Default::default()
+		};
+		let stage4_color_blend_state = ColorBlendState::with_attachment_states(1, stage4_blend);
+
+		let stage4_rendering_info = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			..Default::default()
+		};
 		let transparency_compositing_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -449,8 +480,8 @@ impl MomentTransparencyRenderer
 			],
 			RasterizationState::default(),
 			stage4_pipeline_layout,
-			&[(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))],
-			None,
+			stage4_rendering_info,
+			Some(stage4_color_blend_state),
 			None,
 		)?;
 

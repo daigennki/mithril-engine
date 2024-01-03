@@ -16,7 +16,10 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
-use vulkano::pipeline::graphics::{input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline};
+use vulkano::pipeline::graphics::{
+	color_blend::ColorBlendState, input_assembly::PrimitiveTopology, rasterization::RasterizationState,
+	subpass::PipelineRenderingCreateInfo, GraphicsPipeline,
+};
 use vulkano::pipeline::layout::{PipelineLayoutCreateInfo, PushConstantRange};
 use vulkano::pipeline::{Pipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::shader::ShaderStages;
@@ -138,14 +141,18 @@ impl Skybox
 		};
 		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
+		let rendering_formats = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			..Default::default()
+		};
 		let sky_pipeline = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),
 			pipeline_layout,
-			&[(Format::R16G16B16A16_SFLOAT, None)],
-			None,
+			rendering_formats,
+			Some(ColorBlendState::with_attachment_states(1, Default::default())),
 			None,
 		)?;
 

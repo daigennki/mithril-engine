@@ -26,7 +26,11 @@ use vulkano::image::{
 };
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::AttachmentBlend, input_assembly::PrimitiveTopology, rasterization::RasterizationState, GraphicsPipeline,
+		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
+		input_assembly::PrimitiveTopology,
+		rasterization::RasterizationState,
+		subpass::PipelineRenderingCreateInfo,
+		GraphicsPipeline,
 	},
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	Pipeline, PipelineBindPoint, PipelineLayout,
@@ -206,15 +210,25 @@ impl Canvas
 		};
 		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
-		let color_attachments = [(Format::R16G16B16A16_SFLOAT, Some(AttachmentBlend::alpha()))];
+		let blend_attachment_state = ColorBlendAttachmentState {
+			blend: Some(AttachmentBlend::alpha()),
+			..Default::default()
+		};
+		let color_blend_state = ColorBlendState::with_attachment_states(1, blend_attachment_state);
+
+		let rendering_formats = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			..Default::default()
+		};
+
 		let ui_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
 			pipeline_layout,
-			&color_attachments,
-			None,
+			rendering_formats.clone(),
+			Some(color_blend_state.clone()),
 			None,
 		)?;
 
@@ -249,8 +263,8 @@ impl Canvas
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
 			text_pipeline_layout,
-			&color_attachments,
-			None,
+			rendering_formats,
+			Some(color_blend_state),
 			None,
 		)?;
 

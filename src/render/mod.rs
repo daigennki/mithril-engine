@@ -60,10 +60,23 @@ use vulkano::DeviceSize;
 use texture::Texture;
 
 // Format used for main depth buffer.
-// NOTE: While [NVIDIA recommends](https://developer.nvidia.com/blog/vulkan-dos-donts/) using a 24-bit depth format
-// (`D24_UNORM_S8_UINT`), it doesn't seem to be very well-supported outside of NVIDIA GPUs. Only about 70% of GPUs on Windows
-// and 50% of GPUs on Linux seem to support it, while `D16_UNORM` and `D32_SFLOAT` both have 100% support.
-// (https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+//
+// NOTE: While [NVIDIA recommends](https://developer.nvidia.com/blog/vulkan-dos-donts/) using a
+// 24-bit depth format (`D24_UNORM_S8_UINT`), it doesn't seem to be very well-supported outside of
+// NVIDIA GPUs. Only about 70% of GPUs on Windows and 50% of GPUs on Linux seem to support it,
+// while `D16_UNORM` and `D32_SFLOAT` both have 100% support.
+//
+// More notes regarding observed support for depth/stencil formats:
+//
+// - `D16_UNORM`: Supported on all GPUs.
+// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
+// - `X8_D24_UNORM_PACK32`: Only supported on NVIDIA and Intel GPUs.
+// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
+// - `D32_SFLOAT`: Supported on all GPUs.
+// - `D32_SFLOAT_S8_UINT`: Supported on all GPUs.
+// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
+//
+// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
 pub const MAIN_DEPTH_FORMAT: Format = Format::D16_UNORM;
 
 #[derive(shipyard::Unique)]

@@ -15,10 +15,11 @@ use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::pipeline::{
 	graphics::{
-		color_blend::{AttachmentBlend, BlendFactor, BlendOp},
-		depth_stencil::{CompareOp, DepthState},
+		color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
+		depth_stencil::{CompareOp, DepthState, DepthStencilState},
 		input_assembly::PrimitiveTopology,
 		rasterization::{CullMode, RasterizationState},
+		subpass::PipelineRenderingCreateInfo,
 	},
 	GraphicsPipeline, PipelineLayout,
 };
@@ -193,6 +194,25 @@ impl MaterialPipelineConfig
 			..Default::default()
 		};
 
+		let rendering_formats = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			depth_attachment_format: Some(crate::render::MAIN_DEPTH_FORMAT),
+			..Default::default()
+		};
+
+		let color_blend_state = ColorBlendState {
+			attachments: vec![ColorBlendAttachmentState {
+				blend: attachment_blend,
+				..Default::default()
+			}],
+			..Default::default()
+		};
+
+		let depth_stencil_state = DepthStencilState {
+			depth: Some(DepthState::simple()),
+			..Default::default()
+		};
+
 		// Create the opaque pass pipeline.
 		let opaque_pipeline = crate::render::pipeline::new(
 			vk_dev.clone(),
@@ -200,17 +220,20 @@ impl MaterialPipelineConfig
 			&[self.vertex_shader.clone(), self.fragment_shader],
 			rasterization_state.clone(),
 			pipeline_layout,
-			&[(Format::R16G16B16A16_SFLOAT, attachment_blend)],
-			Some((crate::render::MAIN_DEPTH_FORMAT, DepthState::simple())),
-			None,
+			rendering_formats,
+			Some(color_blend_state),
+			Some(depth_stencil_state),
 		)?;
 
 		// Create the transparency pass pipeline.
 		let oit_pipeline = fs_oit
 			.map(|fs| {
-				let depth_state = DepthState {
-					write_enable: false,
-					compare_op: CompareOp::Less,
+				let oit_depth_stencil_state = DepthStencilState {
+					depth: Some(DepthState {
+						write_enable: false,
+						compare_op: CompareOp::Less,
+					}),
+					..Default::default()
 				};
 
 				let accum_blend = AttachmentBlend {
@@ -223,19 +246,35 @@ impl MaterialPipelineConfig
 					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
 					..Default::default()
 				};
-				let color_attachments = [
-					(Format::R16G16B16A16_SFLOAT, Some(accum_blend)),
-					(Format::R8_UNORM, Some(revealage_blend)),
+				let oit_attachment_blends = vec![
+					ColorBlendAttachmentState {
+						blend: Some(accum_blend),
+						..Default::default()
+					},
+					ColorBlendAttachmentState {
+						blend: Some(revealage_blend),
+						..Default::default()
+					},
 				];
+				let oit_color_blend_state = ColorBlendState {
+					attachments: oit_attachment_blends,
+					..Default::default()
+				};
+
+				let oit_rendering_formats = PipelineRenderingCreateInfo {
+					color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
+					depth_attachment_format: Some(crate::render::MAIN_DEPTH_FORMAT),
+					..Default::default()
+				};
 				crate::render::pipeline::new(
 					vk_dev,
 					primitive_topology,
 					&[self.vertex_shader, fs],
 					rasterization_state,
 					pipeline_layout_oit,
-					&color_attachments,
-					Some((crate::render::MAIN_DEPTH_FORMAT, depth_state)),
-					None,
+					oit_rendering_formats,
+					Some(oit_color_blend_state),
+					Some(oit_depth_stencil_state),
 				)
 			})
 			.transpose()?;

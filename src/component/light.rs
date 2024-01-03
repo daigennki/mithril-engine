@@ -20,9 +20,10 @@ use vulkano::image::{
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
-	depth_stencil::DepthState,
+	depth_stencil::{DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{DepthBiasState, RasterizationState},
+	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipeline,
 };
 use vulkano::pipeline::{
@@ -211,15 +212,23 @@ impl LightManager
 			..Default::default()
 		};
 		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
+		let rendering_formats = PipelineRenderingCreateInfo {
+			depth_attachment_format: Some(Format::D16_UNORM),
+			..Default::default()
+		};
+		let depth_stencil_state = DepthStencilState {
+			depth: Some(DepthState::simple()),
+			..Default::default()
+		};
 		let shadow_pipeline = crate::render::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[vs_shadow::load(device.clone())?],
 			rasterization_state,
 			pipeline_layout,
-			&[],
-			Some((Format::D16_UNORM, DepthState::simple())),
+			rendering_formats,
 			None,
+			Some(depth_stencil_state),
 		)?;
 
 		Ok(LightManager {
