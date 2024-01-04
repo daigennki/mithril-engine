@@ -9,7 +9,7 @@ use glam::*;
 use serde::Deserialize;
 use shipyard::{
 	iter::{IntoIter, IntoWithId},
-	EntityId, Get, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem,
+	EntityId, Get, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem,
 };
 
 use crate::component::{EntityComponent, WantsSystemAdded};
@@ -62,7 +62,7 @@ fn select_default_camera(mut camera_manager: UniqueViewMut<CameraManager>, camer
 	}
 }
 fn update_camera(
-	mut render_ctx: UniqueViewMut<RenderContext>,
+	render_ctx: UniqueView<RenderContext>,
 	transforms: View<super::Transform>,
 	mut camera_manager: UniqueViewMut<CameraManager>,
 	cameras: View<Camera>,
@@ -70,7 +70,7 @@ fn update_camera(
 {
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
-		camera_manager.update(&mut render_ctx, t.position, &t.rotation_quat(), cam.fov);
+		camera_manager.update(render_ctx.swapchain_dimensions(), t.position, &t.rotation_quat(), cam.fov);
 	}
 }
 
@@ -88,10 +88,9 @@ pub struct CameraManager
 }
 impl CameraManager
 {
-	pub fn new(render_ctx: &mut RenderContext, default_fov: CameraFov) -> Self
+	pub fn new(viewport_extent: [u32; 2], default_fov: CameraFov) -> Self
 	{
-		let dim = render_ctx.swapchain_dimensions();
-		let aspect_ratio = dim[0] as f32 / dim[1] as f32;
+		let aspect_ratio = viewport_extent[0] as f32 / viewport_extent[1] as f32;
 		let fov_y_rad = match default_fov {
 			CameraFov::X(fov_x) => fov_x / aspect_ratio,
 			CameraFov::Y(fov_y) => fov_y,
@@ -116,11 +115,10 @@ impl CameraManager
 	}
 
 	/// This function *must* be run every frame, before entities are rendered.
-	pub fn update(&mut self, render_ctx: &mut RenderContext, current_pos: Vec3, current_rotation: &Quat, fov: Option<CameraFov>)
+	pub fn update(&mut self, viewport_extent: [u32; 2], current_pos: Vec3, current_rotation: &Quat, fov: Option<CameraFov>)
 	{
 		let direction = *current_rotation * Vec3::Y;
-		let dim = render_ctx.swapchain_dimensions();
-		let aspect_ratio = dim[0] as f32 / dim[1] as f32;
+		let aspect_ratio = viewport_extent[0] as f32 / viewport_extent[1] as f32;
 		let fov_y_rad = match fov.unwrap_or(self.default_fov) {
 			CameraFov::X(fov_x) => fov_x / aspect_ratio,
 			CameraFov::Y(fov_y) => fov_y,

@@ -89,12 +89,13 @@ fn init_world(
 	setup_log(&data_path);
 
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
+	let viewport_extent = render_ctx.swapchain_dimensions();
 
 	let (world, sky) = load_world(start_map)?;
 
 	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
-	world.add_unique(CameraManager::new(&mut render_ctx, CameraFov::Y(1.0_f32.to_degrees())));
+	world.add_unique(CameraManager::new(viewport_extent, CameraFov::Y(1.0_f32.to_degrees())));
 	world.add_unique(component::mesh::MeshManager::new(&render_ctx)?);
 	world.add_unique(component::light::LightManager::new(&mut render_ctx)?);
 	world.add_unique(InputHelperWrapper::default());
