@@ -554,7 +554,7 @@ impl Canvas
 			}
 		}
 
-		assert!(self.ui_cb.replace(cb.build()?).is_none());
+		self.ui_cb = Some(cb.build()?);
 
 		Ok(())
 	}

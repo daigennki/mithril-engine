@@ -256,7 +256,7 @@ impl MeshManager
 
 	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
-		assert!(self.cb_3d.lock().unwrap().replace(cb).is_none())
+		*self.cb_3d.lock().unwrap() = Some(cb);
 	}
 
 	pub fn execute_rendering(
