@@ -10,10 +10,13 @@ use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
+	SubpassContents,
+};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
+use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo},
 	Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
@@ -30,6 +33,7 @@ use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	PipelineLayout,
 };
+use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
@@ -242,7 +246,7 @@ impl LightManager
 		})
 	}
 
-	pub fn update_dir_light(
+	fn update_dir_light(
 		&mut self,
 		render_ctx: &mut RenderContext,
 		light: &DirectionalLight,
@@ -321,12 +325,31 @@ impl LightManager
 		}
 		self.dir_light_cb.push(cb);
 	}
-	pub fn drain_dir_light_cb(&mut self) -> Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>
+
+	pub fn execute_shadow_rendering(
+		&mut self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+	) -> crate::Result<()>
 	{
-		self.dir_light_cb
-			.drain(..)
-			.zip(self.dir_light_shadow_layers.iter().cloned())
-			.collect()
+		let shadow_iter = self.dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter());
+		for (shadow_cb, shadow_layer_image_view) in shadow_iter {
+			let shadow_render_info = RenderingInfo {
+				depth_attachment: Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::Clear,
+					store_op: AttachmentStoreOp::Store,
+					clear_value: Some(ClearValue::Depth(1.0)),
+					..RenderingAttachmentInfo::image_view(shadow_layer_image_view.clone())
+				}),
+				contents: SubpassContents::SecondaryCommandBuffers,
+				..Default::default()
+			};
+			cb_builder
+				.begin_rendering(shadow_render_info)?
+				.execute_commands(shadow_cb)?
+				.end_rendering()?;
+		}
+
+		Ok(())
 	}
 
 	pub fn get_dir_light_shadow(&self) -> &Arc<ImageView>

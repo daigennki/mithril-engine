@@ -12,7 +12,10 @@ use shipyard::EntityId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
+	SubpassContents,
+};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
@@ -35,6 +38,7 @@ use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	Pipeline, PipelineBindPoint, PipelineLayout,
 };
+use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
 use super::mesh::MeshType;
@@ -555,9 +559,29 @@ impl Canvas
 		Ok(())
 	}
 
-	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
+	pub fn execute_rendering(
+		&mut self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		color_image: Arc<ImageView>,
+	) -> crate::Result<()>
 	{
-		self.ui_cb.take()
+		if let Some(some_cb) = self.ui_cb.take() {
+			let ui_render_info = RenderingInfo {
+				color_attachments: vec![Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::Load,
+					store_op: AttachmentStoreOp::Store,
+					..RenderingAttachmentInfo::image_view(color_image)
+				})],
+				contents: SubpassContents::SecondaryCommandBuffers,
+				..Default::default()
+			};
+			cb_builder
+				.begin_rendering(ui_render_info)?
+				.execute_commands(some_cb)?
+				.end_rendering()?;
+		}
+
+		Ok(())
 	}
 }
 

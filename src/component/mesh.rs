@@ -11,14 +11,19 @@ use shipyard::{EntityId, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
+	SubpassContents,
+};
 use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
 use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
+use vulkano::format::{ClearValue, Format};
+use vulkano::image::view::ImageView;
 use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
 };
+use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
 use crate::component::{EntityComponent, WantsSystemAdded};
@@ -254,9 +259,35 @@ impl MeshManager
 		assert!(self.cb_3d.lock().unwrap().replace(cb).is_none())
 	}
 
-	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
+	pub fn execute_rendering(
+		&mut self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		color_image: Arc<ImageView>,
+		depth_image: Arc<ImageView>,
+	) -> crate::Result<()>
 	{
-		self.cb_3d.lock().unwrap().take()
+		let main_render_info = RenderingInfo {
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Load,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(color_image)
+			})],
+			depth_attachment: Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Clear,
+				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
+				clear_value: Some(ClearValue::Depth(1.0)),
+				..RenderingAttachmentInfo::image_view(depth_image)
+			}),
+			contents: SubpassContents::SecondaryCommandBuffers,
+			..Default::default()
+		};
+		let secondary_cb = self.cb_3d.lock().unwrap().take().unwrap();
+		cb_builder
+			.begin_rendering(main_render_info)?
+			.execute_commands(secondary_cb)?
+			.end_rendering()?;
+
+		Ok(())
 	}
 }
 

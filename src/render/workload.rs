@@ -6,6 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use shipyard::{UniqueView, UniqueViewMut, Workload};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
@@ -81,7 +82,7 @@ fn draw_3d_oit(
 	// First, collect moments for Moment-based OIT.
 	// This will bind the pipeline for you, since it doesn't need to do anything
 	// specific to materials (it only reads the alpha channel of each texture).
-	let moments_pipeline = render_ctx.get_transparency_renderer().get_moments_pipeline().clone();
+	let moments_pipeline = render_ctx.transparency_renderer.get_moments_pipeline().clone();
 	let moments_cb = mesh_manager.draw(
 		&render_ctx,
 		camera_manager.projview(),
@@ -89,17 +90,15 @@ fn draw_3d_oit(
 		&[],
 	)?;
 	if let Some(some_moments_cb) = moments_cb {
-		render_ctx
-			.get_transparency_renderer()
-			.add_transparency_moments_cb(some_moments_cb);
+		render_ctx.transparency_renderer.add_transparency_moments_cb(some_moments_cb);
 
 		// Now, do the weights pass for OIT.
 		let common_sets = [
 			light_manager.get_all_lights_set().clone(),
-			render_ctx.get_transparency_renderer().get_stage3_inputs().clone(),
+			render_ctx.transparency_renderer.get_stage3_inputs().clone(),
 		];
 		let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Transparency, &common_sets)?;
-		render_ctx.get_transparency_renderer().add_transparency_cb(cb.unwrap());
+		render_ctx.transparency_renderer.add_transparency_cb(cb.unwrap());
 	}
 
 	Ok(())
@@ -111,6 +110,7 @@ fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<ui::
 	canvas.draw(&render_ctx)
 }
 
+/// Submit all the command buffers for this frame to actually render them to the image.
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut skybox: UniqueViewMut<super::skybox::Skybox>,
@@ -119,10 +119,46 @@ fn submit_frame(
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
 ) -> crate::Result<()>
 {
-	let sky_cb = skybox.take_cb().unwrap();
-	let mesh_3d_cb = mesh_manager.take_cb().unwrap();
-	let ui_cb = canvas.take_cb();
-	let dir_light_cb = light_manager.drain_dir_light_cb();
+	let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
+		&render_ctx.command_buffer_allocator,
+		render_ctx.graphics_queue.queue_family_index(),
+		CommandBufferUsage::OneTimeSubmit,
+	)?;
 
-	render_ctx.submit_frame(sky_cb, mesh_3d_cb, ui_cb, dir_light_cb)
+	render_ctx.add_synchronous_transfer_commands(&mut primary_cb_builder)?;
+
+	// Sometimes no image may be returned because the image is out of date or the window is minimized,
+	// in which case, don't present.
+	if let Some(swapchain_image_num) = render_ctx.swapchain.get_next_image()? {
+		if render_ctx.window_resized() {
+			render_ctx.resize_everything_else()?;
+		}
+
+		let main_render_target = &render_ctx.main_render_target;
+		let color_image = main_render_target.color_image().clone();
+		let depth_image = main_render_target.depth_image().clone();
+
+		// shadows
+		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
+
+		// skybox (effectively clears the image)
+		skybox.execute_rendering(&mut primary_cb_builder, color_image.clone())?;
+
+		// 3D
+		mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
+
+		// 3D OIT
+		render_ctx
+			.transparency_renderer
+			.process_transparency(&mut primary_cb_builder, color_image.clone(), depth_image)?;
+
+		// UI
+		canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
+
+		// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
+		main_render_target.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_num)?;
+	}
+
+	// submit the built command buffer, presenting it if possible
+	render_ctx.submit_primary(primary_cb_builder.build()?)
 }

@@ -30,7 +30,7 @@ use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, CommandBufferExecFuture, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo,
 	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
-	RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
+	SecondaryAutoCommandBuffer,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -39,17 +39,13 @@ use vulkano::descriptor_set::{
 	},
 };
 use vulkano::device::{Device, Queue};
-use vulkano::format::{ClearValue, Format};
-use vulkano::image::{
-	sampler::{Filter, Sampler, SamplerCreateInfo},
-	view::ImageView,
-};
+use vulkano::format::Format;
+use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport};
-use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::sync::{
 	future::{FenceSignalFuture, NowFuture},
@@ -484,27 +480,17 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Submit all the command buffers for this frame to actually render them to the image.
-	fn submit_frame(
+	fn add_synchronous_transfer_commands(
 		&mut self,
-		sky_cb: Arc<SecondaryAutoCommandBuffer>,
-		cb_3d: Arc<SecondaryAutoCommandBuffer>,
-		ui_cb: Option<Arc<SecondaryAutoCommandBuffer>>,
-		dir_light_shadows: Vec<(Arc<SecondaryAutoCommandBuffer>, Arc<ImageView>)>,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> crate::Result<()>
 	{
-		let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
-			&self.command_buffer_allocator,
-			self.graphics_queue.queue_family_index(),
-			CommandBufferUsage::OneTimeSubmit,
-		)?;
-
 		// buffer updates
 		if self.buffer_updates.len() > 0 {
 			let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
 			for buf_update in self.buffer_updates.drain(..) {
-				buf_update.add_command(&mut primary_cb_builder, &mut staging_buf_alloc_guard)?;
+				buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard)?;
 				self.staging_buf_usage_frame += buf_update.data_size();
 			}
 
@@ -519,107 +505,16 @@ impl RenderContext
 
 		// do async transfers that couldn't be submitted earlier
 		for work in self.async_transfers.drain(..) {
-			work.add_command(&mut primary_cb_builder);
+			work.add_command(cb_builder);
 		}
-
-		let transfer_future = self.transfer_future.take();
-
-		// Sometimes no image may be returned because the image is out of date or the window is minimized,
-		// in which case, don't present.
-		if let Some(swapchain_image_num) = self.swapchain.get_next_image()? {
-			if self.swapchain.extent_changed() {
-				self.resize_everything_else()?;
-			}
-
-			// shadows
-			for (shadow_cb, shadow_layer_image_view) in dir_light_shadows {
-				let shadow_render_info = RenderingInfo {
-					depth_attachment: Some(RenderingAttachmentInfo {
-						load_op: AttachmentLoadOp::Clear,
-						store_op: AttachmentStoreOp::Store,
-						clear_value: Some(ClearValue::Depth(1.0)),
-						..RenderingAttachmentInfo::image_view(shadow_layer_image_view)
-					}),
-					contents: SubpassContents::SecondaryCommandBuffers,
-					..Default::default()
-				};
-				primary_cb_builder
-					.begin_rendering(shadow_render_info)?
-					.execute_commands(shadow_cb)?
-					.end_rendering()?;
-			}
-
-			// skybox (effectively clears the image)
-			let sky_render_info = RenderingInfo {
-				color_attachments: vec![Some(RenderingAttachmentInfo {
-					load_op: AttachmentLoadOp::DontCare,
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-				})],
-				contents: SubpassContents::SecondaryCommandBuffers,
-				..Default::default()
-			};
-			primary_cb_builder
-				.begin_rendering(sky_render_info)?
-				.execute_commands(sky_cb)?
-				.end_rendering()?;
-
-			// 3D
-			let main_render_info = RenderingInfo {
-				color_attachments: vec![Some(RenderingAttachmentInfo {
-					load_op: AttachmentLoadOp::Load,
-					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-				})],
-				depth_attachment: Some(RenderingAttachmentInfo {
-					load_op: AttachmentLoadOp::Clear,
-					store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
-					clear_value: Some(ClearValue::Depth(1.0)),
-					..RenderingAttachmentInfo::image_view(self.main_render_target.depth_image().clone())
-				}),
-				contents: SubpassContents::SecondaryCommandBuffers,
-				..Default::default()
-			};
-			primary_cb_builder
-				.begin_rendering(main_render_info)?
-				.execute_commands(cb_3d)?
-				.end_rendering()?;
-
-			// 3D OIT
-			self.transparency_renderer.process_transparency(
-				&mut primary_cb_builder,
-				self.main_render_target.color_image().clone(),
-				self.main_render_target.depth_image().clone(),
-			)?;
-
-			// UI
-			if let Some(some_ui_cb) = ui_cb {
-				let ui_render_info = RenderingInfo {
-					color_attachments: vec![Some(RenderingAttachmentInfo {
-						load_op: AttachmentLoadOp::Load,
-						store_op: AttachmentStoreOp::Store,
-						..RenderingAttachmentInfo::image_view(self.main_render_target.color_image().clone())
-					})],
-					contents: SubpassContents::SecondaryCommandBuffers,
-					..Default::default()
-				};
-				primary_cb_builder
-					.begin_rendering(ui_render_info)?
-					.execute_commands(some_ui_cb)?
-					.end_rendering()?;
-			}
-
-			// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
-			self.main_render_target
-				.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_num)?;
-		}
-
-		// submit the built command buffer, presenting it if possible
-		let built_primary_cb = primary_cb_builder.build()?;
-		self.swapchain
-			.submit(built_primary_cb, self.graphics_queue.clone(), transfer_future)?;
 
 		Ok(())
+	}
+
+	fn submit_primary(&mut self, built_cb: Arc<PrimaryAutoCommandBuffer>) -> crate::Result<()>
+	{
+		self.swapchain
+			.submit(built_cb, self.graphics_queue.clone(), self.transfer_future.take())
 	}
 
 	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator

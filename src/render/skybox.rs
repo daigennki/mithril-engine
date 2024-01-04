@@ -8,20 +8,27 @@
 use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
+	SubpassContents,
+};
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::image::sampler::{Sampler, SamplerCreateInfo};
+use vulkano::image::{
+	sampler::{Sampler, SamplerCreateInfo},
+	view::ImageView,
+};
 use vulkano::pipeline::graphics::{
 	color_blend::ColorBlendState, input_assembly::PrimitiveTopology, rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo, GraphicsPipeline,
 };
 use vulkano::pipeline::layout::{PipelineLayoutCreateInfo, PushConstantRange};
 use vulkano::pipeline::{Pipeline, PipelineBindPoint, PipelineLayout};
+use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
@@ -201,8 +208,27 @@ impl Skybox
 		Ok(())
 	}
 
-	pub fn take_cb(&mut self) -> Option<Arc<SecondaryAutoCommandBuffer>>
+	pub fn execute_rendering(
+		&mut self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		color_image: Arc<ImageView>,
+	) -> crate::Result<()>
 	{
-		self.command_buffer.take()
+		let sky_render_info = RenderingInfo {
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(color_image)
+			})],
+			contents: SubpassContents::SecondaryCommandBuffers,
+			..Default::default()
+		};
+		let sky_cb = self.command_buffer.take().unwrap();
+		cb_builder
+			.begin_rendering(sky_render_info)?
+			.execute_commands(sky_cb)?
+			.end_rendering()?;
+
+		Ok(())
 	}
 }
