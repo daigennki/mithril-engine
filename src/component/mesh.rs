@@ -15,7 +15,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
 	SubpassContents,
 };
-use vulkano::descriptor_set::{layout::DescriptorSetLayout, PersistentDescriptorSet};
+use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::view::ImageView;
@@ -95,13 +95,13 @@ pub struct MeshManager
 }
 impl MeshManager
 {
-	pub fn new(
-		material_textures_set_layout: Arc<DescriptorSetLayout>,
-		light_set_layout: Arc<DescriptorSetLayout>,
-		transparency_inputs: Arc<DescriptorSetLayout>,
-	) -> crate::Result<Self>
+	pub fn new(render_ctx: &RenderContext) -> crate::Result<Self>
 	{
-		let vk_dev = light_set_layout.device().clone();
+		let vk_dev = render_ctx.device().clone();
+
+		let material_textures_set_layout = render_ctx.get_material_textures_set_layout().clone();
+		let light_set_layout = render_ctx.get_light_set_layout().clone();
+		let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
 
 		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
 		let push_constant_range = PushConstantRange {
@@ -117,7 +117,7 @@ impl MeshManager
 		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 
 		let layout_info_oit = PipelineLayoutCreateInfo {
-			set_layouts: vec![material_textures_set_layout, light_set_layout, transparency_inputs],
+			set_layouts: vec![material_textures_set_layout, light_set_layout, transparency_input_layout],
 			push_constant_ranges: vec![push_constant_range],
 			..Default::default()
 		};
