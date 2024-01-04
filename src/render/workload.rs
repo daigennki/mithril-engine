@@ -56,14 +56,11 @@ fn draw_shadows(
 // Draw opaque 3D objects
 fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
-	mut skybox: UniqueViewMut<super::skybox::Skybox>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
 	light_manager: UniqueView<crate::component::light::LightManager>,
 ) -> crate::Result<()>
 {
-	skybox.draw(&render_ctx, camera_manager.sky_projview())?;
-
 	let common_sets = [light_manager.get_all_lights_set().clone()];
 	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
 
@@ -117,6 +114,7 @@ fn submit_frame(
 	mut mesh_manager: UniqueViewMut<crate::component::mesh::MeshManager>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
+	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
 	let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
@@ -142,7 +140,7 @@ fn submit_frame(
 		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
 
 		// skybox (effectively clears the image)
-		skybox.execute_rendering(&mut primary_cb_builder, color_image.clone())?;
+		skybox.draw(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
 
 		// 3D
 		mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;

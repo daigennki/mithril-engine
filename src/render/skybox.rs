@@ -9,8 +9,7 @@ use glam::*;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
-	SubpassContents,
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SubpassContents,
 };
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
@@ -27,7 +26,7 @@ use vulkano::pipeline::graphics::{
 	subpass::PipelineRenderingCreateInfo, GraphicsPipeline,
 };
 use vulkano::pipeline::layout::{PipelineLayoutCreateInfo, PushConstantRange};
-use vulkano::pipeline::{Pipeline, PipelineBindPoint, PipelineLayout};
+use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
@@ -113,7 +112,6 @@ pub struct Skybox
 	cube_vbo: Subbuffer<[f32]>,
 	cube_ibo: Subbuffer<[u16]>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
-	command_buffer: Option<Arc<SecondaryAutoCommandBuffer>>,
 }
 impl Skybox
 {
@@ -182,16 +180,37 @@ impl Skybox
 			cube_vbo: cube_vbo_bytes.reinterpret(),
 			cube_ibo: cube_ibo_bytes.reinterpret(),
 			descriptor_set,
-			command_buffer: None,
 		})
 	}
 
-	pub fn draw(&mut self, render_ctx: &RenderContext, sky_projview: Mat4) -> crate::Result<()>
+	pub fn draw(
+		&mut self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		color_image: Arc<ImageView>,
+		sky_projview: Mat4,
+	) -> crate::Result<()>
 	{
-		let vp_extent = render_ctx.swapchain_dimensions();
-		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
+		let viewport_extent = color_image.image().extent();
+		let viewport = Viewport {
+			offset: [0.0, 0.0],
+			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
+			depth_range: 0.0..=1.0,
+		};
 
-		cb.bind_pipeline_graphics(self.sky_pipeline.clone())?
+		let sky_render_info = RenderingInfo {
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(color_image)
+			})],
+			contents: SubpassContents::Inline,
+			..Default::default()
+		};
+
+		cb_builder
+			.begin_rendering(sky_render_info)?
+			.set_viewport(0, [viewport].as_slice().into())?
+			.bind_pipeline_graphics(self.sky_pipeline.clone())?
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				self.sky_pipeline.layout().clone(),
@@ -201,32 +220,7 @@ impl Skybox
 			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?
 			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?
 			.bind_index_buffer(self.cube_ibo.clone())?
-			.draw_indexed(17, 1, 0, 0, 0)?;
-
-		assert!(self.command_buffer.replace(cb.build()?).is_none());
-
-		Ok(())
-	}
-
-	pub fn execute_rendering(
-		&mut self,
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		color_image: Arc<ImageView>,
-	) -> crate::Result<()>
-	{
-		let sky_render_info = RenderingInfo {
-			color_attachments: vec![Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::DontCare,
-				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(color_image)
-			})],
-			contents: SubpassContents::SecondaryCommandBuffers,
-			..Default::default()
-		};
-		let sky_cb = self.command_buffer.take().unwrap();
-		cb_builder
-			.begin_rendering(sky_render_info)?
-			.execute_commands(sky_cb)?
+			.draw_indexed(17, 1, 0, 0, 0)?
 			.end_rendering()?;
 
 		Ok(())
