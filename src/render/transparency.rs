@@ -348,24 +348,24 @@ impl MomentTransparencyRenderer
 
 		let moments_blends = vec![
 			ColorBlendAttachmentState {
+				// moments
 				blend: Some(AttachmentBlend {
-					// moments
 					alpha_blend_op: BlendOp::Add,
 					..AttachmentBlend::additive()
 				}),
 				..Default::default()
 			},
 			ColorBlendAttachmentState {
+				// optical_depth
 				blend: Some(AttachmentBlend {
-					// optical_depth
 					alpha_blend_op: BlendOp::Add,
 					..AttachmentBlend::additive()
 				}),
 				..Default::default()
 			},
 			ColorBlendAttachmentState {
+				// min_depth
 				blend: Some(AttachmentBlend {
-					// min_depth
 					color_blend_op: BlendOp::Min,
 					src_color_blend_factor: BlendFactor::One,
 					dst_color_blend_factor: BlendFactor::One,

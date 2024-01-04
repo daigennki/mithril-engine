@@ -236,28 +236,27 @@ impl MaterialPipelineConfig
 					..Default::default()
 				};
 
-				let accum_blend = AttachmentBlend {
-					alpha_blend_op: BlendOp::Add,
-					..AttachmentBlend::additive()
-				};
-				let revealage_blend = AttachmentBlend {
-					color_blend_op: BlendOp::Add,
-					src_color_blend_factor: BlendFactor::Zero,
-					dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-					..Default::default()
-				};
-				let oit_attachment_blends = vec![
-					ColorBlendAttachmentState {
-						blend: Some(accum_blend),
-						..Default::default()
-					},
-					ColorBlendAttachmentState {
-						blend: Some(revealage_blend),
-						..Default::default()
-					},
-				];
 				let oit_color_blend_state = ColorBlendState {
-					attachments: oit_attachment_blends,
+					attachments: vec![
+						ColorBlendAttachmentState {
+							// accum
+							blend: Some(AttachmentBlend {
+								alpha_blend_op: BlendOp::Add,
+								..AttachmentBlend::additive()
+							}),
+							..Default::default()
+						},
+						ColorBlendAttachmentState {
+							// revealage
+							blend: Some(AttachmentBlend {
+								color_blend_op: BlendOp::Add,
+								src_color_blend_factor: BlendFactor::Zero,
+								dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
+								..Default::default()
+							}),
+							..Default::default()
+						},
+					],
 					..Default::default()
 				};
 
@@ -266,6 +265,7 @@ impl MaterialPipelineConfig
 					depth_attachment_format: Some(crate::render::MAIN_DEPTH_FORMAT),
 					..Default::default()
 				};
+
 				crate::render::pipeline::new(
 					vk_dev,
 					primitive_topology,
