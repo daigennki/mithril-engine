@@ -123,7 +123,9 @@ fn submit_frame(
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
 
-	render_ctx.add_synchronous_transfer_commands(&mut primary_cb_builder)?;
+	render_ctx
+		.transfer_manager
+		.add_synchronous_transfer_commands(&mut primary_cb_builder)?;
 
 	// Sometimes no image may be returned because the image is out of date or the window is minimized,
 	// in which case, don't present.

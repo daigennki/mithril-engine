@@ -8,14 +8,14 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{allocator::SubbufferAllocator, BufferContents, Subbuffer};
+use vulkano::buffer::BufferContents;
 use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
 	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout};
+use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::DeviceSize;
 
 use super::RenderContext;
@@ -64,7 +64,7 @@ impl Texture
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = get_tex_staging_buf(&mut render_ctx.staging_buffer_allocator.lock().unwrap(), data, format)?;
+		let staging_buf = render_ctx.transfer_manager.get_tex_staging_buffer(data, format)?;
 
 		let image_info = ImageCreateInfo {
 			format,
@@ -107,7 +107,7 @@ impl Texture
 			regions: regions.into(),
 			..CopyBufferToImageInfo::buffer_image(staging_buf, image)
 		};
-		render_ctx.add_transfer(copy_to_image.into());
+		render_ctx.transfer_manager.add_transfer(copy_to_image.into());
 
 		Ok(Texture { view })
 	}
@@ -166,7 +166,7 @@ impl CubemapTexture
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = get_tex_staging_buf(&mut render_ctx.staging_buffer_allocator.lock().unwrap(), data, format)?;
+		let staging_buf = render_ctx.transfer_manager.get_tex_staging_buffer(data, format)?;
 
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,
@@ -189,7 +189,7 @@ impl CubemapTexture
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
 		let copy_to_image = CopyBufferToImageInfo::buffer_image(staging_buf, image);
-		render_ctx.add_transfer(copy_to_image.into());
+		render_ctx.transfer_manager.add_transfer(copy_to_image.into());
 
 		Ok(CubemapTexture { view })
 	}
@@ -198,27 +198,6 @@ impl CubemapTexture
 	{
 		&self.view
 	}
-}
-
-fn get_tex_staging_buf<Px>(
-	subbuffer_allocator: &mut SubbufferAllocator,
-	data: &[Px],
-	format: Format,
-) -> crate::Result<Subbuffer<[Px]>>
-where
-	Px: BufferContents + Copy,
-{
-	// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
-	// of the format.
-	let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
-	let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
-		.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
-
-	let staging_buf: Subbuffer<[Px]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
-
-	staging_buf.write().unwrap().copy_from_slice(data);
-
-	Ok(staging_buf)
 }
 
 fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
