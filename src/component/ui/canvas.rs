@@ -43,6 +43,7 @@ use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
 use super::mesh::MeshType;
+use crate::render::texture::Texture;
 use crate::render::RenderContext;
 
 mod ui_vs
@@ -376,7 +377,7 @@ impl Canvas
 	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
-			let tex = render_ctx.get_texture(&mesh.image_path)?;
+			let tex = Texture::new(render_ctx, &mesh.image_path)?;
 			let image_dimensions = UVec2::from(tex.dimensions()).as_vec2();
 			let resources = self.update_transform(
 				render_ctx,
@@ -472,7 +473,7 @@ impl Canvas
 		}
 
 		let layer_count = glyph_count.try_into().unwrap();
-		let tex = render_ctx.new_texture_from_slice(&combined_images, Format::R8_UNORM, img_dim, 1, layer_count)?;
+		let tex = Texture::new_from_slice(render_ctx, &combined_images, Format::R8_UNORM, img_dim, 1, layer_count)?;
 
 		let colors = vec![text.color; glyph_count];
 

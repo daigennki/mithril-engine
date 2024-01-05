@@ -104,7 +104,8 @@ impl ColorInput
 		match self {
 			Self::Color(color) => {
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				Ok(Arc::new(render_ctx.new_texture_from_slice(
+				Ok(Arc::new(Texture::new_from_slice(
+					render_ctx,
 					&[*color],
 					Format::R32G32B32A32_SFLOAT,
 					[1, 1],
@@ -112,7 +113,7 @@ impl ColorInput
 					1,
 				)?))
 			}
-			Self::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
+			Self::Texture(tex_path) => Texture::new(render_ctx, &path_prefix.join(tex_path)),
 		}
 	}
 }
@@ -133,7 +134,8 @@ impl GreyscaleInput
 			Self::Value(value) => {
 				// If the input is a single value, make a 2x2 greyscale texture with just the value.
 				// (we make it 2x2 here so that it's aligned to 16 bytes)
-				Ok(Arc::new(render_ctx.new_texture_from_slice(
+				Ok(Arc::new(Texture::new_from_slice(
+					render_ctx,
 					&vec![*value; 4],
 					Format::R32_SFLOAT,
 					[2, 2],
@@ -141,7 +143,7 @@ impl GreyscaleInput
 					1,
 				)?))
 			}
-			Self::Texture(tex_path) => render_ctx.get_texture(&path_prefix.join(tex_path)),
+			Self::Texture(tex_path) => Texture::new(render_ctx, &path_prefix.join(tex_path)),
 		}
 	}
 }

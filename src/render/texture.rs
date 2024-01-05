@@ -15,9 +15,10 @@ use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
 	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
-use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout};
 use vulkano::DeviceSize;
 
+use super::RenderContext;
 use crate::EngineError;
 
 pub struct Texture
@@ -26,39 +27,44 @@ pub struct Texture
 }
 impl Texture
 {
-	pub fn new(
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		subbuffer_allocator: &mut SubbufferAllocator,
-		path: &Path,
-	) -> crate::Result<(Self, CopyBufferToImageInfo)>
+	/// Load an image file as a texture into memory.
+	///
+	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
+	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Arc<Self>>
 	{
+		if let Some(tex) = render_ctx.textures.get(path) {
+			return Ok(tex.clone());
+		}
+
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
 
-		Self::new_from_slice(
-			memory_allocator,
-			subbuffer_allocator,
+		let new_self = Arc::new(Self::new_from_slice(
+			render_ctx,
 			img_raw.as_slice(),
 			vk_fmt,
 			dim,
 			mip_count,
 			1,
-		)
+		)?);
+
+		render_ctx.textures.insert(path.to_path_buf(), new_self.clone());
+
+		Ok(new_self)
 	}
 
 	pub fn new_from_slice<Px>(
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		subbuffer_allocator: &mut SubbufferAllocator,
+		render_ctx: &mut RenderContext,
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
 		mip_levels: u32,
 		array_layers: u32,
-	) -> crate::Result<(Self, CopyBufferToImageInfo)>
+	) -> crate::Result<Self>
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = get_tex_staging_buf(subbuffer_allocator, data, format)?;
+		let staging_buf = get_tex_staging_buf(&mut render_ctx.staging_buffer_allocator.lock().unwrap(), data, format)?;
 
 		let image_info = ImageCreateInfo {
 			format,
@@ -68,7 +74,11 @@ impl Texture
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
+		let image = Image::new(
+			render_ctx.memory_allocator.clone(),
+			image_info,
+			AllocationCreateInfo::default(),
+		)?;
 
 		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
 
@@ -97,8 +107,9 @@ impl Texture
 			regions: regions.into(),
 			..CopyBufferToImageInfo::buffer_image(staging_buf, image)
 		};
+		render_ctx.add_transfer(copy_to_image.into());
 
-		Ok((Texture { view }, copy_to_image))
+		Ok(Texture { view })
 	}
 
 	pub fn view(&self) -> &Arc<ImageView>
@@ -120,11 +131,7 @@ pub struct CubemapTexture
 impl CubemapTexture
 {
 	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
-	pub fn new(
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		subbuffer_allocator: &mut SubbufferAllocator,
-		faces: [PathBuf; 6],
-	) -> crate::Result<(Self, CopyBufferToImageInfo)>
+	pub fn new(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Self>
 	{
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt = None;
@@ -147,26 +154,19 @@ impl CubemapTexture
 			combined_data.extend(&img_raw[..mip_size]);
 		}
 
-		Self::new_from_slice(
-			memory_allocator,
-			subbuffer_allocator,
-			combined_data.as_slice(),
-			cube_fmt.unwrap(),
-			cube_dim.unwrap(),
-		)
+		Self::new_from_slice(render_ctx, combined_data.as_slice(), cube_fmt.unwrap(), cube_dim.unwrap())
 	}
 
 	pub fn new_from_slice<Px>(
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		subbuffer_allocator: &mut SubbufferAllocator,
+		render_ctx: &mut RenderContext,
 		data: &[Px],
 		format: Format,
 		dimensions: [u32; 2],
-	) -> crate::Result<(Self, CopyBufferToImageInfo)>
+	) -> crate::Result<Self>
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = get_tex_staging_buf(subbuffer_allocator, data, format)?;
+		let staging_buf = get_tex_staging_buf(&mut render_ctx.staging_buffer_allocator.lock().unwrap(), data, format)?;
 
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,
@@ -176,7 +176,11 @@ impl CubemapTexture
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = Image::new(memory_allocator, image_info, AllocationCreateInfo::default())?;
+		let image = Image::new(
+			render_ctx.memory_allocator.clone(),
+			image_info,
+			AllocationCreateInfo::default(),
+		)?;
 
 		let view_create_info = ImageViewCreateInfo {
 			view_type: ImageViewType::Cube,
@@ -185,8 +189,9 @@ impl CubemapTexture
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
 		let copy_to_image = CopyBufferToImageInfo::buffer_image(staging_buf, image);
+		render_ctx.add_transfer(copy_to_image.into());
 
-		Ok((CubemapTexture { view }, copy_to_image))
+		Ok(CubemapTexture { view })
 	}
 
 	pub fn view(&self) -> &Arc<ImageView>

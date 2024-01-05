@@ -16,7 +16,7 @@ mod vulkan_init;
 pub mod workload;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use glam::*;
@@ -242,61 +242,6 @@ impl RenderContext
 	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
 	{
 		&self.light_set_layout
-	}
-
-	/// Load an image file as a texture into memory.
-	/// If the image was already loaded, it'll use the corresponding texture.
-	pub fn get_texture(&mut self, path: &Path) -> crate::Result<Arc<Texture>>
-	{
-		match self.textures.get(path) {
-			Some(tex) => Ok(tex.clone()),
-			None => {
-				let (tex, staging_work) = texture::Texture::new(
-					self.memory_allocator.clone(),
-					&mut self.staging_buffer_allocator.lock().unwrap(),
-					path,
-				)?;
-				self.add_transfer(staging_work.into());
-				let tex_arc = Arc::new(tex);
-				self.textures.insert(path.to_path_buf(), tex_arc.clone());
-				Ok(tex_arc)
-			}
-		}
-	}
-
-	pub fn new_cubemap_texture(&mut self, faces: [PathBuf; 6]) -> crate::Result<texture::CubemapTexture>
-	{
-		let (tex, staging_work) = texture::CubemapTexture::new(
-			self.memory_allocator.clone(),
-			&mut self.staging_buffer_allocator.lock().unwrap(),
-			faces,
-		)?;
-		self.add_transfer(staging_work.into());
-		Ok(tex)
-	}
-
-	pub fn new_texture_from_slice<Px>(
-		&mut self,
-		data: &[Px],
-		vk_fmt: Format,
-		dimensions: [u32; 2],
-		mip: u32,
-		array_layers: u32,
-	) -> crate::Result<texture::Texture>
-	where
-		Px: BufferContents + Copy,
-	{
-		let (tex, staging_work) = texture::Texture::new_from_slice(
-			self.memory_allocator.clone(),
-			&mut self.staging_buffer_allocator.lock().unwrap(),
-			data,
-			vk_fmt,
-			dimensions,
-			mip,
-			array_layers,
-		)?;
-		self.add_transfer(staging_work.into());
-		Ok(tex)
 	}
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
