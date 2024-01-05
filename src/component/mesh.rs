@@ -15,7 +15,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, CommandBufferUsage,
 	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
-use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet};
+use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::view::ImageView;
@@ -102,7 +102,7 @@ impl MeshManager
 
 		let material_textures_set_layout = render_ctx.get_material_textures_set_layout().clone();
 		let light_set_layout = render_ctx.get_light_set_layout().clone();
-		let transparency_input_layout = render_ctx.get_transparency_renderer().get_stage3_inputs().layout().clone();
+		let transparency_input_layout = render_ctx.get_oit_stage3_input_layout().clone();
 
 		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
 		let push_constant_range = PushConstantRange {

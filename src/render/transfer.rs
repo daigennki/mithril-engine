@@ -199,7 +199,7 @@ impl TransferManager
 	}
 }
 
-pub struct UpdateBufferData<T: BufferContents + Copy>
+struct UpdateBufferData<T: BufferContents + Copy>
 {
 	dst_buf: Subbuffer<[T]>,
 	data: Vec<T>,
@@ -226,7 +226,7 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		Ok(())
 	}
 }
-pub trait UpdateBufferDataTrait: Send + Sync
+trait UpdateBufferDataTrait: Send + Sync
 {
 	fn data_size(&self) -> DeviceSize;
 

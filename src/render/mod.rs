@@ -12,7 +12,7 @@ pub mod skybox;
 mod swapchain;
 pub mod texture;
 mod transfer;
-pub mod transparency;
+mod transparency;
 mod vulkan_init;
 pub mod workload;
 
@@ -32,6 +32,7 @@ use vulkano::descriptor_set::{
 	layout::{
 		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
 	},
+	DescriptorSet,
 };
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
@@ -198,16 +199,6 @@ impl RenderContext
 		})
 	}
 
-	pub fn get_material_textures_set_layout(&self) -> &Arc<DescriptorSetLayout>
-	{
-		&self.material_textures_set_layout
-	}
-
-	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
-	{
-		&self.light_set_layout
-	}
-
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
 	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
@@ -296,6 +287,19 @@ impl RenderContext
 		self.swapchain.submit(built_cb, self.transfer_manager.take_transfer_future())
 	}
 
+	pub fn get_material_textures_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	{
+		&self.material_textures_set_layout
+	}
+	pub fn get_light_set_layout(&self) -> &Arc<DescriptorSetLayout>
+	{
+		&self.light_set_layout
+	}
+	pub fn get_oit_stage3_input_layout(&self) -> &Arc<DescriptorSetLayout>
+	{
+		&self.transparency_renderer.get_stage3_inputs().layout()
+	}
+
 	pub fn device(&self) -> &Arc<Device>
 	{
 		self.memory_allocator.device()
@@ -336,11 +340,6 @@ impl RenderContext
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()
-	}
-
-	pub fn get_transparency_renderer(&self) -> &transparency::MomentTransparencyRenderer
-	{
-		&self.transparency_renderer
 	}
 
 	/// Get the delta time for last frame.
