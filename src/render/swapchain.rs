@@ -9,7 +9,7 @@ use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
-use vulkano::device::{Device, Queue};
+use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, ImageUsage};
 use vulkano::swapchain::{
@@ -43,6 +43,7 @@ const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
 pub struct Swapchain
 {
 	window: Arc<Window>,
+	graphics_queue: Arc<Queue>,
 	swapchain: Arc<vulkano::swapchain::Swapchain>,
 	image_views: Vec<Arc<ImageView>>,
 
@@ -58,8 +59,9 @@ pub struct Swapchain
 }
 impl Swapchain
 {
-	pub fn new(vk_dev: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
+	pub fn new(graphics_queue: Arc<Queue>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
 	{
+		let vk_dev = graphics_queue.device().clone();
 		let window = create_window(event_loop, window_title)?;
 		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
 
@@ -125,6 +127,7 @@ impl Swapchain
 
 		Ok(Swapchain {
 			window,
+			graphics_queue,
 			swapchain,
 			image_views,
 			extent_changed: false,
@@ -234,11 +237,10 @@ impl Swapchain
 	pub fn submit(
 		&mut self,
 		cb: Arc<PrimaryAutoCommandBuffer>,
-		queue: Arc<Queue>,
 		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
 	) -> crate::Result<()>
 	{
-		let mut joined_futures = vulkano::sync::future::now(queue.device().clone()).boxed_send_sync();
+		let mut joined_futures = vulkano::sync::future::now(self.graphics_queue.device().clone()).boxed_send_sync();
 
 		if let Some(f) = self.submission_future.take() {
 			// wait for the previous submission to finish, to make sure resources are no longer in use
@@ -269,9 +271,9 @@ impl Swapchain
 
 				let submit_result = joined_futures
 					.join(acquire_future)
-					.then_execute(queue.clone(), cb)
+					.then_execute(self.graphics_queue.clone(), cb)
 					.unwrap()
-					.then_swapchain_present(queue, present_info)
+					.then_swapchain_present(self.graphics_queue.clone(), present_info)
 					.boxed_send_sync()
 					.then_signal_fence_and_flush();
 
@@ -289,7 +291,7 @@ impl Swapchain
 			}
 			None => {
 				let f = joined_futures
-					.then_execute(queue.clone(), cb)
+					.then_execute(self.graphics_queue.clone(), cb)
 					.unwrap()
 					.boxed_send_sync()
 					.then_signal_fence_and_flush()?;
@@ -315,6 +317,11 @@ impl Swapchain
 		let dur = now - self.last_frame_presented;
 		self.last_frame_presented = now;
 		self.frame_time = dur;
+	}
+
+	pub fn graphics_queue_family_index(&self) -> u32
+	{
+		self.graphics_queue.queue_family_index()
 	}
 
 	pub fn image_count(&self) -> usize

@@ -119,7 +119,7 @@ fn submit_frame(
 {
 	let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 		&render_ctx.command_buffer_allocator,
-		render_ctx.graphics_queue.queue_family_index(),
+		render_ctx.graphics_queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
 

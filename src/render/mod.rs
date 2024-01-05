@@ -37,7 +37,7 @@ use vulkano::descriptor_set::{
 		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
 	},
 };
-use vulkano::device::{Device, Queue};
+use vulkano::device::{Device, DeviceOwned, Queue};
 use vulkano::format::Format;
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
 use vulkano::memory::{
@@ -77,12 +77,10 @@ pub const MAIN_DEPTH_FORMAT: Format = Format::D16_UNORM;
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
-	device: Arc<Device>,
-	graphics_queue: Arc<Queue>,
 	swapchain: swapchain::Swapchain,
 	main_render_target: render_target::RenderTarget,
-	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	memory_allocator: Arc<StandardMemoryAllocator>,
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
 	transparency_renderer: transparency::MomentTransparencyRenderer,
@@ -104,8 +102,8 @@ pub struct RenderContext
 
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
-	staging_buffer_allocator: Mutex<SubbufferAllocator>, // Used for the buffer updates.
-	staging_buf_max_size: DeviceSize,                    // Maximum staging buffer usage for the entire duration of the program.
+	staging_buffer_allocator: Mutex<SubbufferAllocator>,
+	staging_buf_max_size: DeviceSize, // Maximum staging buffer usage for the entire duration of the program.
 	staging_buf_usage_frame: DeviceSize,
 }
 impl RenderContext
@@ -115,7 +113,7 @@ impl RenderContext
 		let (graphics_queue, transfer_queue, allow_direct_buffer_access) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
 
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), event_loop, game_name)?;
+		let swapchain = swapchain::Swapchain::new(graphics_queue, event_loop, game_name)?;
 
 		let descriptor_set_allocator =
 			StandardDescriptorSetAllocator::new(vk_dev.clone(), StandardDescriptorSetAllocatorCreateInfo::default());
@@ -216,11 +214,9 @@ impl RenderContext
 		let async_transfers = Vec::with_capacity(200);
 
 		Ok(RenderContext {
-			device: vk_dev,
 			swapchain,
-			graphics_queue,
-			descriptor_set_allocator,
 			memory_allocator,
+			descriptor_set_allocator,
 			command_buffer_allocator,
 			main_render_target,
 			transparency_renderer,
@@ -475,30 +471,29 @@ impl RenderContext
 
 	fn submit_primary(&mut self, built_cb: Arc<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
-		self.swapchain
-			.submit(built_cb, self.graphics_queue.clone(), self.transfer_future.take())
+		self.swapchain.submit(built_cb, self.transfer_future.take())
 	}
 
-	pub fn command_buffer_allocator(&self) -> &StandardCommandBufferAllocator
+	pub fn device(&self) -> &Arc<Device>
 	{
-		&self.command_buffer_allocator
+		self.memory_allocator.device()
+	}
+	pub fn graphics_queue_family_index(&self) -> u32
+	{
+		self.swapchain.graphics_queue_family_index()
+	}
+
+	pub fn memory_allocator(&self) -> &Arc<StandardMemoryAllocator>
+	{
+		&self.memory_allocator
 	}
 	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
 	{
 		&self.descriptor_set_allocator
 	}
-	pub fn memory_allocator(&self) -> &Arc<StandardMemoryAllocator>
+	pub fn command_buffer_allocator(&self) -> &StandardCommandBufferAllocator
 	{
-		&self.memory_allocator
-	}
-
-	pub fn device(&self) -> &Arc<Device>
-	{
-		&self.device
-	}
-	pub fn graphics_queue_family_index(&self) -> u32
-	{
-		self.graphics_queue.queue_family_index()
+		&self.command_buffer_allocator
 	}
 
 	/// Check if the window has been resized since the last frame submission.
