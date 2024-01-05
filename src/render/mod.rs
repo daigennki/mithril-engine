@@ -28,9 +28,8 @@ use vulkano::buffer::{
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, CommandBufferExecFuture, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo,
-	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
-	SecondaryAutoCommandBuffer,
+	AutoCommandBufferBuilder, CommandBufferExecFuture, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
+	PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -45,7 +44,7 @@ use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::pipeline::graphics::{depth_stencil::CompareOp, viewport::Viewport};
+use vulkano::pipeline::graphics::depth_stencil::CompareOp;
 use vulkano::shader::ShaderStages;
 use vulkano::sync::{
 	future::{FenceSignalFuture, NowFuture},
@@ -425,43 +424,6 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Issue a new secondary command buffer builder to begin recording to.
-	/// It will be set up for drawing to color and depth images with the given format,
-	/// and with a viewport as large as `viewport_extent`.
-	pub fn gather_commands(
-		&self,
-		color_attachment_formats: &[Format],
-		depth_attachment_format: Option<Format>,
-		stencil_attachment_format: Option<Format>,
-		viewport_extent: [u32; 2],
-	) -> crate::Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>>
-	{
-		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
-			color_attachment_formats: color_attachment_formats.iter().map(|f| Some(*f)).collect(),
-			depth_attachment_format,
-			stencil_attachment_format,
-			..Default::default()
-		};
-		let mut cb = AutoCommandBufferBuilder::secondary(
-			&self.command_buffer_allocator,
-			self.graphics_queue.queue_family_index(),
-			CommandBufferUsage::OneTimeSubmit,
-			CommandBufferInheritanceInfo {
-				render_pass: Some(rendering_inheritance.into()),
-				..Default::default()
-			},
-		)?;
-
-		let viewport = Viewport {
-			offset: [0.0, 0.0],
-			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
-			depth_range: 0.0..=1.0,
-		};
-		cb.set_viewport(0, [viewport].as_slice().into())?;
-
-		Ok(cb)
-	}
-
 	fn resize_everything_else(&mut self) -> crate::Result<()>
 	{
 		// Update images to match the current swapchain image extent.
@@ -517,11 +479,14 @@ impl RenderContext
 			.submit(built_cb, self.graphics_queue.clone(), self.transfer_future.take())
 	}
 
+	pub fn command_buffer_allocator(&self) -> &StandardCommandBufferAllocator
+	{
+		&self.command_buffer_allocator
+	}
 	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
 	{
 		&self.descriptor_set_allocator
 	}
-
 	pub fn memory_allocator(&self) -> &Arc<StandardMemoryAllocator>
 	{
 		&self.memory_allocator
@@ -530,6 +495,10 @@ impl RenderContext
 	pub fn device(&self) -> &Arc<Device>
 	{
 		&self.device
+	}
+	pub fn graphics_queue_family_index(&self) -> u32
+	{
+		self.graphics_queue.queue_family_index()
 	}
 
 	/// Check if the window has been resized since the last frame submission.

@@ -12,14 +12,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
-	SubpassContents,
+	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, CommandBufferUsage,
+	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::view::ImageView;
 use vulkano::pipeline::{
+	graphics::viewport::Viewport,
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
 };
@@ -195,9 +196,27 @@ impl MeshManager
 			_ => (crate::render::MAIN_DEPTH_FORMAT, render_ctx.swapchain_dimensions(), false),
 		};
 
-		let color_formats = pass_type.render_color_formats();
+		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
+			color_attachment_formats: pass_type.render_color_formats(),
+			depth_attachment_format: Some(depth_format),
+			..Default::default()
+		};
+		let mut cb = AutoCommandBufferBuilder::secondary(
+			render_ctx.command_buffer_allocator(),
+			render_ctx.graphics_queue_family_index(),
+			CommandBufferUsage::OneTimeSubmit,
+			CommandBufferInheritanceInfo {
+				render_pass: Some(rendering_inheritance.into()),
+				..Default::default()
+			},
+		)?;
 
-		let mut cb = render_ctx.gather_commands(color_formats, Some(depth_format), None, viewport_extent)?;
+		let viewport = Viewport {
+			offset: [0.0, 0.0],
+			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
+			depth_range: 0.0..=1.0,
+		};
+		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		let pipeline_override = pass_type.pipeline();
 		let transparency_pass = pass_type.transparency_pass();
@@ -305,14 +324,15 @@ pub enum PassType
 }
 impl PassType
 {
-	fn render_color_formats(&self) -> &'static [Format]
+	fn render_color_formats(&self) -> Vec<Option<Format>>
 	{
-		match self {
+		let formats: &'static [Format] = match self {
 			PassType::Shadow { .. } => &[],
 			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
 			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT],
 			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
-		}
+		};
+		formats.iter().copied().map(|f| Some(f)).collect()
 	}
 	fn pipeline(&self) -> Option<&Arc<GraphicsPipeline>>
 	{

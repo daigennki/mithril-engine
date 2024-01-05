@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
-	SubpassContents,
+	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, CommandBufferUsage,
+	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
@@ -33,6 +33,7 @@ use vulkano::pipeline::{
 		input_assembly::PrimitiveTopology,
 		rasterization::RasterizationState,
 		subpass::PipelineRenderingCreateInfo,
+		viewport::Viewport,
 		GraphicsPipeline,
 	},
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
@@ -508,8 +509,27 @@ impl Canvas
 	{
 		// TODO: how do we respect the render order of each UI element?
 
+		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
+			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			..Default::default()
+		};
+		let mut cb = AutoCommandBufferBuilder::secondary(
+			render_ctx.command_buffer_allocator(),
+			render_ctx.graphics_queue_family_index(),
+			CommandBufferUsage::OneTimeSubmit,
+			CommandBufferInheritanceInfo {
+				render_pass: Some(rendering_inheritance.into()),
+				..Default::default()
+			},
+		)?;
+
 		let vp_extent = render_ctx.swapchain_dimensions();
-		let mut cb = render_ctx.gather_commands(&[Format::R16G16B16A16_SFLOAT], None, None, vp_extent)?;
+		let viewport = Viewport {
+			offset: [0.0, 0.0],
+			extent: [vp_extent[0] as f32, vp_extent[1] as f32],
+			depth_range: 0.0..=1.0,
+		};
+		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		cb.bind_pipeline_graphics(self.ui_pipeline.clone())?;
 		for resources in self.mesh_resources.values() {
