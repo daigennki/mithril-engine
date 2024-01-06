@@ -33,7 +33,7 @@ impl WantsSystemAdded for UIText
 }
 fn update_text(
 	mut render_ctx: UniqueViewMut<crate::render::RenderContext>,
-	mut canvas: UniqueViewMut<super::canvas::Canvas>,
+	mut canvas: UniqueViewMut<crate::render::ui::Canvas>,
 	ui_transforms: View<super::UITransform>,
 	ui_texts: View<UIText>,
 )

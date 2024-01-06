@@ -5,7 +5,6 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-pub mod canvas;
 pub mod mesh;
 pub mod text;
 

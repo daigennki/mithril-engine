@@ -42,9 +42,9 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use super::mesh::MeshType;
-use crate::render::texture::Texture;
-use crate::render::RenderContext;
+use crate::component::ui::{mesh::{Mesh, MeshType}, text::UIText, UITransform};
+use super::texture::Texture;
+use super::RenderContext;
 
 mod ui_vs
 {
@@ -289,7 +289,7 @@ impl Canvas
 		let vert_buf = render_ctx.new_buffer(&quad_verts, BufferUsage::VERTEX_BUFFER)?;
 		let (quad_pos_buf, quad_uv_buf) = vert_buf.split_at(4);
 
-		let font_data = include_bytes!("../../../resource/mplus-1m-medium.ttf");
+		let font_data = include_bytes!("../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Font has invalid data")?;
 
 		let dim = render_ctx.swapchain_dimensions();
@@ -339,7 +339,7 @@ impl Canvas
 		&mut self,
 		render_ctx: &mut RenderContext,
 		set_layout: Arc<DescriptorSetLayout>,
-		transform: &super::UITransform,
+		transform: &UITransform,
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
 		text_vbo: Option<Subbuffer<[Vec4]>>,
@@ -372,8 +372,8 @@ impl Canvas
 		&mut self,
 		render_ctx: &mut RenderContext,
 		eid: EntityId,
-		transform: &super::UITransform,
-		mesh: &super::mesh::Mesh,
+		transform: &UITransform,
+		mesh: &Mesh,
 	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
@@ -399,8 +399,8 @@ impl Canvas
 		&mut self,
 		render_ctx: &mut RenderContext,
 		eid: EntityId,
-		transform: &super::UITransform,
-		text: &super::text::UIText,
+		transform: &UITransform,
+		text: &UIText,
 	) -> crate::Result<()>
 	{
 		let text_str = &text.text_str;

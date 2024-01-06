@@ -10,9 +10,9 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
-use crate::component::ui;
 use crate::render::lighting::LightManager;
 use crate::render::model::{MeshManager, PassType};
+use crate::render::ui::Canvas;
 
 pub fn render() -> Workload
 {
@@ -103,7 +103,7 @@ fn draw_3d_oit(
 }
 
 // Draw UI elements.
-fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<ui::canvas::Canvas>) -> crate::Result<()>
+fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
 {
 	canvas.draw(&render_ctx)
 }
@@ -113,7 +113,7 @@ fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut skybox: UniqueViewMut<super::skybox::Skybox>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
-	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
+	mut canvas: UniqueViewMut<Canvas>,
 	mut light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>

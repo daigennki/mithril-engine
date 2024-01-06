@@ -23,7 +23,6 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{CameraFov, CameraManager};
-use component::ui::canvas::Canvas;
 use render::RenderContext;
 
 type EngineError = error::EngineError;
@@ -93,7 +92,7 @@ fn init_world(
 
 	let (world, sky) = load_world(start_map)?;
 
-	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720)?);
+	world.add_unique(render::ui::Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(viewport_extent, CameraFov::Y(1.0_f32.to_degrees())));
 	world.add_unique(render::model::MeshManager::new(&render_ctx)?);

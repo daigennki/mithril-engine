@@ -9,6 +9,7 @@ use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, Wo
 use std::path::PathBuf;
 
 use crate::component::WantsSystemAdded;
+use crate::render::ui::Canvas;
 
 #[derive(Clone, Copy)]
 pub enum MeshType
@@ -45,7 +46,7 @@ impl WantsSystemAdded for Mesh
 }
 fn update_mesh(
 	mut render_ctx: UniqueViewMut<crate::render::RenderContext>,
-	mut canvas: UniqueViewMut<super::canvas::Canvas>,
+	mut canvas: UniqueViewMut<Canvas>,
 	ui_transforms: View<super::UITransform>,
 	ui_meshes: View<Mesh>,
 )

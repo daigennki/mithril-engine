@@ -14,6 +14,7 @@ mod swapchain;
 pub mod texture;
 mod transfer;
 mod transparency;
+pub mod ui;
 mod vulkan_init;
 pub mod workload;
 
