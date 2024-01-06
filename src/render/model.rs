@@ -414,7 +414,7 @@ fn descriptor_set_from_materials(
 
 	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
 	let textures_set = PersistentDescriptorSet::new_variable(
-		render_ctx.descriptor_set_allocator(),
+		&render_ctx.descriptor_set_allocator,
 		render_ctx.material_textures_set_layout.clone(),
 		texture_count,
 		[WriteDescriptorSet::image_view_array(
@@ -750,11 +750,10 @@ impl MeshManager
 {
 	pub fn new(render_ctx: &RenderContext) -> crate::Result<Self>
 	{
-		let vk_dev = render_ctx.device().clone();
-
 		let material_textures_set_layout = render_ctx.material_textures_set_layout.clone();
 		let light_set_layout = render_ctx.light_set_layout.clone();
 		let transparency_input_layout = render_ctx.transparency_renderer.get_stage3_inputs().layout().clone();
+		let vk_dev = material_textures_set_layout.device().clone();
 
 		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
 		let push_constant_range = PushConstantRange {
@@ -854,7 +853,7 @@ impl MeshManager
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
-			render_ctx.command_buffer_allocator(),
+			&render_ctx.command_buffer_allocator,
 			render_ctx.graphics_queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 			CommandBufferInheritanceInfo {

@@ -35,7 +35,7 @@ use vulkano::descriptor_set::{
 		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
 	},
 };
-use vulkano::device::{Device, DeviceOwned};
+use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
 use vulkano::memory::{
@@ -202,7 +202,7 @@ impl RenderContext
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
-	pub fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
+	fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
 	where
 		T: BufferContents + Copy,
 	{
@@ -253,7 +253,7 @@ impl RenderContext
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
-	pub fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>)
+	fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>)
 	where
 		T: BufferContents + Copy,
 	{
@@ -288,26 +288,9 @@ impl RenderContext
 		self.swapchain.submit(built_cb, self.transfer_manager.take_transfer_future())
 	}
 
-	pub fn device(&self) -> &Arc<Device>
-	{
-		self.memory_allocator.device()
-	}
-	pub fn graphics_queue_family_index(&self) -> u32
+	fn graphics_queue_family_index(&self) -> u32
 	{
 		self.swapchain.graphics_queue_family_index()
-	}
-
-	pub fn memory_allocator(&self) -> &Arc<StandardMemoryAllocator>
-	{
-		&self.memory_allocator
-	}
-	pub fn descriptor_set_allocator(&self) -> &StandardDescriptorSetAllocator
-	{
-		&self.descriptor_set_allocator
-	}
-	pub fn command_buffer_allocator(&self) -> &StandardCommandBufferAllocator
-	{
-		&self.command_buffer_allocator
 	}
 
 	/// Check if the window has been resized since the last frame submission.

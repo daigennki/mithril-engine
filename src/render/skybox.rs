@@ -122,7 +122,7 @@ impl Skybox
 	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
 	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> crate::Result<Self>
 	{
-		let device = render_ctx.descriptor_set_allocator().device().clone();
+		let device = render_ctx.descriptor_set_allocator.device().clone();
 
 		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
 		let tex_binding = DescriptorSetLayoutBinding {
@@ -167,7 +167,7 @@ impl Skybox
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = CubemapTexture::new(render_ctx, face_paths)?;
 		let descriptor_set = PersistentDescriptorSet::new(
-			render_ctx.descriptor_set_allocator(),
+			&render_ctx.descriptor_set_allocator,
 			set_layout,
 			[WriteDescriptorSet::image_view(0, sky_cubemap.view().clone())],
 			[],

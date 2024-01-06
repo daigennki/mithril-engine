@@ -42,9 +42,13 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use crate::component::ui::{mesh::{Mesh, MeshType}, text::UIText, UITransform};
 use super::texture::Texture;
 use super::RenderContext;
+use crate::component::ui::{
+	mesh::{Mesh, MeshType},
+	text::UIText,
+	UITransform,
+};
 
 mod ui_vs
 {
@@ -185,7 +189,7 @@ impl Canvas
 {
 	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> crate::Result<Self>
 	{
-		let device = render_ctx.descriptor_set_allocator().device().clone();
+		let device = render_ctx.descriptor_set_allocator.device().clone();
 
 		let sampler_info = SamplerCreateInfo {
 			mag_filter: Filter::Linear,
@@ -355,7 +359,7 @@ impl Canvas
 		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
 
 		let writes = [WriteDescriptorSet::image_view(0, image_view)];
-		let descriptor_set = PersistentDescriptorSet::new(render_ctx.descriptor_set_allocator(), set_layout, writes, [])?;
+		let descriptor_set = PersistentDescriptorSet::new(&render_ctx.descriptor_set_allocator, set_layout, writes, [])?;
 
 		Ok(UiGpuResources {
 			text_vbo,
@@ -416,6 +420,7 @@ impl Canvas
 			..Default::default()
 		};
 		let max_glyphs: usize = render_ctx
+			.memory_allocator
 			.device()
 			.physical_device()
 			.image_format_properties(image_format_info)?
@@ -515,7 +520,7 @@ impl Canvas
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
-			render_ctx.command_buffer_allocator(),
+			&render_ctx.command_buffer_allocator,
 			render_ctx.graphics_queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 			CommandBufferInheritanceInfo {

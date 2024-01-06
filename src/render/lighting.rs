@@ -89,7 +89,7 @@ impl LightManager
 {
 	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
 	{
-		let device = render_ctx.descriptor_set_allocator().device().clone();
+		let device = render_ctx.descriptor_set_allocator.device().clone();
 
 		/* info for shadow images */
 		let image_info = ImageCreateInfo {
@@ -106,7 +106,7 @@ impl LightManager
 			render_ctx.new_buffer(&[dir_light_data], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?;
 
 		let dir_light_shadow_img = Image::new(
-			render_ctx.memory_allocator().clone(),
+			render_ctx.memory_allocator.clone(),
 			image_info.clone(),
 			AllocationCreateInfo::default(),
 		)?;
@@ -133,7 +133,7 @@ impl LightManager
 
 		/* descriptor set with everything lighting- and shadow-related */
 		let all_lights_set = PersistentDescriptorSet::new(
-			render_ctx.descriptor_set_allocator(),
+			&render_ctx.descriptor_set_allocator,
 			render_ctx.light_set_layout.clone(),
 			[
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),
