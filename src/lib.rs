@@ -96,7 +96,7 @@ fn init_world(
 	world.add_unique(Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(viewport_extent, CameraFov::Y(1.0_f32.to_degrees())));
-	world.add_unique(component::mesh::MeshManager::new(&render_ctx)?);
+	world.add_unique(render::model::MeshManager::new(&render_ctx)?);
 	world.add_unique(render::lighting::LightManager::new(&mut render_ctx)?);
 	world.add_unique(InputHelperWrapper::default());
 	world.add_unique(render_ctx);

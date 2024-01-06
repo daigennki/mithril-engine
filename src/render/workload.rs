@@ -10,9 +10,9 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
 
 use super::RenderContext;
 use crate::component::camera::CameraManager;
-use crate::component::mesh::PassType;
 use crate::component::ui;
 use crate::render::lighting::LightManager;
+use crate::render::model::{MeshManager, PassType};
 
 pub fn render() -> Workload
 {
@@ -28,7 +28,7 @@ pub fn render() -> Workload
 // Render shadow maps.
 fn draw_shadows(
 	render_ctx: UniqueView<RenderContext>,
-	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
+	mesh_manager: UniqueView<MeshManager>,
 	mut light_manager: UniqueViewMut<LightManager>,
 ) -> crate::Result<()>
 {
@@ -58,7 +58,7 @@ fn draw_shadows(
 fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
-	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
+	mesh_manager: UniqueView<MeshManager>,
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
@@ -73,7 +73,7 @@ fn draw_3d(
 fn draw_3d_oit(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
-	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
+	mesh_manager: UniqueView<MeshManager>,
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
@@ -112,7 +112,7 @@ fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<ui::
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut skybox: UniqueViewMut<super::skybox::Skybox>,
-	mut mesh_manager: UniqueViewMut<crate::component::mesh::MeshManager>,
+	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
 	mut light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,

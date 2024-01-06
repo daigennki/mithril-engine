@@ -134,7 +134,7 @@ impl LightManager
 		/* descriptor set with everything lighting- and shadow-related */
 		let all_lights_set = PersistentDescriptorSet::new(
 			render_ctx.descriptor_set_allocator(),
-			render_ctx.get_light_set_layout().clone(),
+			render_ctx.light_set_layout.clone(),
 			[
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),
 				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),
