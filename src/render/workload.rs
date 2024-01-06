@@ -12,6 +12,7 @@ use super::RenderContext;
 use crate::component::camera::CameraManager;
 use crate::component::mesh::PassType;
 use crate::component::ui;
+use crate::render::lighting::LightManager;
 
 pub fn render() -> Workload
 {
@@ -28,7 +29,7 @@ pub fn render() -> Workload
 fn draw_shadows(
 	render_ctx: UniqueView<RenderContext>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
-	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
+	mut light_manager: UniqueViewMut<LightManager>,
 ) -> crate::Result<()>
 {
 	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
@@ -58,7 +59,7 @@ fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
-	light_manager: UniqueView<crate::component::light::LightManager>,
+	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
 	let common_sets = [light_manager.get_all_lights_set().clone()];
@@ -73,7 +74,7 @@ fn draw_3d_oit(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<crate::component::mesh::MeshManager>,
-	light_manager: UniqueView<crate::component::light::LightManager>,
+	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
 	// First, collect moments for Moment-based OIT.
@@ -113,7 +114,7 @@ fn submit_frame(
 	mut skybox: UniqueViewMut<super::skybox::Skybox>,
 	mut mesh_manager: UniqueViewMut<crate::component::mesh::MeshManager>,
 	mut canvas: UniqueViewMut<ui::canvas::Canvas>,
-	mut light_manager: UniqueViewMut<crate::component::light::LightManager>,
+	mut light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {

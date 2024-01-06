@@ -5,6 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
+pub mod lighting;
 pub mod model;
 pub mod pipeline;
 mod render_target;
