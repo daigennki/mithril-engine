@@ -19,7 +19,6 @@ use vulkano::descriptor_set::{
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
-	sampler::{Sampler, SamplerCreateInfo},
 	view::ImageView,
 	Image, ImageCreateInfo, ImageUsage,
 };
@@ -421,20 +420,13 @@ impl MomentTransparencyRenderer
 		// generated in Stage 2.
 		let input_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
-			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-		};
-		let input_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
-		let oit_sampler_binding = DescriptorSetLayoutBinding {
-			stages: ShaderStages::FRAGMENT,
-			immutable_samplers: vec![input_sampler],
-			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
 		};
 		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, oit_sampler_binding.clone()),
-				(1, input_binding.clone()), // moments
-				(2, input_binding.clone()), // optical_depth
-				(3, input_binding.clone()), // min_depth
+				(0, input_binding.clone()), // moments
+				(1, input_binding.clone()), // optical_depth
+				(2, input_binding.clone()), // min_depth
 			]
 			.into(),
 			..Default::default()
@@ -446,9 +438,8 @@ impl MomentTransparencyRenderer
 		//
 		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
 			bindings: [
-				(0, oit_sampler_binding),
-				(1, input_binding.clone()), // accum
-				(2, input_binding),         // revealage
+				(0, input_binding.clone()), // accum
+				(1, input_binding),         // revealage
 			]
 			.into(),
 			..Default::default()
@@ -457,6 +448,13 @@ impl MomentTransparencyRenderer
 
 		let stage4_pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![stage4_inputs_layout.clone()],
+			push_constant_ranges: vec![
+				PushConstantRange {
+					stages: ShaderStages::VERTEX,
+					offset: 0,
+					size: std::mem::size_of::<UVec2>().try_into().unwrap(),
+				},
+			],
 			..Default::default()
 		};
 		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)?;
@@ -626,6 +624,7 @@ impl MomentTransparencyRenderer
 		};
 
 		// draw the objects to the transparency framebuffer, then composite the transparency onto the main framebuffer
+		let compositing_layout = self.transparency_compositing_pl.layout().clone();
 		cb.begin_rendering(stage2_rendering_info)?
 			.execute_commands(moments_cb)?
 			.end_rendering()?
@@ -635,12 +634,8 @@ impl MomentTransparencyRenderer
 			.begin_rendering(stage4_rendering_info)?
 			.set_viewport(0, [viewport].as_slice().into())?
 			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
-			.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				self.transparency_compositing_pl.layout().clone(),
-				0,
-				vec![self.stage4_inputs.clone()],
-			)?
+			.push_constants(compositing_layout.clone(), 0, UVec2::from(img_extent))?
+			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, vec![self.stage4_inputs.clone()])?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
 
@@ -695,7 +690,7 @@ fn create_mboit_images(
 	let mut views = Vec::with_capacity(5);
 	for format in image_formats {
 		let info = ImageCreateInfo {
-			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE,
 			format,
 			extent: [extent[0], extent[1], 1],
 			..Default::default()
@@ -716,9 +711,9 @@ fn create_mboit_images(
 		descriptor_set_allocator,
 		stage3_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(1, views[0].clone()),
-			WriteDescriptorSet::image_view(2, views[1].clone()),
-			WriteDescriptorSet::image_view(3, views[2].clone()),
+			WriteDescriptorSet::image_view(0, views[0].clone()),
+			WriteDescriptorSet::image_view(1, views[1].clone()),
+			WriteDescriptorSet::image_view(2, views[2].clone()),
 		],
 		[],
 	)?;
@@ -727,8 +722,8 @@ fn create_mboit_images(
 		descriptor_set_allocator,
 		stage4_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(1, views[3].clone()),
-			WriteDescriptorSet::image_view(2, views[4].clone()),
+			WriteDescriptorSet::image_view(0, views[3].clone()),
+			WriteDescriptorSet::image_view(1, views[4].clone()),
 		],
 		[],
 	)?;

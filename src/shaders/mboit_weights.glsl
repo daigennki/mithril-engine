@@ -1,16 +1,14 @@
 
 // The shader code used for moment-based OIT moment weight calculation (stage 3), meant to be included by other shaders.
 
-layout(set = 2, binding = 0) uniform sampler oit_sampler;
-
 /* sum(rgb * a, a) */
-layout(set = 2, binding = 1) uniform texture2D moments_in;
+layout(set = 2, binding = 0, rgba32f) uniform readonly image2D moments_in;
 
 /* prod(1 - a) */
-layout(set = 2, binding = 2) uniform texture2D optical_depth_in;
+layout(set = 2, binding = 1, r32f) uniform readonly image2D optical_depth_in;
 
 /* minimum depth for correction */
-layout(set = 2, binding = 3) uniform texture2D min_depth;
+layout(set = 2, binding = 2, r32f) uniform readonly image2D min_depth;
 
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
@@ -88,14 +86,15 @@ float calc_w(float alpha)
 
 	// TODO: use a descriptor set here to reflect changes to the camera near/far planes
 	const float near = 0.25;
-	const float far = 5000.0;
+	const float far = 500.0;
 	const float c0 = 1.0 / near;
 	const float c1 = 1.0 / log(far / near);
 
 	vec2 texcoord = gl_FragCoord.xy * 0.5 + 0.5;
+	ivec2 load_coord = ivec2(texcoord * vec2(imageSize(moments_in)));
 
-	vec4 moments = texture(sampler2D(moments_in, oit_sampler), texcoord);
-	float total_od = texture(sampler2D(optical_depth_in, oit_sampler), texcoord).r;
+	vec4 moments = imageLoad(moments_in, load_coord);
+	float total_od = imageLoad(optical_depth_in, load_coord).r;
 	float unit_pos = depth_to_unit(z, c0, c1);
 
 	if (total_od != 0.0) {
@@ -108,7 +107,7 @@ float calc_w(float alpha)
 
 	// if this is *not* the top fragment, but the depth of this fragment is still close to the minimum depth,
 	// correct the "gradient" that might appear under such conditions
-	float min_z = texture(sampler2D(min_depth, oit_sampler), texcoord).r;
+	float min_z = imageLoad(min_depth, load_coord).r;
 	const float correction_factor = 100.0;
 	if (z > min_z) {
 		//w *= clamp((z - min_z) * correction_factor, 0.0, 1.0);
