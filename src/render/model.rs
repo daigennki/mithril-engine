@@ -53,10 +53,13 @@ struct Model
 	// The texture base indices in the variable descriptor count of `textures_set`.
 	// (to get the texture base index, use the material index as an index to this)
 	mat_tex_base_indices: Vec<u32>,
+
+	// All entities with a `Mesh` component that use this model.
+	users: HashMap<EntityId, ModelInstance>,
 }
 impl Model
 {
-	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Self>
+	fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Self>
 	{
 		let parent_folder = path.parent().unwrap();
 
@@ -117,103 +120,111 @@ This model may be inefficient to draw, so consider joining the meshes."
 			index_buffer,
 			textures_set,
 			mat_tex_base_indices,
+			users: Default::default(),
 		})
 	}
 
-	pub fn new_instance(self: Arc<Self>, material_variant: Option<String>) -> ModelInstance
+	fn new_user(&mut self, eid: EntityId, material_variant: Option<String>)
 	{
-		ModelInstance::new(self, material_variant)
+		self.users.insert(eid, ModelInstance::new(&self, material_variant));
+	}
+	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
+	{
+		self.users.get_mut(&eid).unwrap().model_matrix = model_matrix;
+	}
+	fn cleanup(&mut self, eid: EntityId)
+	{
+		self.users.remove(&eid);
 	}
 
-	/// Get the materials of this model.
-	pub fn get_materials(&self) -> &Vec<Box<dyn Material>>
-	{
-		&self.materials
-	}
-
-	/// Draw this model. `transform` is the model/projection/view matrices multiplied for frustum culling.
-	/// Returns `Ok(true)` if any submeshes were drawn at all.
+	/// Draw this model for all visible users. Returns `Ok(true)` if any submeshes were drawn at all.
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_name: Option<&str>,
 		pipeline_layout: Arc<PipelineLayout>,
-		projview: &Mat4,
-		model_matrix: &Mat4,
 		transparency_pass: bool,
 		shadow_pass: bool,
-		material_variant: usize,
-		resources_bound: &mut bool,
+		projview: &Mat4,
 	) -> crate::Result<bool>
 	{
-		// TODO: Check each material's shader name so that we're only drawing them when the respective pipeline is bound.
+		let mut any_drawn = false;
 
-		let projviewmodel = *projview * *model_matrix;
+		// TODO: We should set a separate `bool` for the material descriptor set to false if a model
+		// instance has a custom material variant, so that the wrong resources don't get bound.
+		let mut resources_bound = false;
 
-		// Determine which submeshes are visible.
-		// "Visible" here means it uses the currently bound material pipeline,
-		// its transparency mode matches the current render pass type,
-		// and the submesh passes frustum culling.
-		let mut visible_submeshes = self
-			.submeshes
-			.iter()
-			.filter(|submesh| {
-				let material_index = submesh.mat_indices[material_variant];
-				let mat = &self.materials[material_index];
+		for user in self.users.values() {
+			let model_matrix = &user.model_matrix;
+			let material_variant = user.material_variant;
 
-				// don't filter by material pipeline name if `None` was given
-				let pipeline_matches = pipeline_name
-					.map(|some_pl_name| mat.material_name() == some_pl_name)
-					.unwrap_or(true);
+			let projviewmodel = *projview * *model_matrix;
 
-				pipeline_matches && mat.has_transparency() == transparency_pass
-			})
-			.filter(|submesh| submesh.cull(&projviewmodel))
-			.peekable();
+			// Determine which submeshes are visible.
+			// "Visible" here means it uses the currently bound material pipeline,
+			// its transparency mode matches the current render pass type,
+			// and the submesh passes frustum culling.
+			let mut visible_submeshes = self
+				.submeshes
+				.iter()
+				.filter(|submesh| {
+					let material_index = submesh.mat_indices[material_variant];
+					let mat = &self.materials[material_index];
 
-		let any_visible = visible_submeshes.peek().is_some();
+					// don't filter by material pipeline name if `None` was given
+					let pipeline_matches = pipeline_name
+						.map(|some_pl_name| mat.material_name() == some_pl_name)
+						.unwrap_or(true);
 
-		// Don't even bother with binds if no submeshes are visible
-		if any_visible {
-			if shadow_pass {
-				cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
-			} else {
-				let translation = model_matrix.w_axis.xyz();
-				let push_data = MeshPushConstant {
-					projviewmodel,
-					model_x: model_matrix.x_axis.xyz().extend(translation.x),
-					model_y: model_matrix.y_axis.xyz().extend(translation.y),
-					model_z: model_matrix.z_axis.xyz().extend(translation.z),
-				};
-				cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
-			}
+					pipeline_matches && mat.has_transparency() == transparency_pass
+				})
+				.filter(|submesh| submesh.cull(&projviewmodel))
+				.peekable();
 
-			if !*resources_bound {
-				let vbo;
+			// Don't even bother with binds if no submeshes are visible in this model instance
+			if visible_submeshes.peek().is_some() {
 				if shadow_pass {
-					vbo = vec![self.vertex_subbuffers[0].clone()];
+					cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
 				} else {
-					let set = self.textures_set.clone();
-					cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout, 0, set)?;
-
-					vbo = self.vertex_subbuffers.clone();
+					let translation = model_matrix.w_axis.xyz();
+					let push_data = MeshPushConstant {
+						projviewmodel,
+						model_x: model_matrix.x_axis.xyz().extend(translation.x),
+						model_y: model_matrix.y_axis.xyz().extend(translation.y),
+						model_z: model_matrix.z_axis.xyz().extend(translation.z),
+					};
+					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 				}
 
-				cb.bind_vertex_buffers(0, vbo)?;
-				self.index_buffer.bind(cb)?;
+				if !resources_bound {
+					let vbo;
+					if shadow_pass {
+						vbo = vec![self.vertex_subbuffers[0].clone()];
+					} else {
+						let set = self.textures_set.clone();
+						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
 
-				*resources_bound = true;
-			}
+						vbo = self.vertex_subbuffers.clone();
+					}
 
-			for submesh in visible_submeshes {
-				let mat_index = submesh.mat_indices[material_variant];
-				let instance_index = self.mat_tex_base_indices[mat_index];
+					cb.bind_vertex_buffers(0, vbo)?;
+					self.index_buffer.bind(cb)?;
 
-				submesh.draw(cb, instance_index);
+					resources_bound = true;
+				}
+
+				for submesh in visible_submeshes {
+					let mat_index = submesh.mat_indices[material_variant];
+					let instance_index = self.mat_tex_base_indices[mat_index];
+
+					submesh.draw(cb, instance_index)?;
+				}
+
+				any_drawn = true;
 			}
 		}
 
-		Ok(any_visible)
+		Ok(any_drawn)
 	}
 }
 
@@ -456,7 +467,7 @@ struct SubMesh
 }
 impl SubMesh
 {
-	pub fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> crate::Result<Self>
+	fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> crate::Result<Self>
 	{
 		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
 
@@ -483,7 +494,7 @@ impl SubMesh
 	}
 
 	/// Perform frustum culling. Returns `true` if visible.
-	pub fn cull(&self, projviewmodel: &Mat4) -> bool
+	fn cull(&self, projviewmodel: &Mat4) -> bool
 	{
 		// generate vertices for all 8 corners of this bounding box
 		let mut bb_verts: [Vec4; 8] = Default::default();
@@ -525,10 +536,10 @@ impl SubMesh
 		true
 	}
 
-	pub fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
+	fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32) -> crate::Result<()>
 	{
-		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)
-			.unwrap();
+		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
+		Ok(())
 	}
 }
 
@@ -592,14 +603,12 @@ fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a [gltf::b
 
 struct ModelInstance
 {
-	model: Arc<Model>,
 	material_variant: usize,
-
-	pub model_matrix: Mat4,
+	model_matrix: Mat4,
 }
 impl ModelInstance
 {
-	fn new(model: Arc<Model>, material_variant: Option<String>) -> Self
+	fn new(model: &Model, material_variant: Option<String>) -> Self
 	{
 		let material_variant_index = if let Some(selected_variant_name) = material_variant {
 			model
@@ -618,36 +627,12 @@ impl ModelInstance
 		};
 
 		Self {
-			model,
 			material_variant: material_variant_index,
 			model_matrix: Default::default(),
 		}
 	}
-
-	pub fn draw(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_name: Option<&str>,
-		pipeline_layout: Arc<PipelineLayout>,
-		transparency_pass: bool,
-		shadow_pass: bool,
-		projview: &Mat4,
-		vbo_bound: &mut bool,
-	) -> crate::Result<bool>
-	{
-		self.model.draw(
-			cb,
-			pipeline_name,
-			pipeline_layout,
-			&projview,
-			&self.model_matrix,
-			transparency_pass,
-			shadow_pass,
-			self.material_variant,
-			vbo_bound,
-		)
-	}
 }
+
 #[derive(Clone, Copy, bytemuck::AnyBitPattern)]
 #[repr(C)]
 struct MeshPushConstant
@@ -656,76 +641,6 @@ struct MeshPushConstant
 	model_x: Vec4,
 	model_y: Vec4,
 	model_z: Vec4,
-}
-
-struct ManagedModel
-{
-	model: Arc<Model>,
-	users: HashMap<EntityId, ModelInstance>,
-}
-impl ManagedModel
-{
-	pub fn new(model: Arc<Model>) -> Self
-	{
-		Self {
-			model,
-			users: Default::default(),
-		}
-	}
-
-	pub fn model(&self) -> &Arc<Model>
-	{
-		&self.model
-	}
-
-	pub fn new_user(&mut self, eid: EntityId, material_variant: Option<String>)
-	{
-		let model_instance = self.model.clone().new_instance(material_variant);
-		self.users.insert(eid, model_instance);
-	}
-
-	pub fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
-	{
-		self.users.get_mut(&eid).unwrap().model_matrix = model_matrix;
-	}
-
-	pub fn cleanup(&mut self, eid: EntityId)
-	{
-		self.users.remove(&eid);
-	}
-
-	pub fn draw(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_name: Option<&str>,
-		pipeline_layout: Arc<PipelineLayout>,
-		transparency_pass: bool,
-		shadow_pass: bool,
-		projview: &Mat4,
-	) -> crate::Result<bool>
-	{
-		let mut any_drawn = false;
-
-		// TODO: We should set a separate `bool` for the material descriptor set to false if a model
-		// instance has a custom material variant, so that the wrong resources don't get bound.
-		let mut resources_bound = false;
-
-		for user in self.users.values() {
-			if user.draw(
-				cb,
-				pipeline_name,
-				pipeline_layout.clone(),
-				transparency_pass,
-				shadow_pass,
-				projview,
-				&mut resources_bound,
-			)? {
-				any_drawn = true;
-			}
-		}
-
-		Ok(any_drawn)
-	}
 }
 
 /// A single manager that manages the GPU resources for all `Mesh` components.
@@ -738,8 +653,8 @@ pub struct MeshManager
 	material_pipelines: BTreeMap<&'static str, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
-	// Each "managed model" will also contain the model instance for each entity.
-	models: HashMap<PathBuf, ManagedModel>,
+	// Each model will also contain the model instance for each entity.
+	models: HashMap<PathBuf, Model>,
 
 	// A mapping between entity IDs and the model it uses.
 	resources: HashMap<EntityId, PathBuf>,
@@ -790,18 +705,17 @@ impl MeshManager
 	{
 		// Get a 3D model from `path`, relative to the current working directory.
 		// This attempts loading if it hasn't been loaded into memory yet.
-		let managed_model = match self.models.get_mut(&component.model_path) {
+		let loaded_model = match self.models.get_mut(&component.model_path) {
 			Some(m) => m,
 			None => {
-				let new_model = Arc::new(Model::new(render_ctx, &component.model_path)?);
-				let managed = ManagedModel::new(new_model);
-				self.models.insert(component.model_path.clone(), managed);
+				let new_model = Model::new(render_ctx, &component.model_path)?;
+				self.models.insert(component.model_path.clone(), new_model);
 				self.models.get_mut(&component.model_path).unwrap()
 			}
 		};
 
 		// Go through all the materials, and load the pipelines they need if they aren't already loaded.
-		for mat in managed_model.model().get_materials() {
+		for mat in &loaded_model.materials {
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
 				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
@@ -812,7 +726,7 @@ impl MeshManager
 			}
 		}
 
-		managed_model.new_user(eid, component.material_variant.clone());
+		loaded_model.new_user(eid, component.material_variant.clone());
 		self.resources.insert(eid, component.model_path.clone());
 
 		Ok(())
@@ -897,8 +811,8 @@ impl MeshManager
 			// don't filter by material pipeline name if there is a pipeline override
 			let pipeline_name_option = pipeline_override.is_none().then_some(pipeline_name);
 
-			for managed_model in self.models.values() {
-				if managed_model.draw(
+			for model in self.models.values() {
+				if model.draw(
 					&mut cb,
 					pipeline_name_option.copied(),
 					pipeline_layout.clone(),
