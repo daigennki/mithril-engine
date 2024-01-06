@@ -31,9 +31,7 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{
-		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
-	},
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
@@ -76,9 +74,8 @@ pub struct RenderContext
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	transparency_renderer: transparency::MomentTransparencyRenderer,
+	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
-	material_textures_set_layout: Arc<DescriptorSetLayout>,
 	light_set_layout: Arc<DescriptorSetLayout>,
 
 	// Loaded textures, with the key being the path relative to the current working directory
@@ -111,44 +108,11 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		/* Common material texture descriptor set layout */
-		let mat_tex_sampler_info = SamplerCreateInfo {
-			anisotropy: Some(16.0),
-			..SamplerCreateInfo::simple_repeat_linear()
-		};
-		let mat_tex_sampler = Sampler::new(vk_dev.clone(), mat_tex_sampler_info)?;
-		let mat_tex_bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: sampler0
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![mat_tex_sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: textures
-				binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
-				descriptor_count: 32,
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			},
-		];
-		let mat_tex_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(mat_tex_bindings).collect(),
-			..Default::default()
-		};
-		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
-
 		let main_render_target = render_target::RenderTarget::new(
 			memory_allocator.clone(),
 			&descriptor_set_allocator,
 			swapchain.get_images(),
 			swapchain.color_space(),
-		)?;
-		let transparency_renderer = transparency::MomentTransparencyRenderer::new(
-			memory_allocator.clone(),
-			&descriptor_set_allocator,
-			material_textures_set_layout.clone(),
-			swapchain.dimensions(),
 		)?;
 
 		/* descriptor set with everything lighting- and shadow-related */
@@ -191,13 +155,23 @@ impl RenderContext
 			descriptor_set_allocator,
 			command_buffer_allocator,
 			main_render_target,
-			transparency_renderer,
-			material_textures_set_layout,
+			transparency_renderer: None,
 			light_set_layout,
 			textures: HashMap::new(),
 			allow_direct_buffer_access,
 			transfer_manager,
 		})
+	}
+
+	fn load_transparency(&mut self, material_textures_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
+	{
+		self.transparency_renderer = Some(transparency::MomentTransparencyRenderer::new(
+			self.memory_allocator.clone(),
+			&self.descriptor_set_allocator,
+			material_textures_set_layout,
+			self.swapchain.dimensions(),
+		)?);
+		Ok(())
 	}
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
@@ -274,11 +248,13 @@ impl RenderContext
 			self.swapchain.get_images(),
 			self.swapchain.color_space(),
 		)?;
-		self.transparency_renderer.resize_image(
-			self.memory_allocator.clone(),
-			&self.descriptor_set_allocator,
-			self.swapchain.dimensions(),
-		)?;
+		if let Some(transparency_renderer) = &mut self.transparency_renderer {
+			transparency_renderer.resize_image(
+				self.memory_allocator.clone(),
+				&self.descriptor_set_allocator,
+				self.swapchain.dimensions(),
+			)?
+		}
 
 		Ok(())
 	}

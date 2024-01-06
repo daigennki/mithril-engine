@@ -18,10 +18,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{
-	view::ImageView,
-	Image, ImageCreateInfo, ImageUsage,
-};
+use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
@@ -448,13 +445,11 @@ impl MomentTransparencyRenderer
 
 		let stage4_pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![stage4_inputs_layout.clone()],
-			push_constant_ranges: vec![
-				PushConstantRange {
-					stages: ShaderStages::VERTEX,
-					offset: 0,
-					size: std::mem::size_of::<UVec2>().try_into().unwrap(),
-				},
-			],
+			push_constant_ranges: vec![PushConstantRange {
+				stages: ShaderStages::VERTEX,
+				offset: 0,
+				size: std::mem::size_of::<UVec2>().try_into().unwrap(),
+			}],
 			..Default::default()
 		};
 		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)?;
@@ -635,7 +630,12 @@ impl MomentTransparencyRenderer
 			.set_viewport(0, [viewport].as_slice().into())?
 			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
 			.push_constants(compositing_layout.clone(), 0, UVec2::from(img_extent))?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, vec![self.stage4_inputs.clone()])?
+			.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				compositing_layout,
+				0,
+				vec![self.stage4_inputs.clone()],
+			)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
 

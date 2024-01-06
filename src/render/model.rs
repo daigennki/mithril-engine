@@ -20,10 +20,18 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, CommandBufferUsage,
 	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
-use vulkano::descriptor_set::{DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	layout::{
+		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
+	},
+	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
+};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::view::ImageView;
+use vulkano::image::{
+	sampler::{Sampler, SamplerCreateInfo},
+	view::ImageView,
+};
 use vulkano::pipeline::{
 	graphics::viewport::Viewport,
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
@@ -59,7 +67,11 @@ struct Model
 }
 impl Model
 {
-	fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Self>
+	fn new(
+		render_ctx: &mut RenderContext,
+		material_textures_set_layout: Arc<DescriptorSetLayout>,
+		path: &Path,
+	) -> crate::Result<Self>
 	{
 		let parent_folder = path.parent().unwrap();
 
@@ -110,7 +122,8 @@ This model may be inefficient to draw, so consider joining the meshes."
 			);
 		}
 
-		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(render_ctx, parent_folder, &materials)?;
+		let (textures_set, mat_tex_base_indices) =
+			descriptor_set_from_materials(render_ctx, material_textures_set_layout, parent_folder, &materials)?;
 
 		Ok(Model {
 			materials,
@@ -384,6 +397,7 @@ fn load_gltf_meshes(
 
 fn descriptor_set_from_materials(
 	render_ctx: &mut RenderContext,
+	material_textures_set_layout: Arc<DescriptorSetLayout>,
 	parent_folder: &Path,
 	materials: &[Box<dyn Material>],
 ) -> crate::Result<(Arc<PersistentDescriptorSet>, Vec<u32>)>
@@ -425,7 +439,7 @@ fn descriptor_set_from_materials(
 
 	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
 	let set_alloc = &render_ctx.descriptor_set_allocator;
-	let set_layout = render_ctx.material_textures_set_layout.clone();
+	let set_layout = material_textures_set_layout;
 	let write = WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten());
 	let textures_set = PersistentDescriptorSet::new_variable(set_alloc, set_layout, texture_count, [write], [])?;
 
@@ -640,6 +654,8 @@ struct MeshPushConstant
 #[derive(shipyard::Unique)]
 pub struct MeshManager
 {
+	material_textures_set_layout: Arc<DescriptorSetLayout>,
+
 	pipeline_layout: Arc<PipelineLayout>,
 	pipeline_layout_oit: Arc<PipelineLayout>,
 
@@ -656,12 +672,47 @@ pub struct MeshManager
 }
 impl MeshManager
 {
-	pub fn new(render_ctx: &RenderContext) -> crate::Result<Self>
+	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
 	{
-		let material_textures_set_layout = render_ctx.material_textures_set_layout.clone();
+		let vk_dev = render_ctx.memory_allocator.device().clone();
+
+		/* Common material texture descriptor set layout */
+		let mat_tex_sampler_info = SamplerCreateInfo {
+			anisotropy: Some(16.0),
+			..SamplerCreateInfo::simple_repeat_linear()
+		};
+		let mat_tex_sampler = Sampler::new(vk_dev.clone(), mat_tex_sampler_info)?;
+		let mat_tex_bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: sampler0
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![mat_tex_sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: textures
+				binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
+				descriptor_count: 32,
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			},
+		];
+		let mat_tex_set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: (0..).zip(mat_tex_bindings).collect(),
+			..Default::default()
+		};
+		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
+
 		let light_set_layout = render_ctx.light_set_layout.clone();
-		let transparency_input_layout = render_ctx.transparency_renderer.get_stage3_inputs().layout().clone();
-		let vk_dev = material_textures_set_layout.device().clone();
+
+		render_ctx.load_transparency(material_textures_set_layout.clone())?;
+		let transparency_input_layout = render_ctx
+			.transparency_renderer
+			.as_ref()
+			.unwrap()
+			.get_stage3_inputs()
+			.layout()
+			.clone();
 
 		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
 		let push_constant_range = PushConstantRange {
@@ -677,13 +728,18 @@ impl MeshManager
 		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 
 		let layout_info_oit = PipelineLayoutCreateInfo {
-			set_layouts: vec![material_textures_set_layout, light_set_layout, transparency_input_layout],
+			set_layouts: vec![
+				material_textures_set_layout.clone(),
+				light_set_layout,
+				transparency_input_layout,
+			],
 			push_constant_ranges: vec![push_constant_range],
 			..Default::default()
 		};
 		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;
 
 		Ok(Self {
+			material_textures_set_layout,
 			pipeline_layout,
 			pipeline_layout_oit,
 			material_pipelines: Default::default(),
@@ -701,7 +757,7 @@ impl MeshManager
 		let loaded_model = match self.models.get_mut(&component.model_path) {
 			Some(m) => m,
 			None => {
-				let new_model = Model::new(render_ctx, &component.model_path)?;
+				let new_model = Model::new(render_ctx, self.material_textures_set_layout.clone(), &component.model_path)?;
 				self.models.insert(component.model_path.clone(), new_model);
 				self.models.get_mut(&component.model_path).unwrap()
 			}
