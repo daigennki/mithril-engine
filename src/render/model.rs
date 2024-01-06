@@ -412,8 +412,8 @@ fn descriptor_set_from_materials(
 
 	let texture_count = image_view_writes
 		.iter()
-		.flatten()
-		.count()
+		.map(|write| write.len())
+		.sum::<usize>()
 		.try_into()
 		.expect("too many image writes");
 	log::debug!("texture count (variable descriptor count): {}", texture_count);
@@ -424,17 +424,10 @@ fn descriptor_set_from_materials(
 	assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
 
 	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-	let textures_set = PersistentDescriptorSet::new_variable(
-		&render_ctx.descriptor_set_allocator,
-		render_ctx.material_textures_set_layout.clone(),
-		texture_count,
-		[WriteDescriptorSet::image_view_array(
-			1,
-			0,
-			image_view_writes.into_iter().flatten(),
-		)],
-		[],
-	)?;
+	let set_alloc = &render_ctx.descriptor_set_allocator;
+	let set_layout = render_ctx.material_textures_set_layout.clone();
+	let write = WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten());
+	let textures_set = PersistentDescriptorSet::new_variable(set_alloc, set_layout, texture_count, [write], [])?;
 
 	Ok((textures_set, mat_tex_base_indices))
 }

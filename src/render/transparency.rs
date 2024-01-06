@@ -684,38 +684,22 @@ fn create_mboit_images(
 	stage4_inputs_layout: Arc<DescriptorSetLayout>,
 ) -> crate::Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>)>
 {
-	let image_create_info = ImageCreateInfo {
-		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
-		format: Format::R32G32B32A32_SFLOAT,
-		extent: [extent[0], extent[1], 1],
-		..Default::default()
-	};
-	let image_create_infos = [
-		// moments
-		image_create_info.clone(),
-		// optical_depth
-		ImageCreateInfo {
-			format: Format::R32_SFLOAT,
-			..image_create_info.clone()
-		},
-		// min_depth
-		ImageCreateInfo {
-			format: Format::R32_SFLOAT,
-			..image_create_info.clone()
-		},
-		// accum
-		ImageCreateInfo {
-			format: Format::R16G16B16A16_SFLOAT,
-			..image_create_info.clone()
-		},
-		// revealage
-		ImageCreateInfo {
-			format: Format::R8_UNORM,
-			..image_create_info
-		},
+	let image_formats = [
+		Format::R32G32B32A32_SFLOAT, // moments
+		Format::R32_SFLOAT,          // optical_depth
+		Format::R32_SFLOAT,          // min_depth
+		Format::R16G16B16A16_SFLOAT, // accum
+		Format::R8_UNORM,            // revealage
 	];
+
 	let mut views = Vec::with_capacity(5);
-	for info in image_create_infos {
+	for format in image_formats {
+		let info = ImageCreateInfo {
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+			format,
+			extent: [extent[0], extent[1], 1],
+			..Default::default()
+		};
 		let new_image = Image::new(memory_allocator.clone(), info.clone(), AllocationCreateInfo::default())?;
 		views.push(ImageView::new_default(new_image)?);
 	}

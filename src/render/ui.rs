@@ -664,9 +664,10 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 		.unwrap_or(1)
 		.next_multiple_of(8);
 
-	let mut bitmaps = Vec::with_capacity(glyphs.len());
-	for glyph in glyphs {
-		if let Some(bb) = glyph.pixel_bounding_box() {
+	glyphs
+		.iter()
+		.filter_map(|glyph| glyph.pixel_bounding_box().map(|bb| (glyph, bb)))
+		.map(|(glyph, bb)| {
 			let mut image = DynamicImage::new_luma8(max_width, max_height).into_luma8();
 
 			// Draw the glyph into the image per-pixel by using the draw closure,
@@ -676,9 +677,7 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 			let pos_tl = Vec2::new(bb.min.x as f32, bb.min.y as f32);
 			let bounding_box_size = IVec2::new(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
 
-			bitmaps.push((image, pos_tl, bounding_box_size));
-		}
-	}
-
-	bitmaps
+			(image, pos_tl, bounding_box_size)
+		})
+		.collect()
 }
