@@ -182,6 +182,7 @@ impl MaterialPipelineConfig
 {
 	pub fn into_pipelines(
 		self,
+		depth_format: Format,
 		pipeline_layout: Arc<PipelineLayout>,
 		pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
@@ -198,7 +199,7 @@ impl MaterialPipelineConfig
 
 		let rendering_formats = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			depth_attachment_format: Some(crate::render::MAIN_DEPTH_FORMAT),
+			depth_attachment_format: Some(depth_format),
 			..Default::default()
 		};
 
@@ -264,7 +265,7 @@ impl MaterialPipelineConfig
 
 				let oit_rendering_formats = PipelineRenderingCreateInfo {
 					color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
-					depth_attachment_format: Some(crate::render::MAIN_DEPTH_FORMAT),
+					depth_attachment_format: Some(depth_format),
 					..Default::default()
 				};
 

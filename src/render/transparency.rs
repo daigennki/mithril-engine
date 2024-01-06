@@ -259,6 +259,7 @@ impl MomentTransparencyRenderer
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		mat_tex_set_layout: Arc<DescriptorSetLayout>,
 		dimensions: [u32; 2],
+		depth_stencil_format: Format,
 	) -> crate::Result<Self>
 	{
 		// The render pass from back when we didn't use dynamic rendering.
@@ -338,7 +339,7 @@ impl MomentTransparencyRenderer
 				Some(Format::R32_SFLOAT),
 				Some(Format::R32_SFLOAT),
 			],
-			depth_attachment_format: Some(super::MAIN_DEPTH_FORMAT),
+			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
 
