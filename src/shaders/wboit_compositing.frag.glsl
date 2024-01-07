@@ -13,12 +13,11 @@ float max_component(vec4 color)
 	return max(max(max(color.r, color.g), color.b), color.a);
 }
 
-layout(location = 0) in vec2 texcoord_pixels;
 layout(location = 0) out vec4 color_out;
 
 void main()
 {
-	ivec2 load_coord = ivec2(texcoord_pixels);
+	ivec2 load_coord = ivec2(gl_FragCoord.xy);
 	float revealage = imageLoad(revealage_texture, load_coord).r;
 
 	if (revealage == 1.0) {

@@ -90,7 +90,7 @@ float calc_w(float alpha)
 	const float c0 = 1.0 / near;
 	const float c1 = 1.0 / log(far / near);
 
-	ivec2 load_coord = ivec2(screen_coord_pixels);
+	ivec2 load_coord = ivec2(gl_FragCoord.xy);
 
 	vec4 moments = imageLoad(moments_in, load_coord);
 	float total_od = imageLoad(optical_depth_in, load_coord).r;

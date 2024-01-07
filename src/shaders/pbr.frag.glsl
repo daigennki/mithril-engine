@@ -5,7 +5,6 @@ layout(location = 0) in vec2 texcoord;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec3 world_pos;
 layout(location = 3) flat in int instance_index;
-layout(location = 4) in vec2 screen_coord_pixels;
 
 #ifdef TRANSPARENCY_PASS
 #include "mboit_weights.glsl"
