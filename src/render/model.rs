@@ -768,12 +768,11 @@ impl MeshManager
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
 				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
-				let pipeline_data =
-					pipeline_config.into_pipelines(
-						render_ctx.depth_stencil_format(),
-						self.pipeline_layout.clone(),
-						self.pipeline_layout_oit.clone(),
-					)?;
+				let pipeline_data = pipeline_config.into_pipelines(
+					render_ctx.depth_stencil_format(),
+					self.pipeline_layout.clone(),
+					self.pipeline_layout_oit.clone(),
+				)?;
 
 				self.material_pipelines.insert(mat_name, pipeline_data);
 			}
@@ -860,7 +859,7 @@ impl MeshManager
 			if pass_type.needs_viewport_extent_push_constant() {
 				cb.push_constants(pipeline_layout.clone(), 112, viewport_extent)?;
 			}
-			
+
 			if common_sets.len() > 0 {
 				let sets = Vec::from(common_sets);
 				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
@@ -952,7 +951,9 @@ impl PassType
 		let formats: &'static [Format] = match self {
 			PassType::Shadow { .. } => &[],
 			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
-			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT/*, Format::R32_SFLOAT*/],
+			PassType::TransparencyMoments(_) => {
+				&[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT /*, Format::R32_SFLOAT*/]
+			}
 			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
 		};
 		formats.iter().copied().map(|f| Some(f)).collect()

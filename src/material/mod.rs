@@ -16,7 +16,7 @@ use vulkano::format::Format;
 use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-		depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOp, StencilOps, StencilOpState, StencilState},
+		depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOp, StencilOpState, StencilOps, StencilState},
 		input_assembly::PrimitiveTopology,
 		rasterization::{CullMode, RasterizationState},
 		subpass::PipelineRenderingCreateInfo,

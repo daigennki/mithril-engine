@@ -120,12 +120,8 @@ impl RenderTarget
 
 		//let depth_format = Format::D16_UNORM;
 
-		let (color_image_view, depth_image_view) = create_images(
-			memory_allocator.clone(),
-			extent,
-			depth_format,
-			swapchain_color_space,
-		)?;
+		let (color_image_view, depth_image_view) =
+			create_images(memory_allocator.clone(), extent, depth_format, swapchain_color_space)?;
 
 		let image_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::COMPUTE,

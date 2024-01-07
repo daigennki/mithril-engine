@@ -22,7 +22,7 @@ use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOps, StencilOpState, StencilState},
+	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOpState, StencilOps, StencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
@@ -252,7 +252,6 @@ impl MomentTransparencyRenderer
 			bindings: [
 				(0, input_binding.clone()), // moments
 				(1, input_binding.clone()), // optical_depth
-				//(2, input_binding.clone()), // min_depth
 			]
 			.into(),
 			..Default::default()
