@@ -90,11 +90,13 @@ float calc_w(float alpha)
 	const float c0 = 1.0 / near;
 	const float c1 = 1.0 / log(far / near);
 
-	vec2 texcoord = gl_FragCoord.xy * 0.5 + 0.5;
-	ivec2 load_coord = ivec2(texcoord * vec2(imageSize(moments_in)));
+	ivec2 load_coord = ivec2(screen_coord_pixels);
 
 	vec4 moments = imageLoad(moments_in, load_coord);
 	float total_od = imageLoad(optical_depth_in, load_coord).r;
+	if (moments.r == 0.0) {
+		discard;
+	}
 	float unit_pos = depth_to_unit(z, c0, c1);
 
 	if (total_od != 0.0) {

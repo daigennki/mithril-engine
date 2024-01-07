@@ -29,7 +29,7 @@ void main()
 
 	// TODO: use a descriptor set here to reflect changes to the camera near/far planes
 	const float near = 0.25;
-	const float far = 5000.0;
+	const float far = 500.0;
 	const float c0 = 1.0 / near;
 	const float c1 = 1.0 / log(far / near);
 

@@ -714,7 +714,7 @@ impl MeshManager
 			.layout()
 			.clone();
 
-		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
+		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3 + std::mem::size_of::<UVec2>();
 		let push_constant_range = PushConstantRange {
 			stages: ShaderStages::VERTEX,
 			offset: 0,
@@ -856,6 +856,10 @@ impl MeshManager
 			cb.bind_pipeline_graphics(pipeline.clone())?;
 			let pipeline_layout = pipeline.layout().clone();
 
+			if pass_type.needs_viewport_extent_push_constant() {
+				cb.push_constants(pipeline_layout.clone(), 112, viewport_extent)?;
+			}
+			
 			if common_sets.len() > 0 {
 				let sets = Vec::from(common_sets);
 				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
@@ -963,6 +967,13 @@ impl PassType
 	{
 		match self {
 			PassType::TransparencyMoments(_) | PassType::Transparency => true,
+			_ => false,
+		}
+	}
+	fn needs_viewport_extent_push_constant(&self) -> bool
+	{
+		match self {
+			PassType::Opaque | PassType::Transparency => true,
 			_ => false,
 		}
 	}

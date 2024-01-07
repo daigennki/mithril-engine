@@ -1,6 +1,12 @@
 #version 460
 #extension GL_EXT_nonuniform_qualifier: enable
 
+layout(location = 0) in vec2 texcoord;
+layout(location = 1) in vec3 normal;
+layout(location = 2) in vec3 world_pos;
+layout(location = 3) flat in int instance_index;
+layout(location = 4) in vec2 screen_coord_pixels;
+
 #ifdef TRANSPARENCY_PASS
 #include "mboit_weights.glsl"
 #endif
@@ -32,11 +38,6 @@ layout(set = 1, binding = 1) uniform dir_light_ubo
 };
 layout(set = 1, binding = 2) uniform texture2DArray dir_light_shadow;
 
-
-layout(location = 0) in vec2 texcoord;
-layout(location = 1) in vec3 normal;
-layout(location = 2) in vec3 world_pos;
-layout(location = 3) flat in int instance_index;
 
 // If `TRANSPARENCY_PASS` is defined, the outputs in the OIT shader file included above will be used.
 #ifndef TRANSPARENCY_PASS
