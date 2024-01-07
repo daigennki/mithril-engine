@@ -94,9 +94,6 @@ float calc_w(float alpha)
 
 	vec4 moments = imageLoad(moments_in, load_coord);
 	float total_od = imageLoad(optical_depth_in, load_coord).r;
-	if (moments.r == 0.0) {
-		discard;
-	}
 	float unit_pos = depth_to_unit(z, c0, c1);
 
 	if (total_od != 0.0) {
