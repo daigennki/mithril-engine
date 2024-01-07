@@ -8,7 +8,7 @@ layout(set = 2, binding = 0, rgba32f) uniform readonly image2D moments_in;
 layout(set = 2, binding = 1, r32f) uniform readonly image2D optical_depth_in;
 
 /* minimum depth for correction */
-layout(set = 2, binding = 2, r32f) uniform readonly image2D min_depth;
+//layout(set = 2, binding = 2, r32f) uniform readonly image2D min_depth;
 
 layout(location = 0) out vec4 accum;
 layout(location = 1) out float revealage;
@@ -107,13 +107,13 @@ float calc_w(float alpha)
 	ma = exp(-ma * total_od);
 	float w = ma * alpha;
 
-	// if this is *not* the top fragment, but the depth of this fragment is still close to the minimum depth,
+	/*// if this is *not* the top fragment, but the depth of this fragment is still close to the minimum depth,
 	// correct the "gradient" that might appear under such conditions
 	float min_z = imageLoad(min_depth, load_coord).r;
 	const float correction_factor = 100.0;
 	if (z > min_z) {
-		//w *= clamp((z - min_z) * correction_factor, 0.0, 1.0);
-	}
+		w *= clamp((z - min_z) * correction_factor, 0.0, 1.0);
+	}*/
 	
 	return w;
 }

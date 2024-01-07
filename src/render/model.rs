@@ -951,7 +951,7 @@ impl PassType
 		let formats: &'static [Format] = match self {
 			PassType::Shadow { .. } => &[],
 			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
-			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT, Format::R32_SFLOAT],
+			PassType::TransparencyMoments(_) => &[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT/*, Format::R32_SFLOAT*/],
 			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
 		};
 		formats.iter().copied().map(|f| Some(f)).collect()

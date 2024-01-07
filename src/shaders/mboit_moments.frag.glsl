@@ -11,7 +11,7 @@ layout(location = 1) flat in int instance_index;
 
 layout(location = 0) out vec4 moments;
 layout(location = 1) out float optical_depth;
-layout(location = 2) out float min_depth;
+//layout(location = 2) out float min_depth;
 
 float depth_to_unit(float z, float c0, float c1)
 {
@@ -40,6 +40,6 @@ void main()
 	float unit_pos = depth_to_unit(depth, c0, c1);
 	moments = make_moments4(unit_pos) * optical_depth;
 
-	min_depth = depth;
+	//min_depth = depth;
 }
 

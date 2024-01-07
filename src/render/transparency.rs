@@ -21,7 +21,7 @@ use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
+	color_blend::{AttachmentBlend, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
@@ -165,7 +165,7 @@ impl MomentTransparencyRenderer
 			color_attachment_formats: vec![
 				Some(Format::R32G32B32A32_SFLOAT),
 				Some(Format::R32_SFLOAT),
-				Some(Format::R32_SFLOAT),
+				//Some(Format::R32_SFLOAT),
 			],
 			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
@@ -188,7 +188,7 @@ impl MomentTransparencyRenderer
 				}),
 				..Default::default()
 			},
-			ColorBlendAttachmentState {
+			/*ColorBlendAttachmentState {
 				// min_depth
 				blend: Some(AttachmentBlend {
 					color_blend_op: BlendOp::Min,
@@ -197,7 +197,7 @@ impl MomentTransparencyRenderer
 					..Default::default()
 				}),
 				..Default::default()
-			},
+			},*/
 		];
 		let moments_color_blend_state = ColorBlendState {
 			attachments: moments_blends,
@@ -252,7 +252,7 @@ impl MomentTransparencyRenderer
 			bindings: [
 				(0, input_binding.clone()), // moments
 				(1, input_binding.clone()), // optical_depth
-				(2, input_binding.clone()), // min_depth
+				//(2, input_binding.clone()), // min_depth
 			]
 			.into(),
 			..Default::default()
@@ -386,13 +386,13 @@ impl MomentTransparencyRenderer
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.optical_depth.clone())
 				}),
-				Some(RenderingAttachmentInfo {
+				/*Some(RenderingAttachmentInfo {
 					// min_depth
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.min_depth.clone())
-				}),
+				}),*/
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
@@ -495,7 +495,7 @@ struct MomentImageBundle
 {
 	moments: Arc<ImageView>,
 	optical_depth: Arc<ImageView>,
-	min_depth: Arc<ImageView>,
+	//min_depth: Arc<ImageView>,
 	accum: Arc<ImageView>,
 	revealage: Arc<ImageView>,
 }
@@ -511,7 +511,7 @@ fn create_mboit_images(
 	let image_formats = [
 		Format::R32G32B32A32_SFLOAT, // moments
 		Format::R32_SFLOAT,          // optical_depth
-		Format::R32_SFLOAT,          // min_depth
+		//Format::R32_SFLOAT,          // min_depth
 		Format::R16G16B16A16_SFLOAT, // accum
 		Format::R8_UNORM,            // revealage
 	];
@@ -531,9 +531,9 @@ fn create_mboit_images(
 	let image_bundle = MomentImageBundle {
 		moments: views[0].clone(),
 		optical_depth: views[1].clone(),
-		min_depth: views[2].clone(),
-		accum: views[3].clone(),
-		revealage: views[4].clone(),
+		//min_depth: views[2].clone(),
+		accum: views[2].clone(),
+		revealage: views[3].clone(),
 	};
 
 	let stage3_inputs = PersistentDescriptorSet::new(
@@ -542,7 +542,7 @@ fn create_mboit_images(
 		[
 			WriteDescriptorSet::image_view(0, views[0].clone()),
 			WriteDescriptorSet::image_view(1, views[1].clone()),
-			WriteDescriptorSet::image_view(2, views[2].clone()),
+			//WriteDescriptorSet::image_view(2, views[2].clone()),
 		],
 		[],
 	)?;
@@ -551,8 +551,8 @@ fn create_mboit_images(
 		descriptor_set_allocator,
 		stage4_inputs_layout,
 		[
-			WriteDescriptorSet::image_view(0, views[3].clone()),
-			WriteDescriptorSet::image_view(1, views[4].clone()),
+			WriteDescriptorSet::image_view(0, views[2].clone()),
+			WriteDescriptorSet::image_view(1, views[3].clone()),
 		],
 		[],
 	)?;
