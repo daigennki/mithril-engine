@@ -817,6 +817,7 @@ impl MeshManager
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: pass_type.render_color_formats(),
 			depth_attachment_format: Some(depth_format),
+			stencil_attachment_format: pass_type.needs_stencil_buffer().then_some(depth_format),
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
@@ -967,6 +968,13 @@ impl PassType
 	{
 		match self {
 			PassType::TransparencyMoments(_) | PassType::Transparency => true,
+			_ => false,
+		}
+	}
+	fn needs_stencil_buffer(&self) -> bool
+	{
+		match self {
+			PassType::Transparency => true,
 			_ => false,
 		}
 	}

@@ -13,7 +13,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageFormatInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
 	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo, ComputePipeline, Pipeline, PipelineBindPoint,
@@ -70,6 +70,8 @@ mod compute_gamma
 	}
 }
 
+const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
+
 pub struct RenderTarget
 {
 	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
@@ -98,7 +100,25 @@ impl RenderTarget
 	{
 		let device = memory_allocator.device().clone();
 		let extent = swapchain_images.first().unwrap().image().extent();
-		let depth_format = Format::D16_UNORM;
+
+		let mut selected_depth_format = None;
+		for format in DEPTH_STENCIL_FORMAT_CANDIDATES {
+			let physical_device = memory_allocator.device().physical_device();
+			let image_format_info = ImageFormatInfo {
+				format,
+				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+				..Default::default()
+			};
+			let format_supported = physical_device.image_format_properties(image_format_info)?;
+			if format_supported.is_some() {
+				selected_depth_format = Some(format);
+				break;
+			}
+		}
+		let depth_format = selected_depth_format.ok_or("none of the depth/stencil format candidates are supported")?;
+		log::debug!("using depth/stencil format {depth_format:?}");
+
+		//let depth_format = Format::D16_UNORM;
 
 		let (color_image_view, depth_image_view) = create_images(
 			memory_allocator.clone(),

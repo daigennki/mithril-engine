@@ -16,7 +16,7 @@ use vulkano::format::Format;
 use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-		depth_stencil::{CompareOp, DepthState, DepthStencilState},
+		depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOp, StencilOps, StencilOpState, StencilState},
 		input_assembly::PrimitiveTopology,
 		rasterization::{CullMode, RasterizationState},
 		subpass::PipelineRenderingCreateInfo,
@@ -236,6 +236,17 @@ impl MaterialPipelineConfig
 						write_enable: false,
 						compare_op: CompareOp::Less,
 					}),
+					stencil: Some(StencilState {
+						front: StencilOpState {
+							ops: StencilOps {
+								pass_op: StencilOp::IncrementAndClamp,
+								compare_op: CompareOp::Always,
+								..Default::default()
+							},
+							..Default::default()
+						},
+						..Default::default()
+					}),
 					..Default::default()
 				};
 
@@ -266,6 +277,7 @@ impl MaterialPipelineConfig
 				let oit_rendering_formats = PipelineRenderingCreateInfo {
 					color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
 					depth_attachment_format: Some(depth_format),
+					stencil_attachment_format: Some(depth_format),
 					..Default::default()
 				};
 

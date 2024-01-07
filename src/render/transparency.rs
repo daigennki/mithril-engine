@@ -22,7 +22,7 @@ use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-	depth_stencil::{CompareOp, DepthState, DepthStencilState},
+	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOps, StencilOpState, StencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
@@ -289,8 +289,25 @@ impl MomentTransparencyRenderer
 		};
 		let stage4_color_blend_state = ColorBlendState::with_attachment_states(1, stage4_blend);
 
+		let stencil_op_state = StencilOpState {
+			ops: StencilOps {
+				compare_op: CompareOp::Less,
+				..Default::default()
+			},
+			reference: 0,
+			..Default::default()
+		};
+		let stage4_depth_stencil_state = DepthStencilState {
+			stencil: Some(StencilState {
+				front: stencil_op_state,
+				back: stencil_op_state,
+			}),
+			..Default::default()
+		};
+
 		let stage4_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			stencil_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
 		let transparency_compositing_pl = super::pipeline::new(
@@ -304,7 +321,7 @@ impl MomentTransparencyRenderer
 			stage4_pipeline_layout,
 			stage4_rendering_info,
 			Some(stage4_color_blend_state),
-			None,
+			Some(stage4_depth_stencil_state),
 		)?;
 
 		/* Create the images and descriptor sets */
@@ -423,7 +440,13 @@ impl MomentTransparencyRenderer
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(depth_image.clone())
+			}),
+			stencil_attachment: Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Clear,
+				store_op: AttachmentStoreOp::Store,
+				clear_value: Some(ClearValue::Stencil(0)),
 				..RenderingAttachmentInfo::image_view(depth_image.clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
@@ -437,6 +460,11 @@ impl MomentTransparencyRenderer
 				store_op: AttachmentStoreOp::Store,
 				..RenderingAttachmentInfo::image_view(color_image.clone())
 			})],
+			stencil_attachment: Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Load,
+				store_op: AttachmentStoreOp::DontCare,
+				..RenderingAttachmentInfo::image_view(depth_image.clone())
+			}),
 			contents: SubpassContents::Inline,
 			..Default::default()
 		};
