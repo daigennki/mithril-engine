@@ -12,11 +12,11 @@ use vulkano::buffer::{
 	BufferContents, BufferUsage, Subbuffer,
 };
 use vulkano::command_buffer::{
-	allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, CommandBufferExecFuture, CommandBufferUsage,
-	CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
+	allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, BufferImageCopy, CommandBufferExecFuture,
+	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::Queue;
-use vulkano::format::Format;
+use vulkano::image::Image;
 use vulkano::memory::allocator::{DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::sync::{
 	future::{FenceSignalFuture, NowFuture},
@@ -28,9 +28,11 @@ pub struct TransferManager
 {
 	// Transfers to initialize buffers and images. If there is an asynchronous transfer queue,
 	// these will be performed while the CPU is busy with building the draw command buffers.
-	// Otherwise, these will be run at the beginning of the next graphics submission, before draws are performed.
+	// Otherwise, these will be run at the beginning of the next graphics submission, before draws
+	// are performed.
 	async_transfers: Vec<StagingWork>,
-	transfer_queue: Option<Arc<Queue>>, // if there is a separate (preferably dedicated) transfer queue, use it for transfers
+
+	transfer_queue: Option<Arc<Queue>>,
 	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
 
 	// Buffer updates to run at the beginning of the next graphics submission.
@@ -66,11 +68,19 @@ impl TransferManager
 		}
 	}
 
-	/// Add staging work for new objects.
+	/// Add staging work for a new buffer. (use `update_buffer` instead for previously created buffers)
 	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
 	/// building the draw command buffers.
-	pub fn add_transfer(&mut self, work: StagingWork)
+	pub fn copy_to_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>) -> crate::Result<()>
+	where
+		T: BufferContents + Copy,
 	{
+		let len = data.len().try_into().unwrap();
+		let staging_buf = self.staging_buffer_allocator.lock().unwrap().allocate_slice(len)?;
+		staging_buf.write().unwrap().copy_from_slice(data);
+
+		let work: StagingWork = CopyBufferInfo::buffers(staging_buf, dst_buf).into();
+
 		self.staging_buf_usage_frame += work.buf_size();
 		if self.async_transfers.len() == self.async_transfers.capacity() {
 			log::warn!(
@@ -79,6 +89,57 @@ impl TransferManager
 			);
 		}
 		self.async_transfers.push(work);
+
+		Ok(())
+	}
+
+	/// Add staging work for a new image.
+	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
+	/// building the draw command buffers.
+	///
+	/// If an empty slice is given to `regions`, this will use the default value produced by
+	/// Vulkano's `CopyBufferToImageInfo::buffer_image`.
+	pub fn copy_to_image<Px>(&mut self, data: &[Px], dst_image: Arc<Image>, regions: &[BufferImageCopy]) -> crate::Result<()>
+	where
+		Px: BufferContents + Copy,
+	{
+		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
+		// of the format.
+		let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
+		let format = dst_image.format();
+		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
+			.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
+
+		let staging_buf: Subbuffer<[Px]> = self
+			.staging_buffer_allocator
+			.lock()
+			.unwrap()
+			.allocate(device_layout)?
+			.reinterpret();
+
+		staging_buf.write().unwrap().copy_from_slice(data);
+
+		let with_default_region = CopyBufferToImageInfo::buffer_image(staging_buf, dst_image);
+		let copy_info = if regions.len() > 0 {
+			CopyBufferToImageInfo {
+				regions: regions.into(),
+				..with_default_region
+			}
+		} else {
+			with_default_region
+		};
+		let work: StagingWork = copy_info.into();
+
+		self.staging_buf_usage_frame += work.buf_size();
+		if self.async_transfers.len() == self.async_transfers.capacity() {
+			log::warn!(
+				"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
+				self.async_transfers.len() + 1
+			);
+		}
+		self.async_transfers.push(work);
+
+		Ok(())
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
@@ -163,36 +224,6 @@ impl TransferManager
 		Ok(())
 	}
 
-	pub fn get_staging_buffer<T>(&self, len: DeviceSize) -> crate::Result<Subbuffer<[T]>>
-	where
-		T: BufferContents + Copy,
-	{
-		let staging_buf = self.staging_buffer_allocator.lock().unwrap().allocate_slice(len)?;
-		Ok(staging_buf)
-	}
-
-	pub fn get_tex_staging_buffer<Px>(&self, data: &[Px], format: Format) -> crate::Result<Subbuffer<[Px]>>
-	where
-		Px: BufferContents + Copy,
-	{
-		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
-		// of the format.
-		let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
-		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
-			.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
-
-		let staging_buf: Subbuffer<[Px]> = self
-			.staging_buffer_allocator
-			.lock()
-			.unwrap()
-			.allocate(device_layout)?
-			.reinterpret();
-
-		staging_buf.write().unwrap().copy_from_slice(data);
-
-		Ok(staging_buf)
-	}
-
 	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>
 	{
 		self.transfer_future.take()
@@ -237,7 +268,7 @@ trait UpdateBufferDataTrait: Send + Sync
 	) -> crate::Result<()>;
 }
 
-pub enum StagingWork
+enum StagingWork
 {
 	CopyBuffer(CopyBufferInfo),
 	CopyBufferToImage(CopyBufferToImageInfo),

@@ -9,7 +9,7 @@ use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::BufferContents;
-use vulkano::command_buffer::{BufferImageCopy, CopyBufferToImageInfo};
+use vulkano::command_buffer::BufferImageCopy;
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
@@ -64,8 +64,6 @@ impl Texture
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = render_ctx.transfer_manager.get_tex_staging_buffer(data, format)?;
-
 		let image_info = ImageCreateInfo {
 			format,
 			extent: [dimensions[0], dimensions[1], 1],
@@ -103,11 +101,7 @@ impl Texture
 			mip_height /= 2;
 		}
 
-		let copy_to_image = CopyBufferToImageInfo {
-			regions: regions.into(),
-			..CopyBufferToImageInfo::buffer_image(staging_buf, image)
-		};
-		render_ctx.transfer_manager.add_transfer(copy_to_image.into());
+		render_ctx.transfer_manager.copy_to_image(data, image, &regions)?;
 
 		Ok(Texture { view })
 	}
@@ -166,8 +160,6 @@ impl CubemapTexture
 	where
 		Px: BufferContents + Copy,
 	{
-		let staging_buf = render_ctx.transfer_manager.get_tex_staging_buffer(data, format)?;
-
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,
 			format,
@@ -188,8 +180,7 @@ impl CubemapTexture
 		};
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
-		let copy_to_image = CopyBufferToImageInfo::buffer_image(staging_buf, image);
-		render_ctx.transfer_manager.add_transfer(copy_to_image.into());
+		render_ctx.transfer_manager.copy_to_image(data, image, &[])?;
 
 		Ok(CubemapTexture { view })
 	}

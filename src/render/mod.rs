@@ -27,7 +27,7 @@ use glam::*;
 use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	CopyBufferInfo, PrimaryAutoCommandBuffer,
+	PrimaryAutoCommandBuffer,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -184,11 +184,9 @@ impl RenderContext
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
 			buf.write().unwrap().copy_from_slice(data);
 		} else {
-			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
 			// If direct uploads aren't possible, create a staging buffer on the CPU side,
 			// then submit a transfer command to the new buffer on the GPU side.
-			let staging_buf = self.transfer_manager.get_staging_buffer(data.len().try_into().unwrap())?;
-			staging_buf.write().unwrap().copy_from_slice(data);
+			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
 
 			let buf_info = BufferCreateInfo {
 				usage: usage | BufferUsage::TRANSFER_DST,
@@ -200,9 +198,7 @@ impl RenderContext
 				AllocationCreateInfo::default(),
 				data_len,
 			)?;
-
-			self.transfer_manager
-				.add_transfer(CopyBufferInfo::buffers(staging_buf, buf.clone()).into());
+			self.transfer_manager.copy_to_buffer(data, buf.clone())?;
 		}
 		Ok(buf)
 	}
