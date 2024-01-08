@@ -118,8 +118,6 @@ impl RenderTarget
 		let depth_format = selected_depth_format.ok_or("none of the depth/stencil format candidates are supported")?;
 		log::debug!("using depth/stencil format {depth_format:?}");
 
-		//let depth_format = Format::D16_UNORM;
-
 		let (color_image_view, depth_image_view) =
 			create_images(memory_allocator.clone(), extent, depth_format, swapchain_color_space)?;
 

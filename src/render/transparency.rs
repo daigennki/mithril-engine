@@ -90,117 +90,40 @@ impl MomentTransparencyRenderer
 		depth_stencil_format: Format,
 	) -> crate::Result<Self>
 	{
-		// The render pass from back when we didn't use dynamic rendering.
-		// This is left commented out here so we can get an idea of where each image gets used.
-		/*let moments_rp = vulkano::ordered_passes_renderpass!(vk_dev.clone(),
-			attachments: {
-				moments: {
-					load: Clear,
-					store: DontCare,
-					format: Format::R32G32B32A32_SFLOAT,
-					samples: 1,
-				},
-				optical_depth: {
-					load: Clear,
-					store: DontCare,
-					format: Format::R32_SFLOAT,
-					samples: 1,
-				},
-				min_depth: {
-					load: Clear,
-					store: DontCare,
-					format: Format::R32_SFLOAT,
-					samples: 1,
-				},
-				accum: {
-					load: Clear,
-					store: DontCare,
-					format: Format::R16G16B16A16_SFLOAT,
-					samples: 1,
-				},
-				revealage: {
-					load: Clear,
-					store: DontCare,
-					format: Format::R8_UNORM,
-					samples: 1,
-				},
-				color: {
-					load: Load,
-					store: Store,
-					format: Format::R16G16B16A16_SFLOAT,
-					samples: 1,
-				},
-				depth: {
-					load: Load,
-					store: Store,
-					format: Format::D16_UNORM,
-					samples: 1,
-				}
-			},
-			passes: [
-				{	// MBOIT stage 2: calculate moments
-					color: [moments, optical_depth, min_depth],
-					depth_stencil: { depth },
-					input: []
-				},
-				{	// MBOIT stage 3: calculate weights
-					color: [accum, revealage],
-					depth_stencil: { depth },
-					input: [moments, optical_depth, min_depth]
-				},
-				{	// MBOIT stage 4: composite transparency image onto opaque image
-					color: [color],
-					depth_stencil: {},
-					input: [accum, revealage, min_depth]
-				}
-			]
-		)?;*/
-
 		let device = descriptor_set_allocator.device().clone();
 
 		//
 		/* Stage 2: Calculate moments */
 		//
-		let moments_formats = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![
-				Some(Format::R32G32B32A32_SFLOAT),
-				Some(Format::R32_SFLOAT),
-				//Some(Format::R32_SFLOAT),
-			],
-			depth_attachment_format: Some(depth_stencil_format),
-			..Default::default()
-		};
-
-		let moments_blends = vec![
-			ColorBlendAttachmentState {
-				// moments
-				blend: Some(AttachmentBlend {
-					alpha_blend_op: BlendOp::Add,
-					..AttachmentBlend::additive()
-				}),
-				..Default::default()
-			},
-			ColorBlendAttachmentState {
-				// optical_depth
-				blend: Some(AttachmentBlend {
-					alpha_blend_op: BlendOp::Add,
-					..AttachmentBlend::additive()
-				}),
-				..Default::default()
-			},
-			/*ColorBlendAttachmentState {
-				// min_depth
-				blend: Some(AttachmentBlend {
-					color_blend_op: BlendOp::Min,
-					src_color_blend_factor: BlendFactor::One,
-					dst_color_blend_factor: BlendFactor::One,
-					..Default::default()
-				}),
-				..Default::default()
-			},*/
-		];
 		let moments_color_blend_state = ColorBlendState {
-			attachments: moments_blends,
+			attachments: vec![
+				ColorBlendAttachmentState {
+					// moments
+					blend: Some(AttachmentBlend {
+						alpha_blend_op: BlendOp::Add,
+						..AttachmentBlend::additive()
+					}),
+					..Default::default()
+				},
+				ColorBlendAttachmentState {
+					// optical_depth
+					blend: Some(AttachmentBlend {
+						alpha_blend_op: BlendOp::Add,
+						..AttachmentBlend::additive()
+					}),
+					..Default::default()
+				},
+				/*ColorBlendAttachmentState {
+					// min_depth
+					blend: Some(AttachmentBlend {
+						color_blend_op: BlendOp::Min,
+						src_color_blend_factor: BlendFactor::One,
+						dst_color_blend_factor: BlendFactor::One,
+						..Default::default()
+					}),
+					..Default::default()
+				},*/
+			],
 			..Default::default()
 		};
 
@@ -224,6 +147,15 @@ impl MomentTransparencyRenderer
 		};
 		let stage2_pipeline_layout = PipelineLayout::new(device.clone(), stage2_pipeline_layout_info)?;
 
+		let moments_formats = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![
+				Some(Format::R32G32B32A32_SFLOAT),
+				Some(Format::R32_SFLOAT),
+				//Some(Format::R32_SFLOAT),
+			],
+			depth_attachment_format: Some(depth_stencil_format),
+			..Default::default()
+		};
 		let moments_pl = super::pipeline::new(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
@@ -242,8 +174,8 @@ impl MomentTransparencyRenderer
 		/* Stage 3: Calculate weights */
 		//
 		// The pipeline for stage 3 depends on the material of each mesh, so they're created outside
-		// of this transparency renderer. They'll take the following descriptor set containing images
-		// generated in Stage 2.
+		// of this transparency renderer. They'll take the following descriptor set, which contains
+		// the images rendered in Stage 2.
 		let input_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
@@ -270,7 +202,6 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
-
 		let stage4_pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![stage4_inputs_layout.clone()],
 			..Default::default()
@@ -368,9 +299,6 @@ impl MomentTransparencyRenderer
 		depth_image: Arc<ImageView>,
 	) -> crate::Result<()>
 	{
-		let extent3 = self.images.moments.image().extent();
-		let img_extent = [extent3[0], extent3[1]];
-
 		let moments_cb;
 		if let Some(m_cb) = self.transparency_moments_cb.lock().unwrap().take() {
 			moments_cb = m_cb;
@@ -381,7 +309,6 @@ impl MomentTransparencyRenderer
 		let transparency_cb = self.transparency_cb.lock().unwrap().take().unwrap();
 
 		let stage2_rendering_info = RenderingInfo {
-			render_area_extent: img_extent,
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
 					// moments
@@ -415,7 +342,6 @@ impl MomentTransparencyRenderer
 		};
 
 		let stage3_rendering_info = RenderingInfo {
-			render_area_extent: img_extent,
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
 					// accum
@@ -448,7 +374,6 @@ impl MomentTransparencyRenderer
 		};
 
 		let stage4_rendering_info = RenderingInfo {
-			render_area_extent: img_extent,
 			color_attachments: vec![Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
 				store_op: AttachmentStoreOp::Store,
@@ -463,6 +388,7 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 
+		let img_extent = self.images.moments.image().extent();
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [img_extent[0] as f32, img_extent[1] as f32],
