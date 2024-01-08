@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 
-Copyright (c) 2021-2023, daigennki (@daigennki) and MithrilEngine developers.<br>
+Copyright (c) 2021-2024, daigennki (@daigennki) and MithrilEngine developers.<br>
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
