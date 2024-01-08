@@ -33,7 +33,6 @@ void main()
 
 	vec3 average_color = accum.rgb / max(accum.a, 0.00001);
 
-	// dst' =  (accum.rgb / accum.a) * (1 - revealage) + dst * revealage
-	color_out = vec4(average_color, 1.0 - revealage);
+	color_out = vec4(average_color, revealage);
 }
 

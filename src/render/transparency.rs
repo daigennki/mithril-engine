@@ -21,7 +21,7 @@ use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendOp, ColorBlendAttachmentState, ColorBlendState},
+	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOpState, StencilOps, StencilState},
 	input_assembly::PrimitiveTopology,
 	rasterization::{CullMode, RasterizationState},
@@ -209,7 +209,12 @@ impl MomentTransparencyRenderer
 		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)?;
 
 		let stage4_blend = ColorBlendAttachmentState {
-			blend: Some(AttachmentBlend::alpha()),
+			blend: Some(AttachmentBlend {
+				src_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
+				dst_color_blend_factor: BlendFactor::SrcAlpha,
+				color_blend_op: BlendOp::Add,
+				..AttachmentBlend::ignore_source()
+			}),
 			..Default::default()
 		};
 		let stage4_color_blend_state = ColorBlendState::with_attachment_states(1, stage4_blend);
