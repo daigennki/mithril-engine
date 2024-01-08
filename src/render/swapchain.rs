@@ -68,12 +68,12 @@ impl Swapchain
 		let pd = vk_dev.physical_device();
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
-		let surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
+		let surface_present_modes = Vec::from_iter(pd.surface_present_modes(&surface, SurfaceInfo::default())?);
 
 		log::info!("Available surface format and color space combinations:");
 		surface_formats.iter().for_each(|f| log::info!("- {f:?}"));
 
-		log::info!("Available surface present modes: {:?}", Vec::from_iter(surface_present_modes));
+		log::info!("Available surface present modes: {:?}", &surface_present_modes);
 
 		// Find the intersection between the format candidates and the formats supported by the physical device,
 		// then get the first one remaining.
@@ -87,13 +87,32 @@ impl Swapchain
 			.then_some(ImageUsage::STORAGE)
 			.unwrap_or(ImageUsage::TRANSFER_DST);
 
+		let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
+		let present_mode = std::env::args()
+			.collect::<Vec<_>>()
+			.iter()
+			.find_map(|arg| present_mode_regex.captures(arg))
+			.and_then(|caps| caps.name("value"))
+			.and_then(|value_match| match value_match.as_str() {
+				"Immediate" => Some(PresentMode::Immediate),
+				"Mailbox" => Some(PresentMode::Mailbox),
+				"Fifo" => Some(PresentMode::Fifo),
+				"FifoRelaxed" => Some(PresentMode::FifoRelaxed),
+				_ => None,
+			})
+			.unwrap_or(PresentMode::Fifo);
+
+		if !surface_present_modes.contains(&present_mode) {
+			return Err("the specified present mode is not supported by the surface".into());
+		}
+
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count.max(2),
 			image_extent: window.inner_size().into(),
 			image_format,
 			image_color_space,
 			image_usage,
-			present_mode: PresentMode::Fifo,
+			present_mode,
 			..Default::default()
 		};
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)
