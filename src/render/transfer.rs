@@ -169,7 +169,7 @@ impl TransferManager
 				)?;
 
 				for work in self.async_transfers.drain(..) {
-					work.add_command(&mut cb, &mut staging_buf_alloc_guard)?;
+					work.add_command(&mut cb, &mut staging_buf_alloc_guard);
 				}
 
 				let transfer_future = cb.build()?.execute(q.clone()).unwrap().then_signal_fence_and_flush()?;
@@ -184,24 +184,19 @@ impl TransferManager
 		Ok(())
 	}
 
-	pub fn add_synchronous_transfer_commands(
-		&mut self,
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-	) -> crate::Result<()>
+	pub fn add_synchronous_transfer_commands(&mut self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
 		// buffer updates
 		for buf_update in self.buffer_updates.drain(..) {
-			buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard)?;
+			buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard);
 		}
 
 		// do async transfers that couldn't be submitted earlier
 		for work in self.async_transfers.drain(..) {
-			work.add_command(cb_builder, &mut staging_buf_alloc_guard)?;
+			work.add_command(cb_builder, &mut staging_buf_alloc_guard);
 		}
-
-		Ok(())
 	}
 
 	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>
@@ -227,26 +222,23 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
-	) -> crate::Result<()>
+	)
 	{
-		let staging_buf = subbuffer_allocator.allocate_slice(self.data.len().try_into().unwrap())?;
+		let data_len = self.data.len().try_into().unwrap();
+		let staging_buf = subbuffer_allocator.allocate_slice(data_len).unwrap();
 		staging_buf.write().unwrap().copy_from_slice(&self.data);
 
 		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data
-		cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf))?;
-
-		Ok(())
+		cb_builder
+			.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf))
+			.unwrap();
 	}
 }
 trait UpdateBufferDataTrait: Send + Sync
 {
 	fn device_layout(&self) -> DeviceLayout;
 
-	fn add_command(
-		self: Box<Self>,
-		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		_: &mut SubbufferAllocator,
-	) -> crate::Result<()>;
+	fn add_command(self: Box<Self>, _: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, _: &mut SubbufferAllocator);
 }
 
 enum StagingWork<T: BufferContents + Copy>
@@ -286,18 +278,20 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
-	) -> crate::Result<()>
+	)
 	{
-		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
-		// of the format.
+		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
+		// size of the format. We also `unwrap` on `allocate` because it shouldn't allocate a new
+		// arena (meaning memory allocation errors shouldn't occur), since we already reserved
+		// enough memory for all staging buffers this frame.
 		let device_layout = self.device_layout();
-		let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
+		let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout).unwrap().reinterpret();
 		staging_buf.write().unwrap().copy_from_slice(self.data());
 
 		match *self {
 			Self::CopyBuffer { dst_buf, .. } => {
-				cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, dst_buf))?;
-			},
+				cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, dst_buf)).unwrap();
+			}
 			Self::CopyBufferToImage { dst_image, regions, .. } => {
 				let with_default_region = CopyBufferToImageInfo::buffer_image(staging_buf, dst_image);
 				let copy_info = if regions.len() > 0 {
@@ -308,19 +302,14 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 				} else {
 					with_default_region
 				};
-				cb_builder.copy_buffer_to_image(copy_info)?;
+				cb_builder.copy_buffer_to_image(copy_info).unwrap();
 			}
 		}
-		Ok(())
 	}
 }
 trait StagingWorkTrait: Send + Sync
 {
 	fn device_layout(&self) -> DeviceLayout;
 
-	fn add_command(
-		self: Box<Self>,
-		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		_: &mut SubbufferAllocator,
-	) -> crate::Result<()>;
+	fn add_command(self: Box<Self>, _: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, _: &mut SubbufferAllocator);
 }
