@@ -26,6 +26,8 @@ use vulkano::DeviceSize;
 
 pub struct TransferManager
 {
+	staging_buffer_allocator: Mutex<SubbufferAllocator>,
+
 	// Transfers to initialize buffers and images. If there is an asynchronous transfer queue,
 	// these will be performed while the CPU is busy with building the draw command buffers.
 	// Otherwise, these will be run at the beginning of the next graphics submission, before draws
@@ -37,9 +39,6 @@ pub struct TransferManager
 
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
-	staging_buffer_allocator: Mutex<SubbufferAllocator>,
-	staging_buf_max_size: DeviceSize, // Maximum staging buffer usage for the entire duration of the program.
-	staging_buf_usage_frame: Option<DeviceLayout>,
 }
 impl TransferManager
 {
@@ -53,27 +52,16 @@ impl TransferManager
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
 		// the capacity of these should be adjusted based on number of transfers that might be done in one frame
-		let buffer_updates = Vec::with_capacity(16);
 		let async_transfers = Vec::with_capacity(200);
+		let buffer_updates = Vec::with_capacity(16);
 
 		Self {
+			staging_buffer_allocator,
 			async_transfers,
 			transfer_queue,
 			transfer_future: Default::default(),
 			buffer_updates,
-			staging_buffer_allocator,
-			staging_buf_max_size: 0,
-			staging_buf_usage_frame: None,
 		}
-	}
-
-	fn add_staging_buf_usage(&mut self, device_layout: DeviceLayout)
-	{
-		self.staging_buf_usage_frame = self
-			.staging_buf_usage_frame
-			.as_ref()
-			.map(|usage_frame| usage_frame.extend(device_layout).unwrap().0)
-			.or_else(|| Some(device_layout));
 	}
 
 	/// Add staging work for a new buffer. (use `update_buffer` instead for previously created buffers)
@@ -83,9 +71,7 @@ impl TransferManager
 	where
 		T: BufferContents + Copy,
 	{
-		let data_size_bytes: DeviceSize = (data.len() * std::mem::size_of::<T>()).try_into().unwrap();
-		let device_layout = DeviceLayout::new(data_size_bytes.try_into().unwrap(), T::LAYOUT.alignment()).unwrap();
-		self.add_staging_buf_usage(device_layout);
+		assert!(data.len() > 0);
 
 		if self.async_transfers.len() == self.async_transfers.capacity() {
 			log::warn!(
@@ -106,14 +92,8 @@ impl TransferManager
 	where
 		Px: BufferContents + Copy,
 	{
-		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
-		// of the format.
-		let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
-		let alignment = dst_image.format().block_size();
-		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, alignment)
-			.expect("slice is empty or alignment is not a power of two");
-
-		self.add_staging_buf_usage(device_layout);
+		assert!(data.len() > 0);
+		assert!(dst_image.format().block_size().is_power_of_two());
 
 		if self.async_transfers.len() == self.async_transfers.capacity() {
 			log::warn!(
@@ -133,6 +113,8 @@ impl TransferManager
 	where
 		T: BufferContents + Copy,
 	{
+		assert!(data.len() > 0);
+
 		// This will be submitted to the graphics queue since we're copying to an existing buffer,
 		// which might be in use by a previous submission.
 		if self.buffer_updates.len() == self.buffer_updates.capacity() {
@@ -141,10 +123,6 @@ impl TransferManager
 				self.buffer_updates.len() + 1
 			);
 		}
-
-		let data_size_bytes: DeviceSize = (data.len() * std::mem::size_of::<T>()).try_into().unwrap();
-		let device_layout = DeviceLayout::new(data_size_bytes.try_into().unwrap(), T::LAYOUT.alignment()).unwrap();
-		self.add_staging_buf_usage(device_layout);
 
 		self.buffer_updates.push(Box::new(UpdateBufferData {
 			dst_buf,
@@ -162,14 +140,19 @@ impl TransferManager
 	{
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
+		let copy_layouts = self.async_transfers.iter().map(|c| c.device_layout());
+		let update_layouts = self.buffer_updates.iter().map(|u| u.device_layout());
+		let staging_buf_usage_frame = copy_layouts
+			.chain(update_layouts)
+			.reduce(|usage_frame, device_layout| usage_frame.extend(device_layout).unwrap().0);
+
 		// gather stats on staging buffer usage
-		if let Some(usage) = &self.staging_buf_usage_frame {
-			let usage_size = usage.pad_to_alignment().size();
-			if usage_size > self.staging_buf_max_size {
-				self.staging_buf_max_size = usage_size;
-				log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
+		if let Some(usage) = staging_buf_usage_frame {
+			let needed_arena_size = usage.pad_to_alignment().size();
+			if needed_arena_size > staging_buf_alloc_guard.arena_size() {
+				log::debug!("reserving {needed_arena_size} bytes in `SubbufferAllocator`");
 			}
-			staging_buf_alloc_guard.reserve(usage_size)?;
+			staging_buf_alloc_guard.reserve(needed_arena_size)?;
 
 			// TODO: If staging buffer usage exceeds a certain threshold, don't allocate any further,
 			// and defer any further transfers to a separate submission.
@@ -177,7 +160,7 @@ impl TransferManager
 			// to below the threshold during the next submission.
 		}
 
-		if let Some(q) = self.transfer_queue.as_ref() {
+		if let Some(q) = &self.transfer_queue {
 			if self.async_transfers.len() > 0 {
 				let mut cb = AutoCommandBufferBuilder::primary(
 					command_buffer_allocator,
@@ -209,11 +192,8 @@ impl TransferManager
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
 		// buffer updates
-		if self.buffer_updates.len() > 0 {
-			for buf_update in self.buffer_updates.drain(..) {
-				buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard)?;
-			}
-			self.staging_buf_usage_frame = None;
+		for buf_update in self.buffer_updates.drain(..) {
+			buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard)?;
 		}
 
 		// do async transfers that couldn't be submitted earlier
@@ -237,6 +217,12 @@ struct UpdateBufferData<T: BufferContents + Copy>
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {
+	fn device_layout(&self) -> DeviceLayout
+	{
+		let data_size_bytes: DeviceSize = (self.data.len() * std::mem::size_of::<T>()).try_into().unwrap();
+		DeviceLayout::new(data_size_bytes.try_into().unwrap(), T::LAYOUT.alignment()).unwrap()
+	}
+
 	fn add_command(
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -254,6 +240,8 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 }
 trait UpdateBufferDataTrait: Send + Sync
 {
+	fn device_layout(&self) -> DeviceLayout;
+
 	fn add_command(
 		self: Box<Self>,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -274,36 +262,43 @@ enum StagingWork<T: BufferContents + Copy>
 		regions: Vec<BufferImageCopy>,
 	},
 }
+impl<T: BufferContents + Copy> StagingWork<T>
+{
+	fn data(&self) -> &Vec<T>
+	{
+		let (Self::CopyBuffer { data, .. } | Self::CopyBufferToImage { data, .. }) = self;
+		data
+	}
+}
 impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 {
+	fn device_layout(&self) -> DeviceLayout
+	{
+		let data_size_bytes: DeviceSize = (self.data().len() * std::mem::size_of::<T>()).try_into().unwrap();
+		let alignment = match self {
+			Self::CopyBuffer { .. } => T::LAYOUT.alignment(),
+			Self::CopyBufferToImage { dst_image, .. } => dst_image.format().block_size().try_into().unwrap(),
+		};
+		DeviceLayout::new(data_size_bytes.try_into().unwrap(), alignment).unwrap()
+	}
+
 	fn add_command(
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
 	) -> crate::Result<()>
 	{
+		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block size
+		// of the format.
+		let device_layout = self.device_layout();
+		let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
+		staging_buf.write().unwrap().copy_from_slice(self.data());
+
 		match *self {
-			Self::CopyBuffer { data, dst_buf } => {
-				let len = data.len().try_into().unwrap();
-				let staging_buf = subbuffer_allocator.allocate_slice(len)?;
-				staging_buf.write().unwrap().copy_from_slice(&data);
-
-				let copy_info = CopyBufferInfo::buffers(staging_buf, dst_buf);
-				cb_builder.copy_buffer(copy_info)?;
-			}
-			Self::CopyBufferToImage {
-				data,
-				dst_image,
-				regions,
-			} => {
-				let data_size_bytes = (data.len() * std::mem::size_of::<T>()).try_into().unwrap();
-				let alignment = dst_image.format().block_size();
-				let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, alignment).unwrap();
-
-				let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
-
-				staging_buf.write().unwrap().copy_from_slice(&data);
-
+			Self::CopyBuffer { dst_buf, .. } => {
+				cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, dst_buf))?;
+			},
+			Self::CopyBufferToImage { dst_image, regions, .. } => {
 				let with_default_region = CopyBufferToImageInfo::buffer_image(staging_buf, dst_image);
 				let copy_info = if regions.len() > 0 {
 					CopyBufferToImageInfo {
@@ -313,7 +308,6 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 				} else {
 					with_default_region
 				};
-
 				cb_builder.copy_buffer_to_image(copy_info)?;
 			}
 		}
@@ -322,6 +316,8 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 }
 trait StagingWorkTrait: Send + Sync
 {
+	fn device_layout(&self) -> DeviceLayout;
+
 	fn add_command(
 		self: Box<Self>,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
