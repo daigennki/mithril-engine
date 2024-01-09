@@ -39,14 +39,7 @@ impl Texture
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
 
-		let new_self = Arc::new(Self::new_from_slice(
-			render_ctx,
-			img_raw.as_slice(),
-			vk_fmt,
-			dim,
-			mip_count,
-			1,
-		)?);
+		let new_self = Arc::new(Self::new_from_slice(render_ctx, img_raw, vk_fmt, dim, mip_count, 1)?);
 
 		render_ctx.textures.insert(path.to_path_buf(), new_self.clone());
 
@@ -55,7 +48,7 @@ impl Texture
 
 	pub fn new_from_slice<Px>(
 		render_ctx: &mut RenderContext,
-		data: &[Px],
+		data: Vec<Px>,
 		format: Format,
 		dimensions: [u32; 2],
 		mip_levels: u32,
@@ -101,7 +94,7 @@ impl Texture
 			mip_height /= 2;
 		}
 
-		render_ctx.transfer_manager.copy_to_image(data, image, &regions)?;
+		render_ctx.transfer_manager.copy_to_image(data, image, &regions);
 
 		Ok(Texture { view })
 	}
@@ -148,12 +141,12 @@ impl CubemapTexture
 			combined_data.extend(&img_raw[..mip_size]);
 		}
 
-		Self::new_from_slice(render_ctx, combined_data.as_slice(), cube_fmt.unwrap(), cube_dim.unwrap())
+		Self::new_from_slice(render_ctx, combined_data, cube_fmt.unwrap(), cube_dim.unwrap())
 	}
 
 	pub fn new_from_slice<Px>(
 		render_ctx: &mut RenderContext,
-		data: &[Px],
+		data: Vec<Px>,
 		format: Format,
 		dimensions: [u32; 2],
 	) -> crate::Result<Self>
@@ -180,7 +173,7 @@ impl CubemapTexture
 		};
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
-		render_ctx.transfer_manager.copy_to_image(data, image, &[])?;
+		render_ctx.transfer_manager.copy_to_image(data, image, &[]);
 
 		Ok(CubemapTexture { view })
 	}

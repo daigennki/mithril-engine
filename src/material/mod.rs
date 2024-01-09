@@ -106,7 +106,7 @@ impl ColorInput
 				// If the input is a single color, make a 1x1 RGBA texture with just the color.
 				Ok(Arc::new(Texture::new_from_slice(
 					render_ctx,
-					&[*color],
+					vec![*color],
 					Format::R32G32B32A32_SFLOAT,
 					[1, 1],
 					1,
@@ -136,7 +136,7 @@ impl GreyscaleInput
 				// (we make it 2x2 here so that it's aligned to 16 bytes)
 				Ok(Arc::new(Texture::new_from_slice(
 					render_ctx,
-					&vec![*value; 4],
+					vec![*value; 4],
 					Format::R32_SFLOAT,
 					[2, 2],
 					1,

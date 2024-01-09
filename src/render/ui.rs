@@ -278,7 +278,7 @@ impl Canvas
 			None,
 		)?;
 
-		let quad_verts = [
+		let quad_verts = vec![
 			// position
 			Vec2::new(-0.5, -0.5),
 			Vec2::new(-0.5, 0.5),
@@ -290,7 +290,7 @@ impl Canvas
 			Vec2::new(1.0, 0.0),
 			Vec2::new(1.0, 1.0),
 		];
-		let vert_buf = render_ctx.new_buffer(&quad_verts, BufferUsage::VERTEX_BUFFER)?;
+		let vert_buf = render_ctx.new_buffer(quad_verts, BufferUsage::VERTEX_BUFFER)?;
 		let (quad_pos_buf, quad_uv_buf) = vert_buf.split_at(4);
 
 		let font_data = include_bytes!("../../resource/mplus-1m-medium.ttf");
@@ -478,7 +478,7 @@ impl Canvas
 		}
 
 		let layer_count = glyph_count.try_into().unwrap();
-		let tex = Texture::new_from_slice(render_ctx, &combined_images, Format::R8_UNORM, img_dim, 1, layer_count)?;
+		let tex = Texture::new_from_slice(render_ctx, combined_images, Format::R8_UNORM, img_dim, 1, layer_count)?;
 
 		let colors = vec![text.color; glyph_count];
 
@@ -495,7 +495,7 @@ impl Canvas
 			render_ctx.update_buffer(&vbo_data, some_vbo.clone());
 			some_vbo
 		} else {
-			render_ctx.new_buffer(&vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
+			render_ctx.new_buffer(vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
 		let resources = self.update_transform(

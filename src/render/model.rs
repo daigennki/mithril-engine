@@ -380,16 +380,16 @@ fn load_gltf_meshes(
 	let normals_offset: u64 = combined_data.len().try_into().unwrap();
 	combined_data.append(&mut normals);
 
-	let vertex_buffer = render_ctx.new_buffer(combined_data.as_slice(), BufferUsage::VERTEX_BUFFER)?;
+	let vertex_buffer = render_ctx.new_buffer(combined_data, BufferUsage::VERTEX_BUFFER)?;
 	let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
 	let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
 	let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
 	let vertex_subbuffers = vec![vbo_positions, vbo_texcoords, vbo_normals];
 
 	let index_buffer = if indices_u32.len() > 0 {
-		IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, BufferUsage::INDEX_BUFFER)?)
+		IndexBufferVariant::U32(render_ctx.new_buffer(indices_u32, BufferUsage::INDEX_BUFFER)?)
 	} else {
-		IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, BufferUsage::INDEX_BUFFER)?)
+		IndexBufferVariant::U16(render_ctx.new_buffer(indices_u16, BufferUsage::INDEX_BUFFER)?)
 	};
 
 	Ok((vertex_subbuffers, index_buffer, submeshes))

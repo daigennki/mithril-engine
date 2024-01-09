@@ -157,7 +157,7 @@ impl RenderContext
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
-	fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
+	fn new_buffer<T>(&mut self, data: Vec<T>, usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
 	where
 		T: BufferContents + Copy,
 	{
@@ -182,7 +182,7 @@ impl RenderContext
 				..Default::default()
 			};
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
-			buf.write().unwrap().copy_from_slice(data);
+			buf.write().unwrap().copy_from_slice(&data);
 		} else {
 			// If direct uploads aren't possible, create a staging buffer on the CPU side,
 			// then submit a transfer command to the new buffer on the GPU side.
@@ -198,7 +198,7 @@ impl RenderContext
 				AllocationCreateInfo::default(),
 				data_len,
 			)?;
-			self.transfer_manager.copy_to_buffer(data, buf.clone())?;
+			self.transfer_manager.copy_to_buffer(data, buf.clone());
 		}
 		Ok(buf)
 	}

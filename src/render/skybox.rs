@@ -173,7 +173,7 @@ impl Skybox
 			[],
 		)?;
 
-		let cube_buffer = render_ctx.new_buffer(&[SKY_CUBE_DATA], BufferUsage::VERTEX_BUFFER | BufferUsage::INDEX_BUFFER)?;
+		let cube_buffer = render_ctx.new_buffer(vec![SKY_CUBE_DATA], BufferUsage::VERTEX_BUFFER | BufferUsage::INDEX_BUFFER)?;
 		let (cube_vbo_bytes, cube_ibo_bytes) = cube_buffer.into_bytes().split_at(std::mem::size_of::<[f32; 24]>() as u64);
 
 		Ok(Skybox {
