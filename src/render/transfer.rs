@@ -39,7 +39,7 @@ pub struct TransferManager
 	buffer_updates: Vec<Box<dyn UpdateBufferDataTrait>>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
 	staging_buf_max_size: DeviceSize, // Maximum staging buffer usage for the entire duration of the program.
-	staging_buf_usage_frame: DeviceSize,
+	staging_buf_usage_frame: Option<DeviceLayout>,
 }
 impl TransferManager
 {
@@ -64,8 +64,17 @@ impl TransferManager
 			buffer_updates,
 			staging_buffer_allocator,
 			staging_buf_max_size: 0,
-			staging_buf_usage_frame: 0,
+			staging_buf_usage_frame: None,
 		}
+	}
+
+	fn add_staging_buf_usage(&mut self, device_layout: DeviceLayout)
+	{
+		self.staging_buf_usage_frame = self
+			.staging_buf_usage_frame
+			.as_ref()
+			.map(|usage_frame| usage_frame.extend(device_layout).unwrap().0)
+			.or_else(|| Some(device_layout));
 	}
 
 	/// Add staging work for a new buffer. (use `update_buffer` instead for previously created buffers)
@@ -79,16 +88,18 @@ impl TransferManager
 		let staging_buf = self.staging_buffer_allocator.lock().unwrap().allocate_slice(len)?;
 		staging_buf.write().unwrap().copy_from_slice(data);
 
-		let work: StagingWork = CopyBufferInfo::buffers(staging_buf, dst_buf).into();
+		let data_size_bytes: DeviceSize = (data.len() * std::mem::size_of::<T>()).try_into().unwrap();
+		let device_layout = DeviceLayout::new(data_size_bytes.try_into().unwrap(), T::LAYOUT.alignment()).unwrap();
+		self.add_staging_buf_usage(device_layout);
 
-		self.staging_buf_usage_frame += work.buf_size();
 		if self.async_transfers.len() == self.async_transfers.capacity() {
 			log::warn!(
 				"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
 				self.async_transfers.len() + 1
 			);
 		}
-		self.async_transfers.push(work);
+		self.async_transfers
+			.push(CopyBufferInfo::buffers(staging_buf, dst_buf).into());
 
 		Ok(())
 	}
@@ -108,7 +119,7 @@ impl TransferManager
 		let data_size_bytes = (data.len() * std::mem::size_of::<Px>()).try_into().unwrap();
 		let format = dst_image.format();
 		let device_layout = DeviceLayout::from_size_alignment(data_size_bytes, format.block_size())
-			.ok_or("Texture::new_from_slice: slice is empty or alignment is not a power of two")?;
+			.expect("slice is empty or alignment is not a power of two");
 
 		let staging_buf: Subbuffer<[Px]> = self
 			.staging_buffer_allocator
@@ -128,16 +139,16 @@ impl TransferManager
 		} else {
 			with_default_region
 		};
-		let work: StagingWork = copy_info.into();
 
-		self.staging_buf_usage_frame += work.buf_size();
+		self.add_staging_buf_usage(device_layout);
+
 		if self.async_transfers.len() == self.async_transfers.capacity() {
 			log::warn!(
 				"Re-allocating `Vec` for asynchronous transfers to {}! Consider increasing its initial capacity.",
 				self.async_transfers.len() + 1
 			);
 		}
-		self.async_transfers.push(work);
+		self.async_transfers.push(copy_info.into());
 
 		Ok(())
 	}
@@ -155,6 +166,11 @@ impl TransferManager
 				self.buffer_updates.len() + 1
 			);
 		}
+
+		let data_size_bytes: DeviceSize = (data.len() * std::mem::size_of::<T>()).try_into().unwrap();
+		let device_layout = DeviceLayout::new(data_size_bytes.try_into().unwrap(), T::LAYOUT.alignment()).unwrap();
+		self.add_staging_buf_usage(device_layout);
+
 		self.buffer_updates.push(Box::new(UpdateBufferData {
 			dst_buf,
 			data: data.into(),
@@ -204,16 +220,18 @@ impl TransferManager
 
 			for buf_update in self.buffer_updates.drain(..) {
 				buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard)?;
-				self.staging_buf_usage_frame += buf_update.data_size();
 			}
 
 			// gather stats on staging buffer usage
-			if self.staging_buf_usage_frame > self.staging_buf_max_size {
-				self.staging_buf_max_size = self.staging_buf_usage_frame;
-				log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
+			if let Some(usage) = &self.staging_buf_usage_frame {
+				let usage_size = usage.pad_to_alignment().size();
+				if usage_size > self.staging_buf_max_size {
+					self.staging_buf_max_size = usage_size;
+					log::debug!("max staging buffer usage per frame: {} bytes", self.staging_buf_max_size);
+				}
 			}
 
-			self.staging_buf_usage_frame = 0;
+			self.staging_buf_usage_frame = None;
 		}
 
 		// do async transfers that couldn't be submitted earlier
@@ -237,11 +255,6 @@ struct UpdateBufferData<T: BufferContents + Copy>
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {
-	fn data_size(&self) -> DeviceSize
-	{
-		self.dst_buf.size()
-	}
-
 	fn add_command(
 		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -259,8 +272,6 @@ impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 }
 trait UpdateBufferDataTrait: Send + Sync
 {
-	fn data_size(&self) -> DeviceSize;
-
 	fn add_command(
 		&self,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -278,17 +289,9 @@ impl StagingWork
 	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
 		match self {
-			StagingWork::CopyBuffer(info) => cb_builder.copy_buffer(info).unwrap(),
-			StagingWork::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info).unwrap(),
+			Self::CopyBuffer(info) => cb_builder.copy_buffer(info).unwrap(),
+			Self::CopyBufferToImage(info) => cb_builder.copy_buffer_to_image(info).unwrap(),
 		};
-	}
-
-	fn buf_size(&self) -> DeviceSize
-	{
-		match self {
-			StagingWork::CopyBuffer(info) => info.src_buffer.size(),
-			StagingWork::CopyBufferToImage(info) => info.src_buffer.size(),
-		}
 	}
 }
 impl From<CopyBufferInfo> for StagingWork
