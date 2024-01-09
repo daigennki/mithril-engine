@@ -145,7 +145,11 @@ fn submit_frame(
 		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
 
 		// skybox (effectively clears the image)
-		skybox.draw(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
+		skybox.draw(
+			&mut primary_cb_builder,
+			color_image.clone(),
+			camera_manager.sky_projview().as_mat4(),
+		)?;
 
 		// 3D
 		mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;

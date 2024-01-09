@@ -73,7 +73,7 @@ struct SpotLightData
 #[derive(shipyard::Unique)]
 pub struct LightManager
 {
-	dir_light_projviews: [Mat4; 3],
+	dir_light_projviews: [DMat4; 3],
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
 	dir_light_shadow_layers: Vec<Arc<ImageView>>,
@@ -191,38 +191,38 @@ impl LightManager
 		render_ctx: &mut RenderContext,
 		light: &DirectionalLight,
 		transform: &Transform,
-		cut_camera_frustums: [Mat4; 3],
+		cut_camera_frustums: [DMat4; 3],
 	)
 	{
-		let direction = transform.rotation_quat() * Vec3A::NEG_Z;
+		let direction = transform.rotation_quat() * DVec3::NEG_Z;
 
 		// Fit the light view and projection matrices to different sections of the camera frustum.
 		// Most of this is adapted from here: https://learnopengl.com/Guest-Articles/2021/CSM
 		for (i, cut_frustum) in cut_camera_frustums.iter().enumerate() {
 			let camera_projview_inv = cut_frustum.inverse();
-			let mut frustum_corners: [Vec4; 8] = Default::default();
+			let mut frustum_corners: [DVec4; 8] = Default::default();
 			let mut corner_i = 0;
 			for x in 0..2 {
 				for y in 0..2 {
 					for z in 0..2 {
 						let pt_x = 2 * x - 1;
 						let pt_y = 2 * y - 1;
-						let pt = camera_projview_inv * IVec4::new(pt_x, pt_y, z, 1).as_vec4();
+						let pt = camera_projview_inv * IVec4::new(pt_x, pt_y, z, 1).as_dvec4();
 						frustum_corners[corner_i] = pt / pt.w;
 						corner_i += 1;
 					}
 				}
 			}
 
-			let center = frustum_corners.iter().sum::<Vec4>() * (1.0 / 8.0);
-			let view = Mat4::look_to_lh(center.truncate(), direction.into(), Vec3::Y);
+			let center = frustum_corners.iter().sum::<DVec4>() * (1.0 / 8.0);
+			let view = DMat4::look_to_lh(center.truncate(), direction, DVec3::Y);
 
-			let mut min_x = f32::MAX;
-			let mut max_x = f32::MIN;
-			let mut min_y = f32::MAX;
-			let mut max_y = f32::MIN;
-			let mut min_z = f32::MAX;
-			let mut max_z = f32::MIN;
+			let mut min_x = f64::MAX;
+			let mut max_x = f64::MIN;
+			let mut min_y = f64::MAX;
+			let mut max_y = f64::MIN;
+			let mut min_z = f64::MAX;
+			let mut max_z = f64::MIN;
 			for v in frustum_corners {
 				let trf = view * v;
 				min_x = min_x.min(trf.x);
@@ -245,14 +245,18 @@ impl LightManager
 				max_z *= z_mul;
 			}
 
-			let proj = Mat4::orthographic_lh(min_x, max_x, min_y, max_y, min_z, max_z);
+			let proj = DMat4::orthographic_lh(min_x, max_x, min_y, max_y, min_z, max_z);
 
 			self.dir_light_projviews[i] = proj * view;
 		}
 
+		let mut projviews_f32: [Mat4; 3] = Default::default();
+		for (i, projview) in self.dir_light_projviews.iter().enumerate() {
+			projviews_f32[i] = projview.as_mat4();
+		}
 		let dir_light_data = DirLightData {
-			projviews: self.dir_light_projviews,
-			direction,
+			projviews: projviews_f32,
+			direction: direction.as_vec3a(),
 			color_intensity: light.color.extend(light.intensity),
 		};
 		render_ctx.update_buffer(&[dir_light_data], self.dir_light_buf.clone());
@@ -296,7 +300,7 @@ impl LightManager
 	{
 		&self.dir_light_shadow
 	}
-	pub fn get_dir_light_projviews(&self) -> [Mat4; 3]
+	pub fn get_dir_light_projviews(&self) -> [DMat4; 3]
 	{
 		self.dir_light_projviews
 	}

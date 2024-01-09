@@ -31,12 +31,12 @@ fn update_controllable_camera(
 
 		for (mut transform, _, _) in (&mut transforms, &cameras, &camera_controller).iter() {
 			let sensitivity = 0.05;
-			transform.rotation.z += (sensitivity * delta.0) as f32;
+			transform.rotation.z += (sensitivity * delta.0) as f64;
 			while transform.rotation.z >= 360.0 || transform.rotation.z <= -360.0 {
 				transform.rotation.z %= 360.0;
 			}
 
-			transform.rotation.x += (-sensitivity * delta.1) as f32;
+			transform.rotation.x += (-sensitivity * delta.1) as f64;
 			transform.rotation.x = transform.rotation.x.clamp(-80.0, 80.0);
 		}
 	}

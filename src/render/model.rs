@@ -141,7 +141,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 	{
 		self.users.insert(eid, ModelInstance::new(&self, material_variant));
 	}
-	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
+	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: DMat4)
 	{
 		self.users.get_mut(&eid).unwrap().model_matrix = model_matrix;
 	}
@@ -158,7 +158,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 		pipeline_layout: Arc<PipelineLayout>,
 		transparency_pass: bool,
 		shadow_pass: bool,
-		projview: &Mat4,
+		projview: &DMat4,
 	) -> crate::Result<bool>
 	{
 		let mut any_drawn = false;
@@ -172,6 +172,10 @@ This model may be inefficient to draw, so consider joining the meshes."
 			let material_variant = user.material_variant;
 
 			let projviewmodel = *projview * *model_matrix;
+
+			// To prevent precision loss (especially with large values in the model matrix),
+			// convert the matrix values from f64 to f32 only when sending it to the shader.
+			let pvm_f32 = projviewmodel.as_mat4();
 
 			// Determine which submeshes are visible.
 			// "Visible" here means it uses the currently bound material pipeline,
@@ -191,20 +195,21 @@ This model may be inefficient to draw, so consider joining the meshes."
 
 					pipeline_matches && mat.has_transparency() == transparency_pass
 				})
-				.filter(|submesh| submesh.cull(&projviewmodel))
+				.filter(|submesh| submesh.cull(&pvm_f32))
 				.peekable();
 
 			// Don't even bother with binds if no submeshes are visible in this model instance
 			if visible_submeshes.peek().is_some() {
 				if shadow_pass {
-					cb.push_constants(pipeline_layout.clone(), 0, projviewmodel)?;
+					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32)?;
 				} else {
-					let translation = model_matrix.w_axis.xyz();
+					let model_matrix_f32 = model_matrix.as_mat4();
+					let translation = model_matrix_f32.w_axis.xyz();
 					let push_data = MeshPushConstant {
-						projviewmodel,
-						model_x: model_matrix.x_axis.xyz().extend(translation.x),
-						model_y: model_matrix.y_axis.xyz().extend(translation.y),
-						model_z: model_matrix.z_axis.xyz().extend(translation.z),
+						projviewmodel: pvm_f32,
+						model_x: model_matrix_f32.x_axis.xyz().extend(translation.x),
+						model_y: model_matrix_f32.y_axis.xyz().extend(translation.y),
+						model_z: model_matrix_f32.z_axis.xyz().extend(translation.z),
 					};
 					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 				}
@@ -611,7 +616,7 @@ fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a [gltf::b
 struct ModelInstance
 {
 	material_variant: usize,
-	model_matrix: Mat4,
+	model_matrix: DMat4,
 }
 impl ModelInstance
 {
@@ -784,7 +789,7 @@ impl MeshManager
 		Ok(())
 	}
 
-	pub fn set_model_matrix(&mut self, eid: EntityId, model_matrix: Mat4)
+	pub fn set_model_matrix(&mut self, eid: EntityId, model_matrix: DMat4)
 	{
 		let path = self.resources.get(&eid).unwrap().as_path();
 		self.models.get_mut(path).unwrap().set_model_matrix(eid, model_matrix);
@@ -801,7 +806,7 @@ impl MeshManager
 	pub fn draw(
 		&self,
 		render_ctx: &RenderContext,
-		projview: Mat4,
+		projview: DMat4,
 		pass_type: PassType,
 		common_sets: &[Arc<PersistentDescriptorSet>],
 	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>

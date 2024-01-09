@@ -12,7 +12,7 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::WorkloadSystem;
+use shipyard::{/*IntoIter, IntoWorkloadSystem, ViewMut,*/ WorkloadSystem};
 
 use mithrilengine_derive::EntityComponent;
 
@@ -20,30 +20,31 @@ use mithrilengine_derive::EntityComponent;
 #[track(All)]
 pub struct Transform
 {
-	pub position: Vec3,
-	pub scale: Vec3,
-	pub rotation: Vec3,
+	pub position: DVec3,
+	pub scale: DVec3,
+	pub rotation: DVec3,
 }
 impl Transform
 {
 	/// Calculate the quaternion for the rotation of this `Transform`.
-	pub fn rotation_quat(&self) -> Quat
+	pub fn rotation_quat(&self) -> DQuat
 	{
-		let rot_rad = self.rotation * std::f32::consts::PI / 180.0;
-		Quat::from_euler(EulerRot::ZXY, rot_rad.z, rot_rad.x, rot_rad.y)
+		let rot_rad = self.rotation * std::f64::consts::PI / 180.0;
+		DQuat::from_euler(EulerRot::ZXY, rot_rad.z, rot_rad.x, rot_rad.y)
 	}
 
 	/// Calculate the transformation matrix for this `Transform`.
-	pub fn get_matrix(&self) -> Mat4
+	pub fn get_matrix(&self) -> DMat4
 	{
 		let rot_quat = self.rotation_quat();
-		Mat4::from_scale_rotation_translation(self.scale, rot_quat, self.position)
+		DMat4::from_scale_rotation_translation(self.scale, rot_quat, self.position)
 	}
 }
 impl WantsSystemAdded for Transform
 {
 	fn add_system(&self) -> Option<WorkloadSystem>
 	{
+		//Some(wrap_rotation.into_workload_system().unwrap())
 		None
 	}
 	fn add_prerender_system(&self) -> Option<WorkloadSystem>
@@ -51,6 +52,18 @@ impl WantsSystemAdded for Transform
 		None
 	}
 }
+
+// Wrap rotation values to make them stay within range of [-180.0, 180.0] inclusive.
+/*fn wrap_rotation(mut transforms: ViewMut<Transform>)
+{
+	for mut t in (&mut transforms).inserted_or_modified() {
+		if t.rotation.max_element() > 180.0 {
+			t.rotation = (t.rotation % 180.0) - 180.0;
+		} else if t.rotation.min_element() < -180.0 {
+			t.rotation = (t.rotation % 180.0) + 180.0;
+		}
+	}
+}*/
 
 /// The trait that every component to be used in a map file must implement.
 /// This allows a deserialized component to add itself to the world, so that it can be

@@ -46,7 +46,7 @@ fn update_directional_light(
 	if let Some((dl, t)) = (&dir_lights, &transforms).iter().next() {
 		// Cut the camera frustum into different pieces for the light.
 		let fars = [6.0, 12.0, 24.0];
-		let mut cut_frustums: [Mat4; 3] = Default::default();
+		let mut cut_frustums: [DMat4; 3] = Default::default();
 		let mut near = crate::component::camera::CAMERA_NEAR;
 		for (i, far) in fars.into_iter().enumerate() {
 			cut_frustums[i] = camera_manager.proj_with_near_far(near, far);
