@@ -492,7 +492,7 @@ impl Canvas
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.text_resources.get(&eid).unwrap();
 			let some_vbo = resources.text_vbo.clone().unwrap();
-			render_ctx.update_buffer(&vbo_data, some_vbo.clone());
+			render_ctx.transfer_manager.update_buffer(vbo_data.into(), some_vbo.clone());
 			some_vbo
 		} else {
 			render_ctx.new_buffer(vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?

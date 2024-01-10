@@ -259,7 +259,9 @@ impl LightManager
 			direction: direction.as_vec3a(),
 			color_intensity: light.color.extend(light.intensity),
 		};
-		render_ctx.update_buffer(&[dir_light_data], self.dir_light_buf.clone());
+		render_ctx
+			.transfer_manager
+			.update_buffer(Box::new([dir_light_data]), self.dir_light_buf.clone());
 	}
 
 	pub fn add_dir_light_cb(&mut self, cb: Arc<SecondaryAutoCommandBuffer>)

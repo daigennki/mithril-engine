@@ -203,14 +203,6 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	/// Update a buffer at the begninning of the next graphics submission.
-	fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>)
-	where
-		T: BufferContents + Copy,
-	{
-		self.transfer_manager.update_buffer(data, dst_buf);
-	}
-
 	fn submit_async_transfers(&mut self) -> crate::Result<()>
 	{
 		self.transfer_manager.submit_async_transfers(&self.command_buffer_allocator)

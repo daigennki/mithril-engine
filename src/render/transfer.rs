@@ -64,9 +64,11 @@ impl TransferManager
 		}
 	}
 
-	/// Add staging work for a new buffer. (use `update_buffer` instead for previously created buffers)
+	/// Add staging work for a new buffer.
 	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
 	/// building the draw command buffers.
+	///
+	/// If the buffer might be in use by a previous buffer, use `update_buffer` instead.
 	pub fn copy_to_buffer<T>(&mut self, data: Vec<T>, dst_buf: Subbuffer<[T]>)
 	where
 		T: BufferContents + Copy,
@@ -109,14 +111,12 @@ impl TransferManager
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
-	pub fn update_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>)
+	pub fn update_buffer<T>(&mut self, data: Box<[T]>, dst_buf: Subbuffer<[T]>)
 	where
 		T: BufferContents + Copy,
 	{
 		assert!(data.len() > 0);
 
-		// This will be submitted to the graphics queue since we're copying to an existing buffer,
-		// which might be in use by a previous submission.
 		if self.buffer_updates.len() == self.buffer_updates.capacity() {
 			log::warn!(
 				"Re-allocating `Vec` for buffer updates to {}! Consider increasing its initial capacity.",
@@ -124,10 +124,7 @@ impl TransferManager
 			);
 		}
 
-		self.buffer_updates.push(Box::new(UpdateBufferData {
-			dst_buf,
-			data: data.into(),
-		}));
+		self.buffer_updates.push(Box::new(UpdateBufferData { dst_buf, data }));
 	}
 
 	/// Submit the asynchronous transfers that are waiting.
@@ -140,10 +137,10 @@ impl TransferManager
 	{
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
-		let copy_layouts = self.async_transfers.iter().map(|c| c.device_layout());
-		let update_layouts = self.buffer_updates.iter().map(|u| u.device_layout());
-		let staging_buf_usage_frame = copy_layouts
-			.chain(update_layouts)
+		let staging_buf_usage_frame = self
+			.async_transfers
+			.iter()
+			.map(|c| c.device_layout())
 			.reduce(|usage_frame, device_layout| usage_frame.extend(device_layout).unwrap().0);
 
 		// gather stats on staging buffer usage
@@ -186,14 +183,13 @@ impl TransferManager
 
 	pub fn add_synchronous_transfer_commands(&mut self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-
 		// buffer updates
 		for buf_update in self.buffer_updates.drain(..) {
-			buf_update.add_command(cb_builder, &mut staging_buf_alloc_guard);
+			buf_update.add_command(cb_builder);
 		}
 
 		// do async transfers that couldn't be submitted earlier
+		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 		for work in self.async_transfers.drain(..) {
 			work.add_command(cb_builder, &mut staging_buf_alloc_guard);
 		}
@@ -208,37 +204,18 @@ impl TransferManager
 struct UpdateBufferData<T: BufferContents + Copy>
 {
 	dst_buf: Subbuffer<[T]>,
-	data: Vec<T>,
+	data: Box<[T]>,
 }
 impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
 {
-	fn device_layout(&self) -> DeviceLayout
+	fn add_command(self: Box<Self>, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		let data_size_bytes: DeviceSize = (self.data.len() * std::mem::size_of::<T>()).try_into().unwrap();
-		DeviceLayout::new(data_size_bytes.try_into().unwrap(), T::LAYOUT.alignment()).unwrap()
-	}
-
-	fn add_command(
-		self: Box<Self>,
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		subbuffer_allocator: &mut SubbufferAllocator,
-	)
-	{
-		let data_len = self.data.len().try_into().unwrap();
-		let staging_buf = subbuffer_allocator.allocate_slice(data_len).unwrap();
-		staging_buf.write().unwrap().copy_from_slice(&self.data);
-
-		// TODO: actually use `update_buffer` when the `'static` requirement gets removed for the data
-		cb_builder
-			.copy_buffer(CopyBufferInfo::buffers(staging_buf, self.dst_buf))
-			.unwrap();
+		cb_builder.update_buffer(self.dst_buf, self.data).unwrap();
 	}
 }
 trait UpdateBufferDataTrait: Send + Sync
 {
-	fn device_layout(&self) -> DeviceLayout;
-
-	fn add_command(self: Box<Self>, _: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, _: &mut SubbufferAllocator);
+	fn add_command(self: Box<Self>, _: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
 }
 
 enum StagingWork<T: BufferContents + Copy>
