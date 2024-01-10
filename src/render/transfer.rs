@@ -16,7 +16,7 @@ use vulkano::command_buffer::{
 	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::Queue;
-use vulkano::image::Image;
+use vulkano::image::{Image, ImageSubresourceLayers};
 use vulkano::memory::allocator::{DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::sync::{
 	future::{FenceSignalFuture, NowFuture},
@@ -87,10 +87,7 @@ impl TransferManager
 	/// Add staging work for a new image.
 	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
 	/// building the draw command buffers.
-	///
-	/// If an empty slice is given to `regions`, this will use the default value produced by
-	/// Vulkano's `CopyBufferToImageInfo::buffer_image`.
-	pub fn copy_to_image<Px>(&mut self, data: Vec<Px>, dst_image: Arc<Image>, regions: &[BufferImageCopy])
+	pub fn copy_to_image<Px>(&mut self, data: Vec<Px>, dst_image: Arc<Image>)
 	where
 		Px: BufferContents + Copy,
 	{
@@ -103,11 +100,8 @@ impl TransferManager
 				self.async_transfers.len() + 1
 			);
 		}
-		self.async_transfers.push(Box::new(StagingWork::CopyBufferToImage {
-			data,
-			dst_image,
-			regions: regions.into(),
-		}));
+		self.async_transfers
+			.push(Box::new(StagingWork::CopyBufferToImage { data, dst_image }));
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
@@ -223,15 +217,28 @@ trait UpdateBufferDataTrait: Send + Sync
 /// Asynchronous staging work that can be submitted to the transfer queue, if there is one.
 enum StagingWork<T: BufferContents + Copy>
 {
+	/// Initialize a buffer.
 	CopyBuffer
 	{
 		data: Vec<T>, dst_buf: Subbuffer<[T]>
 	},
+
+	/// Initialize an image.
+	///
+	/// `data` here will be used to initialize the full extent of all mipmap levels and array
+	/// layers (in that order),  and that data is tightly packed together. For example, bitmap data
+	/// for an image with 2 mip levels and 2 array layers must be structured like:
+	///
+	/// - mip level 0
+	///   - array layer 0
+	///   - array layer 1
+	/// - mip level 1
+	///   - array layer 0
+	///   - array layer 1
+	///
 	CopyBufferToImage
 	{
-		data: Vec<T>,
-		dst_image: Arc<Image>,
-		regions: Vec<BufferImageCopy>,
+		data: Vec<T>, dst_image: Arc<Image>
 	},
 }
 impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
@@ -284,22 +291,39 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 					cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, dst_buf)).unwrap();
 				}
 			}
-			Self::CopyBufferToImage {
-				data,
-				dst_image,
-				regions,
-				..
-			} => {
+			Self::CopyBufferToImage { data, dst_image } => {
+				let format = dst_image.format();
+				let extent = dst_image.extent();
+				let mip_levels = dst_image.mip_levels();
+				let array_layers = dst_image.array_layers();
+
+				// generate copies for every mipmap level
+				let mut regions = Vec::with_capacity(mip_levels as usize);
+				let mut mip_width = extent[0];
+				let mut mip_height = extent[1];
+				let mut buffer_offset: DeviceSize = 0;
+				for mip_level in 0..mip_levels {
+					regions.push(BufferImageCopy {
+						buffer_offset,
+						image_subresource: ImageSubresourceLayers {
+							mip_level,
+							..ImageSubresourceLayers::from_parameters(format, array_layers)
+						},
+						image_extent: [mip_width, mip_height, 1],
+						..Default::default()
+					});
+
+					buffer_offset += super::texture::get_mip_size(format, mip_width, mip_height);
+					mip_width /= 2;
+					mip_height /= 2;
+				}
+
 				let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout).unwrap().reinterpret();
 				staging_buf.write().unwrap().copy_from_slice(&data);
-				let with_default_region = CopyBufferToImageInfo::buffer_image(staging_buf, dst_image);
-				let copy_info = if regions.len() > 0 {
-					CopyBufferToImageInfo {
-						regions: regions.clone().into(),
-						..with_default_region
-					}
-				} else {
-					with_default_region
+
+				let copy_info = CopyBufferToImageInfo {
+					regions: regions.into(),
+					..CopyBufferToImageInfo::buffer_image(staging_buf, dst_image)
 				};
 				cb_builder.copy_buffer_to_image(copy_info).unwrap();
 			}

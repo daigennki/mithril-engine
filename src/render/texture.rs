@@ -9,11 +9,10 @@ use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::BufferContents;
-use vulkano::command_buffer::BufferImageCopy;
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
-	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
+	Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::DeviceSize;
@@ -73,28 +72,7 @@ impl Texture
 
 		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
 
-		// generate copies for every mipmap level
-		let mut regions = Vec::with_capacity(mip_levels as usize);
-		let mut mip_width = dimensions[0];
-		let mut mip_height = dimensions[1];
-		let mut buffer_offset: DeviceSize = 0;
-		for mip_level in 0..mip_levels {
-			regions.push(BufferImageCopy {
-				buffer_offset,
-				image_subresource: ImageSubresourceLayers {
-					mip_level,
-					..ImageSubresourceLayers::from_parameters(format, array_layers)
-				},
-				image_extent: [mip_width, mip_height, 1],
-				..Default::default()
-			});
-
-			buffer_offset += get_mip_size(format, mip_width, mip_height);
-			mip_width /= 2;
-			mip_height /= 2;
-		}
-
-		render_ctx.transfer_manager.copy_to_image(data, image, &regions);
+		render_ctx.transfer_manager.copy_to_image(data, image);
 
 		Ok(Texture { view })
 	}
@@ -173,7 +151,7 @@ impl CubemapTexture
 		};
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
-		render_ctx.transfer_manager.copy_to_image(data, image, &[]);
+		render_ctx.transfer_manager.copy_to_image(data, image);
 
 		Ok(CubemapTexture { view })
 	}
@@ -254,7 +232,7 @@ impl std::fmt::Display for UnsupportedDdsFormat
 	}
 }
 
-fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
+pub fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 {
 	let block_extent = format.block_extent();
 	let block_size = format.block_size();
