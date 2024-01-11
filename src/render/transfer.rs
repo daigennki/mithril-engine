@@ -121,12 +121,19 @@ impl TransferManager
 	/// instead be done at the beginning of the graphics submission on the graphics queue.
 	pub fn submit_async_transfers(&mut self, command_buffer_allocator: &StandardCommandBufferAllocator) -> crate::Result<()>
 	{
-		let staging_buf_usage_frame = self
-			.async_transfers
-			.iter()
-			.filter(|c| !c.will_use_update_buffer())
-			.map(|c| c.device_layout())
-			.reduce(|usage_frame, device_layout| usage_frame.extend(device_layout).unwrap().0);
+		// calculate how large the total staging buffer usage will be
+		let mut async_transfer_option = self.async_transfers.as_ref();
+		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
+		while let Some(work) = async_transfer_option.as_ref() {
+			if !work.will_use_update_buffer() {
+				let device_layout = work.device_layout();
+				staging_buf_usage_frame = staging_buf_usage_frame
+					.take()
+					.map(|usage_frame| usage_frame.extend(device_layout).unwrap().0)
+					.or(Some(device_layout));
+			}
+			async_transfer_option = work.next_ref();
+		}
 
 		// gather stats on staging buffer usage
 		if let Some(usage) = staging_buf_usage_frame {
@@ -327,6 +334,11 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 
 		self.next
 	}
+
+	fn next_ref(&self) -> Option<&Box<dyn StagingWorkTrait>>
+	{
+		self.next.as_ref()
+	}
 }
 trait StagingWorkTrait: Send + Sync
 {
@@ -339,6 +351,8 @@ trait StagingWorkTrait: Send + Sync
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		_: &mut SubbufferAllocator,
 	) -> Option<Box<dyn StagingWorkTrait>>;
+
+	fn next_ref(&self) -> Option<&Box<dyn StagingWorkTrait>>;
 }
 
 enum StagingDst<T: BufferContents + Copy>
