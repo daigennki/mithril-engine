@@ -124,7 +124,7 @@ impl TransferManager
 		// calculate how large the total staging buffer usage will be
 		let mut async_transfer_option = self.async_transfers.as_ref();
 		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
-		while let Some(work) = async_transfer_option.as_ref() {
+		while let Some(work) = async_transfer_option.take() {
 			if !work.will_use_update_buffer() {
 				let device_layout = work.device_layout();
 				staging_buf_usage_frame = staging_buf_usage_frame
