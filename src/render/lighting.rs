@@ -116,20 +116,20 @@ impl LightManager
 		};
 		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
 
-		let mut dir_light_shadow_layers = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
-		for i in 0..dir_light_shadow_img.array_layers() {
-			let layer_info = ImageViewCreateInfo {
-				subresource_range: ImageSubresourceRange {
-					aspects: ImageAspects::DEPTH,
-					mip_levels: 0..1,
-					array_layers: i..(i + 1),
-				},
-				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-				..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
-			};
-			let layer_view = ImageView::new(dir_light_shadow_img.clone(), layer_info)?;
-			dir_light_shadow_layers.push(layer_view);
-		}
+		let dir_light_shadow_layers = (0..dir_light_shadow_img.array_layers())
+			.map(|i| {
+				let layer_info = ImageViewCreateInfo {
+					subresource_range: ImageSubresourceRange {
+						aspects: ImageAspects::DEPTH,
+						mip_levels: 0..1,
+						array_layers: i..(i + 1),
+					},
+					usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+					..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
+				};
+				ImageView::new(dir_light_shadow_img.clone(), layer_info)
+			})
+			.collect::<Result<_, _>>()?;
 
 		/* descriptor set with everything lighting- and shadow-related */
 		let all_lights_set = PersistentDescriptorSet::new(

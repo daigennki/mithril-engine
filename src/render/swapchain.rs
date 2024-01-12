@@ -124,10 +124,10 @@ impl Swapchain
 			image_color_space
 		);
 
-		let mut image_views = Vec::with_capacity(images.len());
-		for img in images {
-			image_views.push(ImageView::new_default(img)?);
-		}
+		let image_views = images
+			.into_iter()
+			.map(|img| ImageView::new_default(img))
+			.collect::<Result<_, _>>()?;
 
 		// Set the framerate limit
 		let fps_max_regex = regex::Regex::new("--fps_max=(?<value>\\d+)").unwrap();
@@ -211,10 +211,10 @@ impl Swapchain
 				.recreate(create_info)
 				.map_err(|e| EngineError::new("failed to recreate swapchain", e.unwrap()))?;
 
-			let mut new_image_views = Vec::with_capacity(new_images.len());
-			for img in new_images {
-				new_image_views.push(ImageView::new_default(img)?);
-			}
+			let new_image_views = new_images
+				.into_iter()
+				.map(|img| ImageView::new_default(img))
+				.collect::<Result<_, _>>()?;
 
 			self.swapchain = new_swapchain;
 			self.image_views = new_image_views;
