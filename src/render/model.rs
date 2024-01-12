@@ -715,7 +715,7 @@ impl MeshManager
 			.transparency_renderer
 			.as_ref()
 			.unwrap()
-			.get_stage3_inputs()
+			.get_moments_images_set()
 			.layout()
 			.clone();
 

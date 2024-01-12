@@ -6,6 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use glam::*;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
@@ -74,11 +75,10 @@ pub struct MomentTransparencyRenderer
 	moments_pl: Arc<GraphicsPipeline>,
 	transparency_compositing_pl: Arc<GraphicsPipeline>,
 
-	stage3_inputs: Arc<PersistentDescriptorSet>,
-	stage4_inputs: Arc<PersistentDescriptorSet>,
+	moments_images: Arc<PersistentDescriptorSet>,
+	weights_images: Arc<PersistentDescriptorSet>,
 
-	transparency_moments_cb: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
-	transparency_cb: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
+	transparency_cb: Mutex<Option<(Arc<SecondaryAutoCommandBuffer>, Arc<SecondaryAutoCommandBuffer>)>>,
 }
 impl MomentTransparencyRenderer
 {
@@ -95,37 +95,14 @@ impl MomentTransparencyRenderer
 		//
 		/* Stage 2: Calculate moments */
 		//
-		let moments_color_blend_state = ColorBlendState {
-			attachments: vec![
-				ColorBlendAttachmentState {
-					// moments
-					blend: Some(AttachmentBlend {
-						alpha_blend_op: BlendOp::Add,
-						..AttachmentBlend::additive()
-					}),
-					..Default::default()
-				},
-				ColorBlendAttachmentState {
-					// optical_depth
-					blend: Some(AttachmentBlend {
-						alpha_blend_op: BlendOp::Add,
-						..AttachmentBlend::additive()
-					}),
-					..Default::default()
-				},
-				/*ColorBlendAttachmentState {
-					// min_depth
-					blend: Some(AttachmentBlend {
-						color_blend_op: BlendOp::Min,
-						src_color_blend_factor: BlendFactor::One,
-						dst_color_blend_factor: BlendFactor::One,
-						..Default::default()
-					}),
-					..Default::default()
-				},*/
-			],
+		let all_additive_blend = ColorBlendAttachmentState {
+			blend: Some(AttachmentBlend {
+				alpha_blend_op: BlendOp::Add,
+				..AttachmentBlend::additive()
+			}),
 			..Default::default()
 		};
+		let moments_color_blend_state = ColorBlendState::with_attachment_states(2, all_additive_blend);
 
 		let moments_depth_stencil_state = DepthStencilState {
 			depth: Some(DepthState {
@@ -148,11 +125,7 @@ impl MomentTransparencyRenderer
 		let stage2_pipeline_layout = PipelineLayout::new(device.clone(), stage2_pipeline_layout_info)?;
 
 		let moments_formats = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![
-				Some(Format::R32G32B32A32_SFLOAT),
-				Some(Format::R32_SFLOAT),
-				//Some(Format::R32_SFLOAT),
-			],
+			color_attachment_formats: vec![Some(Format::R32G32B32A32_SFLOAT), Some(Format::R32_SFLOAT)],
 			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
@@ -174,41 +147,39 @@ impl MomentTransparencyRenderer
 		/* Stage 3: Calculate weights */
 		//
 		// The pipeline for stage 3 depends on the material of each mesh, so they're created outside
-		// of this transparency renderer. They'll take the following descriptor set, which contains
-		// the images rendered in Stage 2.
+		// of this transparency renderer. They'll take a descriptor set with the following layout,
+		// which contains the images rendered in Stage 2.
 		let input_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
 		};
-		let stage3_inputs_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
+		let moments_images_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: BTreeMap::from([
 				(0, input_binding.clone()), // moments
 				(1, input_binding.clone()), // optical_depth
-			]
-			.into(),
+			]),
 			..Default::default()
 		};
-		let stage3_inputs_layout = DescriptorSetLayout::new(device.clone(), stage3_inputs_layout_info)?;
+		let moments_images_layout = DescriptorSetLayout::new(device.clone(), moments_images_layout_info)?;
 
 		//
 		/* Stage 4: Composite transparency image onto opaque image */
 		//
-		let stage4_inputs_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
+		let weights_images_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: BTreeMap::from([
 				(0, input_binding.clone()), // accum
 				(1, input_binding),         // revealage
-			]
-			.into(),
+			]),
 			..Default::default()
 		};
-		let stage4_inputs_layout = DescriptorSetLayout::new(device.clone(), stage4_inputs_layout_info)?;
+		let weights_images_layout = DescriptorSetLayout::new(device.clone(), weights_images_layout_info)?;
 		let stage4_pipeline_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![stage4_inputs_layout.clone()],
+			set_layouts: vec![weights_images_layout.clone()],
 			..Default::default()
 		};
 		let stage4_pipeline_layout = PipelineLayout::new(device.clone(), stage4_pipeline_layout_info)?;
 
-		let stage4_blend = ColorBlendAttachmentState {
+		let compositing_blend = ColorBlendAttachmentState {
 			blend: Some(AttachmentBlend {
 				src_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
 				dst_color_blend_factor: BlendFactor::SrcAlpha,
@@ -217,7 +188,7 @@ impl MomentTransparencyRenderer
 			}),
 			..Default::default()
 		};
-		let stage4_color_blend_state = ColorBlendState::with_attachment_states(1, stage4_blend);
+		let compositing_color_blend_state = ColorBlendState::with_attachment_states(1, compositing_blend);
 
 		let stencil_op_state = StencilOpState {
 			ops: StencilOps {
@@ -227,7 +198,7 @@ impl MomentTransparencyRenderer
 			reference: 0,
 			..Default::default()
 		};
-		let stage4_depth_stencil_state = DepthStencilState {
+		let compositing_depth_stencil_state = DepthStencilState {
 			stencil: Some(StencilState {
 				front: stencil_op_state,
 				back: stencil_op_state,
@@ -250,26 +221,25 @@ impl MomentTransparencyRenderer
 			RasterizationState::default(),
 			stage4_pipeline_layout,
 			stage4_rendering_info,
-			Some(stage4_color_blend_state),
-			Some(stage4_depth_stencil_state),
+			Some(compositing_color_blend_state),
+			Some(compositing_depth_stencil_state),
 		)?;
 
 		/* Create the images and descriptor sets */
-		let (images, stage3_inputs, stage4_inputs) = create_mboit_images(
+		let (images, moments_images, weights_images) = create_mboit_images(
 			memory_allocator,
 			descriptor_set_allocator,
 			dimensions,
-			stage3_inputs_layout,
-			stage4_inputs_layout,
+			moments_images_layout,
+			weights_images_layout,
 		)?;
 
 		Ok(MomentTransparencyRenderer {
 			images,
 			moments_pl,
 			transparency_compositing_pl,
-			stage3_inputs,
-			stage4_inputs,
-			transparency_moments_cb: Mutex::new(None),
+			moments_images,
+			weights_images,
 			transparency_cb: Mutex::new(None),
 		})
 	}
@@ -282,17 +252,17 @@ impl MomentTransparencyRenderer
 		dimensions: [u32; 2],
 	) -> crate::Result<()>
 	{
-		let (moments_images, stage3_inputs, stage4_inputs) = create_mboit_images(
+		let (images, moments_images, weights_images) = create_mboit_images(
 			memory_allocator,
 			descriptor_set_allocator,
 			dimensions,
-			self.stage3_inputs.layout().clone(),
-			self.stage4_inputs.layout().clone(),
+			self.moments_images.layout().clone(),
+			self.weights_images.layout().clone(),
 		)?;
 
-		self.images = moments_images;
-		self.stage3_inputs = stage3_inputs;
-		self.stage4_inputs = stage4_inputs;
+		self.images = images;
+		self.moments_images = moments_images;
+		self.weights_images = weights_images;
 		Ok(())
 	}
 
@@ -304,70 +274,53 @@ impl MomentTransparencyRenderer
 		depth_image: Arc<ImageView>,
 	) -> crate::Result<()>
 	{
-		let moments_cb;
-		if let Some(m_cb) = self.transparency_moments_cb.lock().unwrap().take() {
-			moments_cb = m_cb;
-		} else {
-			// Skip OIT processing if no transparent materials are in view
-			return Ok(());
-		}
-		let transparency_cb = self.transparency_cb.lock().unwrap().take().unwrap();
+		let (moments_cb, weights_cb) = match self.transparency_cb.lock().unwrap().take() {
+			Some(cb) => cb,
+			None => return Ok(()), // Skip OIT processing if no transparent submeshes are in view
+		};
 
-		let stage2_rendering_info = RenderingInfo {
+		let depth_attachment = Some(RenderingAttachmentInfo {
+			load_op: AttachmentLoadOp::Load,
+			store_op: AttachmentStoreOp::Store,
+			..RenderingAttachmentInfo::image_view(depth_image.clone())
+		});
+
+		let moments_rendering_info = RenderingInfo {
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
-					// moments
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.moments.clone())
 				}),
 				Some(RenderingAttachmentInfo {
-					// optical_depth
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.optical_depth.clone())
 				}),
-				/*Some(RenderingAttachmentInfo {
-					// min_depth
-					load_op: AttachmentLoadOp::Clear,
-					store_op: AttachmentStoreOp::Store,
-					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
-					..RenderingAttachmentInfo::image_view(self.images.min_depth.clone())
-				}),*/
 			],
-			depth_attachment: Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(depth_image.clone())
-			}),
+			depth_attachment: depth_attachment.clone(),
 			contents: SubpassContents::SecondaryCommandBuffers,
 			..Default::default()
 		};
 
-		let stage3_rendering_info = RenderingInfo {
+		let weights_rendering_info = RenderingInfo {
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
-					// accum
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.accum.clone())
 				}),
 				Some(RenderingAttachmentInfo {
-					// revealage
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(self.images.revealage.clone())
 				}),
 			],
-			depth_attachment: Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(depth_image.clone())
-			}),
+			depth_attachment,
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
@@ -378,7 +331,7 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 
-		let stage4_rendering_info = RenderingInfo {
+		let compositing_rendering_info = RenderingInfo {
 			color_attachments: vec![Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
 				store_op: AttachmentStoreOp::Store,
@@ -386,50 +339,39 @@ impl MomentTransparencyRenderer
 			})],
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				store_op: AttachmentStoreOp::DontCare,
-				..RenderingAttachmentInfo::image_view(depth_image.clone())
+				..RenderingAttachmentInfo::image_view(depth_image)
 			}),
-			contents: SubpassContents::Inline,
 			..Default::default()
 		};
 
-		let img_extent = self.images.moments.image().extent();
+		let img_extent = color_image.image().extent();
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [img_extent[0] as f32, img_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
 
-		// draw the objects to the transparency framebuffer, then composite the transparency onto the main framebuffer
 		let compositing_layout = self.transparency_compositing_pl.layout().clone();
-		cb.begin_rendering(stage2_rendering_info)?
+		let compositing_sets = vec![self.weights_images.clone()];
+		cb.begin_rendering(moments_rendering_info)?
 			.execute_commands(moments_cb)?
 			.end_rendering()?
-			.begin_rendering(stage3_rendering_info)?
-			.execute_commands(transparency_cb)?
+			.begin_rendering(weights_rendering_info)?
+			.execute_commands(weights_cb)?
 			.end_rendering()?
-			.begin_rendering(stage4_rendering_info)?
+			.begin_rendering(compositing_rendering_info)?
 			.set_viewport(0, [viewport].as_slice().into())?
 			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
-			.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				compositing_layout,
-				0,
-				vec![self.stage4_inputs.clone()],
-			)?
+			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, compositing_sets)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
 
 		Ok(())
 	}
 
-	pub fn add_transparency_moments_cb(&self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
+	pub fn add_transparency_cb(&self, moments: Arc<SecondaryAutoCommandBuffer>, weights: Arc<SecondaryAutoCommandBuffer>)
 	{
-		*self.transparency_moments_cb.lock().unwrap() = Some(command_buffer)
-	}
-	pub fn add_transparency_cb(&self, command_buffer: Arc<SecondaryAutoCommandBuffer>)
-	{
-		*self.transparency_cb.lock().unwrap() = Some(command_buffer)
+		*self.transparency_cb.lock().unwrap() = Some((moments, weights))
 	}
 
 	pub fn get_moments_pipeline(&self) -> &Arc<GraphicsPipeline>
@@ -437,9 +379,9 @@ impl MomentTransparencyRenderer
 		&self.moments_pl
 	}
 
-	pub fn get_stage3_inputs(&self) -> &Arc<PersistentDescriptorSet>
+	pub fn get_moments_images_set(&self) -> &Arc<PersistentDescriptorSet>
 	{
-		&self.stage3_inputs
+		&self.moments_images
 	}
 }
 
@@ -447,17 +389,35 @@ struct MomentImageBundle
 {
 	moments: Arc<ImageView>,
 	optical_depth: Arc<ImageView>,
-	//min_depth: Arc<ImageView>,
 	accum: Arc<ImageView>,
 	revealage: Arc<ImageView>,
 }
+
+// if using min_depth, use this blending for it:
+/*ColorBlendAttachmentState {
+	// min_depth
+	blend: Some(AttachmentBlend {
+		color_blend_op: BlendOp::Min,
+		src_color_blend_factor: BlendFactor::One,
+		dst_color_blend_factor: BlendFactor::One,
+		..Default::default()
+	}),
+	..Default::default()
+},*/
+// and render to it with this:
+/*Some(RenderingAttachmentInfo {
+	load_op: AttachmentLoadOp::Clear,
+	store_op: AttachmentStoreOp::Store,
+	clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
+	..RenderingAttachmentInfo::image_view(self.images.min_depth.clone())
+}),*/
 
 fn create_mboit_images(
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	descriptor_set_allocator: &StandardDescriptorSetAllocator,
 	extent: [u32; 2],
-	stage3_inputs_layout: Arc<DescriptorSetLayout>,
-	stage4_inputs_layout: Arc<DescriptorSetLayout>,
+	moments_images_layout: Arc<DescriptorSetLayout>,
+	weights_images_layout: Arc<DescriptorSetLayout>,
 ) -> crate::Result<(MomentImageBundle, Arc<PersistentDescriptorSet>, Arc<PersistentDescriptorSet>)>
 {
 	let image_formats = [
@@ -468,7 +428,7 @@ fn create_mboit_images(
 		Format::R8_UNORM,            // revealage
 	];
 
-	let mut views = Vec::with_capacity(5);
+	let mut views = Vec::with_capacity(4);
 	for format in image_formats {
 		let info = ImageCreateInfo {
 			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE,
@@ -483,25 +443,23 @@ fn create_mboit_images(
 	let image_bundle = MomentImageBundle {
 		moments: views[0].clone(),
 		optical_depth: views[1].clone(),
-		//min_depth: views[2].clone(),
 		accum: views[2].clone(),
 		revealage: views[3].clone(),
 	};
 
-	let stage3_inputs = PersistentDescriptorSet::new(
+	let moments_images = PersistentDescriptorSet::new(
 		descriptor_set_allocator,
-		stage3_inputs_layout,
+		moments_images_layout,
 		[
 			WriteDescriptorSet::image_view(0, views[0].clone()),
 			WriteDescriptorSet::image_view(1, views[1].clone()),
-			//WriteDescriptorSet::image_view(2, views[2].clone()),
 		],
 		[],
 	)?;
 
-	let stage4_inputs = PersistentDescriptorSet::new(
+	let weights_images = PersistentDescriptorSet::new(
 		descriptor_set_allocator,
-		stage4_inputs_layout,
+		weights_images_layout,
 		[
 			WriteDescriptorSet::image_view(0, views[2].clone()),
 			WriteDescriptorSet::image_view(1, views[3].clone()),
@@ -509,5 +467,5 @@ fn create_mboit_images(
 		[],
 	)?;
 
-	Ok((image_bundle, stage3_inputs, stage4_inputs))
+	Ok((image_bundle, moments_images, weights_images))
 }

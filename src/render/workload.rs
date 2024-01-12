@@ -77,27 +77,23 @@ fn draw_3d_oit(
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
-	// First, collect moments for Moment-based OIT.
-	// This will bind the pipeline for you, since it doesn't need to do anything
-	// specific to materials (it only reads the alpha channel of each texture).
+	// We do both passes for OIT in this function, because there will almost always be fewer draw
+	// calls for transparent objects.
 	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
-		let moments_pipeline = transparency_renderer.get_moments_pipeline().clone();
-		let moments_cb = mesh_manager.draw(
-			&render_ctx,
-			camera_manager.projview(),
-			PassType::TransparencyMoments(moments_pipeline),
-			&[],
-		)?;
+		// First, collect moments for Moment-based OIT.
+		// This will bind the pipeline for you, since it doesn't need to do anything
+		// specific to materials (it only reads the alpha channel of each texture).
+		let projview = camera_manager.projview();
+		let moments_pass = PassType::TransparencyMoments(transparency_renderer.get_moments_pipeline().clone());
+		let moments_cb = mesh_manager.draw(&render_ctx, projview, moments_pass, &[])?;
 		if let Some(some_moments_cb) = moments_cb {
-			transparency_renderer.add_transparency_moments_cb(some_moments_cb);
-
 			// Now, do the weights pass for OIT.
 			let common_sets = [
 				light_manager.get_all_lights_set().clone(),
-				transparency_renderer.get_stage3_inputs().clone(),
+				transparency_renderer.get_moments_images_set().clone(),
 			];
-			let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Transparency, &common_sets)?;
-			transparency_renderer.add_transparency_cb(cb.unwrap());
+			let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
+			transparency_renderer.add_transparency_cb(some_moments_cb, weights_cb.unwrap());
 		}
 	}
 
