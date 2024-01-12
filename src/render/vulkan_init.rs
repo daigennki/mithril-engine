@@ -150,33 +150,6 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Resu
 
 	let mem_properties = physical_device.memory_properties();
 
-	// Check if we can write to buffer memory on VRAM directly, as doing so may improve performance.
-	let allow_direct_buffer_access = match physical_device.properties().device_type {
-		PhysicalDeviceType::DiscreteGpu => {
-			// For discrete GPUs, check that the largest `DEVICE_LOCAL` memory heap is also `HOST_VISIBLE`.
-			// This is the case when Resizable BAR is enabled.
-			let (_, largest_heap_i) = mem_properties
-				.memory_heaps
-				.iter()
-				.zip(0_u32..)
-				.filter(|(heap, _)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
-				.max_by_key(|(heap, _)| heap.size)
-				.ok_or("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!")?;
-
-			mem_properties
-				.memory_types
-				.iter()
-				.filter(|t| t.heap_index == largest_heap_i)
-				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE))
-		}
-
-		// For integrated GPUs, assume that writing directly to buffer memory is always possible and fast enough.
-		PhysicalDeviceType::IntegratedGpu => true,
-
-		// For other physical device types, assume we can't write directly to buffer memory.
-		_ => false,
-	};
-
 	// Print all the memory heaps and their types.
 	log::info!("Memory heaps and their memory types on physical device:");
 	for (mem_heap, i) in mem_properties.memory_heaps.iter().zip(0_u32..) {
@@ -188,6 +161,45 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Resu
 			log::info!("└ {:?}", mem_type.property_flags);
 		}
 	}
+
+	// Check if we can write to buffer memory on VRAM directly, as doing so may improve performance.
+	let allow_direct_buffer_access = match physical_device.properties().device_type {
+		PhysicalDeviceType::DiscreteGpu => {
+			// For discrete GPUs, check that a memory type with the property flags
+			// `DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT` belongs to the largest `DEVICE_LOCAL`
+			// heap. This is the case when Resizable BAR is enabled, in which case all of the VRAM
+			// is host-visible, and writes would immediately go across the PCIe interface.
+			mem_properties
+				.memory_types
+				.iter()
+				.find(|t| {
+					t.property_flags.contains(
+						MemoryPropertyFlags::DEVICE_LOCAL
+							| MemoryPropertyFlags::HOST_VISIBLE
+							| MemoryPropertyFlags::HOST_COHERENT,
+					)
+				})
+				.is_some_and(|t| {
+					mem_properties
+						.memory_heaps
+						.iter()
+						.zip(0..)
+						.filter(|(heap, _)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
+						.max_by_key(|(heap, _)| heap.size)
+						.is_some_and(|(_, i)| t.heap_index == i)
+				})
+		}
+
+		// For integrated GPUs, assume that writing directly to buffer memory is always possible and fast enough.
+		PhysicalDeviceType::IntegratedGpu => true,
+
+		// For other physical device types, assume we can't write directly to buffer memory.
+		_ => false,
+	};
+	if allow_direct_buffer_access {
+		log::info!("Enabling direct buffer writes.");
+	}
+
 	Ok((physical_device, allow_direct_buffer_access))
 }
 
