@@ -165,8 +165,8 @@ impl RenderContext
 		let data_size_bytes = data.len() * std::mem::size_of::<T>();
 		let buf;
 		if self.allow_direct_buffer_access {
-			log::debug!("Allocating direct buffer of {} bytes", data_size_bytes);
 			// When possible, upload directly to the new buffer memory.
+			log::debug!("Allocating direct buffer of {} bytes", data_size_bytes);
 			let buf_info = BufferCreateInfo {
 				usage,
 				..Default::default()
@@ -174,10 +174,7 @@ impl RenderContext
 			let alloc_info = AllocationCreateInfo {
 				memory_type_filter: MemoryTypeFilter {
 					required_flags: MemoryPropertyFlags::HOST_VISIBLE,
-					preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
-					not_preferred_flags: MemoryPropertyFlags::HOST_CACHED
-						| MemoryPropertyFlags::DEVICE_COHERENT
-						| MemoryPropertyFlags::DEVICE_UNCACHED,
+					..MemoryTypeFilter::PREFER_DEVICE
 				},
 				..Default::default()
 			};
@@ -187,17 +184,12 @@ impl RenderContext
 			// If direct uploads aren't possible, create a staging buffer on the CPU side,
 			// then submit a transfer command to the new buffer on the GPU side.
 			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
-
 			let buf_info = BufferCreateInfo {
 				usage: usage | BufferUsage::TRANSFER_DST,
 				..Default::default()
 			};
-			buf = Buffer::new_slice(
-				self.memory_allocator.clone(),
-				buf_info,
-				AllocationCreateInfo::default(),
-				data_len,
-			)?;
+			let alloc_info = AllocationCreateInfo::default();
+			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
 			self.transfer_manager.copy_to_buffer(data, buf.clone());
 		}
 		Ok(buf)

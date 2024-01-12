@@ -149,11 +149,9 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Resu
 	log::info!("Using physical device {}: {}", i, physical_device.properties().device_name);
 
 	let mem_properties = physical_device.memory_properties();
-	let device_type = physical_device.properties().device_type;
 
 	// Check if we can write to buffer memory on VRAM directly, as doing so may improve performance.
-	let allow_direct_buffer_access;
-	match device_type {
+	let allow_direct_buffer_access = match physical_device.properties().device_type {
 		PhysicalDeviceType::DiscreteGpu => {
 			// For discrete GPUs, check that the largest `DEVICE_LOCAL` memory heap is also `HOST_VISIBLE`.
 			// This is the case when Resizable BAR is enabled.
@@ -165,25 +163,19 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Resu
 				.max_by_key(|(heap, _)| heap.size)
 				.ok_or("`DiscreteGpu` doesn't have any `DEVICE_LOCAL` memory heaps!")?;
 
-			allow_direct_buffer_access = mem_properties
+			mem_properties
 				.memory_types
 				.iter()
 				.filter(|t| t.heap_index == largest_heap_i)
-				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE));
+				.any(|t| t.property_flags.contains(MemoryPropertyFlags::HOST_VISIBLE))
+		}
 
-			if allow_direct_buffer_access {
-				log::info!("Resizable BAR appears to be enabled on this physical device.");
-			}
-		}
-		PhysicalDeviceType::IntegratedGpu => {
-			// For integrated GPUs, assume that writing directly to buffer memory is always possible and fast enough.
-			allow_direct_buffer_access = true;
-		}
-		_ => {
-			// For other physical device types, assume we can't write directly to buffer memory.
-			allow_direct_buffer_access = false;
-		}
-	}
+		// For integrated GPUs, assume that writing directly to buffer memory is always possible and fast enough.
+		PhysicalDeviceType::IntegratedGpu => true,
+
+		// For other physical device types, assume we can't write directly to buffer memory.
+		_ => false,
+	};
 
 	// Print all the memory heaps and their types.
 	log::info!("Memory heaps and their memory types on physical device:");
