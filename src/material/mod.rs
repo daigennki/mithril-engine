@@ -111,6 +111,7 @@ impl ColorInput
 					[1, 1],
 					1,
 					1,
+					false,
 				)?))
 			}
 			Self::Texture(tex_path) => Texture::new(render_ctx, &path_prefix.join(tex_path)),
@@ -141,6 +142,7 @@ impl GreyscaleInput
 					[2, 2],
 					1,
 					1,
+					false,
 				)?))
 			}
 			Self::Texture(tex_path) => Texture::new(render_ctx, &path_prefix.join(tex_path)),

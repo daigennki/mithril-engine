@@ -464,7 +464,7 @@ impl Canvas
 		}
 
 		let layer_count = glyph_count.try_into().unwrap();
-		let tex = Texture::new_from_slice(render_ctx, combined_images, Format::R8_UNORM, img_dim, 1, layer_count)?;
+		let tex = Texture::new_from_slice(render_ctx, combined_images, Format::R8_UNORM, img_dim, 1, layer_count, false)?;
 
 		let colors = vec![text.color; glyph_count];
 

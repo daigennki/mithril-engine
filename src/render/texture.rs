@@ -38,65 +38,19 @@ impl Texture
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
 
-		let new_self = Arc::new(Self::new_from_slice(render_ctx, img_raw, vk_fmt, dim, mip_count, 1)?);
+		let new_self = Arc::new(Self::new_from_slice(render_ctx, img_raw, vk_fmt, dim, mip_count, 1, false)?);
 
 		render_ctx.textures.insert(path.to_path_buf(), new_self.clone());
 
 		Ok(new_self)
 	}
 
-	pub fn new_from_slice<Px>(
-		render_ctx: &mut RenderContext,
-		data: Vec<Px>,
-		format: Format,
-		dimensions: [u32; 2],
-		mip_levels: u32,
-		array_layers: u32,
-	) -> crate::Result<Self>
-	where
-		Px: BufferContents + Copy,
-	{
-		let image_info = ImageCreateInfo {
-			format,
-			extent: [dimensions[0], dimensions[1], 1],
-			array_layers,
-			mip_levels,
-			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-			..Default::default()
-		};
-		let image = Image::new(
-			render_ctx.memory_allocator.clone(),
-			image_info,
-			AllocationCreateInfo::default(),
-		)?;
-
-		let view = ImageView::new(image.clone(), ImageViewCreateInfo::from_image(&image))?;
-
-		render_ctx.transfer_manager.copy_to_image(data, image);
-
-		Ok(Texture { view })
-	}
-
-	pub fn view(&self) -> &Arc<ImageView>
-	{
-		&self.view
-	}
-
-	pub fn dimensions(&self) -> [u32; 2]
-	{
-		let extent = self.view.image().extent();
-		[extent[0], extent[1]]
-	}
-}
-
-pub struct CubemapTexture
-{
-	view: Arc<ImageView>,
-}
-impl CubemapTexture
-{
-	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z
-	pub fn new(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Self>
+	/// Load six image files as a cubemap textures into memory.
+	///
+	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
+	///
+	/// Unlike `new`, the results of this are *not* cached.
+	pub fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Self>
 	{
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt = None;
@@ -119,7 +73,7 @@ impl CubemapTexture
 			combined_data.extend(&img_raw[..mip_size]);
 		}
 
-		Self::new_from_slice(render_ctx, combined_data, cube_fmt.unwrap(), cube_dim.unwrap())
+		Self::new_from_slice(render_ctx, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), 1, 6, true)
 	}
 
 	pub fn new_from_slice<Px>(
@@ -127,15 +81,21 @@ impl CubemapTexture
 		data: Vec<Px>,
 		format: Format,
 		dimensions: [u32; 2],
+		mip_levels: u32,
+		array_layers: u32,
+		cubemap: bool,
 	) -> crate::Result<Self>
 	where
 		Px: BufferContents + Copy,
 	{
+		assert!(!cubemap || array_layers == 6);
+
 		let image_info = ImageCreateInfo {
-			flags: ImageCreateFlags::CUBE_COMPATIBLE,
+			flags: cubemap.then_some(ImageCreateFlags::CUBE_COMPATIBLE).unwrap_or_default(),
 			format,
 			extent: [dimensions[0], dimensions[1], 1],
-			array_layers: 6,
+			array_layers,
+			mip_levels,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
@@ -145,20 +105,30 @@ impl CubemapTexture
 			AllocationCreateInfo::default(),
 		)?;
 
-		let view_create_info = ImageViewCreateInfo {
-			view_type: ImageViewType::Cube,
-			..ImageViewCreateInfo::from_image(&image)
+		let view_create_info = if cubemap {
+			ImageViewCreateInfo {
+				view_type: ImageViewType::Cube,
+				..ImageViewCreateInfo::from_image(&image)
+			}
+		} else {
+			ImageViewCreateInfo::from_image(&image)
 		};
 		let view = ImageView::new(image.clone(), view_create_info)?;
 
 		render_ctx.transfer_manager.copy_to_image(data, image);
 
-		Ok(CubemapTexture { view })
+		Ok(Texture { view })
 	}
 
 	pub fn view(&self) -> &Arc<ImageView>
 	{
 		&self.view
+	}
+
+	pub fn dimensions(&self) -> [u32; 2]
+	{
+		let extent = self.view.image().extent();
+		[extent[0], extent[1]]
 	}
 }
 
