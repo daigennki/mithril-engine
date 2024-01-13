@@ -171,7 +171,6 @@ pub struct Canvas
 	scale_factor: f32,
 
 	set_layout: Arc<DescriptorSetLayout>,
-	text_set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
 	text_pipeline: Arc<GraphicsPipeline>,
 
@@ -243,21 +242,9 @@ impl Canvas
 		)?;
 
 		/* UI text pipeline */
-		let text_sampler = Sampler::new(device.clone(), SamplerCreateInfo::default())?;
-		let text_binding = DescriptorSetLayoutBinding {
-			stages: ShaderStages::FRAGMENT,
-			immutable_samplers: vec![text_sampler],
-			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-		};
-		let text_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [(0, text_binding)].into(),
-			..Default::default()
-		};
-		let text_set_layout = DescriptorSetLayout::new(device.clone(), text_set_layout_info)?;
-
 		let text_push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>() * 2;
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![text_set_layout.clone()],
+			set_layouts: vec![set_layout.clone()],
 			push_constant_ranges: vec![PushConstantRange {
 				stages: ShaderStages::VERTEX,
 				offset: 0,
@@ -306,7 +293,6 @@ impl Canvas
 			canvas_scaling,
 			scale_factor,
 			set_layout,
-			text_set_layout,
 			ui_pipeline,
 			text_pipeline,
 			text_resources: Default::default(),
@@ -500,7 +486,7 @@ impl Canvas
 
 		let resources = self.update_transform(
 			render_ctx,
-			self.text_set_layout.clone(),
+			self.set_layout.clone(),
 			transform,
 			tex.view().clone(),
 			Vec2::ONE,
@@ -649,14 +635,14 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 
 	// Get the largest glyphs in terms of width and height respectively.
 	// They get adjusted to the next multiple of 8 for memory alignment purposes.
-	let max_width: u32 = glyphs
+	let max_width = glyphs
 		.iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box())
 		.map(|bb| bb.width().abs() as u32)
 		.max()
 		.unwrap_or(1)
 		.next_multiple_of(8);
-	let max_height: u32 = glyphs
+	let max_height = glyphs
 		.iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box())
 		.map(|bb| bb.height().abs() as u32)
@@ -665,7 +651,7 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 		.next_multiple_of(8);
 
 	glyphs
-		.iter()
+		.into_iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box().map(|bb| (glyph, bb)))
 		.map(|(glyph, bb)| {
 			let mut image = DynamicImage::new_luma8(max_width, max_height).into_luma8();
