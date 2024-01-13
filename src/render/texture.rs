@@ -8,128 +8,87 @@
 use ddsfile::DxgiFormat;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::BufferContents;
 use vulkano::format::Format;
 use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
-	Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
+	ImageCreateFlags, ImageCreateInfo, ImageUsage,
 };
-use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::DeviceSize;
 
 use super::RenderContext;
 use crate::EngineError;
 
-pub struct Texture
+/// Load an image file as a 2D texture into memory.
+///
+/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
+pub fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Arc<ImageView>>
 {
-	view: Arc<ImageView>,
+	if let Some(tex) = render_ctx.textures.get(path) {
+		return Ok(tex.clone());
+	}
+
+	// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
+	let (format, extent, mip_levels, img_raw) = load_texture(path)?;
+
+	let image_info = ImageCreateInfo {
+		format,
+		extent: [extent[0], extent[1], 1],
+		mip_levels,
+		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+		..Default::default()
+	};
+	let image = render_ctx.new_image(img_raw, image_info)?;
+	let view = ImageView::new_default(image)?;
+
+	render_ctx.textures.insert(path.to_path_buf(), view.clone());
+
+	Ok(view)
 }
-impl Texture
+
+/// Load six image files as cubemap textures into memory.
+///
+/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
+///
+/// Unlike `new`, the results of this are *not* cached.
+pub fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Arc<ImageView>>
 {
-	/// Load an image file as a texture into memory.
-	///
-	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
-	pub fn new(render_ctx: &mut RenderContext, path: &Path) -> crate::Result<Arc<Self>>
-	{
-		if let Some(tex) = render_ctx.textures.get(path) {
-			return Ok(tex.clone());
+	let mut combined_data = Vec::<u8>::new();
+	let mut cube_fmt = None;
+	let mut cube_dim = None;
+
+	for face_path in faces {
+		let (face_fmt, face_dim, _, img_raw) = load_texture(&face_path)?;
+
+		if face_fmt != *cube_fmt.get_or_insert(face_fmt) {
+			return Err("Not all faces of a cubemap have the same format!".into());
+		}
+		if face_dim != *cube_dim.get_or_insert(face_dim) {
+			return Err("Not all faces of a cubemap have the same dimensions!".into());
 		}
 
-		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
-		let (vk_fmt, dim, mip_count, img_raw) = load_texture(path)?;
-
-		let new_self = Arc::new(Self::new_from_slice(render_ctx, img_raw, vk_fmt, dim, mip_count, 1, false)?);
-
-		render_ctx.textures.insert(path.to_path_buf(), new_self.clone());
-
-		Ok(new_self)
-	}
-
-	/// Load six image files as a cubemap textures into memory.
-	///
-	/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
-	///
-	/// Unlike `new`, the results of this are *not* cached.
-	pub fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Self>
-	{
-		let mut combined_data = Vec::<u8>::new();
-		let mut cube_fmt = None;
-		let mut cube_dim = None;
-
-		for face_path in faces {
-			let (face_fmt, face_dim, _, img_raw) = load_texture(&face_path)?;
-
-			if face_fmt != *cube_fmt.get_or_insert(face_fmt) {
-				return Err("Not all faces of a cubemap have the same format!".into());
-			}
-			if face_dim != *cube_dim.get_or_insert(face_dim) {
-				return Err("Not all faces of a cubemap have the same dimensions!".into());
-			}
-
-			let mip_size = get_mip_size(face_fmt, face_dim[0], face_dim[1]).try_into().unwrap();
-			if combined_data.capacity() == 0 {
-				combined_data.reserve(mip_size * 6);
-			}
-			combined_data.extend(&img_raw[..mip_size]);
+		let mip_size = get_mip_size(face_fmt, face_dim[0], face_dim[1]).try_into().unwrap();
+		if combined_data.capacity() == 0 {
+			combined_data.reserve(mip_size * 6);
 		}
-
-		Self::new_from_slice(render_ctx, combined_data, cube_fmt.unwrap(), cube_dim.unwrap(), 1, 6, true)
+		combined_data.extend(&img_raw[..mip_size]);
 	}
 
-	pub fn new_from_slice<Px>(
-		render_ctx: &mut RenderContext,
-		data: Vec<Px>,
-		format: Format,
-		dimensions: [u32; 2],
-		mip_levels: u32,
-		array_layers: u32,
-		cubemap: bool,
-	) -> crate::Result<Self>
-	where
-		Px: BufferContents + Copy,
-	{
-		assert!(!cubemap || array_layers == 6);
+	let extent = cube_dim.unwrap();
+	let image_info = ImageCreateInfo {
+		flags: ImageCreateFlags::CUBE_COMPATIBLE,
+		format: cube_fmt.unwrap(),
+		extent: [extent[0], extent[1], 1],
+		array_layers: 6,
+		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+		..Default::default()
+	};
+	let image = render_ctx.new_image(combined_data, image_info)?;
 
-		let image_info = ImageCreateInfo {
-			flags: cubemap.then_some(ImageCreateFlags::CUBE_COMPATIBLE).unwrap_or_default(),
-			format,
-			extent: [dimensions[0], dimensions[1], 1],
-			array_layers,
-			mip_levels,
-			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-			..Default::default()
-		};
-		let image = Image::new(
-			render_ctx.memory_allocator.clone(),
-			image_info,
-			AllocationCreateInfo::default(),
-		)?;
-
-		let view_create_info = if cubemap {
-			ImageViewCreateInfo {
-				view_type: ImageViewType::Cube,
-				..ImageViewCreateInfo::from_image(&image)
-			}
-		} else {
-			ImageViewCreateInfo::from_image(&image)
-		};
-		let view = ImageView::new(image.clone(), view_create_info)?;
-
-		render_ctx.transfer_manager.copy_to_image(data, image);
-
-		Ok(Texture { view })
-	}
-
-	pub fn view(&self) -> &Arc<ImageView>
-	{
-		&self.view
-	}
-
-	pub fn dimensions(&self) -> [u32; 2]
-	{
-		let extent = self.view.image().extent();
-		[extent[0], extent[1]]
-	}
+	let view_create_info = ImageViewCreateInfo {
+		view_type: ImageViewType::Cube,
+		..ImageViewCreateInfo::from_image(&image)
+	};
+	Ok(ImageView::new(image, view_create_info)?)
 }
 
 fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
@@ -142,7 +101,7 @@ fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 		.to_str();
 
 	match file_ext {
-		Some("dds") => Ok(load_dds(path)?),
+		Some("dds") => load_dds(path),
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
 			let img = image::io::Reader::open(path)
@@ -157,18 +116,17 @@ fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 fn load_dds(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 {
 	let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
-
 	let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
 	let dds_format = dds
 		.get_dxgi_format()
 		.ok_or("Could not determine DDS image format! Make sure it has a DXGI format.")?;
 
+	// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
+	// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
 	let vk_fmt = match dds_format {
 		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,
 		DxgiFormat::BC4_UNorm => Format::BC4_UNORM_BLOCK,
 		DxgiFormat::BC5_UNorm => Format::BC5_UNORM_BLOCK,
-		// treat BC7_UNorm as sRGB for now since Compressonator doesn't support converting to BC7_UNorm_sRGB,
-		// even though the data itself appears to be in sRGB gamma
 		DxgiFormat::BC7_UNorm => Format::BC7_SRGB_BLOCK,
 		DxgiFormat::BC7_UNorm_sRGB => Format::BC7_SRGB_BLOCK,
 		format => {

@@ -416,7 +416,7 @@ fn descriptor_set_from_materials(
 		let mut mat_image_views = Vec::with_capacity(mat_shader_inputs.len());
 		for input in mat_shader_inputs {
 			let tex = input.into_texture(parent_folder, render_ctx)?;
-			mat_image_views.push(tex.view().clone());
+			mat_image_views.push(tex);
 		}
 		last_tex_index_stride = mat_image_views.len().try_into().unwrap();
 		image_view_writes.push(mat_image_views);

@@ -25,7 +25,7 @@ use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::ImageView,
-	ImageFormatInfo, ImageUsage,
+	ImageCreateInfo, ImageFormatInfo, ImageUsage,
 };
 use vulkano::pipeline::{
 	graphics::{
@@ -42,7 +42,7 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use super::texture::Texture;
+use super::texture;
 use super::RenderContext;
 use crate::component::ui::{
 	mesh::{Mesh, MeshType},
@@ -367,16 +367,11 @@ impl Canvas
 	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
-			let tex = Texture::new(render_ctx, &mesh.image_path)?;
-			let image_dimensions = UVec2::from(tex.dimensions()).as_vec2();
-			let resources = self.update_transform(
-				render_ctx,
-				self.set_layout.clone(),
-				transform,
-				tex.view().clone(),
-				image_dimensions,
-				None,
-			)?;
+			let tex = texture::new(render_ctx, &mesh.image_path)?;
+			let image_extent = tex.image().extent();
+			let image_dimensions = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
+			let resources =
+				self.update_transform(render_ctx, self.set_layout.clone(), transform, tex, image_dimensions, None)?;
 			self.mesh_resources.insert(eid, resources);
 		}
 
@@ -463,8 +458,15 @@ impl Canvas
 			text_pos_verts.push((top_left_corner, logical_quad_size).into());
 		}
 
-		let layer_count = glyph_count.try_into().unwrap();
-		let tex = Texture::new_from_slice(render_ctx, combined_images, Format::R8_UNORM, img_dim, 1, layer_count, false)?;
+		let image_create_info = ImageCreateInfo {
+			format: Format::R8_UNORM,
+			extent: [img_dim[0], img_dim[1], 1],
+			array_layers: glyph_count.try_into().unwrap(),
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+			..Default::default()
+		};
+		let tex_image = render_ctx.new_image(combined_images, image_create_info)?;
+		let tex = ImageView::new_default(tex_image)?;
 
 		let colors = vec![text.color; glyph_count];
 
@@ -484,14 +486,8 @@ impl Canvas
 			render_ctx.new_buffer(vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		let resources = self.update_transform(
-			render_ctx,
-			self.set_layout.clone(),
-			transform,
-			tex.view().clone(),
-			Vec2::ONE,
-			Some(text_vbo),
-		)?;
+		let resources =
+			self.update_transform(render_ctx, self.set_layout.clone(), transform, tex, Vec2::ONE, Some(text_vbo))?;
 		self.text_resources.insert(eid, resources);
 
 		Ok(())

@@ -30,7 +30,7 @@ use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoin
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use super::texture::Texture;
+use super::texture;
 use super::RenderContext;
 
 mod vs
@@ -165,11 +165,11 @@ impl Skybox
 		// sky texture cubemap
 		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
-		let sky_cubemap = Texture::new_cubemap(render_ctx, face_paths)?;
+		let sky_cubemap = texture::new_cubemap(render_ctx, face_paths)?;
 		let descriptor_set = PersistentDescriptorSet::new(
 			&render_ctx.descriptor_set_allocator,
 			set_layout,
-			[WriteDescriptorSet::image_view(0, sky_cubemap.view().clone())],
+			[WriteDescriptorSet::image_view(0, sky_cubemap)],
 			[],
 		)?;
 

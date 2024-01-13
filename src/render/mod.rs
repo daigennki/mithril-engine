@@ -35,15 +35,17 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo};
+use vulkano::image::{
+	sampler::{Filter, Sampler, SamplerCreateInfo},
+	view::ImageView,
+	Image, ImageCreateInfo,
+};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::graphics::depth_stencil::CompareOp;
 use vulkano::shader::ShaderStages;
-
-use texture::Texture;
 
 #[derive(shipyard::Unique)]
 pub struct RenderContext
@@ -59,7 +61,7 @@ pub struct RenderContext
 	light_set_layout: Arc<DescriptorSetLayout>,
 
 	// Loaded textures, with the key being the path relative to the current working directory
-	textures: HashMap<PathBuf, Arc<Texture>>,
+	textures: HashMap<PathBuf, Arc<ImageView>>,
 
 	allow_direct_buffer_access: bool,
 
@@ -193,6 +195,18 @@ impl RenderContext
 			self.transfer_manager.copy_to_buffer(data, buf.clone());
 		}
 		Ok(buf)
+	}
+
+	pub fn new_image<Px>(&mut self, data: Vec<Px>, create_info: ImageCreateInfo) -> crate::Result<Arc<Image>>
+	where
+		Px: BufferContents + Copy,
+	{
+		let alloc_info = AllocationCreateInfo::default();
+		let image = Image::new(self.memory_allocator.clone(), create_info, alloc_info)?;
+
+		self.transfer_manager.copy_to_image(data, image.clone());
+
+		Ok(image)
 	}
 
 	fn submit_async_transfers(&mut self) -> crate::Result<()>

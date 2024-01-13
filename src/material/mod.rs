@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
+use vulkano::image::{view::ImageView, ImageCreateInfo, ImageUsage};
 use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
@@ -25,7 +26,7 @@ use vulkano::pipeline::{
 };
 use vulkano::shader::ShaderModule;
 
-use crate::render::{texture::Texture, RenderContext};
+use crate::render::{texture, RenderContext};
 
 pub mod vs_3d_common
 {
@@ -61,7 +62,7 @@ pub enum ShaderInput
 }
 impl ShaderInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<Texture>>
+	pub fn into_texture(self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
 	{
 		match self {
 			Self::Color(input) => input.into_texture(path_prefix, render_ctx),
@@ -99,22 +100,11 @@ pub enum ColorInput
 }
 impl ColorInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<Texture>>
+	pub fn into_texture(self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
 	{
 		match self {
-			Self::Color(color) => {
-				// If the input is a single color, make a 1x1 RGBA texture with just the color.
-				Ok(Arc::new(Texture::new_from_slice(
-					render_ctx,
-					vec![*color],
-					Format::R32G32B32A32_SFLOAT,
-					[1, 1],
-					1,
-					1,
-					false,
-				)?))
-			}
-			Self::Texture(tex_path) => Texture::new(render_ctx, &path_prefix.join(tex_path)),
+			Self::Color(color) => new_single_color_texture(render_ctx, color),
+			Self::Texture(tex_path) => texture::new(render_ctx, &path_prefix.join(tex_path)),
 		}
 	}
 }
@@ -129,25 +119,26 @@ pub enum GreyscaleInput
 }
 impl GreyscaleInput
 {
-	pub fn into_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<Texture>>
+	pub fn into_texture(self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
 	{
 		match self {
-			Self::Value(value) => {
-				// If the input is a single value, make a 2x2 greyscale texture with just the value.
-				// (we make it 2x2 here so that it's aligned to 16 bytes)
-				Ok(Arc::new(Texture::new_from_slice(
-					render_ctx,
-					vec![*value; 4],
-					Format::R32_SFLOAT,
-					[2, 2],
-					1,
-					1,
-					false,
-				)?))
-			}
-			Self::Texture(tex_path) => Texture::new(render_ctx, &path_prefix.join(tex_path)),
+			Self::Value(value) => new_single_color_texture(render_ctx, Vec4::new(value, value, value, 1.0)),
+			Self::Texture(tex_path) => texture::new(render_ctx, &path_prefix.join(tex_path)),
 		}
 	}
+}
+
+// If the input is a single color, make a 1x1 RGBA texture with just the color.
+fn new_single_color_texture(render_ctx: &mut RenderContext, color: Vec4) -> crate::Result<Arc<ImageView>>
+{
+	let create_info = ImageCreateInfo {
+		format: Format::R32G32B32A32_SFLOAT,
+		extent: [1, 1, 1],
+		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+		..Default::default()
+	};
+	let image = render_ctx.new_image(vec![color], create_info)?;
+	Ok(ImageView::new_default(image)?)
 }
 
 pub enum MaterialTransparencyMode
