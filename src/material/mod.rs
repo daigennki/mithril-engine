@@ -210,7 +210,7 @@ impl MaterialPipelineConfig
 		};
 
 		// Create the opaque pass pipeline.
-		let opaque_pipeline = crate::render::pipeline::new(
+		let opaque_pipeline = crate::render::new_graphics_pipeline(
 			vk_dev.clone(),
 			primitive_topology,
 			&[self.vertex_shader.clone(), self.fragment_shader],
@@ -274,7 +274,7 @@ impl MaterialPipelineConfig
 					..Default::default()
 				};
 
-				crate::render::pipeline::new(
+				crate::render::new_graphics_pipeline(
 					vk_dev,
 					primitive_topology,
 					&[self.vertex_shader, fs],

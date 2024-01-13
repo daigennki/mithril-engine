@@ -129,7 +129,7 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
-		let moments_pl = super::pipeline::new(
+		let moments_pl = super::new_graphics_pipeline(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())?],
@@ -211,7 +211,7 @@ impl MomentTransparencyRenderer
 			stencil_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
-		let transparency_compositing_pl = super::pipeline::new(
+		let transparency_compositing_pl = super::new_graphics_pipeline(
 			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[

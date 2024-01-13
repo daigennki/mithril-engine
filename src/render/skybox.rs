@@ -152,7 +152,7 @@ impl Skybox
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
 		};
-		let sky_pipeline = super::pipeline::new(
+		let sky_pipeline = super::new_graphics_pipeline(
 			device.clone(),
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone())?, fs::load(device.clone())?],

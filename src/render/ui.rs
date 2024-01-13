@@ -229,7 +229,7 @@ impl Canvas
 			..Default::default()
 		};
 
-		let ui_pipeline = crate::render::pipeline::new(
+		let ui_pipeline = super::new_graphics_pipeline(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
@@ -253,7 +253,7 @@ impl Canvas
 		};
 		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
-		let text_pipeline = crate::render::pipeline::new(
+		let text_pipeline = super::new_graphics_pipeline(
 			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
