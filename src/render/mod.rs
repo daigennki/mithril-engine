@@ -11,7 +11,6 @@ pub mod pipeline;
 mod render_target;
 pub mod skybox;
 mod swapchain;
-pub mod texture;
 mod transfer;
 mod transparency;
 pub mod ui;
@@ -19,9 +18,10 @@ mod vulkan_init;
 pub mod workload;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ddsfile::DxgiFormat;
 use glam::*;
 
 use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
@@ -38,7 +38,7 @@ use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::ImageView,
-	Image, ImageCreateInfo,
+	Image, ImageCreateInfo, ImageUsage,
 };
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
@@ -46,6 +46,9 @@ use vulkano::memory::{
 };
 use vulkano::pipeline::graphics::depth_stencil::CompareOp;
 use vulkano::shader::ShaderStages;
+use vulkano::DeviceSize;
+
+use crate::EngineError;
 
 #[derive(shipyard::Unique)]
 pub struct RenderContext
@@ -209,6 +212,33 @@ impl RenderContext
 		Ok(image)
 	}
 
+	/// Load an image file as a 2D texture into memory.
+	///
+	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
+	pub fn new_texture(&mut self, path: &Path) -> crate::Result<Arc<ImageView>>
+	{
+		if let Some(tex) = self.textures.get(path) {
+			return Ok(tex.clone());
+		}
+
+		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
+		let (format, extent, mip_levels, img_raw) = load_texture(path)?;
+
+		let image_info = ImageCreateInfo {
+			format,
+			extent: [extent[0], extent[1], 1],
+			mip_levels,
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+			..Default::default()
+		};
+		let image = self.new_image(img_raw, image_info)?;
+		let view = ImageView::new_default(image)?;
+
+		self.textures.insert(path.to_path_buf(), view.clone());
+
+		Ok(view)
+	}
+
 	fn submit_async_transfers(&mut self) -> crate::Result<()>
 	{
 		self.transfer_manager.submit_async_transfers(&self.command_buffer_allocator)
@@ -274,4 +304,82 @@ impl RenderContext
 	{
 		self.swapchain.delta()
 	}
+}
+
+fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
+{
+	log::info!("Loading texture file '{}'...", path.display());
+
+	let file_ext = path
+		.extension()
+		.ok_or("Could not determine texture file extension!")?
+		.to_str();
+
+	match file_ext {
+		Some("dds") => load_dds(path),
+		_ => {
+			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
+			let img = image::io::Reader::open(path)
+				.map_err(|e| EngineError::new("failed to open image file", e))?
+				.decode()
+				.map_err(|e| EngineError::new("failed to decode image file", e))?
+				.into_rgba8();
+			Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
+		}
+	}
+}
+fn load_dds(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
+{
+	let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
+	let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
+	let dds_format = dds
+		.get_dxgi_format()
+		.ok_or("Could not determine DDS image format! Make sure it has a DXGI format.")?;
+
+	// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
+	// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
+	let vk_fmt = match dds_format {
+		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,
+		DxgiFormat::BC4_UNorm => Format::BC4_UNORM_BLOCK,
+		DxgiFormat::BC5_UNorm => Format::BC5_UNORM_BLOCK,
+		DxgiFormat::BC7_UNorm => Format::BC7_SRGB_BLOCK,
+		DxgiFormat::BC7_UNorm_sRGB => Format::BC7_SRGB_BLOCK,
+		format => {
+			let e = UnsupportedDdsFormat { format };
+			return Err(EngineError::new("failed to read DDS file", e));
+		}
+	};
+	let dim = [dds.get_width(), dds.get_height()];
+	let mip_count = dds.get_num_mipmap_levels();
+
+	Ok((vk_fmt, dim, mip_count, dds.data))
+}
+
+#[derive(Debug)]
+struct UnsupportedDdsFormat
+{
+	format: DxgiFormat,
+}
+impl std::error::Error for UnsupportedDdsFormat
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for UnsupportedDdsFormat
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "DDS format '{:?}' is unsupported", self.format)
+	}
+}
+
+fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
+{
+	let block_extent = format.block_extent();
+	let block_size = format.block_size();
+	let x_blocks = mip_width.div_ceil(block_extent[0]) as DeviceSize;
+	let y_blocks = mip_height.div_ceil(block_extent[1]) as DeviceSize;
+	x_blocks * y_blocks * block_size
 }

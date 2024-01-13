@@ -26,7 +26,7 @@ use vulkano::pipeline::{
 };
 use vulkano::shader::ShaderModule;
 
-use crate::render::{texture, RenderContext};
+use crate::render::RenderContext;
 
 pub mod vs_3d_common
 {
@@ -104,7 +104,7 @@ impl ColorInput
 	{
 		match self {
 			Self::Color(color) => new_single_color_texture(render_ctx, color),
-			Self::Texture(tex_path) => texture::new(render_ctx, &path_prefix.join(tex_path)),
+			Self::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
 		}
 	}
 }
@@ -123,7 +123,7 @@ impl GreyscaleInput
 	{
 		match self {
 			Self::Value(value) => new_single_color_texture(render_ctx, Vec4::new(value, value, value, 1.0)),
-			Self::Texture(tex_path) => texture::new(render_ctx, &path_prefix.join(tex_path)),
+			Self::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
 		}
 	}
 }

@@ -6,6 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use glam::*;
+use std::path::PathBuf;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
@@ -19,7 +20,8 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Sampler, SamplerCreateInfo},
-	view::ImageView,
+	view::{ImageView, ImageViewCreateInfo, ImageViewType},
+	ImageCreateFlags, ImageCreateInfo, ImageUsage,
 };
 use vulkano::pipeline::graphics::{
 	color_blend::ColorBlendState, input_assembly::PrimitiveTopology, rasterization::RasterizationState,
@@ -30,7 +32,6 @@ use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoin
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use super::texture;
 use super::RenderContext;
 
 mod vs
@@ -165,7 +166,7 @@ impl Skybox
 		// sky texture cubemap
 		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
-		let sky_cubemap = texture::new_cubemap(render_ctx, face_paths)?;
+		let sky_cubemap = new_cubemap(render_ctx, face_paths)?;
 		let descriptor_set = PersistentDescriptorSet::new(
 			&render_ctx.descriptor_set_allocator,
 			set_layout,
@@ -226,4 +227,50 @@ impl Skybox
 
 		Ok(())
 	}
+}
+
+/// Load six image files as cubemap textures into memory.
+///
+/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
+///
+/// Unlike `new_texture`, the results of this are *not* cached.
+fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Arc<ImageView>>
+{
+	let mut combined_data = Vec::<u8>::new();
+	let mut cube_fmt = None;
+	let mut cube_dim = None;
+
+	for face_path in faces {
+		let (face_fmt, face_dim, _, img_raw) = super::load_texture(&face_path)?;
+
+		if face_fmt != *cube_fmt.get_or_insert(face_fmt) {
+			return Err("Not all faces of a cubemap have the same format!".into());
+		}
+		if face_dim != *cube_dim.get_or_insert(face_dim) {
+			return Err("Not all faces of a cubemap have the same dimensions!".into());
+		}
+
+		let mip_size = super::get_mip_size(face_fmt, face_dim[0], face_dim[1]).try_into().unwrap();
+		if combined_data.capacity() == 0 {
+			combined_data.reserve(mip_size * 6);
+		}
+		combined_data.extend(&img_raw[..mip_size]);
+	}
+
+	let extent = cube_dim.unwrap();
+	let image_info = ImageCreateInfo {
+		flags: ImageCreateFlags::CUBE_COMPATIBLE,
+		format: cube_fmt.unwrap(),
+		extent: [extent[0], extent[1], 1],
+		array_layers: 6,
+		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+		..Default::default()
+	};
+	let image = render_ctx.new_image(combined_data, image_info)?;
+
+	let view_create_info = ImageViewCreateInfo {
+		view_type: ImageViewType::Cube,
+		..ImageViewCreateInfo::from_image(&image)
+	};
+	Ok(ImageView::new(image, view_create_info)?)
 }

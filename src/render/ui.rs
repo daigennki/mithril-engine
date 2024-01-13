@@ -42,7 +42,6 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-use super::texture;
 use super::RenderContext;
 use crate::component::ui::{
 	mesh::{Mesh, MeshType},
@@ -367,7 +366,7 @@ impl Canvas
 	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
-			let tex = texture::new(render_ctx, &mesh.image_path)?;
+			let tex = render_ctx.new_texture(&mesh.image_path)?;
 			let image_extent = tex.image().extent();
 			let image_dimensions = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
 			let resources =
