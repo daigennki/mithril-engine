@@ -204,7 +204,7 @@ impl RenderTarget
 		swapchain_image_num: u32,
 	) -> crate::Result<()>
 	{
-		if self.color_sets.len() > 0 {
+		if !self.color_sets.is_empty() {
 			// for rendering to non-linear sRGB, perform gamma correction and write to the swapchain image
 			let image_extent = self.color_image.image().extent();
 			let workgroups_x = image_extent[0].div_ceil(64);
@@ -234,9 +234,11 @@ fn create_images(
 	swapchain_color_space: ColorSpace,
 ) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 {
-	let usage = (swapchain_color_space == ColorSpace::SrgbNonLinear)
-		.then_some(ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE)
-		.unwrap_or(ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC);
+	let usage = if swapchain_color_space == ColorSpace::SrgbNonLinear {
+		ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE
+	} else {
+		ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC
+	};
 
 	let color_create_info = ImageCreateInfo {
 		format: Format::R16G16B16A16_SFLOAT,

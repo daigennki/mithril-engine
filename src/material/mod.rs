@@ -11,7 +11,7 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::device::{Device, DeviceOwned};
+use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, ImageCreateInfo, ImageUsage};
 use vulkano::pipeline::{
@@ -153,7 +153,7 @@ impl MaterialTransparencyMode
 	{
 		match self {
 			Self::NoTransparency => (None, None),
-			Self::Blend(blend) => (Some(blend.clone()), None),
+			Self::Blend(blend) => (Some(blend), None),
 			Self::OIT(fs_oit) => (None, Some(fs_oit.clone())),
 		}
 	}
@@ -180,8 +180,6 @@ impl MaterialPipelineConfig
 		pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
 	{
-		let vk_dev = pipeline_layout.device().clone();
-
 		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
 		let primitive_topology = PrimitiveTopology::TriangleList;
@@ -211,7 +209,6 @@ impl MaterialPipelineConfig
 
 		// Create the opaque pass pipeline.
 		let opaque_pipeline = crate::render::new_graphics_pipeline(
-			vk_dev.clone(),
 			primitive_topology,
 			&[self.vertex_shader.clone(), self.fragment_shader],
 			rasterization_state.clone(),
@@ -275,7 +272,6 @@ impl MaterialPipelineConfig
 				};
 
 				crate::render::new_graphics_pipeline(
-					vk_dev,
 					primitive_topology,
 					&[self.vertex_shader, fs],
 					rasterization_state,

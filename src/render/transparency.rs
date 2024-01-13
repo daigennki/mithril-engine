@@ -130,7 +130,6 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let moments_pl = super::new_graphics_pipeline(
-			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())?],
 			RasterizationState {
@@ -212,7 +211,6 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let transparency_compositing_pl = super::new_graphics_pipeline(
-			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[
 				vs_fill_viewport::load(device.clone())?,

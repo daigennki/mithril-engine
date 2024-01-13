@@ -165,7 +165,6 @@ impl LightManager
 			..Default::default()
 		};
 		let shadow_pipeline = crate::render::new_graphics_pipeline(
-			device.clone(),
 			PrimitiveTopology::TriangleList,
 			&[vs_shadow::load(device.clone())?],
 			rasterization_state,

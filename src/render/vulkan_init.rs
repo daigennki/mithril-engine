@@ -98,7 +98,7 @@ fn create_vulkan_instance(
 		enabled_extensions,
 		..InstanceCreateInfo::application_from_cargo_toml()
 	};
-	inst_create_info.engine_version = inst_create_info.application_version.clone();
+	inst_create_info.engine_version = inst_create_info.application_version;
 
 	let instance = vulkano::instance::Instance::new(lib, inst_create_info)
 		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?;
@@ -116,7 +116,7 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Resu
 	for (i, pd) in physical_devices.enumerate() {
 		let properties = pd.properties();
 		let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
-		let driver_name = properties.driver_name.as_ref().map_or("unknown driver", |name| &name);
+		let driver_name = properties.driver_name.as_ref().map_or("unknown driver", |name| name);
 
 		log::info!(
 			"{}: {} ({:?}), driver '{}' version {} (Vulkan {})",
@@ -235,7 +235,7 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> crate::Result<Vec<Qu
 
 	let infos = [graphics]
 		.into_iter()
-		.chain(transfer.into_iter())
+		.chain(transfer)
 		.map(|queue_family_index| QueueCreateInfo {
 			queue_family_index,
 			..Default::default()

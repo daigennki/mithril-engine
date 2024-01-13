@@ -70,7 +70,7 @@ impl TransferManager
 	where
 		T: BufferContents + Copy,
 	{
-		assert!(data.len() > 0);
+		assert!(!data.is_empty());
 
 		let work = StagingWork {
 			data,
@@ -87,7 +87,7 @@ impl TransferManager
 	where
 		Px: BufferContents + Copy,
 	{
-		assert!(data.len() > 0);
+		assert!(!data.is_empty());
 		assert!(dst_image.format().block_size().is_power_of_two());
 
 		let work = StagingWork {
@@ -122,7 +122,7 @@ impl TransferManager
 	pub fn submit_async_transfers(&mut self, command_buffer_allocator: &StandardCommandBufferAllocator) -> crate::Result<()>
 	{
 		// calculate how large the total staging buffer usage will be
-		let mut async_transfer_option = self.async_transfers.as_ref();
+		let mut async_transfer_option = self.async_transfers.as_ref().map(|inner_box| inner_box.as_ref());
 		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
 		while let Some(work) = async_transfer_option.take() {
 			if !work.will_use_update_buffer() {
@@ -335,9 +335,9 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 		self.next
 	}
 
-	fn next_ref(&self) -> Option<&Box<dyn StagingWorkTrait>>
+	fn next_ref(&self) -> Option<&dyn StagingWorkTrait>
 	{
-		self.next.as_ref()
+		self.next.as_ref().map(|next_inner| next_inner.as_ref())
 	}
 }
 trait StagingWorkTrait: Send + Sync
@@ -352,7 +352,7 @@ trait StagingWorkTrait: Send + Sync
 		_: &mut SubbufferAllocator,
 	) -> Option<Box<dyn StagingWorkTrait>>;
 
-	fn next_ref(&self) -> Option<&Box<dyn StagingWorkTrait>>;
+	fn next_ref(&self) -> Option<&dyn StagingWorkTrait>;
 }
 
 enum StagingDst<T: BufferContents + Copy>

@@ -130,12 +130,9 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			..
 		} => {
 			if !key_event.repeat && !key_event.state.is_pressed() {
-				match key_event.physical_key {
-					PhysicalKey::Code(KeyCode::F12) => {
-						// Toggle fullscreen
-						world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.set_fullscreen(!r_ctx.is_fullscreen()));
-					}
-					_ => (),
+				if let PhysicalKey::Code(KeyCode::F12) = key_event.physical_key {
+					// Toggle fullscreen
+					world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.set_fullscreen(!r_ctx.is_fullscreen()));
 				}
 			}
 		}
@@ -182,24 +179,24 @@ fn load_world(file: &str) -> crate::Result<(World, String)>
 
 			// add the relevant system if the component returns one
 			if let Some(add_system) = component.add_system() {
-				if !systems.contains_key(&type_id) {
-					systems.insert(type_id, add_system);
-					log::debug!("inserted system for {}", component.type_name());
-				}
+				systems.entry(type_id).or_insert_with(|| {
+					log::debug!("inserting system for {}", component.type_name());
+					add_system
+				});
 			}
 
 			if let Some(add_system) = component.add_prerender_system() {
-				if !prerender_systems.contains_key(&type_id) {
-					prerender_systems.insert(type_id, add_system);
-					log::debug!("inserted pre-render system for {}", component.type_name());
-				}
+				prerender_systems.entry(type_id).or_insert_with(|| {
+					log::debug!("inserting pre-render system for {}", component.type_name());
+					add_system
+				});
 			}
 
 			component.add_to_entity(&mut world, eid);
 		}
 	}
 
-	if systems.len() > 0 {
+	if !systems.is_empty() {
 		systems
 			.into_values()
 			.fold(Workload::new("Game logic"), |w, s| w.with_system(s))

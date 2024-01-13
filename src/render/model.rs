@@ -77,7 +77,7 @@ impl Model
 
 		log::info!("Loading glTF file '{}'...", path.display());
 
-		let (doc, data_buffers, _) = gltf::import(&path).map_err(|e| EngineError::new("failed to load glTF file", e))?;
+		let (doc, data_buffers, _) = gltf::import(path).map_err(|e| EngineError::new("failed to load glTF file", e))?;
 
 		let (vertex_subbuffers, index_buffer, submeshes) = load_gltf_meshes(render_ctx, &doc, &data_buffers)?;
 
@@ -139,7 +139,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 
 	fn new_user(&mut self, eid: EntityId, material_variant: Option<String>)
 	{
-		self.users.insert(eid, ModelInstance::new(&self, material_variant));
+		self.users.insert(eid, ModelInstance::new(self, material_variant));
 	}
 	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: DMat4)
 	{
@@ -215,15 +215,14 @@ This model may be inefficient to draw, so consider joining the meshes."
 				}
 
 				if !resources_bound {
-					let vbo;
-					if shadow_pass {
-						vbo = vec![self.vertex_subbuffers[0].clone()];
+					let vbo = if shadow_pass {
+						vec![self.vertex_subbuffers[0].clone()]
 					} else {
 						let set = self.textures_set.clone();
 						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
 
-						vbo = self.vertex_subbuffers.clone();
-					}
+						self.vertex_subbuffers.clone()
+					};
 
 					cb.bind_vertex_buffers(0, vbo)?;
 					self.index_buffer.bind(cb)?;
@@ -302,11 +301,13 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> crate::Resu
 	}
 }
 
+// (vertex buffers, index buffer, submeshes)
+type LoadedMeshData = (Vec<Subbuffer<[f32]>>, IndexBufferVariant, Vec<SubMesh>);
 fn load_gltf_meshes(
 	render_ctx: &mut RenderContext,
 	doc: &gltf::Document,
 	data_buffers: &[gltf::buffer::Data],
-) -> crate::Result<(Vec<Subbuffer<[f32]>>, IndexBufferVariant, Vec<SubMesh>)>
+) -> crate::Result<LoadedMeshData>
 {
 	// Collect all of the vertex data into buffers shared by all submeshes to reduce the number of binds.
 	let mut submeshes = Vec::new();
@@ -353,7 +354,7 @@ fn load_gltf_meshes(
 		match indices_accessor.data_type() {
 			DataType::U16 => {
 				let slice_u16: &[u16] = get_buf_data(&indices_accessor, data_buffers)?;
-				if indices_u32.len() > 0 {
+				if !indices_u32.is_empty() {
 					// convert the indices to u32 if mixed with u32 indices
 					indices_u32.extend(slice_u16.iter().copied().map(|index| index as u32));
 				} else {
@@ -361,7 +362,7 @@ fn load_gltf_meshes(
 				}
 			}
 			DataType::U32 => {
-				if indices_u16.len() > 0 {
+				if !indices_u16.is_empty() {
 					// convert existing indices to u32 if they're u16
 					indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
 					indices_u16 = Vec::new(); // free some memory
@@ -391,7 +392,7 @@ fn load_gltf_meshes(
 	let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
 	let vertex_subbuffers = vec![vbo_positions, vbo_texcoords, vbo_normals];
 
-	let index_buffer = if indices_u32.len() > 0 {
+	let index_buffer = if !indices_u32.is_empty() {
 		IndexBufferVariant::U32(render_ctx.new_buffer(indices_u32, BufferUsage::INDEX_BUFFER)?)
 	} else {
 		IndexBufferVariant::U16(render_ctx.new_buffer(indices_u16, BufferUsage::INDEX_BUFFER)?)
@@ -603,8 +604,8 @@ fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a [gltf::b
 	if view.stride().is_some() {
 		return Err("unexpected interleaved data in glTF file".into());
 	}
-	let start = view.offset() as usize;
-	let end = start + view.length() as usize;
+	let start = view.offset();
+	let end = start + view.length();
 	let buf_i = view.buffer().index();
 	// The offset and length should've been validated by the glTF loader,
 	// hence why we use functions that may panic here.
@@ -861,7 +862,7 @@ impl MeshManager
 			cb.bind_pipeline_graphics(pipeline.clone())?;
 			let pipeline_layout = pipeline.layout().clone();
 
-			if common_sets.len() > 0 {
+			if !common_sets.is_empty() {
 				let sets = Vec::from(common_sets);
 				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
 			}
@@ -957,7 +958,7 @@ impl PassType
 			}
 			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
 		};
-		formats.iter().copied().map(|f| Some(f)).collect()
+		formats.iter().copied().map(Some).collect()
 	}
 	fn pipeline(&self) -> Option<&Arc<GraphicsPipeline>>
 	{
@@ -968,16 +969,10 @@ impl PassType
 	}
 	fn transparency_pass(&self) -> bool
 	{
-		match self {
-			PassType::TransparencyMoments(_) | PassType::Transparency => true,
-			_ => false,
-		}
+		matches!(self, PassType::TransparencyMoments(_) | PassType::Transparency)
 	}
 	fn needs_stencil_buffer(&self) -> bool
 	{
-		match self {
-			PassType::Transparency => true,
-			_ => false,
-		}
+		matches!(self, PassType::Transparency)
 	}
 }

@@ -230,7 +230,6 @@ impl Canvas
 		};
 
 		let ui_pipeline = super::new_graphics_pipeline(
-			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
 			RasterizationState::default(),
@@ -254,7 +253,6 @@ impl Canvas
 		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let text_pipeline = super::new_graphics_pipeline(
-			device.clone(),
 			PrimitiveTopology::TriangleStrip,
 			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
 			RasterizationState::default(),
@@ -633,14 +631,14 @@ fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(Gray
 	let max_width = glyphs
 		.iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box())
-		.map(|bb| bb.width().abs() as u32)
+		.map(|bb| bb.width().unsigned_abs())
 		.max()
 		.unwrap_or(1)
 		.next_multiple_of(8);
 	let max_height = glyphs
 		.iter()
 		.filter_map(|glyph| glyph.pixel_bounding_box())
-		.map(|bb| bb.height().abs() as u32)
+		.map(|bb| bb.height().unsigned_abs())
 		.max()
 		.unwrap_or(1)
 		.next_multiple_of(8);

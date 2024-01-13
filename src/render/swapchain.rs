@@ -75,17 +75,18 @@ impl Swapchain
 
 		log::info!("Available surface present modes: {:?}", &surface_present_modes);
 
-		// Find the intersection between the format candidates and the formats supported by the physical device,
-		// then get the first one remaining.
+		// Find the first intersection between the format candidates and the formats supported by
+		// the physical device.
 		let (image_format, image_color_space) = FORMAT_CANDIDATES
 			.into_iter()
-			.filter(|candidate| surface_formats.contains(candidate))
-			.next()
+			.find(|candidate| surface_formats.contains(candidate))
 			.unwrap();
 
-		let image_usage = (image_color_space == ColorSpace::SrgbNonLinear)
-			.then_some(ImageUsage::STORAGE)
-			.unwrap_or(ImageUsage::TRANSFER_DST);
+		let image_usage = if image_color_space == ColorSpace::SrgbNonLinear {
+			ImageUsage::STORAGE
+		} else {
+			ImageUsage::TRANSFER_DST
+		};
 
 		let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
 		let present_mode = std::env::args()
@@ -124,10 +125,7 @@ impl Swapchain
 			image_color_space
 		);
 
-		let image_views = images
-			.into_iter()
-			.map(|img| ImageView::new_default(img))
-			.collect::<Result<_, _>>()?;
+		let image_views = images.into_iter().map(ImageView::new_default).collect::<Result<_, _>>()?;
 
 		// Set the framerate limit
 		let fps_max_regex = regex::Regex::new("--fps_max=(?<value>\\d+)").unwrap();
@@ -211,10 +209,7 @@ impl Swapchain
 				.recreate(create_info)
 				.map_err(|e| EngineError::new("failed to recreate swapchain", e.unwrap()))?;
 
-			let new_image_views = new_images
-				.into_iter()
-				.map(|img| ImageView::new_default(img))
-				.collect::<Result<_, _>>()?;
+			let new_image_views = new_images.into_iter().map(ImageView::new_default).collect::<Result<_, _>>()?;
 
 			self.swapchain = new_swapchain;
 			self.image_views = new_image_views;
@@ -406,8 +401,8 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 		.with_inner_size(inner_size)
 		.with_title(window_title)
 		.with_fullscreen(fullscreen)
-		.with_decorations(std::env::args().find(|arg| arg == "--noborder").is_none())
-		.build(&event_loop)
+		.with_decorations(!std::env::args().any(|arg| arg == "--noborder"))
+		.build(event_loop)
 		.map_err(|e| EngineError::new("failed to create window", e))?;
 
 	// Center the window on the primary monitor.

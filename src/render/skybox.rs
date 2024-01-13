@@ -153,7 +153,6 @@ impl Skybox
 			..Default::default()
 		};
 		let sky_pipeline = super::new_graphics_pipeline(
-			device.clone(),
 			PrimitiveTopology::TriangleFan,
 			&[vs::load(device.clone())?, fs::load(device.clone())?],
 			RasterizationState::default(),

@@ -32,7 +32,7 @@ use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 };
-use vulkano::device::{Device, DeviceOwned};
+use vulkano::device::DeviceOwned;
 use vulkano::format::{Format, NumericType};
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
@@ -399,7 +399,6 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 /// NOTE: In the vertex shader, giving vertex inputs a name that ends with '_INSTANCE' will apply
 /// `VertexInputRate::Instance` for that input. Otherwise, `VertexInputRate::Vertex` will be used.
 pub fn new_graphics_pipeline(
-	vk_dev: Arc<Device>,
 	topology: PrimitiveTopology,
 	shader_modules: &[Arc<ShaderModule>],
 	rasterization_state: RasterizationState,
@@ -414,6 +413,8 @@ pub fn new_graphics_pipeline(
 		primitive_restart_enable: topology == PrimitiveTopology::TriangleStrip || topology == PrimitiveTopology::TriangleFan,
 		..Default::default()
 	});
+
+	let device = shader_modules.first().unwrap().device().clone();
 
 	let stages: smallvec::SmallVec<[PipelineShaderStageCreateInfo; 5]> = shader_modules
 		.iter()
@@ -442,13 +443,13 @@ pub fn new_graphics_pipeline(
 		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 	};
 
-	Ok(GraphicsPipeline::new(vk_dev.clone(), None, pipeline_info)?)
+	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
 }
 
 /// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
 fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 {
-	if entry_point.info().input_interface.elements().len() > 0 {
+	if !entry_point.info().input_interface.elements().is_empty() {
 		log::debug!("Automatically generating VertexInputState:");
 	}
 
@@ -466,10 +467,11 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 			log::debug!("- binding + attribute {binding} '{name}': {format:?} (stride {stride})");
 
 			// If the input name ends with "_INSTANCE", use `VertexInputRate::Instance` for that input.
-			let input_rate = name
-				.ends_with("_INSTANCE")
-				.then_some(VertexInputRate::Instance { divisor: 1 })
-				.unwrap_or(VertexInputRate::Vertex);
+			let input_rate = if name.ends_with("_INSTANCE") {
+				VertexInputRate::Instance { divisor: 1 }
+			} else {
+				VertexInputRate::Vertex
+			};
 
 			let binding_desc = VertexInputBindingDescription { stride, input_rate };
 			let attribute_desc = VertexInputAttributeDescription {
