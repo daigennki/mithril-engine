@@ -436,13 +436,9 @@ pub fn new_graphics_pipeline(
 	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
 }
 
-/// Automatically determine the given vertex shader's vertex inputs using information from the shader module.
+/// Automatically determine vertex inputs using information from the given vertex shader module.
 fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 {
-	if !entry_point.info().input_interface.elements().is_empty() {
-		log::debug!("Automatically generating VertexInputState:");
-	}
-
 	let (bindings, attributes) = entry_point
 		.info()
 		.input_interface
@@ -451,12 +447,8 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 		.map(|input| {
 			let binding = input.location;
 			let format = format_from_shader_interface(&input.ty);
-			let stride = format.components().iter().fold(0, |acc, c| acc + (*c as u32)) / 8;
+			let stride = format.block_size().try_into().unwrap();
 			let name = input.name.as_ref().map(|n| n.as_ref()).unwrap_or("[unknown]");
-
-			log::debug!("- binding + attribute {binding} '{name}': {format:?} (stride {stride})");
-
-			// If the input name ends with "_INSTANCE", use `VertexInputRate::Instance` for that input.
 			let input_rate = if name.ends_with("_INSTANCE") {
 				VertexInputRate::Instance { divisor: 1 }
 			} else {
@@ -469,6 +461,7 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 				format,
 				offset: 0,
 			};
+
 			((binding, binding_desc), (binding, attribute_desc))
 		})
 		.unzip();
@@ -479,7 +472,6 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 		..Default::default()
 	}
 }
-
 fn format_from_shader_interface(ty: &ShaderInterfaceEntryType) -> Format
 {
 	let possible_formats = match ty.base_type {
