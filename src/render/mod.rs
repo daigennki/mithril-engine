@@ -89,8 +89,8 @@ impl RenderContext
 
 		let swapchain = swapchain::Swapchain::new(graphics_queue, event_loop, game_name)?;
 
-		let descriptor_set_allocator =
-			StandardDescriptorSetAllocator::new(vk_dev.clone(), StandardDescriptorSetAllocatorCreateInfo::default());
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo::default();
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), set_alloc_info);
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// The counts below are multiplied by the number of swapchain images, to account for previous submissions.
@@ -319,14 +319,30 @@ impl RenderContext
 fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 {
 	log::info!("Loading texture file '{}'...", path.display());
+	match path.extension().and_then(|ext| ext.to_str()) {
+		Some("dds") => {
+			let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
+			let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
 
-	let file_ext = path
-		.extension()
-		.ok_or("Could not determine texture file extension!")?
-		.to_str();
+			// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
+			// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
+			let vk_fmt = match dds.get_dxgi_format() {
+				Some(DxgiFormat::BC1_UNorm_sRGB) => Format::BC1_RGBA_SRGB_BLOCK,
+				Some(DxgiFormat::BC4_UNorm) => Format::BC4_UNORM_BLOCK,
+				Some(DxgiFormat::BC5_UNorm) => Format::BC5_UNORM_BLOCK,
+				Some(DxgiFormat::BC7_UNorm) => Format::BC7_SRGB_BLOCK,
+				Some(DxgiFormat::BC7_UNorm_sRGB) => Format::BC7_SRGB_BLOCK,
+				Some(format) => {
+					let e = UnsupportedDdsFormat { format };
+					return Err(EngineError::new("failed to read DDS file", e));
+				}
+				None => return Err("DDS file doesn't have a DXGI format".into()),
+			};
+			let dim = [dds.get_width(), dds.get_height()];
+			let mip_count = dds.get_num_mipmap_levels();
 
-	match file_ext {
-		Some("dds") => load_dds(path),
+			Ok((vk_fmt, dim, mip_count, dds.data))
+		}
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
 			let img = image::io::Reader::open(path)
@@ -337,32 +353,6 @@ fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 			Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
 		}
 	}
-}
-fn load_dds(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
-{
-	let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
-	let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
-	let dds_format = dds
-		.get_dxgi_format()
-		.ok_or("Could not determine DDS image format! Make sure it has a DXGI format.")?;
-
-	// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
-	// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
-	let vk_fmt = match dds_format {
-		DxgiFormat::BC1_UNorm_sRGB => Format::BC1_RGBA_SRGB_BLOCK,
-		DxgiFormat::BC4_UNorm => Format::BC4_UNORM_BLOCK,
-		DxgiFormat::BC5_UNorm => Format::BC5_UNORM_BLOCK,
-		DxgiFormat::BC7_UNorm => Format::BC7_SRGB_BLOCK,
-		DxgiFormat::BC7_UNorm_sRGB => Format::BC7_SRGB_BLOCK,
-		format => {
-			let e = UnsupportedDdsFormat { format };
-			return Err(EngineError::new("failed to read DDS file", e));
-		}
-	};
-	let dim = [dds.get_width(), dds.get_height()];
-	let mip_count = dds.get_num_mipmap_levels();
-
-	Ok((vk_fmt, dim, mip_count, dds.data))
 }
 
 #[derive(Debug)]
