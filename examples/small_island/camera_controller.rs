@@ -28,15 +28,13 @@ fn update_controllable_camera(
 	let input_helper = &input_helper_wrapper.inner;
 	if input_helper.mouse_held(1) {
 		let delta = input_helper.mouse_diff();
+		let sensitivity = 0.05;
+		let adjusted_delta_x = (sensitivity * delta.0) as f64;
+		let adjusted_delta_y = (-sensitivity * delta.1) as f64;
 
 		for (mut transform, _, _) in (&mut transforms, &cameras, &camera_controller).iter() {
-			let sensitivity = 0.05;
-			transform.rotation.z += (sensitivity * delta.0) as f64;
-			while transform.rotation.z >= 360.0 || transform.rotation.z <= -360.0 {
-				transform.rotation.z %= 360.0;
-			}
-
-			transform.rotation.x += (-sensitivity * delta.1) as f64;
+			transform.rotation.z += adjusted_delta_x;
+			transform.rotation.x += adjusted_delta_y;
 			transform.rotation.x = transform.rotation.x.clamp(-80.0, 80.0);
 		}
 	}
