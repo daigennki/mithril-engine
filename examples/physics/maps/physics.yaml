@@ -1,0 +1,44 @@
+sky: "sky/Daylight_*.dds"
+entities:
+-
+  - Transform:
+      position: [0.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [30.0, 0.0, 60.0]
+  - DirectionalLight:
+      color: [1.0, 0.933, 0.833]
+      intensity: 3.5
+- 
+  - Transform:
+      position: [0.0, -10.0, 4.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [0.0, 0.0, 0.0]
+  - Camera:
+- 
+  - Transform:
+      position: [0.0, 0.0, 0.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [0.0, 0.0, 0.0]
+  - Mesh:
+      model_path: examples/common_models/test_floor.glb
+  - RigidBody:
+      rigid_body_type: Fixed
+  - Collider:
+      collider_type: !Cuboid
+        half_extents: [150.0, 150.0, 0.5]
+      mass: 1.0
+- 
+  - Transform:
+      position: [0.0, 0.0, 7.0]
+      scale: [1.0, 1.0, 1.0]
+      rotation: [0.0, 0.0, 0.0]
+  - Mesh:
+      model_path: examples/common_models/sphere.glb
+  - RigidBody:
+      rigid_body_type: Dynamic
+  - Collider:
+      collider_type: !Ball 
+        radius: 0.5
+      mass: 1.0
+      restitution: 0.8
+ 

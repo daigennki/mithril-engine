@@ -8,6 +8,7 @@
 pub mod camera;
 pub mod light;
 pub mod mesh;
+pub mod physics;
 pub mod ui;
 
 use glam::*;
@@ -58,7 +59,7 @@ impl WantsSystemAdded for Transform
 // Wrap rotation values to make them stay within range of [-360.0, 360.0] exclusive.
 fn wrap_rotation(mut transforms: ViewMut<Transform>)
 {
-	for mut t in (&mut transforms).inserted_or_modified_mut().iter() {
+	for mut t in transforms.inserted_or_modified_mut().iter() {
 		if t.rotation.abs().max_element() >= 360.0 {
 			t.rotation %= 360.0;
 		}

@@ -100,6 +100,8 @@ fn init_world(
 	world.add_unique(InputHelperWrapper::default());
 	world.add_unique(render_ctx);
 
+	world.add_unique(component::physics::PhysicsManager::default());
+
 	Ok(world)
 }
 
