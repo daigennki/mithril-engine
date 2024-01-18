@@ -6,7 +6,7 @@
 ----------------------------------------------------------------------------- */
 
 use glam::*;
-use rapier3d_f64::prelude::ColliderBuilder;
+use rapier3d_f64::prelude::{ColliderBuilder, RigidBodyType};
 use serde::Deserialize;
 use shipyard::{EntityId, Get, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, ViewMut, WorkloadSystem};
 use std::collections::HashMap;
@@ -68,7 +68,7 @@ impl WantsSystemAdded for Collider
 #[track(All)]
 pub struct RigidBody
 {
-	pub rigid_body_type: rapier3d_f64::prelude::RigidBodyType,
+	pub rigid_body_type: RigidBodyType,
 }
 impl WantsSystemAdded for RigidBody
 {
@@ -115,12 +115,15 @@ fn simulate_physics(
 
 	// Reflect changes made by the physics engine to the `Transform` component
 	for (_, rb) in physics_manager.rigid_body_set.iter() {
-		let eid = EntityId::from_inner(rb.user_data as u64).unwrap();
-		if let Ok(mut t) = (&mut transforms).get(eid) {
-			let (pos, quat) = (*rb.position()).into();
-			let rotation_rad: DVec3 = quat.to_euler(EulerRot::ZXY).into();
-			t.position = pos;
-			t.rotation = rotation_rad * 180.0 / std::f64::consts::PI;
+		if !rb.is_sleeping() && rb.body_type() != RigidBodyType::Fixed {
+			println!("reflecting physics changes");
+			let eid = EntityId::from_inner(rb.user_data as u64).unwrap();
+			if let Ok(mut t) = (&mut transforms).get(eid) {
+				let (pos, quat) = (*rb.position()).into();
+				let rotation_rad: DVec3 = quat.to_euler(EulerRot::ZXY).into();
+				t.position = pos;
+				t.rotation = rotation_rad * 180.0 / std::f64::consts::PI;
+			}
 		}
 	}
 }
