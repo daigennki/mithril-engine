@@ -116,7 +116,6 @@ fn simulate_physics(
 	// Reflect changes made by the physics engine to the `Transform` component
 	for (_, rb) in physics_manager.rigid_body_set.iter() {
 		if !rb.is_sleeping() && rb.body_type() != RigidBodyType::Fixed {
-			println!("reflecting physics changes");
 			let eid = EntityId::from_inner(rb.user_data as u64).unwrap();
 			if let Ok(mut t) = (&mut transforms).get(eid) {
 				let (pos, quat) = (*rb.position()).into();
