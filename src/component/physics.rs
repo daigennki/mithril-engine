@@ -88,6 +88,14 @@ fn simulate_physics(
 	collider_components: View<Collider>,
 )
 {
+	// Clean up removed components
+	for eid in rigid_body_components.removed() {
+		physics_manager.remove_rigid_body(eid);
+	}
+	for eid in collider_components.removed() {
+		physics_manager.remove_collider(eid);
+	}
+
 	// Insert rigid bodies for newly inserted `RigidBody` components
 	for (eid, (t, rb)) in (&transforms, rigid_body_components.inserted()).iter().with_id() {
 		let position = nalgebra::geometry::Isometry {
@@ -96,6 +104,7 @@ fn simulate_physics(
 		};
 		let rigid_body = rapier3d_f64::prelude::RigidBodyBuilder::new(rb.rigid_body_type)
 			.position(position)
+			.sleeping(rb.rigid_body_type == RigidBodyType::Fixed)
 			.user_data(eid.inner() as u128)
 			.build();
 		let rigid_body_handle = physics_manager.rigid_body_set.insert(rigid_body);
@@ -107,9 +116,20 @@ fn simulate_physics(
 		physics_manager.insert_collider(eid, c.collider_type, c.mass, c.restitution);
 	}
 
-	// TODO: handle changes by other components to the `Transform` used by a `RigidBody` component
+	// TODO: handle changes to the `RigidBody` or `Collider` components
 
-	// TODO: clean up removed components
+	// Handle changes by other components to the `Transform` used by a `RigidBody` component
+	for (eid, (t, _)) in (transforms.modified(), &rigid_body_components).iter().with_id() {
+		if let Some(rigid_body_handle) = physics_manager.rigid_body_handles.get(&eid).copied() {
+			if let Some(rigid_body) = physics_manager.rigid_body_set.get_mut(rigid_body_handle) {
+				let position = nalgebra::geometry::Isometry {
+					rotation: t.rotation_quat().into(),
+					translation: t.position.into(),
+				};
+				rigid_body.set_position(position, true);
+			}
+		}
+	}
 
 	physics_manager.step();
 
@@ -160,6 +180,30 @@ impl PhysicsManager
 				.insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set);
 			self.collider_handles.insert(eid, collider_handle);
 		}
+	}
+
+	fn remove_rigid_body(&mut self, eid: EntityId)
+	{
+		if let Some(handle) = self.rigid_body_handles.get(&eid).copied() {
+			self.rigid_body_set.remove(
+				handle,
+				&mut self.island_manager,
+				&mut self.collider_set,
+				&mut self.impulse_joint_set,
+				&mut self.multibody_joint_set,
+				false,
+			);
+		}
+		self.rigid_body_handles.remove(&eid);
+	}
+
+	fn remove_collider(&mut self, eid: EntityId)
+	{
+		if let Some(handle) = self.collider_handles.get(&eid).copied() {
+			self.collider_set
+				.remove(handle, &mut self.island_manager, &mut self.rigid_body_set, true);
+		}
+		self.collider_handles.remove(&eid);
 	}
 
 	fn step(&mut self)
