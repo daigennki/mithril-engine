@@ -385,9 +385,6 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 }
 
 /// Create a new graphics pipeline using the given parameters.
-///
-/// NOTE: In the vertex shader, giving vertex inputs a name that ends with '_INSTANCE' will apply
-/// `VertexInputRate::Instance` for that input. Otherwise, `VertexInputRate::Vertex` will be used.
 pub fn new_graphics_pipeline(
 	topology: PrimitiveTopology,
 	shader_modules: &[Arc<ShaderModule>],
@@ -446,22 +443,15 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 		.iter()
 		.map(|input| {
 			let binding = input.location;
-			let format = format_from_shader_interface(&input.ty);
-			let stride = format.block_size().try_into().unwrap();
-			let name = input.name.as_ref().map(|n| n.as_ref()).unwrap_or("[unknown]");
-			let input_rate = if name.ends_with("_INSTANCE") {
-				VertexInputRate::Instance { divisor: 1 }
-			} else {
-				VertexInputRate::Vertex
-			};
-
-			let binding_desc = VertexInputBindingDescription { stride, input_rate };
 			let attribute_desc = VertexInputAttributeDescription {
 				binding,
-				format,
+				format: format_from_shader_interface(&input.ty),
 				offset: 0,
 			};
-
+			let binding_desc = VertexInputBindingDescription {
+				stride: attribute_desc.format.block_size().try_into().unwrap(),
+				input_rate: VertexInputRate::Vertex,
+			};
 			((binding, binding_desc), (binding, attribute_desc))
 		})
 		.unzip();

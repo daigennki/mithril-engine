@@ -107,16 +107,24 @@ mod ui_text_vs
 				vec2 texture_size_inv;
 			};
 
-			// for position input, xy: top left pos, zw: width and height
-			layout(location = 0) in vec4 pos_INSTANCE;
-			layout(location = 1) in vec4 color_INSTANCE;
+			struct GlyphInfo
+			{
+				vec4 pos; // xy: top left pos, zw: width and height
+				vec4 color;
+			};
+			layout(binding = 1) readonly buffer glyph_info
+			{
+				GlyphInfo glyphs[];
+			};
+
 			layout(location = 0) out vec2 texcoord;
 			layout(location = 1) flat out int instance_index;
 			layout(location = 2) flat out vec4 glyph_color;
 
 			void main()
 			{
-				vec4 pos = pos_INSTANCE;
+				GlyphInfo glyph_info = glyphs[gl_InstanceIndex];
+				vec4 pos = glyph_info.pos;
 				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, pos.w }, { pos.z, 0.0 }, pos.zw };
 				vec2 texcoord_logical_pixels = texcoords[min(gl_VertexIndex, 3)];
 				vec2 pos2 = texcoord_logical_pixels + pos.xy;
@@ -125,7 +133,7 @@ mod ui_text_vs
 				gl_Position = vec4(transformation * pos2 + translation_projected, 0.0, 1.0);
 
 				instance_index = gl_InstanceIndex;
-				glyph_color = color_INSTANCE;
+				glyph_color = glyph_info.color;
 			}
 		",
 	}
@@ -153,9 +161,16 @@ mod ui_text_fs
 	}
 }
 
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Copy, Clone)]
+#[repr(C)]
+struct GlyphInfo
+{
+	pos: Vec4,
+	color: Vec4,
+}
 struct UiGpuResources
 {
-	text_vbo: Option<Subbuffer<[Vec4]>>,
+	glyph_info_buffer: Option<Subbuffer<[GlyphInfo]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	projected: Affine2,
 	logical_texture_size_inv: Vec2,
@@ -170,6 +185,7 @@ pub struct Canvas
 	scale_factor: f32,
 
 	set_layout: Arc<DescriptorSetLayout>,
+	text_set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
 	text_pipeline: Arc<GraphicsPipeline>,
 
@@ -201,7 +217,7 @@ impl Canvas
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
 		};
 		let set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [(0, image_binding)].into(),
+			bindings: [(0, image_binding.clone())].into(),
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
@@ -240,9 +256,19 @@ impl Canvas
 		)?;
 
 		/* UI text pipeline */
+		let storage_buffer_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::VERTEX,
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageBuffer)
+		};
+		let set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [(0, image_binding), (1, storage_buffer_binding)].into(),
+			..Default::default()
+		};
+		let text_set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+
 		let text_push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>() * 2;
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![set_layout.clone()],
+			set_layouts: vec![text_set_layout.clone()],
 			push_constant_ranges: vec![PushConstantRange {
 				stages: ShaderStages::VERTEX,
 				offset: 0,
@@ -290,6 +316,7 @@ impl Canvas
 			canvas_scaling,
 			scale_factor,
 			set_layout,
+			text_set_layout,
 			ui_pipeline,
 			text_pipeline,
 			text_resources: Default::default(),
@@ -329,7 +356,7 @@ impl Canvas
 		transform: &UITransform,
 		image_view: Arc<ImageView>,
 		default_scale: Vec2,
-		text_vbo: Option<Subbuffer<[Vec4]>>,
+		glyph_info_buffer: Option<Subbuffer<[GlyphInfo]>>,
 	) -> crate::Result<UiGpuResources>
 	{
 		let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
@@ -341,11 +368,19 @@ impl Canvas
 		// division inverted here so that division isn't performed in shader
 		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
 
-		let writes = [WriteDescriptorSet::image_view(0, image_view)];
-		let descriptor_set = PersistentDescriptorSet::new(&render_ctx.descriptor_set_allocator, set_layout, writes, [])?;
+		let writes: smallvec::SmallVec<[WriteDescriptorSet; 2]> = if let Some(buf) = glyph_info_buffer.clone() {
+			smallvec::smallvec![
+				WriteDescriptorSet::image_view(0, image_view),
+				WriteDescriptorSet::buffer(1, buf),
+			]
+		} else {
+			smallvec::smallvec![WriteDescriptorSet::image_view(0, image_view)]
+		};
+		let descriptor_set =
+			PersistentDescriptorSet::new(&render_ctx.descriptor_set_allocator, set_layout, writes.into_iter(), [])?;
 
 		Ok(UiGpuResources {
-			text_vbo,
+			glyph_info_buffer,
 			descriptor_set,
 			projected,
 			logical_texture_size_inv,
@@ -415,7 +450,7 @@ impl Canvas
 				text_str,
 			);
 			if let Some(resources) = self.text_resources.get_mut(&eid) {
-				resources.text_vbo = None;
+				resources.glyph_info_buffer = None;
 			}
 			return Ok(());
 		}
@@ -426,7 +461,7 @@ impl Canvas
 		// remove the vertex buffers from the GPU resources, and then return immediately.
 		if glyph_image_array.is_empty() {
 			if let Some(resources) = self.text_resources.get_mut(&eid) {
-				resources.text_vbo = None;
+				resources.glyph_info_buffer = None;
 			}
 			return Ok(());
 		}
@@ -441,8 +476,8 @@ impl Canvas
 			.text_resources
 			.get(&eid)
 			.as_ref()
-			.and_then(|res| res.text_vbo.as_ref())
-			.map(|vbo| (vbo.len() / 2) as usize)
+			.and_then(|res| res.glyph_info_buffer.as_ref())
+			.map(|buf| buf.len() as usize)
 			.unwrap_or(0);
 
 		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_count);
@@ -467,24 +502,35 @@ impl Canvas
 
 		let colors = vec![text.color; glyph_count];
 
-		// Combine position and color data into a single vertex buffer.
-		let mut vbo_data = text_pos_verts;
-		vbo_data.extend_from_slice(&colors);
+		// Combine position and color data into a single storage buffer.
+		let glyph_infos: Vec<_> = text_pos_verts
+			.into_iter()
+			.zip(colors)
+			.map(|(pos, color)| GlyphInfo { pos, color })
+			.collect();
 
-		let text_vbo = if glyph_count == prev_glyph_count {
-			// Reuse the vertex buffer if the glyph count hasn't changed.
+		let glyph_info_buf = if glyph_count == prev_glyph_count {
+			// Reuse the buffer if the glyph count hasn't changed.
 			// If `prev_glyph_count` is greater than 0, we already know that `text_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.text_resources.get(&eid).unwrap();
-			let some_vbo = resources.text_vbo.clone().unwrap();
-			render_ctx.transfer_manager.update_buffer(vbo_data.into(), some_vbo.clone());
-			some_vbo
+			let some_buf = resources.glyph_info_buffer.clone().unwrap();
+			render_ctx
+				.transfer_manager
+				.update_buffer(glyph_infos.into(), some_buf.clone());
+			some_buf
 		} else {
-			render_ctx.new_buffer(vbo_data, BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST)?
+			render_ctx.new_buffer(glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		let resources =
-			self.update_transform(render_ctx, self.set_layout.clone(), transform, tex, Vec2::ONE, Some(text_vbo))?;
+		let resources = self.update_transform(
+			render_ctx,
+			self.text_set_layout.clone(),
+			transform,
+			tex,
+			Vec2::ONE,
+			Some(glyph_info_buf),
+		)?;
 		self.text_resources.insert(eid, resources);
 
 		Ok(())
@@ -539,7 +585,7 @@ impl Canvas
 
 		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
 		for resources in self.text_resources.values() {
-			if let Some(vbo) = resources.text_vbo.clone() {
+			if let Some(glyph_buf) = &resources.glyph_info_buffer {
 				let mut push_constant_data: [f32; 8] = Default::default();
 				resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
 				resources
@@ -553,8 +599,7 @@ impl Canvas
 					0,
 					vec![resources.descriptor_set.clone()],
 				)?;
-				let glyph_count = vbo.len() / 2;
-				cb.bind_vertex_buffers(0, vbo.clone().split_at(glyph_count))?;
+				let glyph_count = glyph_buf.len();
 				cb.draw(4, glyph_count as u32, 0, 0)?;
 			}
 		}
