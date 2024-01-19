@@ -46,7 +46,7 @@ use vulkano::memory::{
 use vulkano::pipeline::graphics::{
 	color_blend::ColorBlendState,
 	depth_stencil::{CompareOp, DepthStencilState},
-	input_assembly::{InputAssemblyState, PrimitiveTopology},
+	input_assembly::InputAssemblyState,
 	multisample::MultisampleState,
 	rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo,
@@ -55,7 +55,7 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
-use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderModule, ShaderStages};
+use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderStages};
 use vulkano::DeviceSize;
 
 use crate::EngineError;
@@ -386,8 +386,8 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 
 /// Create a new graphics pipeline using the given parameters.
 pub fn new_graphics_pipeline(
-	topology: PrimitiveTopology,
-	shader_modules: &[Arc<ShaderModule>],
+	input_assembly_state: InputAssemblyState,
+	stage_entry_points: &[EntryPoint],
 	rasterization_state: RasterizationState,
 	pipeline_layout: Arc<PipelineLayout>,
 	rendering_info: PipelineRenderingCreateInfo,
@@ -395,31 +395,22 @@ pub fn new_graphics_pipeline(
 	depth_stencil_state: Option<DepthStencilState>,
 ) -> crate::Result<Arc<GraphicsPipeline>>
 {
-	let input_assembly_state = Some(InputAssemblyState {
-		topology,
-		primitive_restart_enable: topology == PrimitiveTopology::TriangleStrip || topology == PrimitiveTopology::TriangleFan,
-		..Default::default()
-	});
-
-	let device = shader_modules.first().unwrap().device().clone();
-
-	let stages: smallvec::SmallVec<[PipelineShaderStageCreateInfo; 5]> = shader_modules
+	let vertex_input_state = stage_entry_points
 		.iter()
-		.map(|sm| {
-			let entry_point = sm.entry_point("main").ok_or("no 'main' entry point in shader")?;
-			Ok(PipelineShaderStageCreateInfo::new(entry_point))
-		})
-		.collect::<Result<_, EngineError>>()?;
+		.find(|entry_point| entry_point.info().execution_model == ExecutionModel::Vertex)
+		.map(gen_vertex_input_state);
 
-	let vertex_input_state = stages
+	let stages = stage_entry_points
 		.iter()
-		.find(|stage| stage.entry_point.info().execution_model == ExecutionModel::Vertex)
-		.map(|vs_stage| gen_vertex_input_state(&vs_stage.entry_point));
+		.cloned()
+		.map(PipelineShaderStageCreateInfo::new)
+		.collect();
 
+	let device = pipeline_layout.device().clone();
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
 		vertex_input_state,
-		input_assembly_state,
+		input_assembly_state: Some(input_assembly_state),
 		viewport_state: Some(ViewportState::default()),
 		rasterization_state: Some(rasterization_state),
 		multisample_state: Some(MultisampleState::default()),
@@ -429,7 +420,6 @@ pub fn new_graphics_pipeline(
 		subpass: Some(rendering_info.into()),
 		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 	};
-
 	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
 }
 

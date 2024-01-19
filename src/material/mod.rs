@@ -18,7 +18,7 @@ use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 		depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOp, StencilOpState, StencilOps, StencilState},
-		input_assembly::PrimitiveTopology,
+		input_assembly::InputAssemblyState,
 		rasterization::{CullMode, RasterizationState},
 		subpass::PipelineRenderingCreateInfo,
 	},
@@ -180,9 +180,11 @@ impl MaterialPipelineConfig
 		pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
 	{
+		let vs_entry_point = self.vertex_shader.entry_point("main").unwrap();
+
 		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
-		let primitive_topology = PrimitiveTopology::TriangleList;
+		let input_assembly_state = InputAssemblyState::default();
 		let rasterization_state = RasterizationState {
 			cull_mode: CullMode::Back,
 			..Default::default()
@@ -209,8 +211,8 @@ impl MaterialPipelineConfig
 
 		// Create the opaque pass pipeline.
 		let opaque_pipeline = crate::render::new_graphics_pipeline(
-			primitive_topology,
-			&[self.vertex_shader.clone(), self.fragment_shader],
+			input_assembly_state,
+			&[vs_entry_point.clone(), self.fragment_shader.entry_point("main").unwrap()],
 			rasterization_state.clone(),
 			pipeline_layout,
 			rendering_formats,
@@ -272,8 +274,8 @@ impl MaterialPipelineConfig
 				};
 
 				crate::render::new_graphics_pipeline(
-					primitive_topology,
-					&[self.vertex_shader, fs],
+					input_assembly_state,
+					&[vs_entry_point, fs.entry_point("main").unwrap()],
 					rasterization_state,
 					pipeline_layout_oit,
 					oit_rendering_formats,

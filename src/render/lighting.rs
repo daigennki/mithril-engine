@@ -22,7 +22,7 @@ use vulkano::image::{
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
 	depth_stencil::{DepthState, DepthStencilState},
-	input_assembly::PrimitiveTopology,
+	input_assembly::InputAssemblyState,
 	rasterization::{DepthBiasState, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
 	GraphicsPipeline,
@@ -165,8 +165,8 @@ impl LightManager
 			..Default::default()
 		};
 		let shadow_pipeline = crate::render::new_graphics_pipeline(
-			PrimitiveTopology::TriangleList,
-			&[vs_shadow::load(device.clone())?],
+			InputAssemblyState::default(),
+			&[vs_shadow::load(device.clone())?.entry_point("main").unwrap()],
 			rasterization_state,
 			pipeline_layout,
 			rendering_formats,

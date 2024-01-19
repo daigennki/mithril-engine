@@ -24,7 +24,7 @@ use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOpState, StencilOps, StencilState},
-	input_assembly::PrimitiveTopology,
+	input_assembly::InputAssemblyState,
 	rasterization::{CullMode, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
 	viewport::Viewport,
@@ -130,8 +130,11 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let moments_pl = super::new_graphics_pipeline(
-			PrimitiveTopology::TriangleList,
-			&[vs_nonorm::load(device.clone())?, fs_moments::load(device.clone())?],
+			InputAssemblyState::default(),
+			&[
+				vs_nonorm::load(device.clone())?.entry_point("main").unwrap(),
+				fs_moments::load(device.clone())?.entry_point("main").unwrap(),
+			],
 			RasterizationState {
 				cull_mode: CullMode::Back,
 				..Default::default()
@@ -211,10 +214,10 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let transparency_compositing_pl = super::new_graphics_pipeline(
-			PrimitiveTopology::TriangleList,
+			InputAssemblyState::default(),
 			&[
-				vs_fill_viewport::load(device.clone())?,
-				fs_oit_compositing::load(device.clone())?,
+				vs_fill_viewport::load(device.clone())?.entry_point("main").unwrap(),
+				fs_oit_compositing::load(device.clone())?.entry_point("main").unwrap(),
 			],
 			RasterizationState::default(),
 			stage4_pipeline_layout,

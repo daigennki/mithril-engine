@@ -30,7 +30,7 @@ use vulkano::image::{
 use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
-		input_assembly::PrimitiveTopology,
+		input_assembly::{InputAssemblyState, PrimitiveTopology},
 		rasterization::RasterizationState,
 		subpass::PipelineRenderingCreateInfo,
 		viewport::Viewport,
@@ -234,6 +234,12 @@ impl Canvas
 		};
 		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
+		let input_assembly_state = InputAssemblyState {
+			topology: PrimitiveTopology::TriangleStrip,
+			primitive_restart_enable: true,
+			..Default::default()
+		};
+
 		let blend_attachment_state = ColorBlendAttachmentState {
 			blend: Some(AttachmentBlend::alpha()),
 			..Default::default()
@@ -244,10 +250,12 @@ impl Canvas
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
 		};
-
 		let ui_pipeline = super::new_graphics_pipeline(
-			PrimitiveTopology::TriangleStrip,
-			&[ui_vs::load(device.clone())?, ui_fs::load(device.clone())?],
+			input_assembly_state,
+			&[
+				ui_vs::load(device.clone())?.entry_point("main").unwrap(),
+				ui_fs::load(device.clone())?.entry_point("main").unwrap(),
+			],
 			RasterizationState::default(),
 			pipeline_layout,
 			rendering_formats.clone(),
@@ -279,8 +287,11 @@ impl Canvas
 		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let text_pipeline = super::new_graphics_pipeline(
-			PrimitiveTopology::TriangleStrip,
-			&[ui_text_vs::load(device.clone())?, ui_text_fs::load(device.clone())?],
+			input_assembly_state,
+			&[
+				ui_text_vs::load(device.clone())?.entry_point("main").unwrap(),
+				ui_text_fs::load(device.clone())?.entry_point("main").unwrap(),
+			],
 			RasterizationState::default(),
 			text_pipeline_layout,
 			rendering_formats,
