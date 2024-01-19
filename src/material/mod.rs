@@ -184,6 +184,7 @@ impl MaterialPipelineConfig
 
 		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
+		let vertex_inputs = [Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT];
 		let input_assembly_state = InputAssemblyState::default();
 		let rasterization_state = RasterizationState {
 			cull_mode: CullMode::Back,
@@ -211,6 +212,7 @@ impl MaterialPipelineConfig
 
 		// Create the opaque pass pipeline.
 		let opaque_pipeline = crate::render::new_graphics_pipeline(
+			&vertex_inputs,
 			input_assembly_state,
 			&[vs_entry_point.clone(), self.fragment_shader.entry_point("main").unwrap()],
 			rasterization_state.clone(),
@@ -274,6 +276,7 @@ impl MaterialPipelineConfig
 				};
 
 				crate::render::new_graphics_pipeline(
+					&vertex_inputs,
 					input_assembly_state,
 					&[vs_entry_point, fs.entry_point("main").unwrap()],
 					rasterization_state,

@@ -251,6 +251,7 @@ impl Canvas
 			..Default::default()
 		};
 		let ui_pipeline = super::new_graphics_pipeline(
+			&[Format::R32G32_SFLOAT, Format::R32G32_SFLOAT],
 			input_assembly_state,
 			&[
 				ui_vs::load(device.clone())?.entry_point("main").unwrap(),
@@ -287,6 +288,7 @@ impl Canvas
 		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
 		let text_pipeline = super::new_graphics_pipeline(
+			&[],
 			input_assembly_state,
 			&[
 				ui_text_vs::load(device.clone())?.entry_point("main").unwrap(),

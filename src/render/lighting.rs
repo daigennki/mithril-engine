@@ -165,6 +165,7 @@ impl LightManager
 			..Default::default()
 		};
 		let shadow_pipeline = crate::render::new_graphics_pipeline(
+			&[Format::R32G32B32_SFLOAT],
 			InputAssemblyState::default(),
 			&[vs_shadow::load(device.clone())?.entry_point("main").unwrap()],
 			rasterization_state,

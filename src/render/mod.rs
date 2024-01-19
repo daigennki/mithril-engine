@@ -33,7 +33,7 @@ use vulkano::descriptor_set::{
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 };
 use vulkano::device::DeviceOwned;
-use vulkano::format::{Format, NumericType};
+use vulkano::format::Format;
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::ImageView,
@@ -55,7 +55,7 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
-use vulkano::shader::{spirv::ExecutionModel, EntryPoint, ShaderInterfaceEntryType, ShaderStages};
+use vulkano::shader::{EntryPoint, ShaderStages};
 use vulkano::DeviceSize;
 
 use crate::EngineError;
@@ -385,7 +385,9 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 }
 
 /// Create a new graphics pipeline using the given parameters.
+#[allow(clippy::too_many_arguments)]
 pub fn new_graphics_pipeline(
+	vertex_inputs: &[Format],
 	input_assembly_state: InputAssemblyState,
 	stage_entry_points: &[EntryPoint],
 	rasterization_state: RasterizationState,
@@ -395,11 +397,6 @@ pub fn new_graphics_pipeline(
 	depth_stencil_state: Option<DepthStencilState>,
 ) -> crate::Result<Arc<GraphicsPipeline>>
 {
-	let vertex_input_state = stage_entry_points
-		.iter()
-		.find(|entry_point| entry_point.info().execution_model == ExecutionModel::Vertex)
-		.map(gen_vertex_input_state);
-
 	let stages = stage_entry_points
 		.iter()
 		.cloned()
@@ -409,7 +406,7 @@ pub fn new_graphics_pipeline(
 	let device = pipeline_layout.device().clone();
 	let pipeline_info = GraphicsPipelineCreateInfo {
 		stages,
-		vertex_input_state,
+		vertex_input_state: Some(gen_vertex_input_state(vertex_inputs)),
 		input_assembly_state: Some(input_assembly_state),
 		viewport_state: Some(ViewportState::default()),
 		rasterization_state: Some(rasterization_state),
@@ -422,24 +419,20 @@ pub fn new_graphics_pipeline(
 	};
 	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
 }
-
-/// Automatically determine vertex inputs using information from the given vertex shader module.
-fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
+fn gen_vertex_input_state(formats: &[Format]) -> VertexInputState
 {
-	let (bindings, attributes) = entry_point
-		.info()
-		.input_interface
-		.elements()
+	let (bindings, attributes) = formats
 		.iter()
-		.map(|input| {
-			let binding = input.location;
+		.copied()
+		.zip(0..)
+		.map(|(format, binding)| {
 			let attribute_desc = VertexInputAttributeDescription {
 				binding,
-				format: format_from_shader_interface(&input.ty),
+				format,
 				offset: 0,
 			};
 			let binding_desc = VertexInputBindingDescription {
-				stride: attribute_desc.format.block_size().try_into().unwrap(),
+				stride: format.block_size().try_into().unwrap(),
 				input_rate: VertexInputRate::Vertex,
 			};
 			((binding, binding_desc), (binding, attribute_desc))
@@ -451,29 +444,4 @@ fn gen_vertex_input_state(entry_point: &EntryPoint) -> VertexInputState
 		attributes,
 		..Default::default()
 	}
-}
-fn format_from_shader_interface(ty: &ShaderInterfaceEntryType) -> Format
-{
-	let possible_formats = match ty.base_type {
-		NumericType::Float => [
-			Format::R32_SFLOAT,
-			Format::R32G32_SFLOAT,
-			Format::R32G32B32_SFLOAT,
-			Format::R32G32B32A32_SFLOAT,
-		],
-		NumericType::Int => [
-			Format::R32_SINT,
-			Format::R32G32_SINT,
-			Format::R32G32B32_SINT,
-			Format::R32G32B32A32_SINT,
-		],
-		NumericType::Uint => [
-			Format::R32_UINT,
-			Format::R32G32_UINT,
-			Format::R32G32B32_UINT,
-			Format::R32G32B32A32_UINT,
-		],
-	};
-	let format_index = (ty.num_components - 1) as usize;
-	possible_formats[format_index]
 }

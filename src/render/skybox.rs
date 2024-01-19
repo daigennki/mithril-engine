@@ -161,6 +161,7 @@ impl Skybox
 			..Default::default()
 		};
 		let sky_pipeline = super::new_graphics_pipeline(
+			&[Format::R32G32B32_SFLOAT],
 			input_assembly_state,
 			&[
 				vs::load(device.clone())?.entry_point("main").unwrap(),

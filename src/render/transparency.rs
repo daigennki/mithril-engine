@@ -130,6 +130,7 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let moments_pl = super::new_graphics_pipeline(
+			&[Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT],
 			InputAssemblyState::default(),
 			&[
 				vs_nonorm::load(device.clone())?.entry_point("main").unwrap(),
@@ -214,6 +215,7 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 		let transparency_compositing_pl = super::new_graphics_pipeline(
+			&[],
 			InputAssemblyState::default(),
 			&[
 				vs_fill_viewport::load(device.clone())?.entry_point("main").unwrap(),
