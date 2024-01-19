@@ -419,7 +419,7 @@ pub fn new_graphics_pipeline(
 	};
 	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
 }
-fn gen_vertex_input_state(formats: &[Format]) -> VertexInputState
+pub fn gen_vertex_input_state(formats: &[Format]) -> VertexInputState
 {
 	let (bindings, attributes) = formats
 		.iter()

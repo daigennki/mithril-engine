@@ -8,7 +8,6 @@
 use glam::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SubpassContents,
 };
@@ -42,20 +41,37 @@ mod vs
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		src: r"
-			#version 450
+			#version 460
 
 			layout(push_constant) uniform pc
 			{
 				mat4 sky_projview;
 			};
-			
-			layout(location = 0) in vec3 position;
+
+			// Sky cube, consisting of two fans with the center being opposite corners of the cube.
+			// Relative to camera at default state, -X is left, +Y is forward, and +Z is up.
+			const vec3 POSITIONS[8] = {
+				{ -1.0, -1.0, -1.0 },
+				{ -1.0, -1.0, 1.0 },
+				{ 1.0, -1.0, 1.0 },
+				{ 1.0, -1.0, -1.0 },
+				{ 1.0, 1.0, -1.0 },
+				{ -1.0, 1.0, -1.0 },
+				{ -1.0, 1.0, 1.0 },
+				{ 1.0, 1.0, 1.0 },
+			};
+			const int INDICES[2][8] = {
+				{ 0, 1, 2, 3, 4, 5, 6, 1 },
+				{ 7, 1, 2, 3, 4, 5, 6, 1 },
+			};
+
 			layout(location = 0) out vec3 cube_pos; // give original vertex position to fragment shader
 
 			void main()
 			{
-				cube_pos = position;
-				vec4 new_pos = sky_projview * vec4(position, 1.0);
+				int index = INDICES[gl_InstanceIndex][gl_VertexIndex];
+				cube_pos = POSITIONS[index];
+				vec4 new_pos = sky_projview * vec4(cube_pos, 1.0);
 				gl_Position = new_pos.xyww;
 			}
 		",
@@ -66,7 +82,7 @@ mod fs
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		src: r"
-			#version 450
+			#version 460
 
 			layout(binding = 0) uniform samplerCube sky_tex;
 
@@ -81,41 +97,10 @@ mod fs
 	}
 }
 
-#[derive(Copy, Clone, bytemuck::AnyBitPattern)]
-#[repr(C)]
-struct SkyCubeData
-{
-	position: [f32; 24],
-	indices: [u16; 17],
-}
-const SKY_CUBE_DATA: SkyCubeData = SkyCubeData {
-	// Sky cube, consisting of two fans with the "center" being opposite corners of the cube.
-	// Relative to camera at default state, -X is left, +Y is forward, and +Z is up.
-	#[rustfmt::skip]
-	position: [
-		-1.0, -1.0, -1.0,
-		-1.0, -1.0, 1.0,
-		1.0, -1.0, 1.0,
-		1.0, -1.0, -1.0,
-		1.0, 1.0, -1.0,
-		-1.0, 1.0, -1.0,
-		-1.0, 1.0, 1.0,
-		1.0, 1.0, 1.0,
-	],
-
-	#[rustfmt::skip]
-	indices: [
-		0, 1, 2, 3, 4, 5, 6, 1, u16::MAX,
-		7, 1, 2, 3, 4, 5, 6, 1,
-	],
-};
-
 #[derive(shipyard::Unique)]
 pub struct Skybox
 {
 	sky_pipeline: Arc<GraphicsPipeline>,
-	cube_vbo: Subbuffer<[f32]>,
-	cube_ibo: Subbuffer<[u16]>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 }
 impl Skybox
@@ -153,7 +138,6 @@ impl Skybox
 
 		let input_assembly_state = InputAssemblyState {
 			topology: PrimitiveTopology::TriangleFan,
-			primitive_restart_enable: true,
 			..Default::default()
 		};
 		let rendering_formats = PipelineRenderingCreateInfo {
@@ -161,7 +145,7 @@ impl Skybox
 			..Default::default()
 		};
 		let sky_pipeline = super::new_graphics_pipeline(
-			&[Format::R32G32B32_SFLOAT],
+			&[],
 			input_assembly_state,
 			&[
 				vs::load(device.clone())?.entry_point("main").unwrap(),
@@ -185,13 +169,8 @@ impl Skybox
 			[],
 		)?;
 
-		let cube_buffer = render_ctx.new_buffer(vec![SKY_CUBE_DATA], BufferUsage::VERTEX_BUFFER | BufferUsage::INDEX_BUFFER)?;
-		let (cube_vbo_bytes, cube_ibo_bytes) = cube_buffer.into_bytes().split_at(std::mem::size_of::<[f32; 24]>() as u64);
-
 		Ok(Skybox {
 			sky_pipeline,
-			cube_vbo: cube_vbo_bytes.reinterpret(),
-			cube_ibo: cube_ibo_bytes.reinterpret(),
 			descriptor_set,
 		})
 	}
@@ -231,9 +210,7 @@ impl Skybox
 				vec![self.descriptor_set.clone()],
 			)?
 			.push_constants(self.sky_pipeline.layout().clone(), 0, sky_projview)?
-			.bind_vertex_buffers(0, vec![self.cube_vbo.clone()])?
-			.bind_index_buffer(self.cube_ibo.clone())?
-			.draw_indexed(17, 1, 0, 0, 0)?
+			.draw(8, 2, 0, 0)?
 			.end_rendering()?;
 
 		Ok(())
