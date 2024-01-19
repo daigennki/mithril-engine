@@ -25,12 +25,12 @@ use vulkano::image::{
 use vulkano::pipeline::graphics::{
 	color_blend::ColorBlendState,
 	input_assembly::{InputAssemblyState, PrimitiveTopology},
-	rasterization::RasterizationState,
 	subpass::PipelineRenderingCreateInfo,
-	GraphicsPipeline,
+	viewport::Viewport,
+	GraphicsPipeline, GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::layout::{PipelineLayoutCreateInfo, PushConstantRange};
-use vulkano::pipeline::{graphics::viewport::Viewport, Pipeline, PipelineBindPoint, PipelineLayout};
+use vulkano::pipeline::{DynamicState, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
@@ -144,19 +144,22 @@ impl Skybox
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
 		};
-		let sky_pipeline = super::new_graphics_pipeline(
-			&[],
-			input_assembly_state,
-			&[
-				vs::load(device.clone())?.entry_point("main").unwrap(),
-				fs::load(device.clone())?.entry_point("main").unwrap(),
+		let pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![
+				PipelineShaderStageCreateInfo::new(vs::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(fs::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			RasterizationState::default(),
-			pipeline_layout,
-			rendering_formats,
-			Some(ColorBlendState::with_attachment_states(1, Default::default())),
-			None,
-		)?;
+			vertex_input_state: Some(Default::default()),
+			input_assembly_state: Some(input_assembly_state),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(Default::default()),
+			multisample_state: Some(Default::default()),
+			color_blend_state: Some(ColorBlendState::with_attachment_states(1, Default::default())),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(rendering_formats.into()),
+			..GraphicsPipelineCreateInfo::layout(pipeline_layout)
+		};
+		let sky_pipeline = GraphicsPipeline::new(device, None, pipeline_info)?;
 
 		// sky texture cubemap
 		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];

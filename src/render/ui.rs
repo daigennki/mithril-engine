@@ -31,13 +31,12 @@ use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
 		input_assembly::{InputAssemblyState, PrimitiveTopology},
-		rasterization::RasterizationState,
 		subpass::PipelineRenderingCreateInfo,
 		viewport::Viewport,
-		GraphicsPipeline,
+		GraphicsPipeline, GraphicsPipelineCreateInfo,
 	},
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	Pipeline, PipelineBindPoint, PipelineLayout,
+	DynamicState, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
@@ -250,19 +249,22 @@ impl Canvas
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
 		};
-		let ui_pipeline = super::new_graphics_pipeline(
-			&[Format::R32G32_SFLOAT, Format::R32G32_SFLOAT],
-			input_assembly_state,
-			&[
-				ui_vs::load(device.clone())?.entry_point("main").unwrap(),
-				ui_fs::load(device.clone())?.entry_point("main").unwrap(),
+		let ui_pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![
+				PipelineShaderStageCreateInfo::new(ui_vs::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(ui_fs::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			RasterizationState::default(),
-			pipeline_layout,
-			rendering_formats.clone(),
-			Some(color_blend_state.clone()),
-			None,
-		)?;
+			vertex_input_state: Some(super::gen_vertex_input_state(&[Format::R32G32_SFLOAT, Format::R32G32_SFLOAT])),
+			input_assembly_state: Some(input_assembly_state),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(Default::default()),
+			multisample_state: Some(Default::default()),
+			color_blend_state: Some(color_blend_state.clone()),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(rendering_formats.clone().into()),
+			..GraphicsPipelineCreateInfo::layout(pipeline_layout)
+		};
+		let ui_pipeline = GraphicsPipeline::new(device.clone(), None, ui_pipeline_info)?;
 
 		/* UI text pipeline */
 		let storage_buffer_binding = DescriptorSetLayoutBinding {
@@ -287,19 +289,22 @@ impl Canvas
 		};
 		let text_pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
-		let text_pipeline = super::new_graphics_pipeline(
-			&[],
-			input_assembly_state,
-			&[
-				ui_text_vs::load(device.clone())?.entry_point("main").unwrap(),
-				ui_text_fs::load(device.clone())?.entry_point("main").unwrap(),
+		let text_pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![
+				PipelineShaderStageCreateInfo::new(ui_text_vs::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(ui_text_fs::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			RasterizationState::default(),
-			text_pipeline_layout,
-			rendering_formats,
-			Some(color_blend_state),
-			None,
-		)?;
+			vertex_input_state: Some(Default::default()),
+			input_assembly_state: Some(input_assembly_state),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(Default::default()),
+			multisample_state: Some(Default::default()),
+			color_blend_state: Some(color_blend_state.clone()),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(rendering_formats.clone().into()),
+			..GraphicsPipelineCreateInfo::layout(text_pipeline_layout)
+		};
+		let text_pipeline = GraphicsPipeline::new(device, None, text_pipeline_info)?;
 
 		let quad_verts = vec![
 			// position

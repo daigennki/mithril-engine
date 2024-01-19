@@ -22,14 +22,13 @@ use vulkano::image::{
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
 	depth_stencil::{DepthState, DepthStencilState},
-	input_assembly::InputAssemblyState,
 	rasterization::{DepthBiasState, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
-	GraphicsPipeline,
+	GraphicsPipeline, GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	PipelineLayout,
+	DynamicState, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
@@ -164,16 +163,20 @@ impl LightManager
 			depth: Some(DepthState::simple()),
 			..Default::default()
 		};
-		let shadow_pipeline = crate::render::new_graphics_pipeline(
-			&[Format::R32G32B32_SFLOAT],
-			InputAssemblyState::default(),
-			&[vs_shadow::load(device.clone())?.entry_point("main").unwrap()],
-			rasterization_state,
-			pipeline_layout,
-			rendering_formats,
-			None,
-			Some(depth_stencil_state),
-		)?;
+		let vs_entry_point = vs_shadow::load(device.clone())?.entry_point("main").unwrap();
+		let pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![PipelineShaderStageCreateInfo::new(vs_entry_point)],
+			vertex_input_state: Some(super::gen_vertex_input_state(&[Format::R32G32B32_SFLOAT])),
+			input_assembly_state: Some(Default::default()),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(rasterization_state),
+			multisample_state: Some(Default::default()),
+			depth_stencil_state: Some(depth_stencil_state),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(rendering_formats.into()),
+			..GraphicsPipelineCreateInfo::layout(pipeline_layout)
+		};
+		let shadow_pipeline = GraphicsPipeline::new(device.clone(), None, pipeline_info)?;
 
 		Ok(LightManager {
 			dir_light_projviews: Default::default(),

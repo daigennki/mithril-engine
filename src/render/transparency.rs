@@ -24,15 +24,14 @@ use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOpState, StencilOps, StencilState},
-	input_assembly::InputAssemblyState,
 	rasterization::{CullMode, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
 	viewport::Viewport,
-	GraphicsPipeline,
+	GraphicsPipeline, GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	PipelineLayout,
+	DynamicState, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::pipeline::{Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -129,22 +128,27 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
-		let moments_pl = super::new_graphics_pipeline(
-			&[Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT],
-			InputAssemblyState::default(),
-			&[
-				vs_nonorm::load(device.clone())?.entry_point("main").unwrap(),
-				fs_moments::load(device.clone())?.entry_point("main").unwrap(),
+		let vertex_inputs = [Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT];
+		let stage2_pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![
+				PipelineShaderStageCreateInfo::new(vs_nonorm::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(fs_moments::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			RasterizationState {
+			vertex_input_state: Some(super::gen_vertex_input_state(&vertex_inputs)),
+			input_assembly_state: Some(Default::default()),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(RasterizationState {
 				cull_mode: CullMode::Back,
 				..Default::default()
-			},
-			stage2_pipeline_layout,
-			moments_formats,
-			Some(moments_color_blend_state),
-			Some(moments_depth_stencil_state),
-		)?;
+			}),
+			multisample_state: Some(Default::default()),
+			depth_stencil_state: Some(moments_depth_stencil_state),
+			color_blend_state: Some(moments_color_blend_state),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(moments_formats.into()),
+			..GraphicsPipelineCreateInfo::layout(stage2_pipeline_layout)
+		};
+		let moments_pl = GraphicsPipeline::new(device.clone(), None, stage2_pipeline_info)?;
 
 		//
 		/* Stage 3: Calculate weights */
@@ -214,19 +218,23 @@ impl MomentTransparencyRenderer
 			stencil_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
-		let transparency_compositing_pl = super::new_graphics_pipeline(
-			&[],
-			InputAssemblyState::default(),
-			&[
-				vs_fill_viewport::load(device.clone())?.entry_point("main").unwrap(),
-				fs_oit_compositing::load(device.clone())?.entry_point("main").unwrap(),
+		let stage4_pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![
+				PipelineShaderStageCreateInfo::new(vs_fill_viewport::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(fs_oit_compositing::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			RasterizationState::default(),
-			stage4_pipeline_layout,
-			stage4_rendering_info,
-			Some(compositing_color_blend_state),
-			Some(compositing_depth_stencil_state),
-		)?;
+			vertex_input_state: Some(Default::default()),
+			input_assembly_state: Some(Default::default()),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(Default::default()),
+			multisample_state: Some(Default::default()),
+			depth_stencil_state: Some(compositing_depth_stencil_state),
+			color_blend_state: Some(compositing_color_blend_state),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(stage4_rendering_info.into()),
+			..GraphicsPipelineCreateInfo::layout(stage4_pipeline_layout)
+		};
+		let transparency_compositing_pl = GraphicsPipeline::new(device, None, stage4_pipeline_info)?;
 
 		/* Create the images and descriptor sets */
 		let (images, moments_images, weights_images) = create_mboit_images(

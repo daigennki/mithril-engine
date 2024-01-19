@@ -11,18 +11,18 @@ use glam::*;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::device::Device;
+use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, ImageCreateInfo, ImageUsage};
 use vulkano::pipeline::{
 	graphics::{
 		color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
 		depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOp, StencilOpState, StencilOps, StencilState},
-		input_assembly::InputAssemblyState,
 		rasterization::{CullMode, RasterizationState},
 		subpass::PipelineRenderingCreateInfo,
+		GraphicsPipelineCreateInfo,
 	},
-	GraphicsPipeline, PipelineLayout,
+	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::shader::ShaderModule;
 
@@ -180,12 +180,14 @@ impl MaterialPipelineConfig
 		pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
 	{
-		let vs_entry_point = self.vertex_shader.entry_point("main").unwrap();
+		let device = pipeline_layout.device().clone();
+
+		let vs_stage = PipelineShaderStageCreateInfo::new(self.vertex_shader.entry_point("main").unwrap());
 
 		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
 		let vertex_inputs = [Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT];
-		let input_assembly_state = InputAssemblyState::default();
+		let vertex_input_state = crate::render::gen_vertex_input_state(&vertex_inputs);
 		let rasterization_state = RasterizationState {
 			cull_mode: CullMode::Back,
 			..Default::default()
@@ -211,16 +213,23 @@ impl MaterialPipelineConfig
 		};
 
 		// Create the opaque pass pipeline.
-		let opaque_pipeline = crate::render::new_graphics_pipeline(
-			&vertex_inputs,
-			input_assembly_state,
-			&[vs_entry_point.clone(), self.fragment_shader.entry_point("main").unwrap()],
-			rasterization_state.clone(),
-			pipeline_layout,
-			rendering_formats,
-			Some(color_blend_state),
-			Some(depth_stencil_state),
-		)?;
+		let opaque_pipeline_info = GraphicsPipelineCreateInfo {
+			stages: smallvec::smallvec![
+				vs_stage.clone(),
+				PipelineShaderStageCreateInfo::new(self.fragment_shader.entry_point("main").unwrap()),
+			],
+			vertex_input_state: Some(vertex_input_state.clone()),
+			input_assembly_state: Some(Default::default()),
+			viewport_state: Some(Default::default()),
+			rasterization_state: Some(rasterization_state.clone()),
+			multisample_state: Some(Default::default()),
+			depth_stencil_state: Some(depth_stencil_state),
+			color_blend_state: Some(color_blend_state),
+			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+			subpass: Some(rendering_formats.into()),
+			..GraphicsPipelineCreateInfo::layout(pipeline_layout.clone())
+		};
+		let opaque_pipeline = GraphicsPipeline::new(device.clone(), None, opaque_pipeline_info)?;
 
 		// Create the transparency pass pipeline.
 		let oit_pipeline = fs_oit
@@ -275,16 +284,20 @@ impl MaterialPipelineConfig
 					..Default::default()
 				};
 
-				crate::render::new_graphics_pipeline(
-					&vertex_inputs,
-					input_assembly_state,
-					&[vs_entry_point, fs.entry_point("main").unwrap()],
-					rasterization_state,
-					pipeline_layout_oit,
-					oit_rendering_formats,
-					Some(oit_color_blend_state),
-					Some(oit_depth_stencil_state),
-				)
+				let oit_pipeline_info = GraphicsPipelineCreateInfo {
+					stages: smallvec::smallvec![vs_stage, PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap())],
+					vertex_input_state: Some(vertex_input_state.clone()),
+					input_assembly_state: Some(Default::default()),
+					viewport_state: Some(Default::default()),
+					rasterization_state: Some(rasterization_state),
+					multisample_state: Some(Default::default()),
+					depth_stencil_state: Some(oit_depth_stencil_state),
+					color_blend_state: Some(oit_color_blend_state),
+					dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+					subpass: Some(oit_rendering_formats.into()),
+					..GraphicsPipelineCreateInfo::layout(pipeline_layout_oit)
+				};
+				GraphicsPipeline::new(device, None, oit_pipeline_info)
 			})
 			.transpose()?;
 

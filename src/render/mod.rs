@@ -44,18 +44,10 @@ use vulkano::memory::{
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::graphics::{
-	color_blend::ColorBlendState,
-	depth_stencil::{CompareOp, DepthStencilState},
-	input_assembly::InputAssemblyState,
-	multisample::MultisampleState,
-	rasterization::RasterizationState,
-	subpass::PipelineRenderingCreateInfo,
+	depth_stencil::CompareOp,
 	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
-	viewport::ViewportState,
-	GraphicsPipelineCreateInfo,
 };
-use vulkano::pipeline::{DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
-use vulkano::shader::{EntryPoint, ShaderStages};
+use vulkano::shader::ShaderStages;
 use vulkano::DeviceSize;
 
 use crate::EngineError;
@@ -384,41 +376,8 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 	x_blocks * y_blocks * block_size
 }
 
-/// Create a new graphics pipeline using the given parameters.
-#[allow(clippy::too_many_arguments)]
-pub fn new_graphics_pipeline(
-	vertex_inputs: &[Format],
-	input_assembly_state: InputAssemblyState,
-	stage_entry_points: &[EntryPoint],
-	rasterization_state: RasterizationState,
-	pipeline_layout: Arc<PipelineLayout>,
-	rendering_info: PipelineRenderingCreateInfo,
-	color_blend_state: Option<ColorBlendState>,
-	depth_stencil_state: Option<DepthStencilState>,
-) -> crate::Result<Arc<GraphicsPipeline>>
-{
-	let stages = stage_entry_points
-		.iter()
-		.cloned()
-		.map(PipelineShaderStageCreateInfo::new)
-		.collect();
-
-	let device = pipeline_layout.device().clone();
-	let pipeline_info = GraphicsPipelineCreateInfo {
-		stages,
-		vertex_input_state: Some(gen_vertex_input_state(vertex_inputs)),
-		input_assembly_state: Some(input_assembly_state),
-		viewport_state: Some(ViewportState::default()),
-		rasterization_state: Some(rasterization_state),
-		multisample_state: Some(MultisampleState::default()),
-		depth_stencil_state,
-		color_blend_state,
-		dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-		subpass: Some(rendering_info.into()),
-		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
-	};
-	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
-}
+/// Generate a `VertexInputState` from a slice of input formats, assuming that each binding and
+/// attribute combination have their own tightly packed vertex buffer.
 pub fn gen_vertex_input_state(formats: &[Format]) -> VertexInputState
 {
 	let (bindings, attributes) = formats
