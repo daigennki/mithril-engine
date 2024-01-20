@@ -26,6 +26,7 @@ use vulkano::pipeline::graphics::{
 	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOpState, StencilOps, StencilState},
 	rasterization::{CullMode, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
+	vertex_input::VertexInputState,
 	viewport::Viewport,
 	GraphicsPipeline, GraphicsPipelineCreateInfo,
 };
@@ -128,13 +129,17 @@ impl MomentTransparencyRenderer
 			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
-		let vertex_inputs = [Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT];
+		let vertex_input_state = VertexInputState {
+			bindings: (0..).zip(super::model::VERTEX_BINDINGS).collect(),
+			attributes: (0..).zip(super::model::VERTEX_ATTRIBUTES).collect(),
+			..Default::default()
+		};
 		let stage2_pipeline_info = GraphicsPipelineCreateInfo {
 			stages: smallvec::smallvec![
 				PipelineShaderStageCreateInfo::new(vs_nonorm::load(device.clone())?.entry_point("main").unwrap()),
 				PipelineShaderStageCreateInfo::new(fs_moments::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			vertex_input_state: Some(super::gen_vertex_input_state(&vertex_inputs)),
+			vertex_input_state: Some(vertex_input_state),
 			input_assembly_state: Some(Default::default()),
 			viewport_state: Some(Default::default()),
 			rasterization_state: Some(RasterizationState {

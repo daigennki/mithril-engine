@@ -32,6 +32,7 @@ use vulkano::pipeline::{
 		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
 		input_assembly::{InputAssemblyState, PrimitiveTopology},
 		subpass::PipelineRenderingCreateInfo,
+		vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
 		viewport::Viewport,
 		GraphicsPipeline, GraphicsPipelineCreateInfo,
 	},
@@ -61,12 +62,13 @@ mod ui_vs
 				vec2 translation_projected;
 			};
 
-			layout(location = 0) in vec2 pos;
-			layout(location = 1) in vec2 uv;
+			layout(location = 0) in vec4 pos_and_texcoord;
 			layout(location = 0) out vec2 texcoord;
 
 			void main()
 			{
+				vec2 pos = pos_and_texcoord.xy;
+				vec2 uv = pos_and_texcoord.zw;
 				gl_Position = vec4(transformation * pos + translation_projected, 0.0, 1.0);
 				texcoord = uv;
 			}
@@ -191,8 +193,7 @@ pub struct Canvas
 	text_resources: BTreeMap<EntityId, UiGpuResources>,
 	mesh_resources: BTreeMap<EntityId, UiGpuResources>,
 
-	quad_pos_buf: Subbuffer<[Vec2]>,
-	quad_uv_buf: Subbuffer<[Vec2]>,
+	quad_vbo: Subbuffer<[Vec4]>,
 
 	default_font: Font<'static>,
 
@@ -245,6 +246,17 @@ impl Canvas
 		};
 		let color_blend_state = ColorBlendState::with_attachment_states(1, blend_attachment_state);
 
+		let vert_binding = VertexInputBindingDescription {
+			stride: 16,
+			input_rate: VertexInputRate::Vertex,
+		};
+		let vert_attribute = VertexInputAttributeDescription {
+			binding: 0,
+			format: Format::R32G32B32A32_SFLOAT,
+			offset: 0,
+		};
+		let vertex_input_state = VertexInputState::new().binding(0, vert_binding).attribute(0, vert_attribute);
+
 		let rendering_formats = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
@@ -254,7 +266,7 @@ impl Canvas
 				PipelineShaderStageCreateInfo::new(ui_vs::load(device.clone())?.entry_point("main").unwrap()),
 				PipelineShaderStageCreateInfo::new(ui_fs::load(device.clone())?.entry_point("main").unwrap()),
 			],
-			vertex_input_state: Some(super::gen_vertex_input_state(&[Format::R32G32_SFLOAT, Format::R32G32_SFLOAT])),
+			vertex_input_state: Some(vertex_input_state),
 			input_assembly_state: Some(input_assembly_state),
 			viewport_state: Some(Default::default()),
 			rasterization_state: Some(Default::default()),
@@ -307,19 +319,13 @@ impl Canvas
 		let text_pipeline = GraphicsPipeline::new(device, None, text_pipeline_info)?;
 
 		let quad_verts = vec![
-			// position
-			Vec2::new(-0.5, -0.5),
-			Vec2::new(-0.5, 0.5),
-			Vec2::new(0.5, -0.5),
-			Vec2::new(0.5, 0.5),
-			// texcoord
-			Vec2::new(0.0, 0.0),
-			Vec2::new(0.0, 1.0),
-			Vec2::new(1.0, 0.0),
-			Vec2::new(1.0, 1.0),
+			// position (xy) and texcoord (zw)
+			Vec4::new(-0.5, -0.5, 0.0, 0.0),
+			Vec4::new(-0.5, 0.5, 0.0, 1.0),
+			Vec4::new(0.5, -0.5, 1.0, 0.0),
+			Vec4::new(0.5, 0.5, 1.0, 1.0),
 		];
-		let vert_buf = render_ctx.new_buffer(quad_verts, BufferUsage::VERTEX_BUFFER)?;
-		let (quad_pos_buf, quad_uv_buf) = vert_buf.split_at(4);
+		let quad_vbo = render_ctx.new_buffer(quad_verts, BufferUsage::VERTEX_BUFFER)?;
 
 		let font_data = include_bytes!("../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Font has invalid data")?;
@@ -339,8 +345,7 @@ impl Canvas
 			text_pipeline,
 			text_resources: Default::default(),
 			mesh_resources: Default::default(),
-			quad_pos_buf,
-			quad_uv_buf,
+			quad_vbo,
 			default_font,
 			ui_cb: None,
 		})
@@ -592,7 +597,7 @@ impl Canvas
 
 			match resources.mesh_type {
 				MeshType::Quad => {
-					cb.bind_vertex_buffers(0, (self.quad_pos_buf.clone(), self.quad_uv_buf.clone()))?;
+					cb.bind_vertex_buffers(0, (self.quad_vbo.clone(),))?;
 					cb.draw(4, 1, 0, 0)?;
 				}
 				MeshType::Frame(_border_width) => {

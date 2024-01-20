@@ -33,7 +33,10 @@ use vulkano::image::{
 	view::ImageView,
 };
 use vulkano::pipeline::{
-	graphics::viewport::Viewport,
+	graphics::{
+		vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate},
+		viewport::Viewport,
+	},
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
 };
@@ -44,6 +47,38 @@ use crate::component::mesh::Mesh;
 use crate::material::{pbr::PBR, ColorInput, Material, MaterialPipelines};
 use crate::render::RenderContext;
 use crate::EngineError;
+
+pub const VERTEX_BINDINGS: [VertexInputBindingDescription; 3] = [
+	VertexInputBindingDescription {
+		stride: 12,
+		input_rate: VertexInputRate::Vertex,
+	},
+	VertexInputBindingDescription {
+		stride: 8,
+		input_rate: VertexInputRate::Vertex,
+	},
+	VertexInputBindingDescription {
+		stride: 12,
+		input_rate: VertexInputRate::Vertex,
+	},
+];
+pub const VERTEX_ATTRIBUTES: [VertexInputAttributeDescription; 3] = [
+	VertexInputAttributeDescription {
+		binding: 0,
+		format: Format::R32G32B32_SFLOAT,
+		offset: 0,
+	},
+	VertexInputAttributeDescription {
+		binding: 1,
+		format: Format::R32G32_SFLOAT,
+		offset: 0,
+	},
+	VertexInputAttributeDescription {
+		binding: 2,
+		format: Format::R32G32B32_SFLOAT,
+		offset: 0,
+	},
+];
 
 /// 3D model
 struct Model

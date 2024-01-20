@@ -20,6 +20,7 @@ use vulkano::pipeline::{
 		depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOp, StencilOpState, StencilOps, StencilState},
 		rasterization::{CullMode, RasterizationState},
 		subpass::PipelineRenderingCreateInfo,
+		vertex_input::VertexInputState,
 		GraphicsPipelineCreateInfo,
 	},
 	DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
@@ -186,8 +187,12 @@ impl MaterialPipelineConfig
 
 		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
-		let vertex_inputs = [Format::R32G32B32_SFLOAT, Format::R32G32_SFLOAT, Format::R32G32B32_SFLOAT];
-		let vertex_input_state = crate::render::gen_vertex_input_state(&vertex_inputs);
+		let vertex_input_state = VertexInputState {
+			bindings: (0..).zip(crate::render::model::VERTEX_BINDINGS).collect(),
+			attributes: (0..).zip(crate::render::model::VERTEX_ATTRIBUTES).collect(),
+			..Default::default()
+		};
+
 		let rasterization_state = RasterizationState {
 			cull_mode: CullMode::Back,
 			..Default::default()

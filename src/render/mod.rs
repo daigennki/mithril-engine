@@ -43,10 +43,7 @@ use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::pipeline::graphics::{
-	depth_stencil::CompareOp,
-	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
-};
+use vulkano::pipeline::graphics::depth_stencil::CompareOp;
 use vulkano::shader::ShaderStages;
 use vulkano::DeviceSize;
 
@@ -374,33 +371,4 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 	let x_blocks = mip_width.div_ceil(block_extent[0]) as DeviceSize;
 	let y_blocks = mip_height.div_ceil(block_extent[1]) as DeviceSize;
 	x_blocks * y_blocks * block_size
-}
-
-/// Generate a `VertexInputState` from a slice of input formats, assuming that each binding and
-/// attribute combination have their own tightly packed vertex buffer.
-pub fn gen_vertex_input_state(formats: &[Format]) -> VertexInputState
-{
-	let (bindings, attributes) = formats
-		.iter()
-		.copied()
-		.zip(0..)
-		.map(|(format, binding)| {
-			let attribute_desc = VertexInputAttributeDescription {
-				binding,
-				format,
-				offset: 0,
-			};
-			let binding_desc = VertexInputBindingDescription {
-				stride: format.block_size().try_into().unwrap(),
-				input_rate: VertexInputRate::Vertex,
-			};
-			((binding, binding_desc), (binding, attribute_desc))
-		})
-		.unzip();
-
-	VertexInputState {
-		bindings,
-		attributes,
-		..Default::default()
-	}
 }
