@@ -12,7 +12,10 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
 	SubpassContents,
 };
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
+	PersistentDescriptorSet, WriteDescriptorSet,
+};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
@@ -89,7 +92,12 @@ impl LightManager
 {
 	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
 	{
-		let device = render_ctx.descriptor_set_allocator.device().clone();
+		let device = render_ctx.memory_allocator.device().clone();
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 2,
+			..Default::default()
+		};
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
 
 		/* info for shadow images */
 		let image_info = ImageCreateInfo {
@@ -133,7 +141,7 @@ impl LightManager
 
 		/* descriptor set with everything lighting- and shadow-related */
 		let all_lights_set = PersistentDescriptorSet::new(
-			&render_ctx.descriptor_set_allocator,
+			&descriptor_set_allocator,
 			render_ctx.light_set_layout.clone(),
 			[
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),

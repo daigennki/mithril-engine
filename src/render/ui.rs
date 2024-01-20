@@ -17,6 +17,7 @@ use vulkano::command_buffer::{
 	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
@@ -185,6 +186,7 @@ pub struct Canvas
 	canvas_scaling: Vec2,
 	scale_factor: f32,
 
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	set_layout: Arc<DescriptorSetLayout>,
 	text_set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
@@ -203,7 +205,12 @@ impl Canvas
 {
 	pub fn new(render_ctx: &mut RenderContext, canvas_width: u32, canvas_height: u32) -> crate::Result<Self>
 	{
-		let device = render_ctx.descriptor_set_allocator.device().clone();
+		let device = render_ctx.memory_allocator.device().clone();
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 64,
+			..Default::default()
+		};
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
 
 		let sampler_info = SamplerCreateInfo {
 			mag_filter: Filter::Linear,
@@ -339,6 +346,7 @@ impl Canvas
 			base_dimensions: [canvas_width, canvas_height],
 			canvas_scaling,
 			scale_factor,
+			descriptor_set_allocator,
 			set_layout,
 			text_set_layout,
 			ui_pipeline,
@@ -374,7 +382,6 @@ impl Canvas
 
 	fn update_transform(
 		&mut self,
-		render_ctx: &mut RenderContext,
 		set_layout: Arc<DescriptorSetLayout>,
 		transform: &UITransform,
 		image_view: Arc<ImageView>,
@@ -399,8 +406,7 @@ impl Canvas
 		} else {
 			smallvec::smallvec![WriteDescriptorSet::image_view(0, image_view)]
 		};
-		let descriptor_set =
-			PersistentDescriptorSet::new(&render_ctx.descriptor_set_allocator, set_layout, writes.into_iter(), [])?;
+		let descriptor_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes.into_iter(), [])?;
 
 		Ok(UiGpuResources {
 			glyph_info_buffer,
@@ -425,8 +431,7 @@ impl Canvas
 			let tex = render_ctx.new_texture(&mesh.image_path)?;
 			let image_extent = tex.image().extent();
 			let image_dimensions = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
-			let resources =
-				self.update_transform(render_ctx, self.set_layout.clone(), transform, tex, image_dimensions, None)?;
+			let resources = self.update_transform(self.set_layout.clone(), transform, tex, image_dimensions, None)?;
 			self.mesh_resources.insert(eid, resources);
 		}
 
@@ -546,14 +551,7 @@ impl Canvas
 			render_ctx.new_buffer(glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		let resources = self.update_transform(
-			render_ctx,
-			self.text_set_layout.clone(),
-			transform,
-			tex,
-			Vec2::ONE,
-			Some(glyph_info_buf),
-		)?;
+		let resources = self.update_transform(self.text_set_layout.clone(), transform, tex, Vec2::ONE, Some(glyph_info_buf))?;
 		self.text_resources.insert(eid, resources);
 
 		Ok(())

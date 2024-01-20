@@ -28,9 +28,8 @@ use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	PrimaryAutoCommandBuffer,
 };
-use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+use vulkano::descriptor_set::layout::{
+	DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
@@ -55,7 +54,6 @@ pub struct RenderContext
 	swapchain: swapchain::Swapchain,
 	main_render_target: render_target::RenderTarget,
 	memory_allocator: Arc<StandardMemoryAllocator>,
-	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
@@ -78,8 +76,6 @@ impl RenderContext
 
 		let swapchain = swapchain::Swapchain::new(graphics_queue, event_loop, game_name)?;
 
-		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo::default();
-		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), set_alloc_info);
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// The counts below are multiplied by the number of swapchain images, to account for previous submissions.
@@ -135,7 +131,6 @@ impl RenderContext
 		Ok(RenderContext {
 			swapchain,
 			memory_allocator,
-			descriptor_set_allocator,
 			command_buffer_allocator,
 			main_render_target,
 			transparency_renderer: None,

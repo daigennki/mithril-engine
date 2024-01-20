@@ -21,6 +21,7 @@ use vulkano::command_buffer::{
 	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::{
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{
 		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
 	},
@@ -108,6 +109,7 @@ impl Model
 {
 	fn new(
 		render_ctx: &mut RenderContext,
+		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		material_textures_set_layout: Arc<DescriptorSetLayout>,
 		path: &Path,
 	) -> crate::Result<Self>
@@ -161,8 +163,13 @@ This model may be inefficient to draw, so consider joining the meshes."
 			);
 		}
 
-		let (textures_set, mat_tex_base_indices) =
-			descriptor_set_from_materials(render_ctx, material_textures_set_layout, parent_folder, &materials)?;
+		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
+			render_ctx,
+			descriptor_set_allocator,
+			material_textures_set_layout,
+			parent_folder,
+			&materials,
+		)?;
 
 		Ok(Model {
 			materials,
@@ -442,7 +449,8 @@ fn load_gltf_meshes(
 
 fn descriptor_set_from_materials(
 	render_ctx: &mut RenderContext,
-	material_textures_set_layout: Arc<DescriptorSetLayout>,
+	set_alloc: &StandardDescriptorSetAllocator,
+	set_layout: Arc<DescriptorSetLayout>,
 	parent_folder: &Path,
 	materials: &[Box<dyn Material>],
 ) -> crate::Result<(Arc<PersistentDescriptorSet>, Vec<u32>)>
@@ -483,8 +491,6 @@ fn descriptor_set_from_materials(
 	assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
 
 	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-	let set_alloc = &render_ctx.descriptor_set_allocator;
-	let set_layout = material_textures_set_layout;
 	let write = WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten());
 	let textures_set = PersistentDescriptorSet::new_variable(set_alloc, set_layout, texture_count, [write], [])?;
 
@@ -699,6 +705,7 @@ struct MeshPushConstant
 #[derive(shipyard::Unique)]
 pub struct MeshManager
 {
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	material_textures_set_layout: Arc<DescriptorSetLayout>,
 
 	pipeline_layout: Arc<PipelineLayout>,
@@ -720,6 +727,11 @@ impl MeshManager
 	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
 	{
 		let vk_dev = render_ctx.memory_allocator.device().clone();
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 128, // we might eventually need more than this
+			..Default::default()
+		};
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), set_alloc_info);
 
 		/* Common material texture descriptor set layout */
 		let mat_tex_sampler_info = SamplerCreateInfo {
@@ -784,6 +796,7 @@ impl MeshManager
 		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;
 
 		Ok(Self {
+			descriptor_set_allocator,
 			material_textures_set_layout,
 			pipeline_layout,
 			pipeline_layout_oit,
@@ -802,7 +815,12 @@ impl MeshManager
 		let loaded_model = match self.models.get_mut(&component.model_path) {
 			Some(m) => m,
 			None => {
-				let new_model = Model::new(render_ctx, self.material_textures_set_layout.clone(), &component.model_path)?;
+				let new_model = Model::new(
+					render_ctx,
+					&self.descriptor_set_allocator,
+					self.material_textures_set_layout.clone(),
+					&component.model_path,
+				)?;
 				self.models.insert(component.model_path.clone(), new_model);
 				self.models.get_mut(&component.model_path).unwrap()
 			}

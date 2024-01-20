@@ -12,6 +12,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SubpassContents,
 };
 use vulkano::descriptor_set::{
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
@@ -111,7 +112,12 @@ impl Skybox
 	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
 	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> crate::Result<Self>
 	{
-		let device = render_ctx.descriptor_set_allocator.device().clone();
+		let device = render_ctx.memory_allocator.device().clone();
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 2,
+			..Default::default()
+		};
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
 
 		let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
 		let tex_binding = DescriptorSetLayoutBinding {
@@ -166,7 +172,7 @@ impl Skybox
 		let face_paths = face_names.map(|face_name| tex_files_format.replace('*', face_name).into());
 		let sky_cubemap = new_cubemap(render_ctx, face_paths)?;
 		let descriptor_set = PersistentDescriptorSet::new(
-			&render_ctx.descriptor_set_allocator,
+			&descriptor_set_allocator,
 			set_layout,
 			[WriteDescriptorSet::image_view(0, sky_cubemap)],
 			[],
