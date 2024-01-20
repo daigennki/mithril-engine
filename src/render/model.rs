@@ -48,6 +48,10 @@ use crate::material::{pbr::PBR, ColorInput, Material, MaterialPipelines};
 use crate::render::RenderContext;
 use crate::EngineError;
 
+/// Vertex attributes and bindings describing the vertex buffers bound by a model.
+///
+/// The indices in each of these slices are used as the binding and attribute indices respectively
+/// as-is.
 pub const VERTEX_BINDINGS: [VertexInputBindingDescription; 3] = [
 	VertexInputBindingDescription {
 		stride: 12,

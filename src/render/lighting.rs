@@ -24,7 +24,7 @@ use vulkano::pipeline::graphics::{
 	depth_stencil::{DepthState, DepthStencilState},
 	rasterization::{DepthBiasState, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
-	vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
+	vertex_input::VertexInputState,
 	GraphicsPipeline, GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{
@@ -143,17 +143,9 @@ impl LightManager
 		)?;
 
 		/* shadow pipeline */
-		let vert_binding = VertexInputBindingDescription {
-			stride: 12,
-			input_rate: VertexInputRate::Vertex,
-		};
-		let vert_attribute = VertexInputAttributeDescription {
-			binding: 0,
-			format: Format::R32G32B32_SFLOAT,
-			offset: 0,
-		};
-		let vertex_input_state = VertexInputState::new().binding(0, vert_binding).attribute(0, vert_attribute);
-
+		let vertex_input_state = VertexInputState::new()
+			.binding(0, super::model::VERTEX_BINDINGS[0].clone())
+			.attribute(0, super::model::VERTEX_ATTRIBUTES[0]);
 		let rasterization_state = RasterizationState {
 			depth_bias: Some(DepthBiasState::default()),
 			..Default::default()

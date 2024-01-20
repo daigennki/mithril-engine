@@ -291,7 +291,7 @@ impl MaterialPipelineConfig
 
 				let oit_pipeline_info = GraphicsPipelineCreateInfo {
 					stages: smallvec::smallvec![vs_stage, PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap())],
-					vertex_input_state: Some(vertex_input_state.clone()),
+					vertex_input_state: Some(vertex_input_state),
 					input_assembly_state: Some(Default::default()),
 					viewport_state: Some(Default::default()),
 					rasterization_state: Some(rasterization_state),
