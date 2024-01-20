@@ -126,16 +126,21 @@ fn submit_frame(
 		.transfer_manager
 		.add_synchronous_transfer_commands(&mut primary_cb_builder);
 
-	// Sometimes no image may be returned because the image is out of date or the window is minimized,
-	// in which case, don't present.
+	// Sometimes no image may be returned because the image is out of date or the window is
+	// minimized, in which case, don't present.
 	if let Some(swapchain_image_num) = render_ctx.swapchain.get_next_image()? {
+		let memory_allocator = render_ctx.memory_allocator.clone();
 		if render_ctx.window_resized() {
-			render_ctx.resize_everything_else()?;
+			// Update images to match the current swapchain image extent.
+			let swapchain_images = render_ctx.swapchain.get_images().clone();
+			let color_space = render_ctx.swapchain.color_space();
+			render_ctx
+				.main_render_target
+				.resize(memory_allocator.clone(), swapchain_images, color_space)?;
 		}
 
-		let main_render_target = &render_ctx.main_render_target;
-		let color_image = main_render_target.color_image().clone();
-		let depth_image = main_render_target.depth_image().clone();
+		let color_image = render_ctx.main_render_target.color_image().clone();
+		let depth_image = render_ctx.main_render_target.depth_image().clone();
 
 		// shadows
 		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
@@ -151,15 +156,22 @@ fn submit_frame(
 		mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
 
 		// 3D OIT
-		if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
-			transparency_renderer.process_transparency(&mut primary_cb_builder, color_image.clone(), depth_image)?;
+		if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
+			transparency_renderer.process_transparency(
+				&mut primary_cb_builder,
+				color_image.clone(),
+				depth_image,
+				memory_allocator,
+			)?;
 		}
 
 		// UI
 		canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
 
 		// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
-		main_render_target.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_num)?;
+		render_ctx
+			.main_render_target
+			.blit_to_swapchain(&mut primary_cb_builder, swapchain_image_num)?;
 	}
 
 	// submit the built command buffer, presenting it if possible

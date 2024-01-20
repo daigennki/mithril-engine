@@ -94,8 +94,7 @@ impl RenderContext
 
 		let main_render_target = render_target::RenderTarget::new(
 			memory_allocator.clone(),
-			&descriptor_set_allocator,
-			swapchain.get_images(),
+			swapchain.get_images().clone(),
 			swapchain.color_space(),
 		)?;
 
@@ -151,7 +150,6 @@ impl RenderContext
 	{
 		self.transparency_renderer = Some(transparency::MomentTransparencyRenderer::new(
 			self.memory_allocator.clone(),
-			&self.descriptor_set_allocator,
 			material_textures_set_layout,
 			self.swapchain.dimensions(),
 			self.depth_stencil_format(),
@@ -241,26 +239,6 @@ impl RenderContext
 	fn submit_async_transfers(&mut self) -> crate::Result<()>
 	{
 		self.transfer_manager.submit_async_transfers(&self.command_buffer_allocator)
-	}
-
-	fn resize_everything_else(&mut self) -> crate::Result<()>
-	{
-		// Update images to match the current swapchain image extent.
-		self.main_render_target.resize(
-			self.memory_allocator.clone(),
-			&self.descriptor_set_allocator,
-			self.swapchain.get_images(),
-			self.swapchain.color_space(),
-		)?;
-		if let Some(transparency_renderer) = &mut self.transparency_renderer {
-			transparency_renderer.resize_image(
-				self.memory_allocator.clone(),
-				&self.descriptor_set_allocator,
-				self.swapchain.dimensions(),
-			)?
-		}
-
-		Ok(())
 	}
 
 	fn depth_stencil_format(&self) -> Format

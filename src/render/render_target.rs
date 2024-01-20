@@ -7,7 +7,7 @@
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::{
-	allocator::StandardDescriptorSetAllocator,
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
@@ -74,6 +74,8 @@ const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT,
 
 pub struct RenderTarget
 {
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
+
 	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
 	depth_image: Arc<ImageView>,
 
@@ -93,12 +95,17 @@ impl RenderTarget
 {
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		swapchain_images: &Vec<Arc<ImageView>>,
+		swapchain_images: Vec<Arc<ImageView>>,
 		swapchain_color_space: ColorSpace,
 	) -> crate::Result<Self>
 	{
 		let device = memory_allocator.device().clone();
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 2,
+			..Default::default()
+		};
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
+
 		let extent = swapchain_images.first().unwrap().image().extent();
 
 		let mut selected_depth_format = None;
@@ -132,10 +139,10 @@ impl RenderTarget
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
 		let sets = create_descriptor_sets(
-			descriptor_set_allocator,
+			&descriptor_set_allocator,
 			&set_layout,
 			&color_image_view,
-			swapchain_images,
+			swapchain_images.clone(),
 			swapchain_color_space,
 		)?;
 
@@ -150,9 +157,10 @@ impl RenderTarget
 		let gamma_pipeline = ComputePipeline::new(device, None, pipeline_create_info)?;
 
 		Ok(Self {
+			descriptor_set_allocator,
 			color_image: color_image_view,
 			depth_image: depth_image_view,
-			swapchain_images: swapchain_images.clone(),
+			swapchain_images,
 			gamma_pipeline,
 			set_layout,
 			color_sets: sets,
@@ -162,8 +170,7 @@ impl RenderTarget
 	pub fn resize(
 		&mut self,
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		swapchain_images: &Vec<Arc<ImageView>>,
+		swapchain_images: Vec<Arc<ImageView>>,
 		swapchain_color_space: ColorSpace,
 	) -> crate::Result<()>
 	{
@@ -179,7 +186,7 @@ impl RenderTarget
 		self.depth_image = depth_image_view;
 		self.swapchain_images = swapchain_images.clone();
 		self.color_sets = create_descriptor_sets(
-			descriptor_set_allocator,
+			&self.descriptor_set_allocator,
 			&self.set_layout,
 			&self.color_image,
 			swapchain_images,
@@ -265,7 +272,7 @@ fn create_descriptor_sets(
 	descriptor_set_allocator: &StandardDescriptorSetAllocator,
 	set_layout: &Arc<DescriptorSetLayout>,
 	color_image: &Arc<ImageView>,
-	swapchain_images: &Vec<Arc<ImageView>>,
+	swapchain_images: Vec<Arc<ImageView>>,
 	swapchain_color_space: ColorSpace,
 ) -> crate::Result<Vec<Arc<PersistentDescriptorSet>>>
 {
@@ -277,7 +284,7 @@ fn create_descriptor_sets(
 				set_layout.clone(),
 				[
 					WriteDescriptorSet::image_view(0, color_image.clone()),
-					WriteDescriptorSet::image_view(1, swapchain_image.clone()),
+					WriteDescriptorSet::image_view(1, swapchain_image),
 				],
 				[],
 			)?;

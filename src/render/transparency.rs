@@ -13,7 +13,7 @@ use vulkano::command_buffer::{
 	SubpassContents,
 };
 use vulkano::descriptor_set::{
-	allocator::StandardDescriptorSetAllocator,
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
 };
@@ -75,6 +75,7 @@ pub struct MomentTransparencyRenderer
 	moments_pl: Arc<GraphicsPipeline>,
 	transparency_compositing_pl: Arc<GraphicsPipeline>,
 
+	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	moments_images: Arc<PersistentDescriptorSet>,
 	weights_images: Arc<PersistentDescriptorSet>,
 
@@ -84,13 +85,17 @@ impl MomentTransparencyRenderer
 {
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		mat_tex_set_layout: Arc<DescriptorSetLayout>,
 		dimensions: [u32; 2],
 		depth_stencil_format: Format,
 	) -> crate::Result<Self>
 	{
-		let device = descriptor_set_allocator.device().clone();
+		let device = memory_allocator.device().clone();
+		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 2,
+			..Default::default()
+		};
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
 
 		//
 		/* Stage 2: Calculate moments */
@@ -244,7 +249,7 @@ impl MomentTransparencyRenderer
 		/* Create the images and descriptor sets */
 		let (images, moments_images, weights_images) = create_mboit_images(
 			memory_allocator,
-			descriptor_set_allocator,
+			&descriptor_set_allocator,
 			dimensions,
 			moments_images_layout,
 			weights_images_layout,
@@ -254,23 +259,19 @@ impl MomentTransparencyRenderer
 			images,
 			moments_pl,
 			transparency_compositing_pl,
+			descriptor_set_allocator,
 			moments_images,
 			weights_images,
 			transparency_cb: Mutex::new(None),
 		})
 	}
 
-	/// Resize the output image to match a resized depth image.
-	pub fn resize_image(
-		&mut self,
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		dimensions: [u32; 2],
-	) -> crate::Result<()>
+	/// Resize the output image to match a resized color image.
+	fn resize_image(&mut self, memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2]) -> crate::Result<()>
 	{
 		let (images, moments_images, weights_images) = create_mboit_images(
 			memory_allocator,
-			descriptor_set_allocator,
+			&self.descriptor_set_allocator,
 			dimensions,
 			self.moments_images.layout().clone(),
 			self.weights_images.layout().clone(),
@@ -284,12 +285,18 @@ impl MomentTransparencyRenderer
 
 	/// Do the OIT processing using the secondary command buffers that have already been received.
 	pub fn process_transparency(
-		&self,
+		&mut self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		color_image: Arc<ImageView>,
 		depth_image: Arc<ImageView>,
+		memory_allocator: Arc<StandardMemoryAllocator>,
 	) -> crate::Result<()>
 	{
+		let img_extent = color_image.image().extent();
+		if self.images.accum.image().extent() != img_extent {
+			self.resize_image(memory_allocator, [img_extent[0], img_extent[1]])?;
+		}
+
 		let (moments_cb, weights_cb) = match self.transparency_cb.lock().unwrap().take() {
 			Some(cb) => cb,
 			None => return Ok(()), // Skip OIT processing if no transparent submeshes are in view
@@ -360,7 +367,6 @@ impl MomentTransparencyRenderer
 			..Default::default()
 		};
 
-		let img_extent = color_image.image().extent();
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [img_extent[0] as f32, img_extent[1] as f32],
