@@ -50,21 +50,20 @@ mod compute_gamma
 
 			layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-			layout(binding = 0, rgba16f) uniform readonly image2D color_in;
-			layout(binding = 1) uniform writeonly image2D color_out;
+			layout(binding = 0, rgba16f) uniform restrict image2D color_image;
 
 			void main()
 			{
 				const float gamma = 1.0 / 2.2;
 
 				ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
-				vec3 rgb_lin = imageLoad(color_in, image_coord).rgb;
+				vec3 rgb_lin = imageLoad(color_image, image_coord).rgb;
 
 				float r = pow(rgb_lin.r, gamma);
 				float g = pow(rgb_lin.g, gamma);
 				float b = pow(rgb_lin.b, gamma);
 
-				imageStore(color_out, image_coord, vec4(r, g, b, 1.0));
+				imageStore(color_image, image_coord, vec4(r, g, b, 1.0));
 			}
 		",
 	}
@@ -79,24 +78,22 @@ pub struct RenderTarget
 	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
 	depth_image: Arc<ImageView>,
 
-	// Swapchain images as obtained from the swapchain.
-	swapchain_images: Vec<Arc<ImageView>>,
+	// The current swapchain color space.
 	swapchain_color_space: ColorSpace,
 
 	// The pipeline used to apply gamma correction.
 	// Only used when the output color space is `SrgbNonLinear`.
 	gamma_pipeline: Arc<ComputePipeline>,
 
-	// Input and output image sets for gamma correction.
-	// There will be as many of these as there are swapchain images.
+	// Descriptor set containing `color_image`.
 	set_layout: Arc<DescriptorSetLayout>,
-	color_sets: Vec<Arc<PersistentDescriptorSet>>,
+	color_set: Option<Arc<PersistentDescriptorSet>>,
 }
 impl RenderTarget
 {
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		swapchain_images: Vec<Arc<ImageView>>,
+		extent: [u32; 2],
 		swapchain_color_space: ColorSpace,
 	) -> crate::Result<Self>
 	{
@@ -106,8 +103,6 @@ impl RenderTarget
 			..Default::default()
 		};
 		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
-
-		let extent = swapchain_images.first().unwrap().image().extent();
 
 		let mut selected_depth_format = None;
 		for format in DEPTH_STENCIL_FORMAT_CANDIDATES {
@@ -126,8 +121,8 @@ impl RenderTarget
 		let depth_format = selected_depth_format.ok_or("none of the depth/stencil format candidates are supported")?;
 		log::debug!("using depth/stencil format {depth_format:?}");
 
-		let (color_image_view, depth_image_view) =
-			create_images(memory_allocator.clone(), extent, depth_format, swapchain_color_space)?;
+		let extent3 = [extent[0], extent[1], 1];
+		let (color_image_view, depth_image_view) = create_images(memory_allocator.clone(), extent3, depth_format)?;
 
 		let image_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::COMPUTE,
@@ -139,13 +134,12 @@ impl RenderTarget
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let sets = create_descriptor_sets(
-			&descriptor_set_allocator,
-			&set_layout,
-			&color_image_view,
-			swapchain_images.clone(),
-			swapchain_color_space,
-		)?;
+		let color_set = (swapchain_color_space == ColorSpace::SrgbNonLinear)
+			.then(|| {
+				let set_write = [WriteDescriptorSet::image_view(0, color_image_view.clone())];
+				PersistentDescriptorSet::new(&descriptor_set_allocator, set_layout.clone(), set_write, [])
+			})
+			.transpose()?;
 
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![set_layout.clone()],
@@ -161,44 +155,38 @@ impl RenderTarget
 			descriptor_set_allocator,
 			color_image: color_image_view,
 			depth_image: depth_image_view,
-			swapchain_images,
 			swapchain_color_space,
 			gamma_pipeline,
 			set_layout,
-			color_sets: sets,
+			color_set,
 		})
 	}
 
-	/// Get the color and depth images. This may resize them before returning them if the size or
-	/// color space of the given swapchain images changed.
+	/// Get the color and depth images. This will resize them before returning them if the given
+	/// `extent` or  the color space of the swapchain changed.
 	pub fn get_images(
 		&mut self,
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		swapchain_images: Vec<Arc<ImageView>>,
+		extent2: [u32; 2],
 		swapchain_color_space: ColorSpace,
 	) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 	{
-		let swapchain_extent = swapchain_images.first().unwrap().image().extent();
-
-		if swapchain_extent != self.color_image.image().extent() || swapchain_color_space != self.swapchain_color_space {
-			let (color_image_view, depth_image_view) = create_images(
-				memory_allocator.clone(),
-				swapchain_extent,
-				self.depth_image.format(),
-				swapchain_color_space,
-			)?;
+		let extent = [extent2[0], extent2[1], 1];
+		if extent != self.color_image.image().extent() || swapchain_color_space != self.swapchain_color_space {
+			let (color_image_view, depth_image_view) =
+				create_images(memory_allocator.clone(), extent, self.depth_image.format())?;
 
 			self.color_image = color_image_view;
 			self.depth_image = depth_image_view;
-			self.swapchain_images = swapchain_images.clone();
 			self.swapchain_color_space = swapchain_color_space;
-			self.color_sets = create_descriptor_sets(
-				&self.descriptor_set_allocator,
-				&self.set_layout,
-				&self.color_image,
-				swapchain_images,
-				swapchain_color_space,
-			)?;
+
+			self.color_set = (swapchain_color_space == ColorSpace::SrgbNonLinear)
+				.then(|| {
+					let set_layout = self.set_layout.clone();
+					let set_write = [WriteDescriptorSet::image_view(0, self.color_image.clone())];
+					PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, set_write, [])
+				})
+				.transpose()?;
 		}
 
 		Ok((self.color_image.clone(), self.depth_image.clone()))
@@ -212,26 +200,20 @@ impl RenderTarget
 	pub fn blit_to_swapchain(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		swapchain_image_num: u32,
+		swapchain_image: Arc<Image>,
 	) -> crate::Result<()>
 	{
-		if !self.color_sets.is_empty() {
-			// for rendering to non-linear sRGB, perform gamma correction and write to the swapchain image
+		// for rendering to non-linear sRGB, perform gamma correction before blitting to the swapchain image
+		if let Some(color_set) = self.color_set.clone() {
 			let image_extent = self.color_image.image().extent();
 			let workgroups_x = image_extent[0].div_ceil(64);
-
 			let layout = self.gamma_pipeline.layout().clone();
-			let bind_sets = vec![self.color_sets[swapchain_image_num as usize].clone()];
-
 			cb.bind_pipeline_compute(self.gamma_pipeline.clone())?
-				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, bind_sets)?
+				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, color_set)?
 				.dispatch([workgroups_x, image_extent[1], 1])?;
-		} else {
-			// for rendering to anything else, blit to the swapchain image without gamma correction
-			let input_image = self.color_image.image().clone();
-			let output_image = self.swapchain_images[swapchain_image_num as usize].image().clone();
-			cb.blit_image(BlitImageInfo::images(input_image, output_image))?;
 		}
+
+		cb.blit_image(BlitImageInfo::images(self.color_image.image().clone(), swapchain_image))?;
 
 		Ok(())
 	}
@@ -242,19 +224,12 @@ fn create_images(
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	extent: [u32; 3],
 	depth_format: Format,
-	swapchain_color_space: ColorSpace,
 ) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 {
-	let usage = if swapchain_color_space == ColorSpace::SrgbNonLinear {
-		ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE
-	} else {
-		ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC
-	};
-
 	let color_create_info = ImageCreateInfo {
 		format: Format::R16G16B16A16_SFLOAT,
 		extent,
-		usage,
+		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
 		..Default::default()
 	};
 	let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
@@ -270,32 +245,4 @@ fn create_images(
 	let depth_image_view = ImageView::new_default(depth_image)?;
 
 	Ok((color_image_view, depth_image_view))
-}
-
-fn create_descriptor_sets(
-	descriptor_set_allocator: &StandardDescriptorSetAllocator,
-	set_layout: &Arc<DescriptorSetLayout>,
-	color_image: &Arc<ImageView>,
-	swapchain_images: Vec<Arc<ImageView>>,
-	swapchain_color_space: ColorSpace,
-) -> crate::Result<Vec<Arc<PersistentDescriptorSet>>>
-{
-	if swapchain_color_space == ColorSpace::SrgbNonLinear {
-		let mut color_sets = Vec::with_capacity(swapchain_images.len());
-		for swapchain_image in swapchain_images {
-			let set = PersistentDescriptorSet::new(
-				descriptor_set_allocator,
-				set_layout.clone(),
-				[
-					WriteDescriptorSet::image_view(0, color_image.clone()),
-					WriteDescriptorSet::image_view(1, swapchain_image),
-				],
-				[],
-			)?;
-			color_sets.push(set);
-		}
-		Ok(color_sets)
-	} else {
-		Ok(Vec::new())
-	}
 }

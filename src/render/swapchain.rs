@@ -11,7 +11,7 @@ use std::time::Duration;
 use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
 use vulkano::format::Format;
-use vulkano::image::{view::ImageView, ImageUsage};
+use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
 	ColorSpace, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
@@ -45,7 +45,7 @@ pub struct Swapchain
 	window: Arc<Window>,
 	graphics_queue: Arc<Queue>,
 	swapchain: Arc<vulkano::swapchain::Swapchain>,
-	image_views: Vec<Arc<ImageView>>,
+	images: Vec<Arc<Image>>,
 
 	extent_changed: bool, // `true` if image extent changed since the last presentation
 	recreate_pending: bool,
@@ -82,12 +82,6 @@ impl Swapchain
 			.find(|candidate| surface_formats.contains(candidate))
 			.unwrap();
 
-		let image_usage = if image_color_space == ColorSpace::SrgbNonLinear {
-			ImageUsage::STORAGE
-		} else {
-			ImageUsage::TRANSFER_DST
-		};
-
 		let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
 		let present_mode = std::env::args()
 			.collect::<Vec<_>>()
@@ -112,7 +106,7 @@ impl Swapchain
 			image_extent: window.inner_size().into(),
 			image_format,
 			image_color_space,
-			image_usage,
+			image_usage: ImageUsage::TRANSFER_DST,
 			present_mode,
 			..Default::default()
 		};
@@ -124,8 +118,6 @@ impl Swapchain
 			image_format,
 			image_color_space
 		);
-
-		let image_views = images.into_iter().map(ImageView::new_default).collect::<Result<_, _>>()?;
 
 		// Set the framerate limit
 		let fps_max_regex = regex::Regex::new("--fps_max=(?<value>\\d+)").unwrap();
@@ -146,7 +138,7 @@ impl Swapchain
 			window,
 			graphics_queue,
 			swapchain,
-			image_views,
+			images,
 			extent_changed: false,
 			recreate_pending: false,
 			acquire_future: None,
@@ -168,7 +160,7 @@ impl Swapchain
 	}
 
 	/// Get the next swapchain image.
-	pub fn get_next_image(&mut self) -> crate::Result<Option<u32>>
+	pub fn get_next_image(&mut self) -> crate::Result<Option<Arc<Image>>>
 	{
 		// Panic if this function is called when an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
@@ -209,10 +201,8 @@ impl Swapchain
 				.recreate(create_info)
 				.map_err(|e| EngineError::new("failed to recreate swapchain", e.unwrap()))?;
 
-			let new_image_views = new_images.into_iter().map(ImageView::new_default).collect::<Result<_, _>>()?;
-
 			self.swapchain = new_swapchain;
-			self.image_views = new_image_views;
+			self.images = new_images;
 			self.recreate_pending = false;
 		}
 
@@ -238,7 +228,7 @@ impl Swapchain
 		}
 		self.acquire_future = Some(acquire_future);
 
-		Ok(Some(image_num))
+		Ok(Some(self.images[image_num as usize].clone()))
 	}
 
 	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
@@ -340,12 +330,7 @@ impl Swapchain
 
 	pub fn image_count(&self) -> usize
 	{
-		self.image_views.len()
-	}
-
-	pub fn get_images(&self) -> &Vec<Arc<ImageView>>
-	{
-		&self.image_views
+		self.images.len()
 	}
 
 	pub fn color_space(&self) -> ColorSpace
