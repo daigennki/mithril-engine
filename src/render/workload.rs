@@ -106,7 +106,7 @@ fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canv
 	canvas.draw(&render_ctx)
 }
 
-/// Submit all the command buffers for this frame to actually render them to the image.
+// Submit all the command buffers for this frame to actually render them to the image.
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut skybox: UniqueViewMut<super::skybox::Skybox>,
@@ -131,11 +131,9 @@ fn submit_frame(
 	if let Some(swapchain_image) = render_ctx.swapchain.get_next_image()? {
 		let memory_allocator = render_ctx.memory_allocator.clone();
 		let swapchain_extent = render_ctx.swapchain.dimensions();
-		let color_space = render_ctx.swapchain.color_space();
-		let (color_image, depth_image) =
-			render_ctx
-				.main_render_target
-				.get_images(memory_allocator.clone(), swapchain_extent, color_space)?;
+		let (color_image, depth_image) = render_ctx
+			.main_render_target
+			.get_images(memory_allocator.clone(), swapchain_extent)?;
 
 		// shadows
 		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
@@ -164,9 +162,11 @@ fn submit_frame(
 		canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
 
 		// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
-		render_ctx
-			.main_render_target
-			.blit_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
+		render_ctx.main_render_target.blit_to_swapchain(
+			&mut primary_cb_builder,
+			swapchain_image,
+			render_ctx.swapchain.color_space(),
+		)?;
 	}
 
 	// submit the built command buffer, presenting it if possible

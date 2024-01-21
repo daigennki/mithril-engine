@@ -88,8 +88,7 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let main_render_target =
-			render_target::RenderTarget::new(memory_allocator.clone(), swapchain.dimensions(), swapchain.color_space())?;
+		let main_render_target = render_target::RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
 
 		/* descriptor set with everything lighting- and shadow-related */
 		let shadow_sampler_info = SamplerCreateInfo {
