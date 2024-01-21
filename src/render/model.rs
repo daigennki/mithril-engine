@@ -1006,7 +1006,7 @@ impl MeshManager
 
 pub enum PassType<'a>
 {
-	Shadow(&'a mut LightManager),
+	Shadow(&'a LightManager),
 	Opaque,
 	TransparencyMoments(Arc<GraphicsPipeline>),
 	Transparency,

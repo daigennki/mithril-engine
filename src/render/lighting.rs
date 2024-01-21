@@ -5,7 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
@@ -80,7 +80,7 @@ pub struct LightManager
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
 	dir_light_shadow_layers: Vec<Arc<ImageView>>,
-	dir_light_cb: Vec<Arc<SecondaryAutoCommandBuffer>>,
+	dir_light_cb: Mutex<Vec<Arc<SecondaryAutoCommandBuffer>>>,
 
 	/*point_light_buf: Arc<Subbuffer<[PointLightData]>>,
 	spot_light_buf: Arc<Subbuffer<[SpotLightData]>>,*/
@@ -190,12 +190,14 @@ impl LightManager
 		};
 		let shadow_pipeline = GraphicsPipeline::new(device.clone(), None, pipeline_info)?;
 
+		let dir_light_cb = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
+
 		Ok(LightManager {
 			dir_light_projviews: Default::default(),
 			dir_light_buf,
 			dir_light_shadow: dir_light_shadow_view,
 			dir_light_shadow_layers,
-			dir_light_cb: Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap()),
+			dir_light_cb: Mutex::new(dir_light_cb),
 			all_lights_set,
 			shadow_pipeline,
 		})
@@ -279,20 +281,22 @@ impl LightManager
 			.update_buffer(Box::new([dir_light_data]), self.dir_light_buf.clone());
 	}
 
-	pub fn add_dir_light_cb(&mut self, cb: Arc<SecondaryAutoCommandBuffer>)
+	pub fn add_dir_light_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
 	{
-		if self.dir_light_cb.len() == self.dir_light_cb.capacity() {
+		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
+		if dir_light_cb.len() == dir_light_cb.capacity() {
 			panic!("attempted to add too many command buffers for directional light rendering");
 		}
-		self.dir_light_cb.push(cb);
+		dir_light_cb.push(cb);
 	}
 
 	pub fn execute_shadow_rendering(
-		&mut self,
+		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> crate::Result<()>
 	{
-		let shadow_iter = self.dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter());
+		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
+		let shadow_iter = dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter());
 		for (shadow_cb, shadow_layer_image_view) in shadow_iter {
 			let shadow_render_info = RenderingInfo {
 				depth_attachment: Some(RenderingAttachmentInfo {

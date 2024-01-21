@@ -359,11 +359,11 @@ pub fn render_workload() -> Workload
 fn draw_shadows(
 	render_ctx: UniqueView<RenderContext>,
 	mesh_manager: UniqueView<MeshManager>,
-	mut light_manager: UniqueViewMut<LightManager>,
+	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow(&mut light_manager), &[])?;
+		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow(&light_manager), &[])?;
 	}
 	Ok(())
 }
@@ -418,7 +418,7 @@ fn submit_frame(
 	mut skybox: UniqueViewMut<skybox::Skybox>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<Canvas>,
-	mut light_manager: UniqueViewMut<LightManager>,
+	light_manager: UniqueView<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
