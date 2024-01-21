@@ -81,6 +81,7 @@ pub struct RenderTarget
 
 	// Swapchain images as obtained from the swapchain.
 	swapchain_images: Vec<Arc<ImageView>>,
+	swapchain_color_space: ColorSpace,
 
 	// The pipeline used to apply gamma correction.
 	// Only used when the output color space is `SrgbNonLinear`.
@@ -161,48 +162,51 @@ impl RenderTarget
 			color_image: color_image_view,
 			depth_image: depth_image_view,
 			swapchain_images,
+			swapchain_color_space,
 			gamma_pipeline,
 			set_layout,
 			color_sets: sets,
 		})
 	}
 
-	pub fn resize(
+	/// Get the color and depth images. This may resize them before returning them if the size or
+	/// color space of the given swapchain images changed.
+	pub fn get_images(
 		&mut self,
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		swapchain_images: Vec<Arc<ImageView>>,
 		swapchain_color_space: ColorSpace,
-	) -> crate::Result<()>
+	) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 	{
-		let extent = swapchain_images.first().unwrap().image().extent();
-		let (color_image_view, depth_image_view) = create_images(
-			memory_allocator.clone(),
-			extent,
-			self.depth_image.format(),
-			swapchain_color_space,
-		)?;
+		let swapchain_extent = swapchain_images.first().unwrap().image().extent();
 
-		self.color_image = color_image_view;
-		self.depth_image = depth_image_view;
-		self.swapchain_images = swapchain_images.clone();
-		self.color_sets = create_descriptor_sets(
-			&self.descriptor_set_allocator,
-			&self.set_layout,
-			&self.color_image,
-			swapchain_images,
-			swapchain_color_space,
-		)?;
+		if swapchain_extent != self.color_image.image().extent() || swapchain_color_space != self.swapchain_color_space {
+			let (color_image_view, depth_image_view) = create_images(
+				memory_allocator.clone(),
+				swapchain_extent,
+				self.depth_image.format(),
+				swapchain_color_space,
+			)?;
 
-		Ok(())
+			self.color_image = color_image_view;
+			self.depth_image = depth_image_view;
+			self.swapchain_images = swapchain_images.clone();
+			self.swapchain_color_space = swapchain_color_space;
+			self.color_sets = create_descriptor_sets(
+				&self.descriptor_set_allocator,
+				&self.set_layout,
+				&self.color_image,
+				swapchain_images,
+				swapchain_color_space,
+			)?;
+		}
+
+		Ok((self.color_image.clone(), self.depth_image.clone()))
 	}
 
-	pub fn color_image(&self) -> &Arc<ImageView>
+	pub fn depth_stencil_format(&self) -> Format
 	{
-		&self.color_image
-	}
-	pub fn depth_image(&self) -> &Arc<ImageView>
-	{
-		&self.depth_image
+		self.depth_image.format()
 	}
 
 	pub fn blit_to_swapchain(

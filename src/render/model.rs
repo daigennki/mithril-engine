@@ -832,7 +832,7 @@ impl MeshManager
 			if !self.material_pipelines.contains_key(mat_name) {
 				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
 				let pipeline_data = pipeline_config.into_pipelines(
-					render_ctx.depth_stencil_format(),
+					render_ctx.main_render_target.depth_stencil_format(),
 					self.pipeline_layout.clone(),
 					self.pipeline_layout_oit.clone(),
 				)?;
@@ -873,7 +873,11 @@ impl MeshManager
 			PassType::Shadow {
 				format, viewport_extent, ..
 			} => (*format, *viewport_extent, true),
-			_ => (render_ctx.depth_stencil_format(), render_ctx.swapchain_dimensions(), false),
+			_ => (
+				render_ctx.main_render_target.depth_stencil_format(),
+				render_ctx.swapchain_dimensions(),
+				false,
+			),
 		};
 
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {

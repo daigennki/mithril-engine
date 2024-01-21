@@ -130,17 +130,12 @@ fn submit_frame(
 	// minimized, in which case, don't present.
 	if let Some(swapchain_image_num) = render_ctx.swapchain.get_next_image()? {
 		let memory_allocator = render_ctx.memory_allocator.clone();
-		if render_ctx.window_resized() {
-			// Update images to match the current swapchain image extent.
-			let swapchain_images = render_ctx.swapchain.get_images().clone();
-			let color_space = render_ctx.swapchain.color_space();
+		let swapchain_images = render_ctx.swapchain.get_images().clone();
+		let color_space = render_ctx.swapchain.color_space();
+		let (color_image, depth_image) =
 			render_ctx
 				.main_render_target
-				.resize(memory_allocator.clone(), swapchain_images, color_space)?;
-		}
-
-		let color_image = render_ctx.main_render_target.color_image().clone();
-		let depth_image = render_ctx.main_render_target.depth_image().clone();
+				.get_images(memory_allocator.clone(), swapchain_images, color_space)?;
 
 		// shadows
 		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;

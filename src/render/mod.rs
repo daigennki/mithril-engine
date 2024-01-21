@@ -147,7 +147,7 @@ impl RenderContext
 			self.memory_allocator.clone(),
 			material_textures_set_layout,
 			self.swapchain.dimensions(),
-			self.depth_stencil_format(),
+			self.main_render_target.depth_stencil_format(),
 		)?);
 		Ok(())
 	}
@@ -234,11 +234,6 @@ impl RenderContext
 	fn submit_async_transfers(&mut self) -> crate::Result<()>
 	{
 		self.transfer_manager.submit_async_transfers(&self.command_buffer_allocator)
-	}
-
-	fn depth_stencil_format(&self) -> Format
-	{
-		self.main_render_target.depth_image().format()
 	}
 
 	fn submit_primary(&mut self, built_cb: Arc<PrimaryAutoCommandBuffer>) -> crate::Result<()>
