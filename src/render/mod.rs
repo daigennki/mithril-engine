@@ -362,29 +362,13 @@ fn draw_shadows(
 	mut light_manager: UniqueViewMut<LightManager>,
 ) -> crate::Result<()>
 {
-	let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
-	let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
-	let pipeline = light_manager.get_shadow_pipeline().clone();
-	let format = light_manager.get_dir_light_shadow().format();
-
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		let cb = mesh_manager.draw(
-			&render_ctx,
-			layer_projview,
-			PassType::Shadow {
-				pipeline: pipeline.clone(),
-				format,
-				viewport_extent,
-			},
-			&[],
-		)?;
-		light_manager.add_dir_light_cb(cb.unwrap());
+		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow(&mut light_manager), &[])?;
 	}
-
 	Ok(())
 }
 
-// Draw opaque 3D objects
+// Draw opaque 3D objects.
 fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
@@ -393,9 +377,7 @@ fn draw_3d(
 ) -> crate::Result<()>
 {
 	let common_sets = [light_manager.get_all_lights_set().clone()];
-	let cb = mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
-
-	mesh_manager.add_cb(cb.unwrap());
+	mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
 	Ok(())
 }
 

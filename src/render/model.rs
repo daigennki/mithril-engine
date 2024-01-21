@@ -44,9 +44,10 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
+use super::lighting::LightManager;
+use super::RenderContext;
 use crate::component::mesh::Mesh;
 use crate::material::{pbr::PBR, ColorInput, Material, MaterialPipelines};
-use crate::render::RenderContext;
 use crate::EngineError;
 
 /// Vertex attributes and bindings describing the vertex buffers bound by a model.
@@ -870,9 +871,12 @@ impl MeshManager
 	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>
 	{
 		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
-			PassType::Shadow {
-				format, viewport_extent, ..
-			} => (*format, *viewport_extent, true),
+			PassType::Shadow(light_manager) => {
+				let format = light_manager.get_dir_light_shadow().format();
+				let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
+				let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
+				(format, viewport_extent, true)
+			}
 			_ => (
 				render_ctx.main_render_target.depth_stencil_format(),
 				render_ctx.swapchain_dimensions(),
@@ -949,18 +953,23 @@ impl MeshManager
 			}
 		}
 
-		// Don't bother building the command buffer if this is the OIT pass and no models were drawn.
-		let cb_return = if any_drawn || !transparency_pass || shadow_pass {
-			Some(cb.build()?)
-		} else {
-			None
-		};
-		Ok(cb_return)
-	}
-
-	pub fn add_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
-	{
-		*self.cb_3d.lock().unwrap() = Some(cb);
+		// If this is the opaque pass, don't let the command buffer leave this `MeshManager`.
+		// Otherwise, only return the command buffer if this is the OIT pass and models were drawn
+		// at all, or if this is the shadow pass.
+		match pass_type {
+			PassType::Opaque => {
+				*self.cb_3d.lock().unwrap() = Some(cb.build()?);
+			}
+			PassType::TransparencyMoments(_) | PassType::Transparency => {
+				if any_drawn {
+					return Ok(Some(cb.build()?));
+				}
+			}
+			PassType::Shadow(light_manager) => {
+				light_manager.add_dir_light_cb(cb.build()?);
+			}
+		}
+		Ok(None)
 	}
 
 	pub fn execute_rendering(
@@ -995,19 +1004,14 @@ impl MeshManager
 	}
 }
 
-pub enum PassType
+pub enum PassType<'a>
 {
-	Shadow
-	{
-		pipeline: Arc<GraphicsPipeline>,
-		format: Format,
-		viewport_extent: [u32; 2],
-	},
+	Shadow(&'a mut LightManager),
 	Opaque,
 	TransparencyMoments(Arc<GraphicsPipeline>),
 	Transparency,
 }
-impl PassType
+impl PassType<'_>
 {
 	fn render_color_formats(&self) -> Vec<Option<Format>>
 	{
@@ -1024,7 +1028,8 @@ impl PassType
 	fn pipeline(&self) -> Option<&Arc<GraphicsPipeline>>
 	{
 		match self {
-			PassType::Shadow { pipeline, .. } | PassType::TransparencyMoments(pipeline) => Some(pipeline),
+			PassType::Shadow(light_manager) => Some(light_manager.get_shadow_pipeline()),
+			PassType::TransparencyMoments(pipeline) => Some(pipeline),
 			_ => None,
 		}
 	}
