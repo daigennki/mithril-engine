@@ -149,7 +149,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 
 			// Main rendering: build the command buffers, then submit them for presentation
 			world
-				.run_workload(render::workload::render)
+				.run_workload(render::render_workload)
 				.map_err(|e| EngineError::new("failed to run render workload", e))?;
 		}
 		_ => (),
@@ -212,7 +212,7 @@ fn load_world(file: &str) -> crate::Result<(World, String)>
 		.add_to_world(&world)
 		.expect("failed to add pre-render workload to world");
 
-	world.add_workload(render::workload::render);
+	world.add_workload(render::render_workload);
 
 	Ok((world, world_data.sky))
 }
