@@ -21,12 +21,12 @@ use std::sync::Arc;
 
 use ddsfile::DxgiFormat;
 use glam::*;
-use shipyard::{UniqueView, UniqueViewMut, Workload};
+use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
 
 use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
+	AutoCommandBufferBuilder, CommandBufferUsage,
 };
 use vulkano::descriptor_set::layout::{
 	DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
@@ -49,7 +49,7 @@ use vulkano::DeviceSize;
 use crate::component::camera::CameraManager;
 use crate::EngineError;
 use lighting::LightManager;
-use model::{MeshManager, PassType};
+use model::MeshManager;
 use ui::Canvas;
 
 #[derive(shipyard::Unique)]
@@ -236,11 +236,6 @@ impl RenderContext
 		self.transfer_manager.submit_async_transfers(&self.command_buffer_allocator)
 	}
 
-	fn submit_primary(&mut self, built_cb: Arc<PrimaryAutoCommandBuffer>) -> crate::Result<()>
-	{
-		self.swapchain.submit(built_cb, self.transfer_manager.take_transfer_future())
-	}
-
 	fn graphics_queue_family_index(&self) -> u32
 	{
 		self.swapchain.graphics_queue_family_index()
@@ -346,70 +341,16 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 //
 pub fn render_workload() -> Workload
 {
-	Workload::new("Render")
-		.with_try_system(|mut render_ctx: UniqueViewMut<RenderContext>| render_ctx.submit_async_transfers())
-		.with_try_system(draw_shadows)
-		.with_try_system(draw_3d)
-		.with_try_system(draw_3d_oit)
-		.with_try_system(|r: UniqueView<RenderContext>, mut c: UniqueViewMut<Canvas>| c.draw(&r))
-		.with_try_system(submit_frame)
+	(submit_async_transfers, model::draw_workload, draw_ui, submit_frame).into_workload()
 }
 
-// Render shadow maps.
-fn draw_shadows(
-	render_ctx: UniqueView<RenderContext>,
-	mesh_manager: UniqueView<MeshManager>,
-	light_manager: UniqueView<LightManager>,
-) -> crate::Result<()>
+fn submit_async_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
 {
-	for layer_projview in light_manager.get_dir_light_projviews() {
-		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow(&light_manager), &[])?;
-	}
-	Ok(())
+	render_ctx.submit_async_transfers()
 }
-
-// Draw opaque 3D objects.
-fn draw_3d(
-	render_ctx: UniqueView<RenderContext>,
-	camera_manager: UniqueView<CameraManager>,
-	mesh_manager: UniqueView<MeshManager>,
-	light_manager: UniqueView<LightManager>,
-) -> crate::Result<()>
+fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
 {
-	let common_sets = [light_manager.get_all_lights_set().clone()];
-	mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
-	Ok(())
-}
-
-// Draw objects for OIT (order-independent transparency).
-fn draw_3d_oit(
-	render_ctx: UniqueView<RenderContext>,
-	camera_manager: UniqueView<CameraManager>,
-	mesh_manager: UniqueView<MeshManager>,
-	light_manager: UniqueView<LightManager>,
-) -> crate::Result<()>
-{
-	// We do both passes for OIT in this function, because there will almost always be fewer draw
-	// calls for transparent objects.
-	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
-		// First, collect moments for Moment-based OIT.
-		// This will bind the pipeline for you, since it doesn't need to do anything
-		// specific to materials (it only reads the alpha channel of each texture).
-		let projview = camera_manager.projview();
-		let moments_pass = PassType::TransparencyMoments(transparency_renderer.get_moments_pipeline().clone());
-		let moments_cb = mesh_manager.draw(&render_ctx, projview, moments_pass, &[])?;
-		if let Some(some_moments_cb) = moments_cb {
-			// Now, do the weights pass for OIT.
-			let common_sets = [
-				light_manager.get_all_lights_set().clone(),
-				transparency_renderer.get_moments_images_set().clone(),
-			];
-			let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
-			transparency_renderer.add_transparency_cb(some_moments_cb, weights_cb.unwrap());
-		}
-	}
-
-	Ok(())
+	canvas.draw(&render_ctx)
 }
 
 // Submit all the command buffers for this frame to actually render them to the image.
@@ -476,5 +417,7 @@ fn submit_frame(
 	}
 
 	// submit the built command buffer, presenting it if possible
-	render_ctx.submit_primary(primary_cb_builder.build()?)
+	let built_cb = primary_cb_builder.build()?;
+	let transfer_future = render_ctx.transfer_manager.take_transfer_future();
+	render_ctx.swapchain.submit(built_cb, transfer_future)
 }

@@ -8,7 +8,7 @@ use glam::*;
 use gltf::accessor::DataType;
 use gltf::Semantic;
 use serde::Deserialize;
-use shipyard::EntityId;
+use shipyard::{EntityId, IntoWorkload, UniqueView, Workload};
 use std::any::TypeId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::File;
@@ -46,7 +46,7 @@ use vulkano::shader::ShaderStages;
 
 use super::lighting::LightManager;
 use super::RenderContext;
-use crate::component::mesh::Mesh;
+use crate::component::{camera::CameraManager, mesh::Mesh};
 use crate::material::{pbr::PBR, ColorInput, Material, MaterialPipelines};
 use crate::EngineError;
 
@@ -862,7 +862,7 @@ impl MeshManager
 		self.resources.remove(&eid);
 	}
 
-	pub fn draw(
+	fn draw(
 		&self,
 		render_ctx: &RenderContext,
 		projview: DMat4,
@@ -1004,7 +1004,7 @@ impl MeshManager
 	}
 }
 
-pub enum PassType<'a>
+enum PassType<'a>
 {
 	Shadow(&'a LightManager),
 	Opaque,
@@ -1041,4 +1041,70 @@ impl PassType<'_>
 	{
 		matches!(self, PassType::Transparency)
 	}
+}
+
+//
+/* Workloads and systems for drawing models */
+//
+pub fn draw_workload() -> Workload
+{
+	(draw_shadows, draw_3d, draw_3d_oit).into_workload()
+}
+
+// Render shadow maps.
+fn draw_shadows(
+	render_ctx: UniqueView<RenderContext>,
+	mesh_manager: UniqueView<MeshManager>,
+	light_manager: UniqueView<LightManager>,
+) -> crate::Result<()>
+{
+	for layer_projview in light_manager.get_dir_light_projviews() {
+		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow(&light_manager), &[])?;
+	}
+	Ok(())
+}
+
+// Draw opaque 3D objects.
+fn draw_3d(
+	render_ctx: UniqueView<RenderContext>,
+	camera_manager: UniqueView<CameraManager>,
+	mesh_manager: UniqueView<MeshManager>,
+	light_manager: UniqueView<LightManager>,
+) -> crate::Result<()>
+{
+	let common_sets = [light_manager.get_all_lights_set().clone()];
+	mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
+	Ok(())
+}
+
+// Draw objects for OIT (order-independent transparency).
+fn draw_3d_oit(
+	render_ctx: UniqueView<RenderContext>,
+	camera_manager: UniqueView<CameraManager>,
+	mesh_manager: UniqueView<MeshManager>,
+	light_manager: UniqueView<LightManager>,
+) -> crate::Result<()>
+{
+	// We do both passes for OIT in this function, because there will almost always be fewer draw
+	// calls for transparent objects.
+	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
+		// First, collect moments for Moment-based OIT.
+		// This will bind the pipeline for us, since it doesn't need to do anything
+		// specific to materials (it only reads the alpha channel of each texture).
+		let projview = camera_manager.projview();
+		let moments_pass = PassType::TransparencyMoments(transparency_renderer.get_moments_pipeline().clone());
+		let moments_cb = mesh_manager.draw(&render_ctx, projview, moments_pass, &[])?;
+
+		// Next, do the weights pass for OIT.
+		if let Some(some_moments_cb) = moments_cb {
+			let common_sets = [
+				light_manager.get_all_lights_set().clone(),
+				transparency_renderer.get_moments_images_set().clone(),
+			];
+			let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
+			transparency_renderer.add_transparency_cb(some_moments_cb, weights_cb.unwrap());
+		}
+	}
+
+	Ok(())
 }
