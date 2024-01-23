@@ -51,6 +51,6 @@ fn update_meshes(
 	}
 
 	for (eid, (t, _)) in (transforms.inserted_or_modified(), &meshes).iter().with_id() {
-		mesh_manager.set_model_matrix(eid, t.get_matrix());
+		mesh_manager.set_affine(eid, t.get_affine());
 	}
 }

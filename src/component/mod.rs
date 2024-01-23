@@ -37,11 +37,11 @@ impl Transform
 		DQuat::from_euler(EulerRot::ZXY, rot_rad.z, rot_rad.x, rot_rad.y)
 	}
 
-	/// Calculate the model transformation matrix for this `Transform`.
-	pub fn get_matrix(&self) -> DMat4
+	/// Calculate the affine transformation for this `Transform`.
+	pub fn get_affine(&self) -> DAffine3
 	{
-		let rot_quat = self.rotation_quat();
-		DMat4::from_scale_rotation_translation(self.scale, rot_quat, self.position)
+		let quat = self.rotation_quat();
+		DAffine3::from_scale_rotation_translation(self.scale, quat, self.position)
 	}
 }
 impl WantsSystemAdded for Transform

@@ -188,9 +188,9 @@ This model may be inefficient to draw, so consider joining the meshes."
 	{
 		self.users.insert(eid, ModelInstance::new(self, material_variant));
 	}
-	fn set_model_matrix(&mut self, eid: EntityId, model_matrix: DMat4)
+	fn set_affine(&mut self, eid: EntityId, affine: DAffine3)
 	{
-		self.users.get_mut(&eid).unwrap().model_matrix = model_matrix;
+		self.users.get_mut(&eid).unwrap().affine = affine;
 	}
 	fn cleanup(&mut self, eid: EntityId)
 	{
@@ -215,12 +215,12 @@ This model may be inefficient to draw, so consider joining the meshes."
 		let mut resources_bound = false;
 
 		for user in self.users.values() {
-			let model_matrix = &user.model_matrix;
+			let affine = &user.affine;
 			let material_variant = user.material_variant;
 
-			let projviewmodel = *projview * *model_matrix;
+			let projviewmodel = *projview * DMat4::from(*affine);
 
-			// To prevent precision loss (especially with large values in the model matrix),
+			// To prevent precision loss (especially with large values in the affine transformation),
 			// convert the matrix values from f64 to f32 only when sending it to the shader.
 			let pvm_f32 = projviewmodel.as_mat4();
 
@@ -250,13 +250,13 @@ This model may be inefficient to draw, so consider joining the meshes."
 				if shadow_pass {
 					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32)?;
 				} else {
-					let model_matrix_f32 = model_matrix.as_mat4();
-					let translation = model_matrix_f32.w_axis.xyz();
+					let affine_mat_f32 = affine.matrix3.as_mat3();
+					let translation = affine.translation.as_vec3();
 					let push_data = MeshPushConstant {
 						projviewmodel: pvm_f32,
-						model_x: model_matrix_f32.x_axis.xyz().extend(translation.x),
-						model_y: model_matrix_f32.y_axis.xyz().extend(translation.y),
-						model_z: model_matrix_f32.z_axis.xyz().extend(translation.z),
+						model_x: affine_mat_f32.x_axis.extend(translation.x),
+						model_y: affine_mat_f32.y_axis.extend(translation.y),
+						model_z: affine_mat_f32.z_axis.extend(translation.z),
 					};
 					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 				}
@@ -663,7 +663,7 @@ fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a [gltf::b
 struct ModelInstance
 {
 	material_variant: usize,
-	model_matrix: DMat4,
+	affine: DAffine3,
 }
 impl ModelInstance
 {
@@ -687,7 +687,7 @@ impl ModelInstance
 
 		Self {
 			material_variant: material_variant_index,
-			model_matrix: Default::default(),
+			affine: Default::default(),
 		}
 	}
 }
@@ -848,10 +848,10 @@ impl MeshManager
 		Ok(())
 	}
 
-	pub fn set_model_matrix(&mut self, eid: EntityId, model_matrix: DMat4)
+	pub fn set_affine(&mut self, eid: EntityId, affine: DAffine3)
 	{
 		let path = self.resources.get(&eid).unwrap().as_path();
-		self.models.get_mut(path).unwrap().set_model_matrix(eid, model_matrix);
+		self.models.get_mut(path).unwrap().set_affine(eid, affine);
 	}
 
 	/// Free resources for the given entity ID. Only call this when the `Mesh` component was actually removed!
