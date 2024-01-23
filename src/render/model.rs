@@ -115,8 +115,6 @@ impl Model
 		path: &Path,
 	) -> crate::Result<Self>
 	{
-		let parent_folder = path.parent().unwrap();
-
 		log::info!("Loading glTF file '{}'...", path.display());
 
 		let (doc, data_buffers, _) = gltf::import(path).map_err(|e| EngineError::new("failed to load glTF file", e))?;
@@ -124,20 +122,24 @@ impl Model
 		let (vertex_subbuffers, index_buffer, submeshes) = load_gltf_meshes(render_ctx, &doc, &data_buffers)?;
 
 		// Collect materials
+		let parent_folder = path.parent().unwrap();
 		let materials: Vec<_> = doc
 			.materials()
 			.map(|mat| load_gltf_material(&mat, parent_folder))
 			.collect::<Result<_, _>>()?;
 
 		// Check what shaders are being used across all of the materials in this model.
-		let mut shader_names = BTreeSet::new();
-		for mat in &materials {
-			if !shader_names.contains(mat.material_name()) {
-				shader_names.insert(mat.material_name());
-			}
-		}
+		let shader_names: BTreeSet<_> = materials.iter().map(|mat| mat.material_name()).collect();
 		log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
 		shader_names.iter().for_each(|shader_name| log::debug!("- {shader_name}"));
+
+		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
+			render_ctx,
+			descriptor_set_allocator,
+			material_textures_set_layout,
+			parent_folder,
+			&materials,
+		)?;
 
 		// Collect material variants. If there are no material variants, only one material
 		// group will be set up in the end.
@@ -147,30 +149,20 @@ impl Model
 			.flatten()
 			.map(|variant| variant.name().to_string())
 			.collect();
-
 		if material_variants.is_empty() {
 			log::debug!("no material variants in model");
+			if submeshes.len() > materials.len() {
+				log::warn!(
+					r"There are more meshes than materials in the model, even though there are no material variants!
+This model may be inefficient to draw, so consider joining the meshes."
+				);
+			}
 		} else {
 			log::debug!("material variants in model:");
 			for (i, variant) in material_variants.iter().enumerate() {
 				log::debug!("{i}: {variant}");
 			}
 		}
-
-		if material_variants.is_empty() && submeshes.len() > materials.len() {
-			log::warn!(
-				r"There are more meshes than materials in the model, even though there are no material variants!
-This model may be inefficient to draw, so consider joining the meshes."
-			);
-		}
-
-		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
-			render_ctx,
-			descriptor_set_allocator,
-			material_textures_set_layout,
-			parent_folder,
-			&materials,
-		)?;
 
 		Ok(Model {
 			materials,
@@ -215,13 +207,11 @@ This model may be inefficient to draw, so consider joining the meshes."
 		let mut resources_bound = false;
 
 		for user in self.users.values() {
-			let affine = &user.affine;
-			let material_variant = user.material_variant;
-
-			let projviewmodel = *projview * DMat4::from(*affine);
+			let projviewmodel = *projview * DMat4::from(user.affine);
 
 			// To prevent precision loss (especially with large values in the affine transformation),
-			// convert the matrix values from f64 to f32 only when sending it to the shader.
+			// convert the matrix values from f64 to f32 only after the projview and model matrices
+			// have been multiplied.
 			let pvm_f32 = projviewmodel.as_mat4();
 
 			// Determine which submeshes are visible.
@@ -232,7 +222,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 				.submeshes
 				.iter()
 				.filter(|submesh| {
-					let material_index = submesh.mat_indices[material_variant];
+					let material_index = submesh.mat_indices[user.material_variant];
 					let mat = &self.materials[material_index];
 
 					// don't filter by material pipeline name if `None` was given
@@ -250,8 +240,8 @@ This model may be inefficient to draw, so consider joining the meshes."
 				if shadow_pass {
 					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32)?;
 				} else {
-					let affine_mat_f32 = affine.matrix3.as_mat3();
-					let translation = affine.translation.as_vec3();
+					let affine_mat_f32 = user.affine.matrix3.as_mat3();
+					let translation = user.affine.translation.as_vec3();
 					let push_data = MeshPushConstant {
 						projviewmodel: pvm_f32,
 						model_x: affine_mat_f32.x_axis.extend(translation.x),
@@ -267,7 +257,6 @@ This model may be inefficient to draw, so consider joining the meshes."
 					} else {
 						let set = self.textures_set.clone();
 						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
-
 						self.vertex_subbuffers.clone()
 					};
 
@@ -278,9 +267,8 @@ This model may be inefficient to draw, so consider joining the meshes."
 				}
 
 				for submesh in visible_submeshes {
-					let mat_index = submesh.mat_indices[material_variant];
+					let mat_index = submesh.mat_indices[user.material_variant];
 					let instance_index = self.mat_tex_base_indices[mat_index];
-
 					submesh.draw(cb, instance_index)?;
 				}
 
@@ -457,42 +445,27 @@ fn descriptor_set_from_materials(
 ) -> crate::Result<(Arc<PersistentDescriptorSet>, Vec<u32>)>
 {
 	// Get the image views for each material, and calculate the base index in the variable descriptor count.
-	let mut image_view_writes = Vec::with_capacity(materials.len());
+	let mut image_views = Vec::with_capacity(materials.len());
 	let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
 	let mut last_tex_index_stride = 0;
 	for mat in materials {
-		let mat_shader_inputs = mat.get_shader_inputs();
-		let mut mat_image_views = Vec::with_capacity(mat_shader_inputs.len());
-		for input in mat_shader_inputs {
-			let tex = input.into_texture(parent_folder, render_ctx)?;
-			mat_image_views.push(tex);
-		}
+		let mat_image_views: Vec<_> = mat
+			.get_shader_inputs()
+			.into_iter()
+			.map(|input| input.into_texture(parent_folder, render_ctx))
+			.collect::<Result<_, _>>()?;
+
+		let mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
 		last_tex_index_stride = mat_image_views.len().try_into().unwrap();
-		image_view_writes.push(mat_image_views);
 
-		let next_mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
-		mat_tex_base_indices.push(next_mat_tex_base_index);
+		image_views.push(mat_image_views);
+		mat_tex_base_indices.push(mat_tex_base_index);
 	}
-	// There will be one extra unused element at the end of `mat_tex_base_indices`, so remove it,
-	// then give the first material a base texture index of 0.
-	mat_tex_base_indices.pop();
-	mat_tex_base_indices.insert(0, 0);
-
-	let texture_count = image_view_writes
-		.iter()
-		.map(|write| write.len())
-		.sum::<usize>()
-		.try_into()
-		.expect("too many image writes");
-	log::debug!("texture count (variable descriptor count): {}", texture_count);
-
-	// Make sure that the shader doesn't overrun the variable count descriptor.
-	// Some very weird things (like crashing the entire computer) might happen if we don't check this!
-	let last_mat_tex_base_index = mat_tex_base_indices.last().unwrap();
-	assert!(last_mat_tex_base_index + last_tex_index_stride <= texture_count);
 
 	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-	let write = WriteDescriptorSet::image_view_array(1, 0, image_view_writes.into_iter().flatten());
+	let write = WriteDescriptorSet::image_view_array(1, 0, image_views.into_iter().flatten());
+	let texture_count = write.elements().len();
+	log::debug!("texture count (variable descriptor count): {}", texture_count);
 	let textures_set = PersistentDescriptorSet::new_variable(set_alloc, set_layout, texture_count, [write], [])?;
 
 	Ok((textures_set, mat_tex_base_indices))
