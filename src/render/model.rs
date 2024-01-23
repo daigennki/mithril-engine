@@ -158,10 +158,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 				);
 			}
 		} else {
-			log::debug!("material variants in model:");
-			for (i, variant) in material_variants.iter().enumerate() {
-				log::debug!("{i}: {variant}");
-			}
+			log::debug!("material variants in model: {:?}", &material_variants);
 		}
 
 		Ok(Model {
@@ -308,30 +305,18 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> crate::Resu
 	if use_external {
 		let material_name = mat
 			.name()
-			.ok_or("model wants an external material, but the glTF material has no name")?;
+			.ok_or("a model wants an external material, but the glTF material has no name")?;
 		let mat_path = search_folder.join(material_name).with_extension("yaml");
 
-		log::info!(
-			"External material specified, loading material file '{}'...",
-			mat_path.display()
-		);
+		log::info!("Loading external material file '{}'...", mat_path.display());
 
 		let mat_file = File::open(&mat_path).map_err(|e| EngineError::new("failed to open material file", e))?;
-		let deserialized_mat: Box<dyn Material> =
-			serde_yaml::from_reader(mat_file).map_err(|e| EngineError::new("failed to parse material file", e))?;
-
-		Ok(deserialized_mat)
+		serde_yaml::from_reader(mat_file).map_err(|e| EngineError::new("failed to parse material file", e))
 	} else {
-		let transparent = mat.alpha_mode() == gltf::material::AlphaMode::Blend;
-		if transparent {
-			log::debug!("found a transparent glTF material");
-		}
-
 		let loaded_mat = PBR {
-			base_color: ColorInput::Color(Vec4::from(mat.pbr_metallic_roughness().base_color_factor())),
-			transparent,
+			base_color: ColorInput::Color(mat.pbr_metallic_roughness().base_color_factor().into()),
+			transparent: mat.alpha_mode() == gltf::material::AlphaMode::Blend,
 		};
-
 		Ok(Box::new(loaded_mat))
 	}
 }
@@ -481,8 +466,8 @@ impl IndexBufferVariant
 	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> crate::Result<()>
 	{
 		match self {
-			IndexBufferVariant::U16(buf) => cb.bind_index_buffer(buf.clone()),
-			IndexBufferVariant::U32(buf) => cb.bind_index_buffer(buf.clone()),
+			Self::U16(buf) => cb.bind_index_buffer(buf.clone()),
+			Self::U32(buf) => cb.bind_index_buffer(buf.clone()),
 		}?;
 		Ok(())
 	}
@@ -860,7 +845,7 @@ impl MeshManager
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: pass_type.render_color_formats(),
 			depth_attachment_format: Some(depth_format),
-			stencil_attachment_format: pass_type.needs_stencil_buffer().then_some(depth_format),
+			stencil_attachment_format: matches!(pass_type, PassType::Transparency).then_some(depth_format),
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
@@ -881,7 +866,7 @@ impl MeshManager
 		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		let pipeline_override = pass_type.pipeline();
-		let transparency_pass = pass_type.transparency_pass();
+		let transparency_pass = matches!(pass_type, PassType::TransparencyMoments(_) | PassType::Transparency);
 
 		let mut any_drawn = false;
 		for (pipeline_name, mat_pl) in &self.material_pipelines {
@@ -1005,14 +990,6 @@ impl PassType<'_>
 			PassType::TransparencyMoments(pipeline) => Some(pipeline),
 			_ => None,
 		}
-	}
-	fn transparency_pass(&self) -> bool
-	{
-		matches!(self, PassType::TransparencyMoments(_) | PassType::Transparency)
-	}
-	fn needs_stencil_buffer(&self) -> bool
-	{
-		matches!(self, PassType::Transparency)
 	}
 }
 
