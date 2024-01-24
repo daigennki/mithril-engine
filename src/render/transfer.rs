@@ -5,7 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use vulkano::buffer::{
 	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
@@ -15,11 +15,11 @@ use vulkano::command_buffer::{
 	allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, BufferImageCopy, CommandBufferExecFuture,
 	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
-use vulkano::device::Queue;
+use vulkano::device::{Device, Queue};
 use vulkano::image::{Image, ImageSubresourceLayers};
 use vulkano::memory::{
-	allocator::{DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator},
-	DeviceAlignment,
+	allocator::{BumpAllocator, DeviceLayout, GenericMemoryAllocator, GenericMemoryAllocatorCreateInfo, MemoryTypeFilter},
+	DeviceAlignment, MemoryProperties, MemoryPropertyFlags,
 };
 use vulkano::sync::{
 	future::{FenceSignalFuture, NowFuture},
@@ -29,34 +29,71 @@ use vulkano::DeviceSize;
 
 pub struct TransferManager
 {
+	bump_allocator: Arc<GenericMemoryAllocator<BumpAllocator>>,
+
 	// Transfers to initialize buffers and images. If there is an asynchronous transfer queue,
 	// these will be performed while the CPU is busy with building the draw command buffers.
 	// Otherwise, these will be run at the beginning of the next graphics submission, before draws
 	// are performed.
 	async_transfers: Option<Box<dyn StagingWorkTrait>>,
-	staging_buffer_allocator: Mutex<SubbufferAllocator>,
 	transfer_queue: Option<Arc<Queue>>,
 	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
+
+	next_arena_size: Option<DeviceSize>,
 
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Option<Box<dyn UpdateBufferDataTrait>>,
 }
 impl TransferManager
 {
-	pub fn new(transfer_queue: Option<Arc<Queue>>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
+	pub fn new(device: Arc<Device>, transfer_queue: Option<Arc<Queue>>) -> Self
 	{
-		let pool_create_info = SubbufferAllocatorCreateInfo {
-			buffer_usage: BufferUsage::TRANSFER_SRC,
-			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+		let MemoryProperties {
+			memory_types,
+			memory_heaps,
+			..
+		} = device.physical_device().memory_properties();
+
+		let mut block_sizes = vec![0; memory_types.len()];
+		let mut memory_type_bits = u32::MAX;
+
+		for (index, memory_type) in memory_types.iter().enumerate() {
+			const LARGE_HEAP_THRESHOLD: DeviceSize = 1024 * 1024 * 1024;
+
+			let heap_size = memory_heaps[memory_type.heap_index as usize].size;
+
+			block_sizes[index] = if heap_size >= LARGE_HEAP_THRESHOLD {
+				256 * 1024 * 1024
+			} else {
+				64 * 1024 * 1024
+			};
+
+			if memory_type.property_flags.intersects(
+				MemoryPropertyFlags::LAZILY_ALLOCATED
+					| MemoryPropertyFlags::PROTECTED
+					| MemoryPropertyFlags::DEVICE_COHERENT
+					| MemoryPropertyFlags::RDMA_CAPABLE,
+			) {
+				// VUID-VkMemoryAllocateInfo-memoryTypeIndex-01872
+				// VUID-vkAllocateMemory-deviceCoherentMemory-02790
+				// Lazily allocated memory would just cause problems for suballocation in general.
+				memory_type_bits &= !(1 << index);
+			}
+		}
+
+		let allocator_create_info = GenericMemoryAllocatorCreateInfo {
+			block_sizes: &block_sizes,
+			memory_type_bits,
 			..Default::default()
 		};
-		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
+		let bump_allocator = Arc::new(GenericMemoryAllocator::<BumpAllocator>::new(device, allocator_create_info));
 
 		Self {
+			bump_allocator,
 			async_transfers: None,
-			staging_buffer_allocator,
 			transfer_queue,
 			transfer_future: Default::default(),
+			next_arena_size: None,
 			buffer_updates: None,
 		}
 	}
@@ -135,19 +172,8 @@ impl TransferManager
 			async_transfer_option = work.next_ref();
 		}
 
-		// gather stats on staging buffer usage
 		if let Some(usage) = staging_buf_usage_frame {
-			let staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-			let needed_arena_size = usage.pad_to_alignment().size();
-			if needed_arena_size > staging_buf_alloc_guard.arena_size() {
-				log::debug!("reserving {needed_arena_size} bytes in `SubbufferAllocator`");
-			}
-			staging_buf_alloc_guard.reserve(needed_arena_size)?;
-
-			// TODO: If staging buffer usage exceeds a certain threshold, don't allocate any further,
-			// and defer any further transfers to a separate submission.
-			// We could also instead make it allocate everything it needs at once, then reset the arena size
-			// to below the threshold during the next submission.
+			self.next_arena_size = Some(usage.pad_to_alignment().size());
 		}
 
 		if let Some(q) = self.transfer_queue.clone() {
@@ -186,10 +212,19 @@ impl TransferManager
 
 	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-		let mut staging_work_option = self.async_transfers.take();
-		while let Some(work) = staging_work_option.take() {
-			staging_work_option = work.add_command(cb, &mut staging_buf_alloc_guard);
+		if let Some(arena_size) = self.next_arena_size.take() {
+			let pool_create_info = SubbufferAllocatorCreateInfo {
+				arena_size,
+				buffer_usage: BufferUsage::TRANSFER_SRC,
+				memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+				..Default::default()
+			};
+			let mut staging_buf_alloc = SubbufferAllocator::new(self.bump_allocator.clone(), pool_create_info);
+
+			let mut staging_work_option = self.async_transfers.take();
+			while let Some(work) = staging_work_option.take() {
+				staging_work_option = work.add_command(cb, &mut staging_buf_alloc);
+			}
 		}
 	}
 
@@ -273,7 +308,7 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 	fn add_command(
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		subbuffer_allocator: &mut SubbufferAllocator,
+		subbuffer_allocator: &mut SubbufferAllocator<GenericMemoryAllocator<BumpAllocator>>,
 	) -> Option<Box<dyn StagingWorkTrait>>
 	{
 		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
@@ -349,7 +384,7 @@ trait StagingWorkTrait: Send + Sync
 	fn add_command(
 		self: Box<Self>,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		_: &mut SubbufferAllocator,
+		_: &mut SubbufferAllocator<GenericMemoryAllocator<BumpAllocator>>,
 	) -> Option<Box<dyn StagingWorkTrait>>;
 
 	fn next_ref(&self) -> Option<&dyn StagingWorkTrait>;
