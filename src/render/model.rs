@@ -10,7 +10,7 @@ use gltf::Semantic;
 use serde::Deserialize;
 use shipyard::{EntityId, IntoWorkload, UniqueView, Workload};
 use std::any::TypeId;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -121,17 +121,11 @@ impl Model
 
 		let (vertex_subbuffers, index_buffer, submeshes) = load_gltf_meshes(render_ctx, &doc, &data_buffers)?;
 
-		// Collect materials
 		let parent_folder = path.parent().unwrap();
 		let materials: Vec<_> = doc
 			.materials()
 			.map(|mat| load_gltf_material(&mat, parent_folder))
 			.collect::<Result<_, _>>()?;
-
-		// Check what shaders are being used across all of the materials in this model.
-		let shader_names: BTreeSet<_> = materials.iter().map(|mat| mat.material_name()).collect();
-		log::debug!("Model has {} submeshes. It uses these shaders:", submeshes.len());
-		shader_names.iter().for_each(|shader_name| log::debug!("- {shader_name}"));
 
 		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
 			render_ctx,
@@ -197,24 +191,24 @@ This model may be inefficient to draw, so consider joining the meshes."
 		projview: &DMat4,
 	) -> crate::Result<bool>
 	{
+		// `bool` indicating if any submeshes for any users have been drawn, and as such, resources
+		// such as the material descriptor set and the vertex/index buffers have been bound.
+		//
+		// TODO: We should separately handle users with custom material variants after ones without
+		// custom material variants, so that the wrong descriptor set doesn't get bound.
 		let mut any_drawn = false;
-
-		// TODO: We should set a separate `bool` for the material descriptor set to false if a model
-		// instance has a custom material variant, so that the wrong resources don't get bound.
-		let mut resources_bound = false;
 
 		for user in self.users.values() {
 			let projviewmodel = *projview * DMat4::from(user.affine);
 
-			// To prevent precision loss (especially with large values in the affine transformation),
-			// convert the matrix values from f64 to f32 only after the projview and model matrices
-			// have been multiplied.
+			// Convert the matrix values from f64 to f32 only after multiplying the projview and
+			// model matrices. This prevents precision loss, especially with large values in the
+			// affine transformation.
 			let pvm_f32 = projviewmodel.as_mat4();
 
-			// Determine which submeshes are visible.
-			// "Visible" here means it uses the currently bound material pipeline,
-			// its transparency mode matches the current render pass type,
-			// and the submesh passes frustum culling.
+			// Filter visible submeshes. "Visible" here means it uses the currently bound material
+			// pipeline, its transparency mode matches the current render pass type, and the submesh
+			// passes frustum culling.
 			let mut visible_submeshes = self
 				.submeshes
 				.iter()
@@ -248,7 +242,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 				}
 
-				if !resources_bound {
+				if !any_drawn {
 					let vbo = if shadow_pass {
 						vec![self.vertex_subbuffers[0].clone()]
 					} else {
@@ -259,8 +253,6 @@ This model may be inefficient to draw, so consider joining the meshes."
 
 					cb.bind_vertex_buffers(0, vbo)?;
 					self.index_buffer.bind(cb)?;
-
-					resources_bound = true;
 				}
 
 				for submesh in visible_submeshes {
@@ -486,8 +478,6 @@ impl SubMesh
 {
 	fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> crate::Result<Self>
 	{
-		let indices = primitive.indices().ok_or("no indices in glTF primitive")?;
-
 		// Get the material index for each material variant. If this glTF document doesn't have
 		// material variants, `mat_indices` will contain exactly one index, the material index
 		// from the regular material.
@@ -502,7 +492,7 @@ impl SubMesh
 
 		Ok(SubMesh {
 			first_index,
-			index_count: indices.count().try_into().unwrap(),
+			index_count: primitive.indices().unwrap().count().try_into().unwrap(),
 			vertex_offset,
 			mat_indices,
 			corner_min: primitive.bounding_box().min.into(),
@@ -789,6 +779,7 @@ impl MeshManager
 		for mat in &loaded_model.materials {
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
+				log::debug!("Loading material pipeline '{mat_name}'...");
 				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
 				let pipeline_data = pipeline_config.into_pipelines(
 					render_ctx.main_render_target.depth_stencil_format(),
