@@ -46,7 +46,7 @@ impl TransferManager
 	pub fn new(transfer_queue: Option<Arc<Queue>>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
 	{
 		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: 128 * 1024 * 1024,
+			arena_size: 64 * 1024 * 1024,
 			buffer_usage: BufferUsage::TRANSFER_SRC,
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
