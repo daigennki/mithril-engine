@@ -327,6 +327,11 @@ impl std::fmt::Display for UnsupportedDdsFormat
 	}
 }
 
+/// Calculate the size (in bytes) that a mip level with the given format, width, and height would
+/// take up.
+///
+/// This does not take array layers into account; the returned value should be multiplied by the
+/// array layer count.
 fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 {
 	let block_extent = format.block_extent();

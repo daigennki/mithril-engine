@@ -303,7 +303,7 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 						..Default::default()
 					});
 
-					buffer_offset += super::get_mip_size(format, mip_width, mip_height);
+					buffer_offset += super::get_mip_size(format, mip_width, mip_height) * (array_layers as DeviceSize);
 					mip_width /= 2;
 					mip_height /= 2;
 				}
