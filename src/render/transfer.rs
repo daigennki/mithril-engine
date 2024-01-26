@@ -33,7 +33,7 @@ pub struct TransferManager
 	// these will be performed while the CPU is busy with building the draw command buffers.
 	// Otherwise, these will be run at the beginning of the next graphics submission, before draws
 	// are performed.
-	async_transfers: Option<Box<dyn StagingWorkTrait>>,
+	async_transfers: Vec<Box<dyn StagingWorkTrait>>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
 	transfer_queue: Option<Arc<Queue>>,
 	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
@@ -54,7 +54,7 @@ impl TransferManager
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
 		Self {
-			async_transfers: None,
+			async_transfers: Vec::with_capacity(256),
 			staging_buffer_allocator,
 			transfer_queue,
 			transfer_future: Default::default(),
@@ -76,9 +76,8 @@ impl TransferManager
 		let work = StagingWork {
 			data,
 			dst: StagingDst::Buffer(dst_buf),
-			next: self.async_transfers.take(),
 		};
-		self.async_transfers = Some(Box::new(work));
+		self.async_transfers.push(Box::new(work));
 	}
 
 	/// Add staging work for a new image.
@@ -94,9 +93,8 @@ impl TransferManager
 		let work = StagingWork {
 			data,
 			dst: StagingDst::Image(dst_image),
-			next: self.async_transfers.take(),
 		};
-		self.async_transfers = Some(Box::new(work));
+		self.async_transfers.push(Box::new(work));
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
@@ -123,7 +121,7 @@ impl TransferManager
 	pub fn submit_async_transfers(&mut self, command_buffer_allocator: &StandardCommandBufferAllocator) -> crate::Result<()>
 	{
 		if let Some(q) = self.transfer_queue.clone() {
-			if self.async_transfers.is_some() {
+			if !self.async_transfers.is_empty() {
 				let mut cb = AutoCommandBufferBuilder::primary(
 					command_buffer_allocator,
 					q.queue_family_index(),
@@ -155,8 +153,12 @@ impl TransferManager
 			buf_update_option = buf_update.add_command(cb);
 		}
 
-		// do async transfers that couldn't be submitted earlier
-		self.add_copies(cb)
+		// If there is no asynchronous transfer queue, do them on the graphics queue.
+		if self.transfer_queue.is_none() {
+			self.add_copies(cb)?;
+		}
+
+		Ok(())
 	}
 
 	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
@@ -164,8 +166,7 @@ impl TransferManager
 		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
-		let mut staging_work_option = self.async_transfers.take();
-		while let Some(work) = staging_work_option.take() {
+		for work in self.async_transfers.drain(..) {
 			// calculate the total staging buffer usage
 			if !work.will_use_update_buffer() {
 				let device_layout = work.device_layout();
@@ -179,7 +180,7 @@ impl TransferManager
 				assert!(staging_buf_usage_frame.as_ref().unwrap().size() <= staging_buf_alloc_guard.arena_size());
 			}
 
-			staging_work_option = work.add_command(cb, &mut staging_buf_alloc_guard)?;
+			work.add_command(cb, &mut staging_buf_alloc_guard)?;
 		}
 
 		Ok(())
@@ -218,10 +219,10 @@ trait UpdateBufferDataTrait: Send + Sync
 	) -> Option<Box<dyn UpdateBufferDataTrait>>;
 }
 
-/// Asynchronous staging work that can be submitted to the transfer queue, if there is one. This
-/// is a singly linked list, and the next staging work is returned by `add_command`.
+/// Staging work that may be submitted to either the asynchronous transfer queue or the graphics
+/// queue.
 ///
-/// Note for when this is used with images:
+/// # Note for when this is used with images
 ///
 /// `data` here will be used to initialize the full extent of all mipmap levels and array layers
 /// (in that order). The data must be tightly packed together. For example, bitmap data for an
@@ -238,7 +239,6 @@ struct StagingWork<T: BufferContents + Copy>
 {
 	data: Vec<T>,
 	dst: StagingDst<T>,
-	next: Option<Box<dyn StagingWorkTrait>>,
 }
 impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 {
@@ -261,12 +261,12 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 		}
 	}
 
-	/// Add the command for this staging work, and return the next work (if there is any).
+	/// Add the command for this staging work.
 	fn add_command(
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
-	) -> crate::Result<Option<Box<dyn StagingWorkTrait>>>
+	) -> crate::Result<()>
 	{
 		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
 		// size of the format.
@@ -322,7 +322,7 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 			}
 		}
 
-		Ok(self.next)
+		Ok(())
 	}
 }
 trait StagingWorkTrait: Send + Sync
@@ -335,7 +335,7 @@ trait StagingWorkTrait: Send + Sync
 		self: Box<Self>,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		_: &mut SubbufferAllocator,
-	) -> crate::Result<Option<Box<dyn StagingWorkTrait>>>;
+	) -> crate::Result<()>;
 }
 
 enum StagingDst<T: BufferContents + Copy>
