@@ -130,7 +130,7 @@ impl TransferManager
 					CommandBufferUsage::OneTimeSubmit,
 				)?;
 
-				self.add_copies(&mut cb);
+				self.add_copies(&mut cb)?;
 
 				let transfer_future = cb.build()?.execute(q).unwrap().then_signal_fence_and_flush()?;
 
@@ -144,7 +144,10 @@ impl TransferManager
 		Ok(())
 	}
 
-	pub fn add_synchronous_transfer_commands(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
+	pub fn add_synchronous_transfer_commands(
+		&mut self,
+		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+	) -> crate::Result<()>
 	{
 		// buffer updates
 		let mut buf_update_option = self.buffer_updates.take();
@@ -153,10 +156,10 @@ impl TransferManager
 		}
 
 		// do async transfers that couldn't be submitted earlier
-		self.add_copies(cb);
+		self.add_copies(cb)
 	}
 
-	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
+	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
 		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
@@ -176,8 +179,10 @@ impl TransferManager
 				assert!(staging_buf_usage_frame.as_ref().unwrap().size() <= staging_buf_alloc_guard.arena_size());
 			}
 
-			staging_work_option = work.add_command(cb, &mut staging_buf_alloc_guard);
+			staging_work_option = work.add_command(cb, &mut staging_buf_alloc_guard)?;
 		}
+
+		Ok(())
 	}
 
 	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>
@@ -261,12 +266,10 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 		self: Box<Self>,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		subbuffer_allocator: &mut SubbufferAllocator,
-	) -> Option<Box<dyn StagingWorkTrait>>
+	) -> crate::Result<Option<Box<dyn StagingWorkTrait>>>
 	{
 		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
-		// size of the format. We also `unwrap` on `allocate` because it shouldn't allocate a new
-		// arena (meaning memory allocation errors shouldn't occur), since we already reserved
-		// enough memory for all staging buffers this frame.
+		// size of the format.
 		let device_layout = self.device_layout();
 
 		let use_update_buffer = self.will_use_update_buffer();
@@ -274,11 +277,11 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 		match self.dst {
 			StagingDst::Buffer(dst_buf) => {
 				if use_update_buffer {
-					cb_builder.update_buffer(dst_buf, self.data.into_boxed_slice()).unwrap();
+					cb_builder.update_buffer(dst_buf, self.data.into_boxed_slice())?;
 				} else {
-					let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout).unwrap().reinterpret();
+					let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
 					staging_buf.write().unwrap().copy_from_slice(&self.data);
-					cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, dst_buf)).unwrap();
+					cb_builder.copy_buffer(CopyBufferInfo::buffers(staging_buf, dst_buf))?;
 				}
 			}
 			StagingDst::Image(dst_image) => {
@@ -308,18 +311,18 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 					mip_height /= 2;
 				}
 
-				let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout).unwrap().reinterpret();
+				let staging_buf: Subbuffer<[T]> = subbuffer_allocator.allocate(device_layout)?.reinterpret();
 				staging_buf.write().unwrap().copy_from_slice(&self.data);
 
 				let copy_info = CopyBufferToImageInfo {
 					regions: regions.into(),
 					..CopyBufferToImageInfo::buffer_image(staging_buf, dst_image)
 				};
-				cb_builder.copy_buffer_to_image(copy_info).unwrap();
+				cb_builder.copy_buffer_to_image(copy_info)?;
 			}
 		}
 
-		self.next
+		Ok(self.next)
 	}
 }
 trait StagingWorkTrait: Send + Sync
@@ -332,7 +335,7 @@ trait StagingWorkTrait: Send + Sync
 		self: Box<Self>,
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		_: &mut SubbufferAllocator,
-	) -> Option<Box<dyn StagingWorkTrait>>;
+	) -> crate::Result<Option<Box<dyn StagingWorkTrait>>>;
 }
 
 enum StagingDst<T: BufferContents + Copy>
