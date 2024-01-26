@@ -12,7 +12,7 @@ use vulkano::buffer::{
 	BufferContents, BufferUsage, Subbuffer,
 };
 use vulkano::command_buffer::{
-	allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, BufferImageCopy, CommandBufferExecFuture,
+	allocator::StandardCommandBufferAllocator, AutoCommandBufferBuilder, BufferImageCopy,
 	CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::Queue;
@@ -21,11 +21,10 @@ use vulkano::memory::{
 	allocator::{DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator},
 	DeviceAlignment,
 };
-use vulkano::sync::{
-	future::{FenceSignalFuture, NowFuture},
-	GpuFuture,
-};
+use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
 use vulkano::DeviceSize;
+
+const STAGING_ARENA_SIZE: DeviceSize = 64 * 1024 * 1024;
 
 pub struct TransferManager
 {
@@ -36,7 +35,7 @@ pub struct TransferManager
 	async_transfers: Vec<Box<dyn StagingWorkTrait>>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
 	transfer_queue: Option<Arc<Queue>>,
-	transfer_future: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
+	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	// Buffer updates to run at the beginning of the next graphics submission.
 	buffer_updates: Option<Box<dyn UpdateBufferDataTrait>>,
@@ -46,7 +45,7 @@ impl TransferManager
 	pub fn new(transfer_queue: Option<Arc<Queue>>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
 	{
 		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: 64 * 1024 * 1024,
+			arena_size: STAGING_ARENA_SIZE,
 			buffer_usage: BufferUsage::TRANSFER_SRC,
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
@@ -60,6 +59,26 @@ impl TransferManager
 			transfer_future: Default::default(),
 			buffer_updates: None,
 		}
+	}
+
+	fn add_transfer<T>(&mut self, work: StagingWork<T>)
+	where
+		T: BufferContents + Copy
+	{
+		// If adding this transfer would cause staging buffer usage to exceed the staging buffer
+		// arena size, submit transfers immediately before adding the transfer.
+		if let Some(pending_transfer_size) = self.pending_transfer_size() {
+			let transfer_layout = work.device_layout();
+			let (extended_layout, _) = pending_transfer_size.extend(transfer_layout).unwrap();
+
+			if extended_layout.size() > STAGING_ARENA_SIZE {
+				log::debug!("exceeded staging buffer arena size, submitting previous transfers now...");
+
+				todo!();
+			}
+		}
+
+		self.async_transfers.push(Box::new(work));
 	}
 
 	/// Add staging work for a new buffer.
@@ -77,7 +96,7 @@ impl TransferManager
 			data,
 			dst: StagingDst::Buffer(dst_buf),
 		};
-		self.async_transfers.push(Box::new(work));
+		self.add_transfer(work);
 	}
 
 	/// Add staging work for a new image.
@@ -94,7 +113,7 @@ impl TransferManager
 			data,
 			dst: StagingDst::Image(dst_image),
 		};
-		self.async_transfers.push(Box::new(work));
+		self.add_transfer(work);
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
@@ -112,6 +131,43 @@ impl TransferManager
 		self.buffer_updates = Some(Box::new(buf_update));
 	}
 
+	fn submit_transfers(
+		&mut self,
+		command_buffer_allocator: &StandardCommandBufferAllocator,
+		queue: Arc<Queue>,
+	) -> crate::Result<()>
+	{
+		if !self.async_transfers.is_empty() {
+			let mut cb = AutoCommandBufferBuilder::primary(
+				command_buffer_allocator,
+				queue.queue_family_index(),
+				CommandBufferUsage::OneTimeSubmit,
+			)?;
+
+			self.add_copies(&mut cb)?;
+
+			let transfer_future = if let Some(f) = self.transfer_future.take() {
+				f.wait(None)?;
+
+				cb.build()?
+					.execute_after(f, queue)
+					.unwrap()
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			} else {
+				cb.build()?
+					.execute(queue)
+					.unwrap()
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			};
+
+			self.transfer_future = Some(transfer_future);
+		}
+
+		Ok(())
+	}
+
 	/// Submit the asynchronous transfers that are waiting.
 	/// Run this just before beginning to build the draw command buffers,
 	/// so that the transfers can be done while the CPU is busy with building the draw command buffers.
@@ -121,22 +177,7 @@ impl TransferManager
 	pub fn submit_async_transfers(&mut self, command_buffer_allocator: &StandardCommandBufferAllocator) -> crate::Result<()>
 	{
 		if let Some(q) = self.transfer_queue.clone() {
-			if !self.async_transfers.is_empty() {
-				let mut cb = AutoCommandBufferBuilder::primary(
-					command_buffer_allocator,
-					q.queue_family_index(),
-					CommandBufferUsage::OneTimeSubmit,
-				)?;
-
-				self.add_copies(&mut cb)?;
-
-				let transfer_future = cb.build()?.execute(q).unwrap().then_signal_fence_and_flush()?;
-
-				// This panics here if there's an unused future, because it *must* have been used when
-				// the draw commands were submitted last frame. Otherwise, we can't guarantee that transfers
-				// have finished by the time the draws that need them are performed.
-				assert!(self.transfer_future.replace(transfer_future).is_none());
-			}
+			self.submit_transfers(command_buffer_allocator, q)?;
 		}
 
 		Ok(())
@@ -190,7 +231,7 @@ impl TransferManager
 		Ok(())
 	}
 
-	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>
+	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
 	{
 		self.transfer_future.take()
 	}

@@ -8,14 +8,14 @@
 use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
-use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::device::Queue;
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
 	ColorSpace, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
-use vulkano::sync::future::{FenceSignalFuture, GpuFuture, NowFuture};
+use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{Validated, VulkanError};
 use winit::event_loop::EventLoop;
 use winit::window::{Window, WindowBuilder};
@@ -241,7 +241,7 @@ impl Swapchain
 	pub fn submit(
 		&mut self,
 		cb: Arc<PrimaryAutoCommandBuffer>,
-		after: Option<FenceSignalFuture<CommandBufferExecFuture<NowFuture>>>,
+		after: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 	) -> crate::Result<()>
 	{
 		let mut joined_futures = vulkano::sync::future::now(self.graphics_queue.device().clone()).boxed_send_sync();
