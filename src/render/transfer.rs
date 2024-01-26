@@ -161,25 +161,29 @@ impl TransferManager
 		Ok(())
 	}
 
+	/// Calculate the total staging buffer usage for the pending transfers.
+	///
+	/// Returns `None` if there are no pending transfers.
+	fn pending_transfer_size(&self) -> Option<DeviceLayout>
+	{
+		self.async_transfers
+			.iter()
+			.filter(|work| !work.will_use_update_buffer())
+			.map(|work| work.device_layout())
+			.reduce(|acc, device_layout| acc.extend(device_layout).unwrap().0)
+	}
+
 	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
-		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
+		// TODO: If usage exceeds a certain threshold, defer further transfers to the next submission.
+		let staging_buf_usage_frame = self.pending_transfer_size();
+
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 
+		let staging_buf_usage_bytes = staging_buf_usage_frame.map(|usage| usage.size()).unwrap_or(0);
+		assert!(staging_buf_usage_bytes <= staging_buf_alloc_guard.arena_size());
+
 		for work in self.async_transfers.drain(..) {
-			// calculate the total staging buffer usage
-			if !work.will_use_update_buffer() {
-				let device_layout = work.device_layout();
-				staging_buf_usage_frame = staging_buf_usage_frame
-					.take()
-					.map(|usage_frame| usage_frame.extend(device_layout).unwrap().0)
-					.or(Some(device_layout));
-
-				// TODO: If staging buffer usage exceeds a certain threshold, defer further
-				// transfers to the next submission instead of panicking.
-				assert!(staging_buf_usage_frame.as_ref().unwrap().size() <= staging_buf_alloc_guard.arena_size());
-			}
-
 			work.add_command(cb, &mut staging_buf_alloc_guard)?;
 		}
 
