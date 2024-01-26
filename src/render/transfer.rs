@@ -46,6 +46,7 @@ impl TransferManager
 	pub fn new(transfer_queue: Option<Arc<Queue>>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
 	{
 		let pool_create_info = SubbufferAllocatorCreateInfo {
+			arena_size: 128 * 1024 * 1024,
 			buffer_usage: BufferUsage::TRANSFER_SRC,
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
@@ -121,35 +122,6 @@ impl TransferManager
 	/// instead be done at the beginning of the graphics submission on the graphics queue.
 	pub fn submit_async_transfers(&mut self, command_buffer_allocator: &StandardCommandBufferAllocator) -> crate::Result<()>
 	{
-		// calculate how large the total staging buffer usage will be
-		let mut async_transfer_option = self.async_transfers.as_ref().map(|inner_box| inner_box.as_ref());
-		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
-		while let Some(work) = async_transfer_option.take() {
-			if !work.will_use_update_buffer() {
-				let device_layout = work.device_layout();
-				staging_buf_usage_frame = staging_buf_usage_frame
-					.take()
-					.map(|usage_frame| usage_frame.extend(device_layout).unwrap().0)
-					.or(Some(device_layout));
-			}
-			async_transfer_option = work.next_ref();
-		}
-
-		// gather stats on staging buffer usage
-		if let Some(usage) = staging_buf_usage_frame {
-			let staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-			let needed_arena_size = usage.pad_to_alignment().size();
-			if needed_arena_size > staging_buf_alloc_guard.arena_size() {
-				log::debug!("reserving {needed_arena_size} bytes in `SubbufferAllocator`");
-			}
-			staging_buf_alloc_guard.reserve(needed_arena_size)?;
-
-			// TODO: If staging buffer usage exceeds a certain threshold, don't allocate any further,
-			// and defer any further transfers to a separate submission.
-			// We could also instead make it allocate everything it needs at once, then reset the arena size
-			// to below the threshold during the next submission.
-		}
-
 		if let Some(q) = self.transfer_queue.clone() {
 			if self.async_transfers.is_some() {
 				let mut cb = AutoCommandBufferBuilder::primary(
@@ -186,9 +158,24 @@ impl TransferManager
 
 	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
+		let mut staging_buf_usage_frame: Option<DeviceLayout> = None;
 		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
+
 		let mut staging_work_option = self.async_transfers.take();
 		while let Some(work) = staging_work_option.take() {
+			// calculate the total staging buffer usage
+			if !work.will_use_update_buffer() {
+				let device_layout = work.device_layout();
+				staging_buf_usage_frame = staging_buf_usage_frame
+					.take()
+					.map(|usage_frame| usage_frame.extend(device_layout).unwrap().0)
+					.or(Some(device_layout));
+
+				// TODO: If staging buffer usage exceeds a certain threshold, defer further
+				// transfers to the next submission instead of panicking.
+				assert!(staging_buf_usage_frame.as_ref().unwrap().size() <= staging_buf_alloc_guard.arena_size());
+			}
+
 			staging_work_option = work.add_command(cb, &mut staging_buf_alloc_guard);
 		}
 	}
@@ -334,11 +321,6 @@ impl<T: BufferContents + Copy> StagingWorkTrait for StagingWork<T>
 
 		self.next
 	}
-
-	fn next_ref(&self) -> Option<&dyn StagingWorkTrait>
-	{
-		self.next.as_ref().map(|next_inner| next_inner.as_ref())
-	}
 }
 trait StagingWorkTrait: Send + Sync
 {
@@ -351,8 +333,6 @@ trait StagingWorkTrait: Send + Sync
 		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		_: &mut SubbufferAllocator,
 	) -> Option<Box<dyn StagingWorkTrait>>;
-
-	fn next_ref(&self) -> Option<&dyn StagingWorkTrait>;
 }
 
 enum StagingDst<T: BufferContents + Copy>
