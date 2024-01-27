@@ -82,12 +82,11 @@ impl RenderContext
 
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
-		// The counts below are multiplied by the number of swapchain images, to account for previous submissions.
-		// - Primary: One for graphics, another for async transfers, each on separate queue families.
-		// - Secondary: Only up to four should be created per thread.
+		// - Primary command buffers: One for each graphics submission.
+		// - Secondary command buffers: Only up to four should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: swapchain.image_count(),
-			secondary_buffer_count: 4 * swapchain.image_count(),
+			secondary_buffer_count: 4,
 			..Default::default()
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
@@ -231,11 +230,6 @@ impl RenderContext
 		Ok(view)
 	}
 
-	fn submit_async_transfers(&mut self) -> crate::Result<()>
-	{
-		self.transfer_manager.submit_async_transfers(&self.command_buffer_allocator)
-	}
-
 	fn graphics_queue_family_index(&self) -> u32
 	{
 		self.swapchain.graphics_queue_family_index()
@@ -351,7 +345,7 @@ pub fn render_workload() -> Workload
 
 fn submit_async_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
 {
-	render_ctx.submit_async_transfers()
+	render_ctx.transfer_manager.submit_async_transfers()
 }
 fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
 {
