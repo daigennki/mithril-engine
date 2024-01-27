@@ -92,8 +92,8 @@ impl TransferManager
 		let pending_transfer_size = self
 			.transfers
 			.iter()
-			.filter(|work| !work.will_use_update_buffer())
-			.map(|work| work.device_layout())
+			.filter(|pending_work| !pending_work.will_use_update_buffer())
+			.map(|pending_work| pending_work.device_layout())
 			.reduce(|acc, device_layout| acc.extend(device_layout).unwrap().0);
 
 		if let Some(transfer_size) = pending_transfer_size {
