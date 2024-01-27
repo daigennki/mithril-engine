@@ -89,25 +89,25 @@ impl TransferManager
 		let work = StagingWork { data, dst };
 
 		// Calculate the total staging buffer usage for the pending transfers.
-		let pending_transfer_size = self
+		let will_exceed_arena_size = self
 			.transfers
 			.iter()
 			.filter(|pending_work| !pending_work.will_use_update_buffer())
 			.map(|pending_work| pending_work.device_layout())
-			.reduce(|acc, device_layout| acc.extend(device_layout).unwrap().0);
+			.reduce(|acc, device_layout| acc.extend(device_layout).unwrap().0)
+			.map(|pending_transfer_size| {
+				let transfer_layout = work.device_layout();
+				let (extended_layout, _) = pending_transfer_size.extend(transfer_layout).unwrap();
+				extended_layout.size() > STAGING_ARENA_SIZE
+			})
+			.unwrap_or(false);
 
-		if let Some(transfer_size) = pending_transfer_size {
-			let transfer_layout = work.device_layout();
-			let (extended_layout, _) = transfer_size.extend(transfer_layout).unwrap();
-
-			// If adding this transfer would cause staging buffer usage to exceed the staging buffer
-			// arena size, or the length of `transfers` to exceed its capacity, submit pending
-			// transfers immediately before adding this transfer.
-			if extended_layout.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
-				log::debug!("exceeded staging buffer arena size, submitting pending transfers now...");
-
-				self.submit_transfers()?;
-			}
+		// If adding this transfer would cause staging buffer usage to exceed the staging buffer
+		// arena size, or the length of `transfers` to exceed its capacity, submit pending
+		// transfers immediately before adding this transfer.
+		if will_exceed_arena_size || self.transfers.len() == self.transfers.capacity() {
+			log::debug!("staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now...");
+			self.submit_transfers()?;
 		}
 
 		self.transfers.push(Box::new(work));
