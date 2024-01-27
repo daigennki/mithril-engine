@@ -78,7 +78,7 @@ impl RenderContext
 		let (graphics_queue, transfer_queue, allow_direct_buffer_access) = vulkan_init::vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
 
-		let swapchain = swapchain::Swapchain::new(graphics_queue, event_loop, game_name)?;
+		let swapchain = swapchain::Swapchain::new(graphics_queue.clone(), event_loop, game_name)?;
 
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
@@ -125,7 +125,7 @@ impl RenderContext
 		};
 		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)?;
 
-		let transfer_manager = transfer::TransferManager::new(transfer_queue, memory_allocator.clone());
+		let transfer_manager = transfer::TransferManager::new(graphics_queue, transfer_queue, memory_allocator.clone());
 
 		Ok(RenderContext {
 			swapchain,
@@ -186,7 +186,7 @@ impl RenderContext
 			};
 			let alloc_info = AllocationCreateInfo::default();
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
-			self.transfer_manager.copy_to_buffer(data, buf.clone());
+			self.transfer_manager.copy_to_buffer(data, buf.clone())?;
 		}
 		Ok(buf)
 	}
@@ -198,7 +198,7 @@ impl RenderContext
 		let alloc_info = AllocationCreateInfo::default();
 		let image = Image::new(self.memory_allocator.clone(), create_info, alloc_info)?;
 
-		self.transfer_manager.copy_to_image(data, image.clone());
+		self.transfer_manager.copy_to_image(data, image.clone())?;
 
 		Ok(image)
 	}
@@ -340,12 +340,12 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 //
 pub fn render_workload() -> Workload
 {
-	(submit_async_transfers, model::draw_workload, draw_ui, submit_frame).into_workload()
+	(submit_transfers, model::draw_workload, draw_ui, submit_frame).into_workload()
 }
 
-fn submit_async_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
+fn submit_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
 {
-	render_ctx.transfer_manager.submit_async_transfers()
+	render_ctx.transfer_manager.submit_transfers()
 }
 fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
 {
@@ -368,9 +368,7 @@ fn submit_frame(
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
 
-	render_ctx
-		.transfer_manager
-		.add_synchronous_transfer_commands(&mut primary_cb_builder)?;
+	render_ctx.transfer_manager.add_update_commands(&mut primary_cb_builder);
 
 	// Sometimes no image may be returned because the image is out of date or the window is
 	// minimized, in which case, don't present.

@@ -13,8 +13,8 @@ use vulkano::buffer::{
 };
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BufferImageCopy, CommandBufferUsage, CopyBufferInfo,
-	CopyBufferToImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
+	AutoCommandBufferBuilder, BufferImageCopy, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
+	PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::image::{Image, ImageSubresourceLayers};
@@ -35,8 +35,13 @@ pub struct TransferManager
 	// these will be performed while the CPU is busy with building the draw command buffers.
 	// Otherwise, these will be run at the beginning of the next graphics submission, before draws
 	// are performed.
+	//
+	// However, if the staging buffer arena gets full or `transfers` gets full,
+	// and adding another transfer is attempted, the transfers will get submitted immediately,
+	// preferably on the asynchronous transfer queue.
 	transfers: Vec<Box<dyn StagingWorkTrait>>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
+	graphics_queue: Arc<Queue>,
 	transfer_queue: Option<Arc<Queue>>,
 	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
@@ -45,7 +50,11 @@ pub struct TransferManager
 }
 impl TransferManager
 {
-	pub fn new(transfer_queue: Option<Arc<Queue>>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
+	pub fn new(
+		graphics_queue: Arc<Queue>,
+		transfer_queue: Option<Arc<Queue>>,
+		memory_allocator: Arc<StandardMemoryAllocator>,
+	) -> Self
 	{
 		let pool_create_info = SubbufferAllocatorCreateInfo {
 			arena_size: STAGING_ARENA_SIZE,
@@ -66,32 +75,44 @@ impl TransferManager
 			command_buffer_allocator,
 			transfers: Vec::with_capacity(256),
 			staging_buffer_allocator,
+			graphics_queue,
 			transfer_queue,
 			transfer_future: Default::default(),
 			buffer_updates: None,
 		}
 	}
 
-	fn add_transfer<T>(&mut self, data: Vec<T>, dst: StagingDst<T>)
+	fn add_transfer<T>(&mut self, data: Vec<T>, dst: StagingDst<T>) -> crate::Result<()>
 	where
 		T: BufferContents + Copy,
 	{
 		let work = StagingWork { data, dst };
 
-		// If adding this transfer would cause staging buffer usage to exceed the staging buffer
-		// arena size, submit transfers immediately before adding the transfer.
-		if let Some(pending_transfer_size) = self.pending_transfer_size() {
+		// Calculate the total staging buffer usage for the pending transfers.
+		let pending_transfer_size = self
+			.transfers
+			.iter()
+			.filter(|work| !work.will_use_update_buffer())
+			.map(|work| work.device_layout())
+			.reduce(|acc, device_layout| acc.extend(device_layout).unwrap().0);
+
+		if let Some(transfer_size) = pending_transfer_size {
 			let transfer_layout = work.device_layout();
-			let (extended_layout, _) = pending_transfer_size.extend(transfer_layout).unwrap();
+			let (extended_layout, _) = transfer_size.extend(transfer_layout).unwrap();
 
+			// If adding this transfer would cause staging buffer usage to exceed the staging buffer
+			// arena size, or the length of `transfers` to exceed its capacity, submit pending
+			// transfers immediately before adding this transfer.
 			if extended_layout.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
-				log::debug!("exceeded staging buffer arena size, submitting previous transfers now...");
+				log::debug!("exceeded staging buffer arena size, submitting pending transfers now...");
 
-				todo!();
+				self.submit_transfers()?;
 			}
 		}
 
 		self.transfers.push(Box::new(work));
+
+		Ok(())
 	}
 
 	/// Add staging work for a new buffer.
@@ -99,26 +120,26 @@ impl TransferManager
 	/// building the draw command buffers.
 	///
 	/// If the buffer might be in use by a previous buffer, use `update_buffer` instead.
-	pub fn copy_to_buffer<T>(&mut self, data: Vec<T>, dst_buf: Subbuffer<[T]>)
+	pub fn copy_to_buffer<T>(&mut self, data: Vec<T>, dst_buf: Subbuffer<[T]>) -> crate::Result<()>
 	where
 		T: BufferContents + Copy,
 	{
 		assert!(!data.is_empty());
 
-		self.add_transfer(data, StagingDst::Buffer(dst_buf));
+		self.add_transfer(data, StagingDst::Buffer(dst_buf))
 	}
 
 	/// Add staging work for a new image.
 	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
 	/// building the draw command buffers.
-	pub fn copy_to_image<Px>(&mut self, data: Vec<Px>, dst_image: Arc<Image>)
+	pub fn copy_to_image<Px>(&mut self, data: Vec<Px>, dst_image: Arc<Image>) -> crate::Result<()>
 	where
 		Px: BufferContents + Copy,
 	{
 		assert!(!data.is_empty());
 		assert!(dst_image.format().block_size().is_power_of_two());
 
-		self.add_transfer(data, StagingDst::Image(dst_image));
+		self.add_transfer(data, StagingDst::Image(dst_image))
 	}
 
 	/// Update a buffer at the begninning of the next graphics submission.
@@ -136,18 +157,30 @@ impl TransferManager
 		self.buffer_updates = Some(Box::new(buf_update));
 	}
 
-	fn submit_transfers(&mut self, queue: Arc<Queue>) -> crate::Result<()>
+	/// Submit the transfers that are waiting.
+	/// Run this just before beginning to build the draw command buffers, so that the transfers can
+	/// be done while the CPU is busy with building the draw command buffers.
+	///
+	/// This will try to submit the transfers to the asynchronous transfer queue. If there is no
+	/// such queue, they'll be submitted to the graphics queue.
+	pub fn submit_transfers(&mut self) -> crate::Result<()>
 	{
 		if !self.transfers.is_empty() {
+			let queue = self.transfer_queue.as_ref().unwrap_or(&self.graphics_queue).clone();
+
 			let mut cb = AutoCommandBufferBuilder::primary(
 				&self.command_buffer_allocator,
 				queue.queue_family_index(),
 				CommandBufferUsage::OneTimeSubmit,
 			)?;
 
-			self.add_copies(&mut cb)?;
+			let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
+			for work in self.transfers.drain(..) {
+				work.add_command(&mut cb, &mut staging_buf_alloc_guard)?;
+			}
 
 			let transfer_future = if let Some(f) = self.transfer_future.take() {
+				// wait so that we don't allocate too many staging buffers
 				f.wait(None)?;
 
 				cb.build()?
@@ -169,67 +202,12 @@ impl TransferManager
 		Ok(())
 	}
 
-	/// Submit the asynchronous transfers that are waiting.
-	/// Run this just before beginning to build the draw command buffers,
-	/// so that the transfers can be done while the CPU is busy with building the draw command buffers.
-	///
-	/// This does nothing if there is no asynchronous transfer queue. In such a case, the transfers will
-	/// instead be done at the beginning of the graphics submission on the graphics queue.
-	pub fn submit_async_transfers(&mut self) -> crate::Result<()>
+	pub fn add_update_commands(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		if let Some(q) = self.transfer_queue.clone() {
-			self.submit_transfers(q)?;
-		}
-
-		Ok(())
-	}
-
-	pub fn add_synchronous_transfer_commands(
-		&mut self,
-		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-	) -> crate::Result<()>
-	{
-		// buffer updates
 		let mut buf_update_option = self.buffer_updates.take();
 		while let Some(buf_update) = buf_update_option.take() {
 			buf_update_option = buf_update.add_command(cb);
 		}
-
-		// If there is no asynchronous transfer queue, do them on the graphics queue.
-		if self.transfer_queue.is_none() {
-			self.add_copies(cb)?;
-		}
-
-		Ok(())
-	}
-
-	/// Calculate the total staging buffer usage for the pending transfers.
-	///
-	/// Returns `None` if there are no pending transfers.
-	fn pending_transfer_size(&self) -> Option<DeviceLayout>
-	{
-		self.transfers
-			.iter()
-			.filter(|work| !work.will_use_update_buffer())
-			.map(|work| work.device_layout())
-			.reduce(|acc, device_layout| acc.extend(device_layout).unwrap().0)
-	}
-
-	fn add_copies(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
-	{
-		// TODO: If usage exceeds a certain threshold, defer further transfers to the next submission.
-		let staging_buf_usage_frame = self.pending_transfer_size();
-
-		let mut staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-
-		let staging_buf_usage_bytes = staging_buf_usage_frame.map(|usage| usage.size()).unwrap_or(0);
-		assert!(staging_buf_usage_bytes <= staging_buf_alloc_guard.arena_size());
-
-		for work in self.transfers.drain(..) {
-			work.add_command(cb, &mut staging_buf_alloc_guard)?;
-		}
-
-		Ok(())
 	}
 
 	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
