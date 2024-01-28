@@ -138,7 +138,7 @@ fn new_single_color_texture(render_ctx: &mut RenderContext, color: Vec4) -> crat
 		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 		..Default::default()
 	};
-	let image = render_ctx.new_image(vec![color], create_info)?;
+	let image = render_ctx.new_image(&[color], create_info)?;
 	Ok(ImageView::new_default(image)?)
 }
 

@@ -263,7 +263,7 @@ fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Re
 		usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 		..Default::default()
 	};
-	let image = render_ctx.new_image(combined_data, image_info)?;
+	let image = render_ctx.new_image(&combined_data, image_info)?;
 
 	let view_create_info = ImageViewCreateInfo {
 		view_type: ImageViewType::Cube,

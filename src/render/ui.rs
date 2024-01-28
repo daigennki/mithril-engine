@@ -325,14 +325,14 @@ impl Canvas
 		};
 		let text_pipeline = GraphicsPipeline::new(device, None, text_pipeline_info)?;
 
-		let quad_verts = vec![
+		let quad_verts = [
 			// position (xy) and texcoord (zw)
 			Vec4::new(-0.5, -0.5, 0.0, 0.0),
 			Vec4::new(-0.5, 0.5, 0.0, 1.0),
 			Vec4::new(0.5, -0.5, 1.0, 0.0),
 			Vec4::new(0.5, 0.5, 1.0, 1.0),
 		];
-		let quad_vbo = render_ctx.new_buffer(quad_verts, BufferUsage::VERTEX_BUFFER)?;
+		let quad_vbo = render_ctx.new_buffer(&quad_verts, BufferUsage::VERTEX_BUFFER)?;
 
 		let font_data = include_bytes!("../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Font has invalid data")?;
@@ -525,7 +525,7 @@ impl Canvas
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let tex_image = render_ctx.new_image(combined_images, image_create_info)?;
+		let tex_image = render_ctx.new_image(&combined_images, image_create_info)?;
 		let tex = ImageView::new_default(tex_image)?;
 
 		let colors = vec![text.color; glyph_count];
@@ -548,7 +548,7 @@ impl Canvas
 				.update_buffer(glyph_infos.into(), some_buf.clone());
 			some_buf
 		} else {
-			render_ctx.new_buffer(glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
+			render_ctx.new_buffer(&glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
 		let resources = self.update_transform(self.text_set_layout.clone(), transform, tex, Vec2::ONE, Some(glyph_info_buf))?;

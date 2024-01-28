@@ -111,7 +111,7 @@ impl LightManager
 		/* directional light */
 		let dir_light_data = DirLightData::default();
 		let dir_light_buf =
-			render_ctx.new_buffer(vec![dir_light_data], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?;
+			render_ctx.new_buffer(&[dir_light_data], BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST)?;
 
 		let dir_light_shadow_img = Image::new(
 			render_ctx.memory_allocator.clone(),

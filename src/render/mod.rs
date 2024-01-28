@@ -153,16 +153,16 @@ impl RenderContext
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
-	fn new_buffer<T>(&mut self, data: Vec<T>, usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
+	fn new_buffer<T>(&mut self, data: &[T], usage: BufferUsage) -> crate::Result<Subbuffer<[T]>>
 	where
 		T: BufferContents + Copy,
 	{
 		let data_len = data.len().try_into().unwrap();
-		let data_size_bytes = data.len() * std::mem::size_of::<T>();
+		let data_size_bytes = std::mem::size_of_val(data);
 		let buf;
 		if self.allow_direct_buffer_access {
 			// When possible, upload directly to the new buffer memory.
-			log::debug!("Allocating direct buffer of {} bytes", data_size_bytes);
+			log::debug!("Allocating direct buffer of {data_size_bytes} bytes");
 			let buf_info = BufferCreateInfo {
 				usage,
 				..Default::default()
@@ -175,11 +175,11 @@ impl RenderContext
 				..Default::default()
 			};
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
-			buf.write().unwrap().copy_from_slice(&data);
+			buf.write().unwrap().copy_from_slice(data);
 		} else {
 			// If direct uploads aren't possible, create a staging buffer on the CPU side,
 			// then submit a transfer command to the new buffer on the GPU side.
-			log::debug!("Allocating buffer of {} bytes", data_size_bytes);
+			log::debug!("Allocating buffer of {data_size_bytes} bytes");
 			let buf_info = BufferCreateInfo {
 				usage: usage | BufferUsage::TRANSFER_DST,
 				..Default::default()
@@ -191,7 +191,7 @@ impl RenderContext
 		Ok(buf)
 	}
 
-	pub fn new_image<Px>(&mut self, data: Vec<Px>, create_info: ImageCreateInfo) -> crate::Result<Arc<Image>>
+	pub fn new_image<Px>(&mut self, data: &[Px], create_info: ImageCreateInfo) -> crate::Result<Arc<Image>>
 	where
 		Px: BufferContents + Copy,
 	{
@@ -222,7 +222,7 @@ impl RenderContext
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let image = self.new_image(img_raw, image_info)?;
+		let image = self.new_image(&img_raw, image_info)?;
 		let view = ImageView::new_default(image)?;
 
 		self.textures.insert(path.to_path_buf(), view.clone());
