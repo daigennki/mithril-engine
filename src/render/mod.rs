@@ -125,7 +125,8 @@ impl RenderContext
 		};
 		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)?;
 
-		let transfer_manager = transfer::TransferManager::new(graphics_queue, transfer_queue, memory_allocator.clone());
+		let submit_transfers_to = transfer_queue.unwrap_or(graphics_queue);
+		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone());
 
 		Ok(RenderContext {
 			swapchain,

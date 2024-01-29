@@ -31,30 +31,21 @@ pub struct TransferManager
 {
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
-	// Transfers to initialize buffers and images. If there is an asynchronous transfer queue,
-	// these will be performed while the CPU is busy with building the draw command buffers.
-	// Otherwise, these will be run at the beginning of the next graphics submission, before draws
-	// are performed.
-	//
-	// However, if the staging buffer arena gets full or `transfers` gets full,
-	// and adding another transfer is attempted, the transfers will get submitted immediately,
-	// preferably on the asynchronous transfer queue.
+	// Transfers to initialize buffers and images.
+	// If this or the staging buffer arena gets full, the transfers will get submitted immediately.
 	transfers: Vec<StagingWork>,
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
-	graphics_queue: Arc<Queue>,
-	transfer_queue: Option<Arc<Queue>>,
+	queue: Arc<Queue>, // The queue to submit the transfers to.
 	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
-	// Buffer updates to run at the beginning of the next graphics submission.
+	// Buffer updates to run at the beginning of the next graphics presentation submission.
 	buffer_updates: Option<Box<dyn UpdateBufferDataTrait>>,
 }
 impl TransferManager
 {
-	pub fn new(
-		graphics_queue: Arc<Queue>,
-		transfer_queue: Option<Arc<Queue>>,
-		memory_allocator: Arc<StandardMemoryAllocator>,
-	) -> Self
+	/// Create a transfer manager that will submit transfers to the given `queue`, and create a
+	/// `SubbufferAllocator` using the given `memory_allocator`.
+	pub fn new(queue: Arc<Queue>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
 	{
 		let pool_create_info = SubbufferAllocatorCreateInfo {
 			arena_size: STAGING_ARENA_SIZE,
@@ -64,7 +55,7 @@ impl TransferManager
 		};
 		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
 
-		let device = memory_allocator.device().clone();
+		let device = queue.device().clone();
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: 4,
 			..Default::default()
@@ -75,8 +66,7 @@ impl TransferManager
 			command_buffer_allocator,
 			transfers: Vec::with_capacity(256),
 			staging_buffer_allocator,
-			graphics_queue,
-			transfer_queue,
+			queue,
 			transfer_future: Default::default(),
 			buffer_updates: None,
 		}
@@ -129,8 +119,6 @@ impl TransferManager
 	}
 
 	/// Add staging work for a new buffer.
-	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
-	/// building the draw command buffers.
 	///
 	/// If the buffer might be in use by a previous submission, use `update_buffer` instead.
 	pub fn copy_to_buffer<T>(&mut self, data: &[T], dst_buf: Subbuffer<[T]>) -> crate::Result<()>
@@ -141,8 +129,18 @@ impl TransferManager
 	}
 
 	/// Add staging work for a new image.
-	/// If there is a separate transfer queue, this will be performed asynchronously with the CPU
-	/// building the draw command buffers.
+	///
+	/// `data` here will be used to initialize the full extent of all mipmap levels and array layers
+	/// (in that order). The data must be tightly packed together. For example, bitmap data for an
+	/// image with 2 mip levels and 2 array layers must be structured like:
+	///
+	/// - mip level 0
+	///   - array layer 0
+	///   - array layer 1
+	/// - mip level 1
+	///   - array layer 0
+	///   - array layer 1
+	///
 	pub fn copy_to_image<Px>(&mut self, data: &[Px], dst_image: Arc<Image>) -> crate::Result<()>
 	where
 		Px: BufferContents + Copy,
@@ -152,7 +150,7 @@ impl TransferManager
 		self.add_transfer(data, StagingDst::Image(dst_image))
 	}
 
-	/// Update a buffer at the begninning of the next graphics submission.
+	/// Update a buffer at the begninning of the next graphics presentation submission.
 	pub fn update_buffer<T>(&mut self, data: Box<[T]>, dst_buf: Subbuffer<[T]>)
 	where
 		T: BufferContents + Copy,
@@ -165,20 +163,15 @@ impl TransferManager
 		self.buffer_updates = Some(Box::new(buf_update));
 	}
 
-	/// Submit the transfers that are waiting.
-	/// Run this just before beginning to build the draw command buffers, so that the transfers can
-	/// be done while the CPU is busy with building the draw command buffers.
-	///
-	/// This will try to submit the transfers to the asynchronous transfer queue. If there is no
-	/// such queue, they'll be submitted to the graphics queue.
+	/// Submit pending transfers. Run this just before beginning to build the draw command buffers
+	/// so that the transfers can be done while the CPU is busy with building the draw command
+	/// buffers.
 	pub fn submit_transfers(&mut self) -> crate::Result<()>
 	{
 		if !self.transfers.is_empty() {
-			let queue = self.transfer_queue.as_ref().unwrap_or(&self.graphics_queue).clone();
-
 			let mut cb = AutoCommandBufferBuilder::primary(
 				&self.command_buffer_allocator,
-				queue.queue_family_index(),
+				self.queue.queue_family_index(),
 				CommandBufferUsage::OneTimeSubmit,
 			)?;
 
@@ -191,13 +184,13 @@ impl TransferManager
 				f.wait(None)?;
 
 				cb.build()?
-					.execute_after(f, queue)
+					.execute_after(f, self.queue.clone())
 					.unwrap()
 					.boxed_send_sync()
 					.then_signal_fence_and_flush()?
 			} else {
 				cb.build()?
-					.execute(queue)
+					.execute(self.queue.clone())
 					.unwrap()
 					.boxed_send_sync()
 					.then_signal_fence_and_flush()?
@@ -223,8 +216,8 @@ impl TransferManager
 	}
 }
 
-/// Synchronous buffer updates that must be submitted on the graphics queue. This is a singly
-/// linked list, and the next staging work is returned by `add_command`.
+/// Synchronous buffer updates that must be submitted after previous graphics submissions have
+/// completed. This is a singly linked list, and the next staging work is returned by `add_command`.
 struct UpdateBufferData<T: BufferContents + Copy>
 {
 	dst_buf: Subbuffer<[T]>,
@@ -250,22 +243,6 @@ trait UpdateBufferDataTrait: Send + Sync
 	) -> Option<Box<dyn UpdateBufferDataTrait>>;
 }
 
-/// Staging work that may be submitted to either the asynchronous transfer queue or the graphics
-/// queue.
-///
-/// # Note for when this is used with images
-///
-/// `data` here will be used to initialize the full extent of all mipmap levels and array layers
-/// (in that order). The data must be tightly packed together. For example, bitmap data for an
-/// image with 2 mip levels and 2 array layers must be structured like:
-///
-/// - mip level 0
-///   - array layer 0
-///   - array layer 1
-/// - mip level 1
-///   - array layer 0
-///   - array layer 1
-///
 struct StagingWork
 {
 	src: Subbuffer<[u8]>,
@@ -278,7 +255,6 @@ impl StagingWork
 		DeviceLayout::new(self.src.size().try_into().unwrap(), self.dst.alignment()).unwrap()
 	}
 
-	/// Add the command for this staging work.
 	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
 		match self.dst {
