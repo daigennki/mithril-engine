@@ -39,7 +39,7 @@ pub struct TransferManager
 	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	// Buffer updates to run at the beginning of the next graphics presentation submission.
-	buffer_updates: Option<Box<dyn UpdateBufferDataTrait>>,
+	buffer_updates: Vec<UpdateBufferData>,
 }
 impl TransferManager
 {
@@ -68,7 +68,7 @@ impl TransferManager
 			staging_buffer_allocator,
 			queue,
 			transfer_future: Default::default(),
-			buffer_updates: None,
+			buffer_updates: Vec::new(),
 		}
 	}
 
@@ -151,16 +151,23 @@ impl TransferManager
 	}
 
 	/// Update a buffer at the begninning of the next graphics presentation submission.
-	pub fn update_buffer<T>(&mut self, data: Box<[T]>, dst_buf: Subbuffer<[T]>)
+	pub fn update_buffer<T>(&mut self, data: &[T], dst: Subbuffer<[T]>)
 	where
-		T: BufferContents + Copy,
+		T: BufferContents + Copy + bytemuck::Pod,
 	{
 		let buf_update = UpdateBufferData {
-			dst_buf,
-			data,
-			next: self.buffer_updates.take(),
+			dst: dst.into_bytes(),
+			data: bytemuck::cast_slice::<_, u8>(data).into(),
 		};
-		self.buffer_updates = Some(Box::new(buf_update));
+
+		if self.buffer_updates.len() == self.buffer_updates.capacity() {
+			let old_capacity = self.buffer_updates.capacity();
+			self.buffer_updates.reserve(64);
+			let new_capacity = self.buffer_updates.capacity();
+			log::debug!("increased buffer updates `Vec` capacity from {old_capacity} to {new_capacity}");
+		}
+
+		self.buffer_updates.push(buf_update);
 	}
 
 	/// Submit pending transfers. Run this just before beginning to build the draw command buffers
@@ -204,9 +211,8 @@ impl TransferManager
 
 	pub fn add_update_commands(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		let mut buf_update_option = self.buffer_updates.take();
-		while let Some(buf_update) = buf_update_option.take() {
-			buf_update_option = buf_update.add_command(cb);
+		for buf_update in self.buffer_updates.drain(..) {
+			buf_update.add_command(cb);
 		}
 	}
 
@@ -217,30 +223,18 @@ impl TransferManager
 }
 
 /// Synchronous buffer updates that must be submitted after previous graphics submissions have
-/// completed. This is a singly linked list, and the next staging work is returned by `add_command`.
-struct UpdateBufferData<T: BufferContents + Copy>
+/// completed.
+struct UpdateBufferData
 {
-	dst_buf: Subbuffer<[T]>,
-	data: Box<[T]>,
-	next: Option<Box<dyn UpdateBufferDataTrait>>,
+	data: Box<[u8]>,
+	dst: Subbuffer<[u8]>,
 }
-impl<T: BufferContents + Copy> UpdateBufferDataTrait for UpdateBufferData<T>
+impl UpdateBufferData
 {
-	fn add_command(
-		self: Box<Self>,
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-	) -> Option<Box<dyn UpdateBufferDataTrait>>
+	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		cb_builder.update_buffer(self.dst_buf, self.data).unwrap();
-		self.next
+		cb_builder.update_buffer(self.dst, self.data).unwrap();
 	}
-}
-trait UpdateBufferDataTrait: Send + Sync
-{
-	fn add_command(
-		self: Box<Self>,
-		_: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-	) -> Option<Box<dyn UpdateBufferDataTrait>>;
 }
 
 struct StagingWork

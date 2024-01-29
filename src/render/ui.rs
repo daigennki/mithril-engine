@@ -543,9 +543,7 @@ impl Canvas
 			// the given `eid` is `Some`, so we use `unwrap` here.
 			let resources = self.text_resources.get(&eid).unwrap();
 			let some_buf = resources.glyph_info_buffer.clone().unwrap();
-			render_ctx
-				.transfer_manager
-				.update_buffer(glyph_infos.into(), some_buf.clone());
+			render_ctx.transfer_manager.update_buffer(&glyph_infos, some_buf.clone());
 			some_buf
 		} else {
 			render_ctx.new_buffer(&glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?

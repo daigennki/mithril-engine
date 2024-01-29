@@ -41,12 +41,12 @@ use crate::component::light::DirectionalLight;
 use crate::component::Transform;
 use crate::RenderContext;
 
-#[derive(Clone, Copy, bytemuck::AnyBitPattern)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 struct DirLightData
 {
 	projviews: [Mat4; 3],
-	direction: Vec3A,
+	direction: Vec4,       // "w" element only exists for alignment and will be set to 0
 	color_intensity: Vec4, // RGB is color, A is intensity
 }
 impl Default for DirLightData
@@ -55,7 +55,7 @@ impl Default for DirLightData
 	{
 		DirLightData {
 			projviews: Default::default(),
-			direction: Vec3A::NEG_Z,
+			direction: Vec4::NEG_Z,
 			color_intensity: Vec4::ONE,
 		}
 	}
@@ -273,12 +273,12 @@ impl LightManager
 		}
 		let dir_light_data = DirLightData {
 			projviews: projviews_f32,
-			direction: direction.as_vec3a(),
+			direction: direction.as_vec3().extend(0.0),
 			color_intensity: light.color.extend(light.intensity),
 		};
 		render_ctx
 			.transfer_manager
-			.update_buffer(Box::new([dir_light_data]), self.dir_light_buf.clone());
+			.update_buffer(&[dir_light_data], self.dir_light_buf.clone());
 	}
 
 	pub fn add_dir_light_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
