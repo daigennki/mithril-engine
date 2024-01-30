@@ -76,12 +76,12 @@ impl TransferManager
 	where
 		T: BufferContents + Copy,
 	{
-		assert!(!data.is_empty());
-
 		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
 		// size of the format.
 		let data_size_bytes: DeviceSize = std::mem::size_of_val(data).try_into().unwrap();
-		let transfer_layout = DeviceLayout::new(data_size_bytes.try_into().unwrap(), dst.alignment()).unwrap();
+		let nonzero_size = data_size_bytes.try_into().expect("`data` for buffer/image transfer is empty!");
+		let transfer_layout = DeviceLayout::new(nonzero_size, dst.alignment()).unwrap();
+
 		let staging_buf: Subbuffer<[T]> = {
 			let staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 			staging_buf_alloc_guard.allocate(transfer_layout)?.reinterpret()
@@ -92,28 +92,20 @@ impl TransferManager
 			src: staging_buf.into_bytes(),
 			dst,
 		};
+		self.transfers.push(work);
 
-		// Calculate the total staging buffer usage for the pending transfers.
-		let will_exceed_arena_size = self
+		let total_usage = self
 			.transfers
 			.iter()
 			.map(|pending_work| pending_work.device_layout())
 			.reduce(|acc, layout| acc.extend(layout).unwrap().0)
-			.map(|pending_transfer_size| {
-				let (extended_layout, _) = pending_transfer_size.extend(transfer_layout).unwrap();
-				extended_layout.size() > STAGING_ARENA_SIZE
-			})
-			.unwrap_or(false);
-
-		// If adding this transfer would cause staging buffer usage to exceed the staging buffer
-		// arena size, or the length of `transfers` to exceed its capacity, submit pending
-		// transfers immediately before adding this transfer.
-		if will_exceed_arena_size || self.transfers.len() == self.transfers.capacity() {
-			log::debug!("staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now...");
+			.unwrap();
+		if total_usage.size() >= STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
+			log::debug!(
+				"staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now..."
+			);
 			self.submit_transfers()?;
 		}
-
-		self.transfers.push(work);
 
 		Ok(())
 	}
@@ -125,7 +117,7 @@ impl TransferManager
 	where
 		T: BufferContents + Copy,
 	{
-		self.add_transfer(data, StagingDst::Buffer((dst_buf.into_bytes(), T::LAYOUT.alignment())))
+		self.add_transfer(data, StagingDst::Buffer(dst_buf.into_bytes()))
 	}
 
 	/// Add staging work for a new image.
@@ -157,7 +149,7 @@ impl TransferManager
 	{
 		let buf_update = UpdateBufferData {
 			dst: dst.into_bytes(),
-			data: bytemuck::cast_slice::<_, u8>(data).into(),
+			data: bytemuck::cast_slice(data).into(),
 		};
 
 		if self.buffer_updates.len() == self.buffer_updates.capacity() {
@@ -252,7 +244,7 @@ impl StagingWork
 	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
 		match self.dst {
-			StagingDst::Buffer((dst_buf, _)) => {
+			StagingDst::Buffer(dst_buf) => {
 				cb_builder.copy_buffer(CopyBufferInfo::buffers(self.src, dst_buf))?;
 			}
 			StagingDst::Image(dst_image) => {
@@ -296,7 +288,7 @@ impl StagingWork
 
 enum StagingDst
 {
-	Buffer((Subbuffer<[u8]>, DeviceAlignment)),
+	Buffer(Subbuffer<[u8]>),
 	Image(Arc<Image>),
 }
 impl StagingDst
@@ -304,7 +296,7 @@ impl StagingDst
 	fn alignment(&self) -> DeviceAlignment
 	{
 		match self {
-			Self::Buffer((_, alignment)) => *alignment,
+			Self::Buffer(buf) => buf.buffer().memory_requirements().layout.alignment(),
 			Self::Image(image) => image.format().block_size().try_into().unwrap(),
 		}
 	}
