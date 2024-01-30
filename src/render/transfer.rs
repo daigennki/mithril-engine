@@ -208,7 +208,7 @@ impl StagingWork
 				let array_layers = dst_image.array_layers();
 
 				// generate copies for every mipmap level
-				let mut regions = Vec::with_capacity(mip_levels as usize);
+				let mut regions = smallvec::SmallVec::with_capacity(mip_levels as usize);
 				let [mut mip_width, mut mip_height, _] = dst_image.extent();
 				let mut buffer_offset: DeviceSize = 0;
 				for mip_level in 0..mip_levels {
@@ -228,7 +228,7 @@ impl StagingWork
 				}
 
 				let copy_info = CopyBufferToImageInfo {
-					regions: regions.into(),
+					regions,
 					..CopyBufferToImageInfo::buffer_image(self.src, dst_image)
 				};
 				cb_builder.copy_buffer_to_image(copy_info)
