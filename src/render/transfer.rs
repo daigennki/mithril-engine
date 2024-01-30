@@ -78,6 +78,21 @@ impl TransferManager
 		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
 		let transfer_layout = DeviceLayout::new(nonzero_size, dst.alignment()).unwrap();
 
+		if !self.transfers.is_empty() {
+			let total_usage = self
+				.transfers
+				.iter()
+				.map(|pending_work| pending_work.device_layout())
+				.fold(transfer_layout, |acc, layout| acc.extend(layout).unwrap().0);
+
+			if total_usage.size() >= STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
+				log::debug!(
+					"staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now..."
+				);
+				self.submit_transfers()?;
+			}
+		}
+
 		let staging_buf: Subbuffer<[T]> = {
 			let staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
 			staging_buf_alloc_guard.allocate(transfer_layout)?.reinterpret()
@@ -89,17 +104,6 @@ impl TransferManager
 			dst,
 		};
 		self.transfers.push(work);
-
-		let total_usage = self
-			.transfers
-			.iter()
-			.map(|pending_work| pending_work.device_layout())
-			.reduce(|acc, layout| acc.extend(layout).unwrap().0)
-			.unwrap();
-		if total_usage.size() >= STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
-			log::debug!("staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now...");
-			self.submit_transfers()?;
-		}
 
 		Ok(())
 	}
