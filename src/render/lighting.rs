@@ -87,6 +87,8 @@ pub struct LightManager
 	all_lights_set: Arc<PersistentDescriptorSet>,
 
 	shadow_pipeline: Arc<GraphicsPipeline>,
+
+	update_needed: Option<DirLightData>,
 }
 impl LightManager
 {
@@ -192,7 +194,7 @@ impl LightManager
 
 		let dir_light_cb = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
 
-		Ok(LightManager {
+		Ok(Self {
 			dir_light_projviews: Default::default(),
 			dir_light_buf,
 			dir_light_shadow: dir_light_shadow_view,
@@ -200,16 +202,11 @@ impl LightManager
 			dir_light_cb: Mutex::new(dir_light_cb),
 			all_lights_set,
 			shadow_pipeline,
+			update_needed: None,
 		})
 	}
 
-	pub fn update_dir_light(
-		&mut self,
-		render_ctx: &mut RenderContext,
-		light: &DirectionalLight,
-		transform: &Transform,
-		cut_camera_frustums: [DMat4; 3],
-	)
+	pub fn update_dir_light(&mut self, light: &DirectionalLight, transform: &Transform, cut_camera_frustums: [DMat4; 3])
 	{
 		let direction = transform.rotation_quat() * DVec3::NEG_Z;
 
@@ -276,7 +273,7 @@ impl LightManager
 			direction: direction.as_vec3().extend(0.0),
 			color_intensity: light.color.extend(light.intensity),
 		};
-		render_ctx.update_buffer(&[dir_light_data], self.dir_light_buf.clone());
+		self.update_needed = Some(dir_light_data);
 	}
 
 	pub fn add_dir_light_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
@@ -289,10 +286,14 @@ impl LightManager
 	}
 
 	pub fn execute_shadow_rendering(
-		&self,
+		&mut self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> crate::Result<()>
 	{
+		if let Some(dir_light_data) = self.update_needed.take() {
+			cb_builder.update_buffer(self.dir_light_buf.clone(), Box::from([dir_light_data]))?;
+		}
+
 		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
 		let shadow_iter = dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter());
 		for (shadow_cb, shadow_layer_image_view) in shadow_iter {

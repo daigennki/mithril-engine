@@ -177,6 +177,7 @@ struct UiGpuResources
 	projected: Affine2,
 	logical_texture_size_inv: Vec2,
 	mesh_type: MeshType,
+	update_needed: Option<Box<[GlyphInfo]>>,
 }
 
 #[derive(shipyard::Unique)]
@@ -414,6 +415,7 @@ impl Canvas
 			projected,
 			logical_texture_size_inv,
 			mesh_type: MeshType::Quad,
+			update_needed: None,
 		})
 	}
 
@@ -450,11 +452,11 @@ impl Canvas
 	{
 		let text_str = &text.text_str;
 
-		// If the string is longer than the maximum image array layers allowed by Vulkan, refuse to
-		// render it. On Windows/Linux desktop, the limit is always at least 2048, so it should be
-		// extremely rare that we get such a long string, but we should check it anyways just in case.
-		// We also check that it's no larger than 2048 characters because we might use
-		// vkCmdUpdateBuffer, which has a limit of 65536 (32 * 2048) bytes, to update vertices.
+		// If the string is longer than the maximum image array layers allowed by the driver, refuse
+		// to render it. On Windows/Linux desktop, the limit is always at least 2048, so it should
+		// be extremely rare that we get such a long string, but we should check it anyways just in
+		// case. We also check that it's no larger than 2048 characters because we use
+		// `vkCmdUpdateBuffer`, which has a limit of 65536 (32 * 2048) bytes, to update vertices.
 		let image_format_info = ImageFormatInfo {
 			format: Format::R8_UNORM,
 			usage: ImageUsage::SAMPLED,
@@ -537,19 +539,23 @@ impl Canvas
 			.map(|(pos, color)| GlyphInfo { pos, color })
 			.collect();
 
+		let update_needed;
 		let glyph_info_buf = if glyph_count == prev_glyph_count {
 			// Reuse the buffer if the glyph count hasn't changed.
 			// If `prev_glyph_count` is greater than 0, we already know that `text_resources` for
 			// the given `eid` is `Some`, so we use `unwrap` here.
-			let resources = self.text_resources.get(&eid).unwrap();
-			let some_buf = resources.glyph_info_buffer.clone().unwrap();
-			render_ctx.update_buffer(&glyph_infos, some_buf.clone());
-			some_buf
+			let resources = self.text_resources.get_mut(&eid).unwrap();
+			update_needed = Some(glyph_infos.into());
+			resources.glyph_info_buffer.clone().unwrap()
 		} else {
+			update_needed = None;
 			render_ctx.new_buffer(&glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		let resources = self.update_transform(self.text_set_layout.clone(), transform, tex, Vec2::ONE, Some(glyph_info_buf))?;
+		let resources = UiGpuResources {
+			update_needed,
+			..self.update_transform(self.text_set_layout.clone(), transform, tex, Vec2::ONE, Some(glyph_info_buf))?
+		};
 		self.text_resources.insert(eid, resources);
 
 		Ok(())
@@ -634,6 +640,13 @@ impl Canvas
 		color_image: Arc<ImageView>,
 	) -> crate::Result<()>
 	{
+		for text_resource in self.text_resources.values_mut() {
+			if let Some(update_needed) = text_resource.update_needed.take() {
+				let dst_buf = text_resource.glyph_info_buffer.clone().unwrap();
+				cb_builder.update_buffer(dst_buf, update_needed)?;
+			}
+		}
+
 		if let Some(some_cb) = self.ui_cb.take() {
 			let ui_render_info = RenderingInfo {
 				color_attachments: vec![Some(RenderingAttachmentInfo {

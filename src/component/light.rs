@@ -10,7 +10,7 @@ use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
-use crate::render::{lighting::LightManager, RenderContext};
+use crate::render::lighting::LightManager;
 
 /// These are various components that represent light sources in the world.
 ///
@@ -34,7 +34,6 @@ impl WantsSystemAdded for DirectionalLight
 	}
 }
 fn update_directional_light(
-	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 	dir_lights: View<DirectionalLight>,
@@ -53,7 +52,7 @@ fn update_directional_light(
 			near = fars[i];
 		}
 
-		light_manager.update_dir_light(&mut render_ctx, dl, t, cut_frustums);
+		light_manager.update_dir_light(dl, t, cut_frustums);
 	}
 }
 

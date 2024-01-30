@@ -70,9 +70,6 @@ pub struct RenderContext
 	allow_direct_buffer_access: bool,
 
 	transfer_manager: transfer::TransferManager,
-
-	// Buffer updates that must be submitted after previous graphics submissions have completed.
-	buffer_updates: Vec<UpdateBufferData>,
 }
 impl RenderContext
 {
@@ -141,7 +138,6 @@ impl RenderContext
 			textures: HashMap::new(),
 			allow_direct_buffer_access,
 			transfer_manager,
-			buffer_updates: Vec::new(),
 		})
 	}
 
@@ -233,25 +229,6 @@ impl RenderContext
 		self.textures.insert(path.to_path_buf(), view.clone());
 
 		Ok(view)
-	}
-
-	/// Update a buffer at the begninning of the next graphics presentation submission.
-	pub fn update_buffer<T>(&mut self, data: &[T], dst: Subbuffer<[T]>)
-	where
-		T: BufferContents + Copy + bytemuck::Pod,
-	{
-		if self.buffer_updates.len() == self.buffer_updates.capacity() {
-			let old_capacity = self.buffer_updates.capacity();
-			self.buffer_updates.reserve(64);
-			let new_capacity = self.buffer_updates.capacity();
-			log::debug!("increased buffer updates `Vec` capacity from {old_capacity} to {new_capacity}");
-		}
-
-		let update = UpdateBufferData {
-			data: bytemuck::cast_slice(data).into(),
-			dst: dst.into_bytes(),
-		};
-		self.buffer_updates.push(update);
 	}
 
 	fn graphics_queue_family_index(&self) -> u32
@@ -359,12 +336,6 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 	x_blocks * y_blocks * block_size
 }
 
-struct UpdateBufferData
-{
-	data: Box<[u8]>,
-	dst: Subbuffer<[u8]>,
-}
-
 //
 /* Render workload */
 //
@@ -388,7 +359,7 @@ fn submit_frame(
 	mut skybox: UniqueViewMut<skybox::Skybox>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<Canvas>,
-	light_manager: UniqueView<LightManager>,
+	mut light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
@@ -397,10 +368,6 @@ fn submit_frame(
 		render_ctx.graphics_queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
-
-	for UpdateBufferData { data, dst } in render_ctx.buffer_updates.drain(..) {
-		primary_cb_builder.update_buffer(dst, data)?;
-	}
 
 	// Sometimes no image may be returned because the image is out of date or the window is
 	// minimized, in which case, don't present.
