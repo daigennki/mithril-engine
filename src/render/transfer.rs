@@ -79,7 +79,7 @@ impl TransferManager
 		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
 		// size of the format.
 		let data_size_bytes: DeviceSize = std::mem::size_of_val(data).try_into().unwrap();
-		let nonzero_size = data_size_bytes.try_into().expect("`data` for buffer/image transfer is empty!");
+		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
 		let transfer_layout = DeviceLayout::new(nonzero_size, dst.alignment()).unwrap();
 
 		let staging_buf: Subbuffer<[T]> = {
@@ -101,9 +101,7 @@ impl TransferManager
 			.reduce(|acc, layout| acc.extend(layout).unwrap().0)
 			.unwrap();
 		if total_usage.size() >= STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
-			log::debug!(
-				"staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now..."
-			);
+			log::debug!("staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now...");
 			self.submit_transfers()?;
 		}
 
@@ -147,11 +145,6 @@ impl TransferManager
 	where
 		T: BufferContents + Copy + bytemuck::Pod,
 	{
-		let buf_update = UpdateBufferData {
-			dst: dst.into_bytes(),
-			data: bytemuck::cast_slice(data).into(),
-		};
-
 		if self.buffer_updates.len() == self.buffer_updates.capacity() {
 			let old_capacity = self.buffer_updates.capacity();
 			self.buffer_updates.reserve(64);
@@ -159,6 +152,10 @@ impl TransferManager
 			log::debug!("increased buffer updates `Vec` capacity from {old_capacity} to {new_capacity}");
 		}
 
+		let buf_update = UpdateBufferData {
+			dst: dst.into_bytes(),
+			data: bytemuck::cast_slice(data).into(),
+		};
 		self.buffer_updates.push(buf_update);
 	}
 
@@ -174,9 +171,7 @@ impl TransferManager
 				CommandBufferUsage::OneTimeSubmit,
 			)?;
 
-			for work in self.transfers.drain(..) {
-				work.add_command(&mut cb)?;
-			}
+			self.transfers.drain(..).for_each(|work| work.add_command(&mut cb));
 
 			let transfer_future = if let Some(f) = self.transfer_future.take() {
 				// wait so that we don't allocate too many staging buffers
@@ -203,9 +198,7 @@ impl TransferManager
 
 	pub fn add_update_commands(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		for buf_update in self.buffer_updates.drain(..) {
-			buf_update.add_command(cb);
-		}
+		self.buffer_updates.drain(..).for_each(|update| update.add_command(cb))
 	}
 
 	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
@@ -241,22 +234,18 @@ impl StagingWork
 		DeviceLayout::new(self.src.size().try_into().unwrap(), self.dst.alignment()).unwrap()
 	}
 
-	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
+	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
 		match self.dst {
-			StagingDst::Buffer(dst_buf) => {
-				cb_builder.copy_buffer(CopyBufferInfo::buffers(self.src, dst_buf))?;
-			}
+			StagingDst::Buffer(dst_buf) => cb_builder.copy_buffer(CopyBufferInfo::buffers(self.src, dst_buf)),
 			StagingDst::Image(dst_image) => {
 				let format = dst_image.format();
-				let extent = dst_image.extent();
 				let mip_levels = dst_image.mip_levels();
 				let array_layers = dst_image.array_layers();
 
 				// generate copies for every mipmap level
 				let mut regions = Vec::with_capacity(mip_levels as usize);
-				let mut mip_width = extent[0];
-				let mut mip_height = extent[1];
+				let [mut mip_width, mut mip_height, _] = dst_image.extent();
 				let mut buffer_offset: DeviceSize = 0;
 				for mip_level in 0..mip_levels {
 					regions.push(BufferImageCopy {
@@ -278,11 +267,10 @@ impl StagingWork
 					regions: regions.into(),
 					..CopyBufferToImageInfo::buffer_image(self.src, dst_image)
 				};
-				cb_builder.copy_buffer_to_image(copy_info)?;
+				cb_builder.copy_buffer_to_image(copy_info)
 			}
 		}
-
-		Ok(())
+		.unwrap();
 	}
 }
 
