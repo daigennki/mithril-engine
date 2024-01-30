@@ -37,9 +37,6 @@ pub struct TransferManager
 	staging_buffer_allocator: Mutex<SubbufferAllocator>,
 	queue: Arc<Queue>, // The queue to submit the transfers to.
 	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
-
-	// Buffer updates to run at the beginning of the next graphics presentation submission.
-	buffer_updates: Vec<UpdateBufferData>,
 }
 impl TransferManager
 {
@@ -68,7 +65,6 @@ impl TransferManager
 			staging_buffer_allocator,
 			queue,
 			transfer_future: Default::default(),
-			buffer_updates: Vec::new(),
 		}
 	}
 
@@ -140,25 +136,6 @@ impl TransferManager
 		self.add_transfer(data, StagingDst::Image(dst_image))
 	}
 
-	/// Update a buffer at the begninning of the next graphics presentation submission.
-	pub fn update_buffer<T>(&mut self, data: &[T], dst: Subbuffer<[T]>)
-	where
-		T: BufferContents + Copy + bytemuck::Pod,
-	{
-		if self.buffer_updates.len() == self.buffer_updates.capacity() {
-			let old_capacity = self.buffer_updates.capacity();
-			self.buffer_updates.reserve(64);
-			let new_capacity = self.buffer_updates.capacity();
-			log::debug!("increased buffer updates `Vec` capacity from {old_capacity} to {new_capacity}");
-		}
-
-		let buf_update = UpdateBufferData {
-			dst: dst.into_bytes(),
-			data: bytemuck::cast_slice(data).into(),
-		};
-		self.buffer_updates.push(buf_update);
-	}
-
 	/// Submit pending transfers. Run this just before beginning to build the draw command buffers
 	/// so that the transfers can be done while the CPU is busy with building the draw command
 	/// buffers.
@@ -196,29 +173,9 @@ impl TransferManager
 		Ok(())
 	}
 
-	pub fn add_update_commands(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
-	{
-		self.buffer_updates.drain(..).for_each(|update| update.add_command(cb))
-	}
-
 	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
 	{
 		self.transfer_future.take()
-	}
-}
-
-/// Synchronous buffer updates that must be submitted after previous graphics submissions have
-/// completed.
-struct UpdateBufferData
-{
-	data: Box<[u8]>,
-	dst: Subbuffer<[u8]>,
-}
-impl UpdateBufferData
-{
-	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
-	{
-		cb_builder.update_buffer(self.dst, self.data).unwrap();
 	}
 }
 
