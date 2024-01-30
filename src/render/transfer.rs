@@ -79,11 +79,14 @@ impl TransferManager
 		let transfer_layout = DeviceLayout::new(nonzero_size, dst.alignment()).unwrap();
 
 		if !self.transfers.is_empty() {
-			let total_usage = self
+			let (total_usage, _) = self
 				.transfers
 				.iter()
 				.map(|pending_work| pending_work.device_layout())
-				.fold(transfer_layout, |acc, layout| acc.extend(layout).unwrap().0);
+				.reduce(|acc, layout| acc.extend(layout).unwrap().0)
+				.unwrap()
+				.extend(transfer_layout)
+				.unwrap();
 
 			if total_usage.size() >= STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
 				log::debug!(
