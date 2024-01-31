@@ -167,7 +167,7 @@ mod ui_text_fs
 #[repr(C)]
 struct GlyphInfo
 {
-	pos: Vec4,
+	pos_size: Vec4, // pos: xy, size: zw
 	color: Vec4,
 }
 struct UiGpuResources
@@ -485,23 +485,26 @@ impl Canvas
 			return Ok(());
 		}
 
-		let glyph_image_array = text_to_image_array(text_str, &self.default_font, text.size * self.scale_factor);
+		let (optional_glyphs_image, mut glyph_infos) =
+			text_to_image(text_str, &self.default_font, text.size * self.scale_factor);
 
 		// If no visible glyphs were produced (e.g. the string was empty, or it only has space characters),
 		// remove the vertex buffers from the GPU resources, and then return immediately.
-		if glyph_image_array.is_empty() {
+		let combined_image = if let Some(image) = optional_glyphs_image {
+			image
+		} else {
 			if let Some(resources) = self.text_resources.get_mut(&eid) {
 				resources.glyph_info_buffer = None;
 			}
 			return Ok(());
-		}
+		};
 
-		let img_dim = glyph_image_array
-			.first()
-			.map(|(image, _, _)| [image.width(), image.height()])
-			.unwrap();
+		let len_u32: u32 = glyph_infos.len().try_into().unwrap();
+		let img_width = combined_image.width();
+		let img_height = combined_image.height() / len_u32;
+		let img_dim = [img_width, img_height];
 
-		let glyph_count = glyph_image_array.len();
+		let glyph_count = glyph_infos.len();
 		let prev_glyph_count = self
 			.text_resources
 			.get(&eid)
@@ -510,14 +513,11 @@ impl Canvas
 			.map(|buf| buf.len() as usize)
 			.unwrap_or(0);
 
-		let mut combined_images = Vec::with_capacity((img_dim[0] * img_dim[1]) as usize * glyph_count);
-		let mut text_pos_verts = Vec::with_capacity(glyph_count);
-		for (image, tl, bb_size) in glyph_image_array.into_iter() {
-			combined_images.extend_from_slice(image.into_raw().as_slice());
-
-			let top_left_corner: Vec2 = tl / self.scale_factor;
-			let logical_quad_size: Vec2 = bb_size.as_vec2() / self.scale_factor;
-			text_pos_verts.push((top_left_corner, logical_quad_size).into());
+		// Scale the positions and sizes according to the current UI scale factor, and set the color
+		// for each glyph.
+		for glyph_info in &mut glyph_infos {
+			glyph_info.pos_size /= self.scale_factor;
+			glyph_info.color = text.color;
 		}
 
 		let image_create_info = ImageCreateInfo {
@@ -527,17 +527,8 @@ impl Canvas
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
 		};
-		let tex_image = render_ctx.new_image(&combined_images, image_create_info)?;
+		let tex_image = render_ctx.new_image(&combined_image.into_raw(), image_create_info)?;
 		let tex = ImageView::new_default(tex_image)?;
-
-		let colors = vec![text.color; glyph_count];
-
-		// Combine position and color data into a single storage buffer.
-		let glyph_infos: Vec<_> = text_pos_verts
-			.into_iter()
-			.zip(colors)
-			.map(|(pos, color)| GlyphInfo { pos, color })
-			.collect();
 
 		let update_needed;
 		let glyph_info_buf = if glyph_count == prev_glyph_count {
@@ -695,45 +686,57 @@ fn calculate_projection(canvas_width: f32, canvas_height: f32, screen_width: f32
 	(proj, scale_factor)
 }
 
-/// Create a `Vec` of greyscale images for each rendered glyph.
-/// Each image is paired with a `Vec2` representing the top left corner relative to the baseline,
-/// and an `IVec2` representing the bounding box size.
-fn text_to_image_array(text: &str, font: &Font<'static>, size: f32) -> Vec<(GrayImage, Vec2, IVec2)>
+/// Create a combined image containing each glyph in order. Divide total image height by the length
+/// of the `Vec` containing glyph info to get the max height of the glyphs.
+/// Each image is paired with a `GlyphInfo` containing a `Vec4` with xy representing the top left
+/// corner relative to the baseline, and zw representing the bounding box size. The `color` will be
+/// set to white, which you can change later for each glyph.
+fn text_to_image(text: &str, font: &Font<'static>, size: f32) -> (Option<GrayImage>, Vec<GlyphInfo>)
 {
 	let scale_uniform = Scale::uniform(size);
-	let glyphs: Vec<_> = font.layout(text, scale_uniform, rusttype::point(0.0, 0.0)).collect();
+	let glyphs: Vec<_> = font
+		.layout(text, scale_uniform, rusttype::point(0.0, 0.0))
+		.filter_map(|glyph| glyph.pixel_bounding_box().map(|bb| (glyph, bb)))
+		.collect();
+
+	if glyphs.is_empty() {
+		return (None, Vec::new());
+	}
 
 	// Get the largest glyphs in terms of width and height respectively.
 	// They get adjusted to the next multiple of 8 for memory alignment purposes.
 	let max_width = glyphs
 		.iter()
-		.filter_map(|glyph| glyph.pixel_bounding_box())
-		.map(|bb| bb.width().unsigned_abs())
+		.map(|(_, bb)| bb.width().unsigned_abs())
 		.max()
-		.unwrap_or(1)
+		.unwrap()
 		.next_multiple_of(8);
 	let max_height = glyphs
 		.iter()
-		.filter_map(|glyph| glyph.pixel_bounding_box())
-		.map(|bb| bb.height().unsigned_abs())
+		.map(|(_, bb)| bb.height().unsigned_abs())
 		.max()
-		.unwrap_or(1)
+		.unwrap()
 		.next_multiple_of(8);
 
-	glyphs
+	let glyphs_len_u32: u32 = glyphs.len().try_into().unwrap();
+	let mut combined_images = DynamicImage::new_luma8(max_width, max_height * glyphs_len_u32).into_luma8();
+	let positions_sizes = glyphs
 		.into_iter()
-		.filter_map(|glyph| glyph.pixel_bounding_box().map(|bb| (glyph, bb)))
-		.map(|(glyph, bb)| {
-			let mut image = DynamicImage::new_luma8(max_width, max_height).into_luma8();
+		.zip(0..)
+		.map(|((glyph, bb), i)| {
+			let offset_lines = max_height * i;
 
 			// Draw the glyph into the image per-pixel by using the draw closure,
 			// and turn the coverage into an alpha value
-			glyph.draw(|x, y, v| image.put_pixel(x, y, Luma([(v * 255.0) as u8])));
+			glyph.draw(|x, y, v| combined_images.put_pixel(x, y + offset_lines, Luma([(v * 255.0) as u8])));
 
-			let pos_tl = Vec2::new(bb.min.x as f32, bb.min.y as f32);
-			let bounding_box_size = IVec2::new(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
-
-			(image, pos_tl, bounding_box_size)
+			let position_size_int = IVec4::new(bb.min.x, bb.min.y, bb.max.x - bb.min.x, bb.max.y - bb.min.y);
+			GlyphInfo {
+				pos_size: position_size_int.as_vec4(),
+				color: Vec4::splat(1.0),
+			}
 		})
-		.collect()
+		.collect();
+
+	(Some(combined_images), positions_sizes)
 }
