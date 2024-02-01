@@ -10,9 +10,11 @@ use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags,
 };
-use vulkano::instance::{InstanceCreateInfo, InstanceExtensions};
-use vulkano::memory::{MemoryHeapFlags, MemoryPropertyFlags};
+use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
+use vulkano::memory::MemoryPropertyFlags;
 use vulkano::swapchain::Surface;
+use vulkano::DeviceSize;
+use winit::event_loop::EventLoop;
 
 use crate::EngineError;
 
@@ -30,7 +32,7 @@ impl DriverVersion
 		// NVIDIA
 		if vendor_id == 4318 {
 			return Self::Nvidia((
-				(version >> 22) & 0x3ff,
+				(version >> 22),
 				(version >> 14) & 0x0ff,
 				(version >> 6) & 0x0ff,
 				version & 0x003f,
@@ -60,10 +62,8 @@ impl std::fmt::Display for DriverVersion
 	}
 }
 
-fn create_vulkan_instance(
-	game_name: &str,
-	event_loop: &winit::event_loop::EventLoop<()>,
-) -> crate::Result<Arc<vulkano::instance::Instance>>
+/// Create a vulkan instance, then get an appropriate physical device.
+fn create_vulkan_instance(game_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Arc<Instance>>
 {
 	let lib = vulkano::library::VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
 
@@ -98,58 +98,55 @@ fn create_vulkan_instance(
 		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))
 }
 
-/// Get the most appropriate GPU, along with whether or not buffers can be directly written to.
-fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Result<Arc<PhysicalDevice>>
+fn get_physical_device(vkinst: &Arc<Instance>) -> crate::Result<Arc<PhysicalDevice>>
 {
-	log::info!("Available Vulkan physical devices:");
-	let (dgpu, igpu) = vkinst
+	let physical_devices: smallvec::SmallVec<[_; 4]> = vkinst
 		.enumerate_physical_devices()
 		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?
-		.enumerate()
-		.fold((None, None), |(dgpu, igpu), (i, pd)| {
-			let properties = pd.properties();
-			let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
-			let driver_name = properties.driver_name.as_ref().map_or("unknown driver", |name| name);
+		.collect();
 
-			log::info!(
-				"{}: {} ({:?}), driver '{}' version {} (Vulkan {})",
-				i,
-				properties.device_name,
-				properties.device_type,
-				driver_name,
-				driver_ver,
-				properties.api_version
-			);
+	log::info!("Available Vulkan physical devices:");
+	for (i, pd) in physical_devices.iter().enumerate() {
+		let properties = pd.properties();
+		let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
+		let driver_name = properties.driver_name.as_ref().map_or("[unknown]", |name| name);
+		log::info!(
+			"{}: {} ({:?}), driver '{}' version {} (Vulkan {})",
+			i,
+			properties.device_name,
+			properties.device_type,
+			driver_name,
+			driver_ver,
+			properties.api_version
+		);
+	}
 
-			match properties.device_type {
-				PhysicalDeviceType::DiscreteGpu => (dgpu.or(Some((i, pd))), igpu),
-				PhysicalDeviceType::IntegratedGpu => (dgpu, igpu.or(Some((i, pd)))),
-				_ => (dgpu, igpu),
-			}
-		});
-
-	// By default, prefer the discrete GPU over the integrated GPU. However, if the "--prefer_igp"
-	// argument was provided, instead prefer the integrated GPU over the discrete GPU.
-	let (pd_i, physical_device) = std::env::args()
+	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
+	// discrete GPU.
+	let dgpu = physical_devices
+		.iter()
+		.position(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
+	let igpu = physical_devices
+		.iter()
+		.position(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
+	let pd_i = std::env::args()
 		.find(|arg| arg == "--prefer_igp")
-		.and_then(|_| igpu.clone().or_else(|| dgpu.clone()))
+		.and_then(|_| igpu.or(dgpu))
 		.or_else(|| dgpu.or(igpu))
 		.ok_or("No GPUs were found!")?;
-	log::info!("Using physical device {}: {}", pd_i, physical_device.properties().device_name);
+	let physical_device = physical_devices[pd_i].clone();
+	log::info!("Using physical device {}", pd_i);
 
-	// Print all the memory heaps and their types.
-	log::info!("Memory heaps and their memory types on physical device:");
+	log::info!("Memory heaps:");
 	let mem_properties = physical_device.memory_properties();
-	for (mem_heap, i) in mem_properties.memory_heaps.iter().zip(0..) {
+	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
 		let mib = mem_heap.size / (1024 * 1024);
-		log::info!("{i}: {mib} MiB, flags {:?}", mem_heap.flags);
+		log::info!("{i}: {mib} MiB");
+	}
 
-		mem_properties
-			.memory_types
-			.iter()
-			.enumerate()
-			.filter(|(_, t)| t.heap_index == i)
-			.for_each(|(j, mem_type)| log::info!("└ type {j}: {:?}", mem_type.property_flags));
+	log::info!("Memory types:");
+	for (i, mem_type) in mem_properties.memory_types.iter().enumerate() {
+		log::info!("{i}: heap {}, {:?}", mem_type.heap_index, mem_type.property_flags);
 	}
 
 	Ok(physical_device)
@@ -159,38 +156,25 @@ fn get_physical_device(vkinst: &Arc<vulkano::instance::Instance>) -> crate::Resu
 fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
 {
 	match physical_device.properties().device_type {
+		PhysicalDeviceType::IntegratedGpu => true, // Always possible for integrated GPU.
 		PhysicalDeviceType::DiscreteGpu => {
-			// For discrete GPUs, look for a memory type with the property flags
-			// `DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT` belongs to the largest `DEVICE_LOCAL`
-			// heap. This is the case when Resizable BAR is enabled, in which case all of the VRAM
-			// is host-visible, and writes would immediately go across the PCIe interface.
+			// For discrete GPUs, check if Resizable BAR is enabled by looking for a host-visible
+			// memory type that belongs to a device-local heap larger than **exactly** 256 **MiB**.
+			const REBAR_THRESHOLD: DeviceSize = 256 * 1024 * 1024;
 			let mem_properties = physical_device.memory_properties();
 			mem_properties
 				.memory_types
 				.iter()
-				.find(|t| {
+				.filter(|t| {
 					t.property_flags.contains(
 						MemoryPropertyFlags::DEVICE_LOCAL
 							| MemoryPropertyFlags::HOST_VISIBLE
 							| MemoryPropertyFlags::HOST_COHERENT,
 					)
 				})
-				.is_some_and(|t| {
-					mem_properties
-						.memory_heaps
-						.iter()
-						.zip(0..)
-						.filter(|(heap, _)| heap.flags.contains(MemoryHeapFlags::DEVICE_LOCAL))
-						.max_by_key(|(heap, _)| heap.size)
-						.is_some_and(|(_, i)| t.heap_index == i)
-				})
+				.any(|t| mem_properties.memory_heaps[t.heap_index as usize].size > REBAR_THRESHOLD)
 		}
-
-		// For integrated GPUs, directly writing to buffer memory is always possible.
-		PhysicalDeviceType::IntegratedGpu => true,
-
-		// For other physical device types, assume we can't directly write to buffer memory.
-		_ => false,
+		_ => unreachable!(),
 	}
 }
 
@@ -199,12 +183,12 @@ fn get_queue_infos(physical_device: Arc<PhysicalDevice>) -> crate::Result<Vec<Qu
 {
 	let queue_family_properties = physical_device.queue_family_properties();
 
-	log::info!("Available physical device queue families:");
+	log::info!("Queue families:");
 	for (i, q) in queue_family_properties.iter().enumerate() {
 		log::info!("{}: {} queue(s), {:?}", i, q.queue_count, q.queue_flags);
 	}
 
-	// Get the required graphics queue family, and try to get an optional one for async transfers.
+	// Get the required graphics queue family.
 	let (_, graphics) = queue_family_properties
 		.iter()
 		.zip(0..)
