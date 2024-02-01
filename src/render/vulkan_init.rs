@@ -18,46 +18,33 @@ use winit::event_loop::EventLoop;
 
 use crate::EngineError;
 
-enum DriverVersion
+struct DriverVersion
 {
-	Nvidia((u32, u32, u32, u32)),
-	#[cfg(target_family = "windows")]
-	IntelWindows((u32, u32)),
-	Other((u32, u32, u32)),
-}
-impl DriverVersion
-{
-	fn new(version: u32, vendor_id: u32) -> Self
-	{
-		// NVIDIA
-		if vendor_id == 4318 {
-			return Self::Nvidia((
-				(version >> 22),
-				(version >> 14) & 0x0ff,
-				(version >> 6) & 0x0ff,
-				version & 0x003f,
-			));
-		}
-
-		// Intel (Windows only)
-		#[cfg(target_family = "windows")]
-		if vendor_id == 0x8086 {
-			return Self::IntelWindows(((version >> 14), version & 0x3fff));
-		}
-
-		// others (use Vulkan version convention)
-		Self::Other(((version >> 22), (version >> 12) & 0x3ff, version & 0xfff))
-	}
+	version: u32,
+	vendor_id: u32,
 }
 impl std::fmt::Display for DriverVersion
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
 	{
-		match self {
-			Self::Nvidia((a, b, c, d)) => write!(f, "{a}.{b}.{c}.{d}"),
+		let version = self.version;
+		match self.vendor_id {
+			// NVIDIA
+			4318 => write!(
+				f,
+				"{}.{}.{}.{}",
+				version >> 22,
+				(version >> 14) & 0x0ff,
+				(version >> 6) & 0x0ff,
+				version & 0x003f,
+			),
+
+			// Intel (Windows only)
 			#[cfg(target_family = "windows")]
-			Self::IntelWindows((a, b)) => write!(f, "{a}.{b}"),
-			Self::Other((a, b, c)) => write!(f, "{a}.{b}.{c}"),
+			0x8086 => write!(f, "{}.{}", version >> 14, version & 0x3fff),
+
+			// Others (use Vulkan version convention)
+			_ => vulkano::Version::from(version).fmt(f),
 		}
 	}
 }
@@ -67,8 +54,8 @@ fn create_vulkan_instance(game_name: &str, event_loop: &EventLoop<()>) -> crate:
 {
 	let lib = vulkano::library::VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
 
-	// We'll need to enable the `enumerate_portability` extension if we want to use devices with non-conformant Vulkan
-	// implementations like MoltenVK. For now, we can go without it.
+	// VK_KHR_portability_enumeration needs to be enabled if we want to support non-conformant
+	// Vulkan implementations like MoltenVK. For now, we can go without it.
 	let wanted_extensions = InstanceExtensions {
 		ext_swapchain_colorspace: true,
 		..Default::default()
@@ -107,18 +94,14 @@ fn get_physical_device(vkinst: &Arc<Instance>) -> crate::Result<Arc<PhysicalDevi
 
 	log::info!("Available Vulkan physical devices:");
 	for (i, pd) in physical_devices.iter().enumerate() {
-		let properties = pd.properties();
-		let driver_ver = DriverVersion::new(properties.driver_version, properties.vendor_id);
-		let driver_name = properties.driver_name.as_ref().map_or("[unknown]", |name| name);
-		log::info!(
-			"{}: {} ({:?}), driver '{}' version {} (Vulkan {})",
-			i,
-			properties.device_name,
-			properties.device_type,
-			driver_name,
-			driver_ver,
-			properties.api_version
-		);
+		let device_name = &pd.properties().device_name;
+		let device_type = pd.properties().device_type;
+		let driver_name = pd.properties().driver_name.as_ref().map_or("[unknown]", |name| name);
+		let driver_ver = DriverVersion {
+			version: pd.properties().driver_version,
+			vendor_id: pd.properties().vendor_id,
+		};
+		log::info!("{i}: {device_name} ({device_type:?}) (driver: {driver_name} {driver_ver})");
 	}
 
 	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
@@ -135,7 +118,9 @@ fn get_physical_device(vkinst: &Arc<Instance>) -> crate::Result<Arc<PhysicalDevi
 		.or_else(|| dgpu.or(igpu))
 		.ok_or("No GPUs were found!")?;
 	let physical_device = physical_devices[pd_i].clone();
-	log::info!("Using physical device {}", pd_i);
+
+	let pd_api_ver = physical_device.properties().api_version;
+	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
 
 	log::info!("Memory heaps:");
 	let mem_properties = physical_device.memory_properties();
