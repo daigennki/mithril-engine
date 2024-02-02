@@ -74,6 +74,9 @@ impl Swapchain
 			.find(|candidate| surface_formats.contains(candidate))
 			.unwrap();
 
+		let surface_present_modes: smallvec::SmallVec<[_; 4]> =
+			pd.surface_present_modes(&surface, SurfaceInfo::default())?.collect();
+		log::info!("Supported present modes: {:?}", &surface_present_modes);
 		let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
 		let present_mode = std::env::args()
 			.collect::<Vec<_>>()
@@ -87,12 +90,14 @@ impl Swapchain
 				"FifoRelaxed" => Some(PresentMode::FifoRelaxed),
 				_ => None,
 			})
+			.filter(|mode| {
+				let mode_supported = surface_present_modes.contains(mode);
+				if !mode_supported {
+					log::warn!("Requested present mode `{mode:?}` is not supported, falling back to Fifo...");
+				}
+				mode_supported
+			})
 			.unwrap_or(PresentMode::Fifo);
-
-		let mut surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
-		if !surface_present_modes.any(|mode| present_mode == mode) {
-			return Err("the specified present mode is not supported by the surface".into());
-		}
 
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
 		let create_info = SwapchainCreateInfo {
@@ -107,10 +112,11 @@ impl Swapchain
 		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)
 			.map_err(|e| EngineError::new("failed to create swapchain", e.unwrap()))?;
 		log::info!(
-			"Created a swapchain with {} images (format {:?}, color space {:?})",
+			"Created a swapchain with {} images ({:?}, {:?}, {:?})",
 			images.len(),
 			image_format,
-			image_color_space
+			image_color_space,
+			present_mode,
 		);
 
 		// Set the framerate limit
