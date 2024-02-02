@@ -18,7 +18,7 @@ use vulkano::swapchain::{
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{Validated, VulkanError};
 use winit::event_loop::EventLoop;
-use winit::window::{Window, WindowBuilder};
+use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use crate::EngineError;
 
@@ -358,31 +358,21 @@ impl Swapchain
 
 fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Arc<Window>>
 {
-	let mon = event_loop
-		.primary_monitor()
-		.or_else(|| event_loop.available_monitors().next())
-		.ok_or("No monitors are available!")?;
+	let primary_monitor = event_loop.primary_monitor();
 
-	let mon_name = mon.name().unwrap_or_else(|| "[no longer exists]".to_string());
-	let mon_size: [u32; 2] = mon.size().into();
-	let refresh_rate = mon.refresh_rate_millihertz().unwrap_or(0);
-	log::info!(
-		"Guessed primary monitor: '{}' ({} x {} @ {}.{:03} Hz)",
-		mon_name,
-		mon_size[0],
-		mon_size[1],
-		refresh_rate / 1000,
-		refresh_rate % 1000,
-	);
-
-	// If "--fullscreen" was specified in the arguments, use winit's "borderless" fullscreen on the primary monitor.
-	// winit also offers an "exclusive" fullscreen option, but for Vulkan, it provides no benefits.
+	// If "--fullscreen" was specified in the arguments, use winit's "borderless" fullscreen on the
+	// primary monitor. winit also has an "exclusive" fullscreen option, but for Vulkan, it provides
+	// no benefits.
 	let (fullscreen, inner_size) = std::env::args()
 		.find(|arg| arg == "--fullscreen")
-		.map(|_| (Some(winit::window::Fullscreen::Borderless(Some(mon.clone()))), mon.size()))
+		.map(|_| {
+			let inner_size = primary_monitor.as_ref().map_or_else(|| [1280, 720].into(), |mon| mon.size());
+			(Some(Fullscreen::Borderless(primary_monitor.clone())), inner_size)
+		})
 		.unwrap_or_else(|| (None, [1280, 720].into()));
 
 	let window = WindowBuilder::new()
+		.with_min_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
 		.with_inner_size(inner_size)
 		.with_title(window_title)
 		.with_fullscreen(fullscreen)
@@ -390,18 +380,22 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 		.build(event_loop)
 		.map_err(|e| EngineError::new("failed to create window", e))?;
 
-	// Center the window on the primary monitor.
+	// Center the window on the primary monitor, if the primary monitor could be determined.
 	//
-	// winit says that `set_outer_position` is unsupported on Wayland,
-	// but that shouldn't be a problem since Wayland already centers the window by default
-	// (albeit on the "current" monitor rather than the "primary" monitor).
-	let mon_pos: [i32; 2] = mon.position().into();
-	let mon_size_half: IVec2 = (UVec2::from(mon_size) / 2).try_into().unwrap();
-	let mon_center = IVec2::from(mon_pos) + mon_size_half;
-	let outer_size: [u32; 2] = window.outer_size().into();
-	let outer_size_half: IVec2 = (UVec2::from(outer_size) / 2).try_into().unwrap();
-	let outer_pos = winit::dpi::Position::Physical((mon_center - outer_size_half).to_array().into());
-	window.set_outer_position(outer_pos);
+	// winit says that `set_outer_position` is unsupported on Wayland, but that shouldn't be a
+	// problem since Wayland already centers the window by default (albeit on the "current" monitor
+	// rather than the "primary" monitor). `primary_monitor()` in `EventLoop` seems to return `None`
+	// for Wayland anyways.
+	if let Some(some_mon) = primary_monitor {
+		let mon_pos: [i32; 2] = some_mon.position().into();
+		let mon_size: [u32; 2] = some_mon.size().into();
+		let mon_size_half: IVec2 = (UVec2::from(mon_size) / 2).try_into().unwrap();
+		let mon_center = IVec2::from(mon_pos) + mon_size_half;
+		let outer_size: [u32; 2] = window.outer_size().into();
+		let outer_size_half: IVec2 = (UVec2::from(outer_size) / 2).try_into().unwrap();
+		let outer_pos = winit::dpi::Position::Physical((mon_center - outer_size_half).to_array().into());
+		window.set_outer_position(outer_pos);
+	}
 
 	Ok(Arc::new(window))
 }
