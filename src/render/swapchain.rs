@@ -62,21 +62,13 @@ impl Swapchain
 	pub fn new(graphics_queue: Arc<Queue>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
 	{
 		let vk_dev = graphics_queue.device().clone();
+		let pd = vk_dev.physical_device();
 		let window = create_window(event_loop, window_title)?;
 		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
 
-		let pd = vk_dev.physical_device();
-		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
-		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
-		let surface_present_modes = Vec::from_iter(pd.surface_present_modes(&surface, SurfaceInfo::default())?);
-
-		log::info!("Available surface format and color space combinations:");
-		surface_formats.iter().for_each(|f| log::info!("- {f:?}"));
-
-		log::info!("Available surface present modes: {:?}", &surface_present_modes);
-
 		// Find the first intersection between the format candidates and the formats supported by
 		// the physical device.
+		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let (image_format, image_color_space) = FORMAT_CANDIDATES
 			.into_iter()
 			.find(|candidate| surface_formats.contains(candidate))
@@ -97,10 +89,12 @@ impl Swapchain
 			})
 			.unwrap_or(PresentMode::Fifo);
 
-		if !surface_present_modes.contains(&present_mode) {
+		let mut surface_present_modes = pd.surface_present_modes(&surface, SurfaceInfo::default())?;
+		if !surface_present_modes.any(|mode| present_mode == mode) {
 			return Err("the specified present mode is not supported by the surface".into());
 		}
 
+		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count.max(2),
 			image_extent: window.inner_size().into(),

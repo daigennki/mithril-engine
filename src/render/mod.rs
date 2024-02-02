@@ -453,40 +453,39 @@ fn submit_frame(
 //
 /* Vulkan initialization */
 //
-struct DriverVersion
+fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Arc<PhysicalDevice>>
 {
-	version: u32,
-	vendor_id: u32,
-}
-impl std::fmt::Display for DriverVersion
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result
-	{
-		let version = self.version;
-		match self.vendor_id {
-			// NVIDIA
-			4318 => write!(
-				f,
-				"{}.{}.{}.{}",
-				version >> 22,
-				(version >> 14) & 0x0ff,
-				(version >> 6) & 0x0ff,
-				version & 0x003f,
-			),
+	let lib = VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
 
-			// Intel (Windows only)
-			#[cfg(target_family = "windows")]
-			0x8086 => write!(f, "{}.{}", version >> 14, version & 0x3fff),
+	// only use the validation layer in debug builds
+	#[cfg(debug_assertions)]
+	let enabled_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
+	#[cfg(not(debug_assertions))]
+	let enabled_layers = Vec::new();
 
-			// Others (use Vulkan version convention)
-			_ => vulkano::Version::from(version).fmt(f),
-		}
-	}
-}
+	const OPTIONAL_INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
+		ext_swapchain_colorspace: true,
+		..InstanceExtensions::empty()
+	};
+	// TODO: take app version as parameter
+	let inst_create_info = InstanceCreateInfo {
+		application_name: Some(app_name.into()),
+		engine_name: Some(env!("CARGO_PKG_NAME").into()),
+		engine_version: vulkano::Version {
+			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
+			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
+			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
+		},
+		enabled_layers,
+		enabled_extensions: OPTIONAL_INSTANCE_EXTENSIONS
+			.intersection(lib.supported_extensions())
+			.union(&Surface::required_extensions(event_loop)),
+		..Default::default()
+	};
+	log::info!("Enabling instance extensions: {:?}", &inst_create_info.enabled_extensions);
 
-fn get_physical_device(vkinst: &Arc<Instance>) -> crate::Result<Arc<PhysicalDevice>>
-{
-	let physical_devices: smallvec::SmallVec<[_; 4]> = vkinst
+	let physical_devices: smallvec::SmallVec<[_; 4]> = Instance::new(lib, inst_create_info)
+		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?
 		.enumerate_physical_devices()
 		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?
 		.collect();
@@ -494,13 +493,9 @@ fn get_physical_device(vkinst: &Arc<Instance>) -> crate::Result<Arc<PhysicalDevi
 	log::info!("Available Vulkan physical devices:");
 	for (i, pd) in physical_devices.iter().enumerate() {
 		let device_name = &pd.properties().device_name;
-		let device_type = pd.properties().device_type;
-		let driver_name = pd.properties().driver_name.as_ref().map_or("[unknown]", |name| name);
-		let driver_ver = DriverVersion {
-			version: pd.properties().driver_version,
-			vendor_id: pd.properties().vendor_id,
-		};
-		log::info!("{i}: {device_name} ({device_type:?}) (driver: {driver_name} {driver_ver})");
+		let driver_name = pd.properties().driver_name.as_ref().map_or("[no driver name]", |name| name);
+		let driver_info = pd.properties().driver_info.as_ref().map_or("[no driver info]", |name| name);
+		log::info!("{i}: {device_name} (driver: {driver_name}, {driver_info})");
 	}
 
 	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
@@ -516,21 +511,8 @@ fn get_physical_device(vkinst: &Arc<Instance>) -> crate::Result<Arc<PhysicalDevi
 		.and_then(|_| igpu_i.or(dgpu_i))
 		.or_else(|| dgpu_i.or(igpu_i))
 		.ok_or("No GPUs were found!")?;
-	let physical_device = physical_devices.into_iter().nth(pd_i).unwrap();
 
-	let pd_api_ver = physical_device.properties().api_version;
-	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
-
-	let mem_properties = physical_device.memory_properties();
-	for (i, mem_heap) in mem_properties.memory_heaps.iter().enumerate() {
-		let mib = mem_heap.size / (1024 * 1024);
-		log::info!("Memory heap {i}: {mib} MiB");
-	}
-	for (i, mem_type) in mem_properties.memory_types.iter().enumerate() {
-		log::info!("Memory type {i}: heap {}, {:?}", mem_type.heap_index, mem_type.property_flags);
-	}
-
-	Ok(physical_device)
+	Ok(physical_devices.into_iter().nth(pd_i).unwrap())
 }
 
 // The features enabled here are supported by basically any Vulkan device on PC.
@@ -547,8 +529,14 @@ const ENABLED_FEATURES: Features = Features {
 	..Features::empty()
 };
 
-fn create_logical_device(physical_device: Arc<PhysicalDevice>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
+/// Create the Vulkan logical device. Returns a graphics queue (which owns the device) and an
+/// optional transfer queue.
+fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
 {
+	let physical_device = get_physical_device(app_name, event_loop)?;
+	let pd_api_ver = physical_device.properties().api_version;
+	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
+
 	let queue_family_properties = physical_device.queue_family_properties();
 	for (i, q) in queue_family_properties.iter().enumerate() {
 		log::info!("Queue family {i}: {} queue(s), {:?}", q.queue_count, q.queue_flags);
@@ -597,47 +585,4 @@ fn create_logical_device(physical_device: Arc<PhysicalDevice>) -> crate::Result<
 	let graphics_queue = queues.next().unwrap();
 	let transfer_queue = queues.next();
 	Ok((graphics_queue, transfer_queue))
-}
-
-/// Set up the Vulkan instance and logical device. Returns a graphics queue (which owns the device)
-/// and an optional transfer queue.
-fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
-{
-	let lib = VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
-
-	// only use the validation layer in debug builds
-	#[cfg(debug_assertions)]
-	let enabled_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
-	#[cfg(not(debug_assertions))]
-	let enabled_layers = Vec::new();
-
-	const OPTIONAL_INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
-		ext_swapchain_colorspace: true,
-		..InstanceExtensions::empty()
-	};
-	// TODO: take app version as parameter
-	let mut inst_create_info = InstanceCreateInfo {
-		application_name: Some(app_name.into()),
-		engine_name: Some(env!("CARGO_PKG_NAME").into()),
-		engine_version: vulkano::Version {
-			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
-			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
-			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
-		},
-		enabled_layers,
-		enabled_extensions: OPTIONAL_INSTANCE_EXTENSIONS
-			.intersection(lib.supported_extensions())
-			.union(&Surface::required_extensions(event_loop)),
-		..Default::default()
-	};
-	inst_create_info.engine_version = inst_create_info.application_version;
-
-	log::info!("Enabling instance extensions: {:?}", &inst_create_info.enabled_extensions);
-
-	let vkinst =
-		Instance::new(lib, inst_create_info).map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?;
-
-	let physical_device = get_physical_device(&vkinst)?;
-
-	Ok(create_logical_device(physical_device)?)
 }
