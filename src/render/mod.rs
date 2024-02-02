@@ -511,8 +511,12 @@ fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Res
 		.and_then(|_| igpu_i.or(dgpu_i))
 		.or_else(|| dgpu_i.or(igpu_i))
 		.ok_or("No GPUs were found!")?;
+	let physical_device = physical_devices.into_iter().nth(pd_i).unwrap();
 
-	Ok(physical_devices.into_iter().nth(pd_i).unwrap())
+	let pd_api_ver = physical_device.properties().api_version;
+	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
+
+	Ok(physical_device)
 }
 
 // The features enabled here are supported by basically any Vulkan device on PC.
@@ -534,8 +538,6 @@ const ENABLED_FEATURES: Features = Features {
 fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
 {
 	let physical_device = get_physical_device(app_name, event_loop)?;
-	let pd_api_ver = physical_device.properties().api_version;
-	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
 
 	let queue_family_properties = physical_device.queue_family_properties();
 	for (i, q) in queue_family_properties.iter().enumerate() {
