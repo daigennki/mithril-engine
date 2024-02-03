@@ -5,12 +5,9 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use vulkano::buffer::{
-	allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo},
-	BufferContents, BufferUsage, Subbuffer,
-};
+use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BufferImageCopy, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
@@ -19,7 +16,7 @@ use vulkano::command_buffer::{
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::image::{Image, ImageSubresourceLayers};
 use vulkano::memory::{
-	allocator::{DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator},
+	allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator},
 	DeviceAlignment,
 };
 use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
@@ -34,24 +31,19 @@ pub struct TransferManager
 	// Transfers to initialize buffers and images.
 	// If this or the staging buffer arena gets full, the transfers will get submitted immediately.
 	transfers: Vec<StagingWork>,
-	staging_buffer_allocator: Mutex<SubbufferAllocator>,
+	staging_arenas: [Subbuffer<[u8]>; 2],
+	current_arena: usize,
+	staging_layout: Option<DeviceLayout>, // Current layout inside the current arena.
+
 	queue: Arc<Queue>, // The queue to submit the transfers to.
 	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 }
 impl TransferManager
 {
-	/// Create a transfer manager that will submit transfers to the given `queue`, and create a
-	/// `SubbufferAllocator` using the given `memory_allocator`.
-	pub fn new(queue: Arc<Queue>, memory_allocator: Arc<StandardMemoryAllocator>) -> Self
+	/// Create a transfer manager that will submit transfers to the given `queue`. It'll create a
+	/// big buffer which will be split up into subbuffers for use as staging buffers.
+	pub fn new(queue: Arc<Queue>, memory_allocator: Arc<StandardMemoryAllocator>) -> crate::Result<Self>
 	{
-		let pool_create_info = SubbufferAllocatorCreateInfo {
-			arena_size: STAGING_ARENA_SIZE,
-			buffer_usage: BufferUsage::TRANSFER_SRC,
-			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-			..Default::default()
-		};
-		let staging_buffer_allocator = Mutex::new(SubbufferAllocator::new(memory_allocator.clone(), pool_create_info));
-
 		let device = queue.device().clone();
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: 4,
@@ -59,36 +51,41 @@ impl TransferManager
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(device, cb_alloc_info);
 
-		Self {
+		let buf_info = BufferCreateInfo {
+			usage: BufferUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		let alloc_info = AllocationCreateInfo {
+			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+			..Default::default()
+		};
+		let total_arena_size: DeviceSize = STAGING_ARENA_SIZE * 2;
+		let combined_staging_arenas = Buffer::new_slice(memory_allocator, buf_info, alloc_info, total_arena_size)?;
+
+		Ok(Self {
 			command_buffer_allocator,
 			transfers: Vec::with_capacity(256),
-			staging_buffer_allocator,
+			staging_arenas: combined_staging_arenas.split_at(STAGING_ARENA_SIZE).into(),
+			current_arena: 0,
+			staging_layout: None,
 			queue,
 			transfer_future: Default::default(),
-		}
+		})
 	}
 
 	fn add_transfer<T>(&mut self, data: &[T], dst: StagingDst) -> crate::Result<()>
 	where
 		T: BufferContents + Copy,
 	{
-		// We allocate a subbuffer using a `DeviceLayout` here so that it's aligned to the block
-		// size of the format.
+		// We get a subbuffer using a `DeviceLayout` here so that it's aligned to the block size of
+		// the format.
 		let data_size_bytes: DeviceSize = std::mem::size_of_val(data).try_into().unwrap();
 		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
 		let transfer_layout = DeviceLayout::new(nonzero_size, dst.alignment()).unwrap();
 
 		if !self.transfers.is_empty() {
-			let (total_usage, _) = self
-				.transfers
-				.iter()
-				.map(|pending_work| pending_work.device_layout())
-				.reduce(|acc, layout| acc.extend(layout).unwrap().0)
-				.unwrap()
-				.extend(transfer_layout)
-				.unwrap();
-
-			if total_usage.size() >= STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
+			let (extended_usage, _) = self.staging_layout.unwrap().extend(transfer_layout).unwrap();
+			if extended_usage.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
 				log::debug!(
 					"staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now..."
 				);
@@ -96,10 +93,21 @@ impl TransferManager
 			}
 		}
 
-		let staging_buf: Subbuffer<[T]> = {
-			let staging_buf_alloc_guard = self.staging_buffer_allocator.lock().unwrap();
-			staging_buf_alloc_guard.allocate(transfer_layout)?.reinterpret()
+		let (new_layout, new_offset) = if let Some(current_layout) = self.staging_layout.take() {
+			current_layout.extend(transfer_layout).unwrap()
+		} else {
+			(transfer_layout, 0)
 		};
+		self.staging_layout = Some(new_layout);
+
+		let slice_end = new_offset + transfer_layout.size();
+		if slice_end > self.staging_arenas[self.current_arena].size() {
+			return Err("Transfer too big for staging buffer arena!".into());
+		}
+		let staging_buf: Subbuffer<[T]> = self.staging_arenas[self.current_arena]
+			.clone()
+			.slice(new_offset..slice_end)
+			.reinterpret();
 		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let work = StagingWork {
@@ -157,6 +165,12 @@ impl TransferManager
 
 			self.transfers.drain(..).for_each(|work| work.add_command(&mut cb));
 
+			self.staging_layout = None;
+			self.current_arena += 1;
+			if self.current_arena == self.staging_arenas.len() {
+				self.current_arena = 0;
+			}
+
 			let transfer_future = if let Some(f) = self.transfer_future.take() {
 				// wait so that we don't allocate too many staging buffers
 				f.wait(None)?;
@@ -193,11 +207,6 @@ struct StagingWork
 }
 impl StagingWork
 {
-	fn device_layout(&self) -> DeviceLayout
-	{
-		DeviceLayout::new(self.src.size().try_into().unwrap(), self.dst.alignment()).unwrap()
-	}
-
 	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
 		match self.dst {
