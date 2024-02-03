@@ -22,7 +22,7 @@ use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use crate::EngineError;
 
-// Pairs of format and color space we can support.
+// Pairs of surface format and color space we can support.
 const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
 	// HDR via extended sRGB linear image
 	// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
@@ -93,7 +93,7 @@ impl Swapchain
 			.filter(|mode| {
 				let mode_supported = surface_present_modes.contains(mode);
 				if !mode_supported {
-					log::warn!("Requested present mode `{mode:?}` is not supported, falling back to Fifo...");
+					log::warn!("Requested present mode `{mode:?}` is not supported, falling back to `Fifo`...");
 				}
 				mode_supported
 			})
@@ -159,10 +159,14 @@ impl Swapchain
 		self.window.fullscreen().is_some()
 	}
 
-	/// Get the next swapchain image.
+	pub fn is_minimized(&self) -> bool
+	{
+		self.window.is_minimized().unwrap_or(false)
+	}
+
 	pub fn get_next_image(&mut self) -> crate::Result<Option<Arc<Image>>>
 	{
-		// Panic if this function is called when an image has already been acquired without being submitted
+		// Panic if an image has already been acquired without being submitted
 		assert!(self.acquire_future.is_none());
 
 		// clean up resources from finished submissions
@@ -170,10 +174,9 @@ impl Swapchain
 			f.cleanup_finished();
 		}
 
-		// If the window is minimized, don't acquire an image.
-		// We have to do this because sometimes (often on Windows) the window may report an inner width or height of 0,
-		// which we can't resize the swapchain to. We can't keep presenting swapchain images without causing an "out of date"
-		// error either, so we just have to not present any images.
+		// If the window is minimized, don't acquire an image. This must be done because the window
+		// (often on Windows) may report an inner width or height of 0, which we can't resize the
+		// swapchain to. Presenting swapchain images anyways would cause an "out of date" error too.
 		if self.window.is_minimized().unwrap_or(false) {
 			return Ok(None);
 		}
@@ -183,13 +186,9 @@ impl Swapchain
 		let new_inner_size = self.window.inner_size().into();
 		self.extent_changed = prev_extent != new_inner_size;
 		if self.extent_changed || self.recreate_pending {
-			log::info!(
-				"Recreating swapchain; size will change from {:?} to {:?}",
-				prev_extent,
-				new_inner_size
-			);
+			log::info!("Recreating swapchain; size will change from {prev_extent:?} to {new_inner_size:?}");
 
-			// set minimum size here to make sure we adapt to any DPI scale factor changes that may arise
+			// Set minimum size here to adapt to any DPI scale factor changes that may occur.
 			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
 
 			let create_info = SwapchainCreateInfo {
@@ -231,13 +230,11 @@ impl Swapchain
 		Ok(Some(self.images[image_num as usize].clone()))
 	}
 
-	/// Submit a primary command buffer's commands (where the command buffer is expected to manipulate the currently acquired
-	/// swapchain image) and then present the resulting image.
-	/// Optionally, a future `after` to wait for (usually for joining submitted transfers on another queue) can be given, so
-	/// that graphics operations don't begin until after that future is reached.
+	/// Submit a primary command buffer to the graphics queue, and then present the resulting image.
+	/// If `after` is `Some`, the submitted work won't begin until after it.
 	///
-	/// If this is called without acquiring an image, it'll assume that you want to submit the contents of the command buffer
-	/// to the graphics queue without presenting an image, which may be useful when the window is minimized.
+	/// If this is called with no image acquired, it'll submit the command buffer without presenting
+	/// an image, which may be useful when the window is minimized.
 	pub fn submit(
 		&mut self,
 		cb: Arc<PrimaryAutoCommandBuffer>,
@@ -247,7 +244,7 @@ impl Swapchain
 		let mut joined_futures = vulkano::sync::future::now(self.graphics_queue.device().clone()).boxed_send_sync();
 
 		if let Some(f) = self.submission_future.take() {
-			// wait for the previous submission to finish, to make sure resources are no longer in use
+			// Wait for the previous submission to finish to make sure resources are no longer in use.
 			match f.wait(Some(std::time::Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => return Err("Graphics submission took too long!".into()),
@@ -257,7 +254,7 @@ impl Swapchain
 		}
 
 		if let Some(f) = after {
-			// Ideally we'd use a semaphore instead of a fence here, but apprently it's borked in Vulkano right now.
+			// Ideally we'd use a semaphore instead of a fence here, but it's borked in Vulkano right now.
 			match f.wait(Some(Duration::from_secs(5))) {
 				Ok(()) => (),
 				Err(Validated::Error(VulkanError::Timeout)) => return Err("Transfer submission took too long!".into()),
@@ -309,6 +306,7 @@ impl Swapchain
 	}
 
 	/// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
+	///
 	/// NOTE: High resolution timer on Windows is only available since Rust 1.75 beta.
 	fn sleep_and_calculate_delta(&mut self)
 	{
@@ -360,9 +358,8 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 {
 	let primary_monitor = event_loop.primary_monitor();
 
-	// If "--fullscreen" was specified in the arguments, use winit's "borderless" fullscreen on the
-	// primary monitor. winit also has an "exclusive" fullscreen option, but for Vulkan, it provides
-	// no benefits.
+	// If "--fullscreen" was specified in the arguments, use "borderless" fullscreen on the primary
+	// monitor. ("exclusive" fullscreen provides no benefits for Vulkan)
 	let (fullscreen, inner_size) = std::env::args()
 		.find(|arg| arg == "--fullscreen")
 		.map(|_| {
@@ -382,10 +379,9 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 
 	// Center the window on the primary monitor, if the primary monitor could be determined.
 	//
-	// winit says that `set_outer_position` is unsupported on Wayland, but that shouldn't be a
-	// problem since Wayland already centers the window by default (albeit on the "current" monitor
-	// rather than the "primary" monitor). `primary_monitor()` in `EventLoop` seems to return `None`
-	// for Wayland anyways.
+	// On Wayland, this does nothing because `set_outer_position` is unsupported and
+	// `primary_monitor` returns `None`. That's fine since Wayland seems to usually center it on the
+	// current monitor by default.
 	if let Some(some_mon) = primary_monitor {
 		let mon_pos: [i32; 2] = some_mon.position().into();
 		let mon_size: [u32; 2] = some_mon.size().into();

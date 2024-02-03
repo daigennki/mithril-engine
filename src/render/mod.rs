@@ -403,7 +403,7 @@ fn submit_frame(
 
 	// Sometimes no image may be returned because the image is out of date or the window is
 	// minimized, in which case, don't present.
-	if let Some(swapchain_image) = render_ctx.swapchain.get_next_image()? {
+	if !render_ctx.swapchain.is_minimized() {
 		let memory_allocator = render_ctx.memory_allocator.clone();
 		let swapchain_extent = render_ctx.swapchain.dimensions();
 		let (color_image, depth_image) = render_ctx
@@ -436,12 +436,15 @@ fn submit_frame(
 		// UI
 		canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
 
-		// blit the image to the swapchain image, converting it to the swapchain's color space if necessary
-		render_ctx.main_render_target.blit_to_swapchain(
-			&mut primary_cb_builder,
-			swapchain_image,
-			render_ctx.swapchain.color_space(),
-		)?;
+		if let Some(swapchain_image) = render_ctx.swapchain.get_next_image()? {
+			// Blit the image to the swapchain image, after converting it to the swapchain's color
+			// space if necessary.
+			render_ctx.main_render_target.blit_to_swapchain(
+				&mut primary_cb_builder,
+				swapchain_image,
+				render_ctx.swapchain.color_space(),
+			)?;
+		}
 	}
 
 	// submit the built command buffer, presenting it if possible
