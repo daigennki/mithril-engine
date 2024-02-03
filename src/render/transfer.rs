@@ -59,7 +59,7 @@ impl TransferManager
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
 			..Default::default()
 		};
-		let total_arena_size: DeviceSize = STAGING_ARENA_SIZE * 2;
+		let total_arena_size = STAGING_ARENA_SIZE * 2;
 		let combined_staging_arenas = Buffer::new_slice(memory_allocator, buf_info, alloc_info, total_arena_size)?;
 
 		Ok(Self {
@@ -73,18 +73,16 @@ impl TransferManager
 		})
 	}
 
-	fn add_transfer<T>(&mut self, data: &[T], dst: StagingDst) -> crate::Result<()>
+	fn add_transfer<T>(&mut self, data: &[T], dst: StagingDst, alignment: DeviceAlignment) -> crate::Result<()>
 	where
 		T: BufferContents + Copy,
 	{
-		// We get a subbuffer using a `DeviceLayout` here so that it's aligned to the block size of
-		// the format.
 		let data_size_bytes: DeviceSize = std::mem::size_of_val(data).try_into().unwrap();
 		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
-		let transfer_layout = DeviceLayout::new(nonzero_size, dst.alignment()).unwrap();
+		let transfer_layout = DeviceLayout::new(nonzero_size, alignment).unwrap();
 
 		if !self.transfers.is_empty() {
-			let (extended_usage, _) = self.staging_layout.unwrap().extend(transfer_layout).unwrap();
+			let (extended_usage, _) = self.staging_layout.as_ref().unwrap().extend(transfer_layout).unwrap();
 			if extended_usage.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
 				log::debug!(
 					"staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now..."
@@ -93,21 +91,18 @@ impl TransferManager
 			}
 		}
 
-		let (new_layout, new_offset) = if let Some(current_layout) = self.staging_layout.take() {
-			current_layout.extend(transfer_layout).unwrap()
-		} else {
-			(transfer_layout, 0)
-		};
-		self.staging_layout = Some(new_layout);
+		let (new_layout, offset) = self
+			.staging_layout
+			.take()
+			.map(|current_layout| current_layout.extend(transfer_layout).unwrap())
+			.unwrap_or((transfer_layout, 0));
 
-		let slice_end = new_offset + transfer_layout.size();
-		if slice_end > self.staging_arenas[self.current_arena].size() {
-			return Err("Transfer too big for staging buffer arena!".into());
+		if new_layout.size() > self.staging_arenas[self.current_arena].size() {
+			return Err("transfer is too big for staging buffer arena".into());
 		}
-		let staging_buf: Subbuffer<[T]> = self.staging_arenas[self.current_arena]
-			.clone()
-			.slice(new_offset..slice_end)
-			.reinterpret();
+
+		let arena = self.staging_arenas[self.current_arena].clone();
+		let staging_buf: Subbuffer<[T]> = arena.slice(offset..new_layout.size()).reinterpret();
 		staging_buf.write().unwrap().copy_from_slice(data);
 
 		let work = StagingWork {
@@ -115,6 +110,7 @@ impl TransferManager
 			dst,
 		};
 		self.transfers.push(work);
+		self.staging_layout = Some(new_layout);
 
 		Ok(())
 	}
@@ -126,7 +122,7 @@ impl TransferManager
 	where
 		T: BufferContents + Copy,
 	{
-		self.add_transfer(data, StagingDst::Buffer(dst_buf.into_bytes()))
+		self.add_transfer(data, StagingDst::Buffer(dst_buf.into_bytes()), T::LAYOUT.alignment())
 	}
 
 	/// Add staging work for a new image.
@@ -146,9 +142,8 @@ impl TransferManager
 	where
 		Px: BufferContents + Copy,
 	{
-		assert!(dst_image.format().block_size().is_power_of_two());
-
-		self.add_transfer(data, StagingDst::Image(dst_image))
+		let alignment = dst_image.format().block_size().try_into().unwrap();
+		self.add_transfer(data, StagingDst::Image(dst_image), alignment)
 	}
 
 	/// Submit pending transfers. Run this just before beginning to build the draw command buffers
@@ -200,6 +195,11 @@ impl TransferManager
 	}
 }
 
+enum StagingDst
+{
+	Buffer(Subbuffer<[u8]>),
+	Image(Arc<Image>),
+}
 struct StagingWork
 {
 	src: Subbuffer<[u8]>,
@@ -244,21 +244,5 @@ impl StagingWork
 			}
 		}
 		.unwrap();
-	}
-}
-
-enum StagingDst
-{
-	Buffer(Subbuffer<[u8]>),
-	Image(Arc<Image>),
-}
-impl StagingDst
-{
-	fn alignment(&self) -> DeviceAlignment
-	{
-		match self {
-			Self::Buffer(buf) => buf.buffer().memory_requirements().layout.alignment(),
-			Self::Image(image) => image.format().block_size().try_into().unwrap(),
-		}
 	}
 }
