@@ -16,13 +16,13 @@ use vulkano::command_buffer::{
 use vulkano::device::{DeviceOwned, Queue};
 use vulkano::image::{Image, ImageSubresourceLayers};
 use vulkano::memory::{
-	allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter, StandardMemoryAllocator},
+	allocator::{AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator},
 	DeviceAlignment,
 };
 use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
 use vulkano::DeviceSize;
 
-const STAGING_ARENA_SIZE: DeviceSize = 64 * 1024 * 1024;
+pub const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
 
 pub struct TransferManager
 {
@@ -57,6 +57,7 @@ impl TransferManager
 		};
 		let alloc_info = AllocationCreateInfo {
 			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+			allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
 			..Default::default()
 		};
 		let total_arena_size = STAGING_ARENA_SIZE * 2;
@@ -80,13 +81,14 @@ impl TransferManager
 		let data_size_bytes: DeviceSize = std::mem::size_of_val(data).try_into().unwrap();
 		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
 		let transfer_layout = DeviceLayout::new(nonzero_size, alignment).unwrap();
+		if transfer_layout.size() > STAGING_ARENA_SIZE {
+			return Err("buffer or image is too big (it must be no larger than 32 MiB)".into());
+		}
 
 		if !self.transfers.is_empty() {
 			let (extended_usage, _) = self.staging_layout.as_ref().unwrap().extend(transfer_layout).unwrap();
 			if extended_usage.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
-				log::debug!(
-					"staging buffer arena size or transfer `Vec` capacity reached, submitting pending transfers now..."
-				);
+				log::debug!("staging arena size or transfer `Vec` capacity reached, submitting transfers now");
 				self.submit_transfers()?;
 			}
 		}
@@ -96,10 +98,6 @@ impl TransferManager
 			.take()
 			.map(|current_layout| current_layout.extend(transfer_layout).unwrap())
 			.unwrap_or((transfer_layout, 0));
-
-		if new_layout.size() > self.staging_arenas[self.current_arena].size() {
-			return Err("transfer is too big for staging buffer arena".into());
-		}
 
 		let arena = self.staging_arenas[self.current_arena].clone();
 		let staging_buf: Subbuffer<[T]> = arena.slice(offset..new_layout.size()).reinterpret();
@@ -127,16 +125,14 @@ impl TransferManager
 
 	/// Add staging work for a new image.
 	///
-	/// `data` here will be used to initialize the full extent of all mipmap levels and array layers
-	/// (in that order). The data must be tightly packed together. For example, bitmap data for an
-	/// image with 2 mip levels and 2 array layers must be structured like:
+	/// `data` will be used to initialize the full extent of all mipmap levels and array layers (in
+	/// that order), and it must be tightly packed together. For example, data for an image with 2
+	/// mip levels and 2 array layers must be structured like:
 	///
-	/// - mip level 0
-	///   - array layer 0
-	///   - array layer 1
-	/// - mip level 1
-	///   - array layer 0
-	///   - array layer 1
+	/// - mip level 0, array layer 0
+	/// - mip level 0, array layer 1
+	/// - mip level 1, array layer 0
+	/// - mip level 1, array layer 1
 	///
 	pub fn copy_to_image<Px>(&mut self, data: &[Px], dst_image: Arc<Image>) -> crate::Result<()>
 	where
@@ -146,9 +142,8 @@ impl TransferManager
 		self.add_transfer(data, StagingDst::Image(dst_image), alignment)
 	}
 
-	/// Submit pending transfers. Run this just before beginning to build the draw command buffers
-	/// so that the transfers can be done while the CPU is busy with building the draw command
-	/// buffers.
+	/// Submit pending transfers. Run this just before building the draw command buffers so that the
+	/// transfers can be done while the CPU is busy.
 	pub fn submit_transfers(&mut self) -> crate::Result<()>
 	{
 		if !self.transfers.is_empty() {
@@ -167,7 +162,7 @@ impl TransferManager
 			}
 
 			let transfer_future = if let Some(f) = self.transfer_future.take() {
-				// wait so that we don't allocate too many staging buffers
+				// wait to prevent resource conflicts
 				f.wait(None)?;
 
 				cb.build()?
