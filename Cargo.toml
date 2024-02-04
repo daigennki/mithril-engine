@@ -4,8 +4,12 @@ version = "0.0.2"
 authors = ["daigennki <daigennki@users.noreply.github.com>"]
 edition = "2021"
 
+# Rust 1.75 or later is needed because it provides high-resolution timer support on Windows, which
+# we use for the framerate limiter.
+rust-version = "1.75"
+
 [profile.dev]
-opt-level = 1   # needed to stop stack overflow in Windows debug build; see https://github.com/vulkano-rs/vulkano/issues/1790#issuecomment-1023222638
+opt-level = 1 # needed to stop stack overflow in Windows debug build; see https://github.com/vulkano-rs/vulkano/issues/1790#issuecomment-1023222638
 
 #[features]
 #egui = ["dep:egui_winit_vulkano"]

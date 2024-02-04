@@ -109,7 +109,7 @@ impl Swapchain
 			present_mode,
 			..Default::default()
 		};
-		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev.clone(), surface, create_info)
+		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev, surface, create_info)
 			.map_err(|e| EngineError::new("failed to create swapchain", e.unwrap()))?;
 		log::info!(
 			"Created a swapchain with {} images ({:?}, {:?}, {:?})",
@@ -166,10 +166,6 @@ impl Swapchain
 
 	pub fn get_next_image(&mut self) -> crate::Result<Option<Arc<Image>>>
 	{
-		// Panic if an image has already been acquired without being submitted
-		assert!(self.acquire_future.is_none());
-
-		// clean up resources from finished submissions
 		if let Some(f) = self.submission_future.as_mut() {
 			f.cleanup_finished();
 		}
@@ -205,27 +201,24 @@ impl Swapchain
 			self.recreate_pending = false;
 		}
 
-		let timeout = Some(Duration::from_secs(5));
-		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), timeout);
+		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None);
 		let (image_num, suboptimal, acquire_future) = match acquire_result {
-			Ok(ok) => ok,
 			Err(Validated::Error(VulkanError::OutOfDate)) => {
 				// If the swapchain is out of date, don't return an image;
 				// recreate the swapchain before the next image is acquired.
-				log::warn!("Swapchain is out of date! Recreate pending...");
+				log::info!("Swapchain is out of date, recreate pending...");
 				self.recreate_pending = true;
 				return Ok(None);
 			}
-			Err(Validated::Error(VulkanError::Timeout)) => {
-				return Err("Swapchain image took too long to become available!".into())
-			}
-			Err(e) => return Err(e.into()),
+			other => other?,
 		};
 		if suboptimal {
-			log::warn!("Swapchain is suboptimal! Recreate pending...");
+			log::info!("Swapchain is suboptimal, recreate pending...");
 			self.recreate_pending = true;
 		}
-		self.acquire_future = Some(acquire_future);
+
+		// Panic if an image has been acquired without being submitted
+		assert!(self.acquire_future.replace(acquire_future).is_none());
 
 		Ok(Some(self.images[image_num as usize].clone()))
 	}
@@ -243,32 +236,24 @@ impl Swapchain
 	{
 		let mut joined_futures = vulkano::sync::future::now(self.graphics_queue.device().clone()).boxed_send_sync();
 
-		if let Some(f) = self.submission_future.take() {
-			// Wait for the previous submission to finish to make sure resources are no longer in use.
-			match f.wait(Some(std::time::Duration::from_secs(5))) {
-				Ok(()) => (),
-				Err(Validated::Error(VulkanError::Timeout)) => return Err("Graphics submission took too long!".into()),
-				Err(e) => return Err(e.into()),
-			}
+		if let Some(f) = after {
+			// Ideally we'd use a semaphore instead of a fence here, but it's borked in Vulkano right now.
+			f.wait(None)?;
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		if let Some(f) = after {
-			// Ideally we'd use a semaphore instead of a fence here, but it's borked in Vulkano right now.
-			match f.wait(Some(Duration::from_secs(5))) {
-				Ok(()) => (),
-				Err(Validated::Error(VulkanError::Timeout)) => return Err("Transfer submission took too long!".into()),
-				Err(e) => return Err(e.into()),
-			}
+		if let Some(f) = self.submission_future.take() {
+			// Wait for the previous submission to finish to make sure resources are no longer in use.
+			f.wait(Some(Duration::from_secs(5)))?;
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
 		self.sleep_and_calculate_delta();
 
-		let submission_future = match self.acquire_future.take() {
+		self.submission_future = match self.acquire_future.take() {
 			Some(acquire_future) => {
-				let present_info =
-					SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), acquire_future.image_index());
+				let image_index = acquire_future.image_index();
+				let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index);
 
 				let submit_result = joined_futures
 					.join(acquire_future)
@@ -279,46 +264,40 @@ impl Swapchain
 					.then_signal_fence_and_flush();
 
 				match submit_result {
-					Ok(f) => Some(f),
 					Err(Validated::Error(VulkanError::OutOfDate)) => {
 						// If the swapchain is out of date, don't present;
 						// recreate the swapchain before the next image is acquired.
-						log::warn!("Swapchain is out of date! Recreate pending...");
+						log::info!("Swapchain is out of date, recreate pending...");
 						self.recreate_pending = true;
 						None
 					}
-					Err(e) => return Err(e.into()),
+					other => Some(other?),
 				}
 			}
-			None => {
-				let f = joined_futures
-					.then_execute(self.graphics_queue.clone(), cb)
-					.unwrap()
-					.boxed_send_sync()
-					.then_signal_fence_and_flush()?;
-
-				Some(f)
-			}
+			None => joined_futures
+				.then_execute(self.graphics_queue.clone(), cb)
+				.unwrap()
+				.boxed_send_sync()
+				.then_signal_fence_and_flush()?
+				.into(),
 		};
-		self.submission_future = submission_future;
 
 		Ok(())
 	}
 
 	/// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
 	///
-	/// NOTE: High resolution timer on Windows is only available since Rust 1.75 beta.
+	/// NOTE: High resolution timer on Windows is only available since Rust 1.75.
 	fn sleep_and_calculate_delta(&mut self)
 	{
-		let dur = self.last_frame_presented + self.frame_time_min_limit - std::time::Instant::now();
-		if dur > Duration::ZERO {
-			std::thread::sleep(dur);
+		let sleep_dur = self.last_frame_presented + self.frame_time_min_limit - std::time::Instant::now();
+		if sleep_dur > Duration::ZERO {
+			std::thread::sleep(sleep_dur);
 		}
 
 		let now = std::time::Instant::now();
-		let dur = now - self.last_frame_presented;
+		self.frame_time = now - self.last_frame_presented;
 		self.last_frame_presented = now;
-		self.frame_time = dur;
 	}
 
 	pub fn graphics_queue_family_index(&self) -> u32
@@ -348,7 +327,7 @@ impl Swapchain
 	}
 
 	/// Get the delta time for last frame.
-	pub fn delta(&self) -> std::time::Duration
+	pub fn delta(&self) -> Duration
 	{
 		self.frame_time
 	}
