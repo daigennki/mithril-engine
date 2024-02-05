@@ -259,28 +259,25 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 	let primary_monitor = event_loop.primary_monitor();
 
 	// Use "borderless" fullscreen if requested. ("exclusive" fullscreen is meaningless for Vulkan)
-	let (fullscreen, inner_size) = std::env::args()
-		.any(|arg| arg == "--fullscreen")
-		.then(|| {
-			let inner_size = primary_monitor.as_ref().map_or(WINDOW_MIN_INNER_SIZE, |mon| mon.size());
-			(Some(Fullscreen::Borderless(primary_monitor.clone())), inner_size)
-		})
-		.unwrap_or((None, WINDOW_MIN_INNER_SIZE));
+	let fullscreen = std::env::args().any(|arg| arg == "--fullscreen");
+	let inner_size = primary_monitor
+		.as_ref()
+		.filter(|_| fullscreen)
+		.map_or(WINDOW_MIN_INNER_SIZE, |mon| mon.size());
 
 	let window = WindowBuilder::new()
 		.with_min_inner_size(WINDOW_MIN_INNER_SIZE)
 		.with_inner_size(inner_size)
 		.with_title(window_title)
-		.with_fullscreen(fullscreen)
+		.with_fullscreen(fullscreen.then(|| Fullscreen::Borderless(primary_monitor.clone())))
 		.with_decorations(!std::env::args().any(|arg| arg == "--noborder"))
 		.build(event_loop)
 		.map_err(|e| EngineError::new("failed to create window", e))?;
 
 	// Center the window on the primary monitor, if the primary monitor could be determined.
 	//
-	// On Wayland, this does nothing because `set_outer_position` is unsupported and
-	// `primary_monitor` returns `None`. That's fine since Wayland seems to usually center it on the
-	// current monitor by default.
+	// On Wayland, `set_outer_position` is unsupported and `primary_monitor` returns `None`, so this
+	// does nothing. We'll just have to hope that the WM centers the window (KWin is one that does).
 	if let Some(mon) = primary_monitor {
 		let mon_pos: [i32; 2] = mon.position().into();
 		let mon_size: [u32; 2] = mon.size().into();
@@ -297,32 +294,29 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 
 fn get_configured_present_mode(physical_device: &Arc<PhysicalDevice>, surface: &Surface) -> crate::Result<PresentMode>
 {
-	let surface_present_modes: smallvec::SmallVec<[_; 4]> = physical_device
-		.surface_present_modes(surface, SurfaceInfo::default())?
-		.collect();
-	log::info!("Supported present modes: {:?}", &surface_present_modes);
-
 	let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
 	let present_mode = std::env::args()
 		.collect::<Vec<_>>()
 		.iter()
 		.find_map(|arg| present_mode_regex.captures(arg))
 		.and_then(|caps| caps.name("value"))
-		.and_then(|value_match| match value_match.as_str() {
-			"Immediate" => Some(PresentMode::Immediate),
-			"Mailbox" => Some(PresentMode::Mailbox),
-			"Fifo" => Some(PresentMode::Fifo),
-			"FifoRelaxed" => Some(PresentMode::FifoRelaxed),
-			_ => None,
-		})
-		.filter(|mode| {
-			let mode_supported = surface_present_modes.contains(mode);
-			if !mode_supported {
-				log::warn!("Requested present mode `{mode:?}` is not supported, falling back to `Fifo`...");
-			}
-			mode_supported
-		})
-		.unwrap_or(PresentMode::Fifo);
+		.map_or(PresentMode::Fifo, |value| match value.as_str() {
+			"Immediate" => PresentMode::Immediate,
+			"Mailbox" => PresentMode::Mailbox,
+			"Fifo" => PresentMode::Fifo,
+			"FifoRelaxed" => PresentMode::FifoRelaxed,
+			_ => PresentMode::Fifo,
+		});
 
-	Ok(present_mode)
+	let surface_present_modes: smallvec::SmallVec<[_; 4]> = physical_device
+		.surface_present_modes(surface, SurfaceInfo::default())?
+		.collect();
+	log::info!("Supported present modes: {:?}", &surface_present_modes);
+
+	if surface_present_modes.contains(&present_mode) {
+		Ok(present_mode)
+	} else {
+		log::warn!("Requested present mode `{present_mode:?}` is not supported, falling back to `Fifo`...");
+		Ok(PresentMode::Fifo)
+	}
 }
