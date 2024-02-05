@@ -9,7 +9,7 @@ use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
-use vulkano::device::Queue;
+use vulkano::device::{physical::PhysicalDevice, Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
@@ -21,6 +21,8 @@ use winit::event_loop::EventLoop;
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use crate::EngineError;
+
+const WINDOW_MIN_INNER_SIZE: winit::dpi::PhysicalSize<u32> = winit::dpi::PhysicalSize::new(1280, 720);
 
 // Pairs of surface format and color space we can support.
 const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
@@ -34,7 +36,8 @@ const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
 	(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
 ];
 
-// Windows and Linux have different sleep overshoot, so different values are used for each.
+// The sleep overshoot that gets subtracted from the minimum frame time for the framerate limiter.
+// Overshoot differs between Windows and Linux.
 #[cfg(target_family = "windows")]
 const SLEEP_OVERSHOOT: Duration = Duration::from_micros(260);
 #[cfg(not(target_family = "windows"))]
@@ -43,62 +46,32 @@ const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
 pub struct Swapchain
 {
 	window: Arc<Window>,
-	graphics_queue: Arc<Queue>,
 	swapchain: Arc<vulkano::swapchain::Swapchain>,
 	images: Vec<Arc<Image>>,
+	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
 	extent_changed: bool, // `true` if image extent changed since the last presentation
 	recreate_pending: bool,
-
-	acquire_future: Option<SwapchainAcquireFuture>,
-	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
-
 	last_frame_presented: std::time::Instant,
-	frame_time: std::time::Duration,
-	frame_time_min_limit: std::time::Duration, // minimum frame time, used for framerate limit
+	frame_time: Duration,
+	frame_time_min_limit: Duration, // minimum frame time, used for framerate limit
 }
 impl Swapchain
 {
-	pub fn new(graphics_queue: Arc<Queue>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
+	pub fn new(device: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
 	{
-		let vk_dev = graphics_queue.device().clone();
-		let pd = vk_dev.physical_device();
+		let pd = device.physical_device();
 		let window = create_window(event_loop, window_title)?;
-		let surface = Surface::from_window(vk_dev.instance().clone(), window.clone())?;
+		let surface = Surface::from_window(device.instance().clone(), window.clone())?;
 
-		// Find the first intersection between the format candidates and the formats supported by
-		// the physical device.
+		// Find the first format candidate supported by the physical device.
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let (image_format, image_color_space) = FORMAT_CANDIDATES
 			.into_iter()
 			.find(|candidate| surface_formats.contains(candidate))
 			.unwrap();
 
-		let surface_present_modes: smallvec::SmallVec<[_; 4]> =
-			pd.surface_present_modes(&surface, SurfaceInfo::default())?.collect();
-		log::info!("Supported present modes: {:?}", &surface_present_modes);
-		let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
-		let present_mode = std::env::args()
-			.collect::<Vec<_>>()
-			.iter()
-			.find_map(|arg| present_mode_regex.captures(arg))
-			.and_then(|caps| caps.name("value"))
-			.and_then(|value_match| match value_match.as_str() {
-				"Immediate" => Some(PresentMode::Immediate),
-				"Mailbox" => Some(PresentMode::Mailbox),
-				"Fifo" => Some(PresentMode::Fifo),
-				"FifoRelaxed" => Some(PresentMode::FifoRelaxed),
-				_ => None,
-			})
-			.filter(|mode| {
-				let mode_supported = surface_present_modes.contains(mode);
-				if !mode_supported {
-					log::warn!("Requested present mode `{mode:?}` is not supported, falling back to `Fifo`...");
-				}
-				mode_supported
-			})
-			.unwrap_or(PresentMode::Fifo);
-
+		let present_mode = get_configured_present_mode(pd, &surface)?;
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
 		let create_info = SwapchainCreateInfo {
 			min_image_count: surface_caps.min_image_count.max(2),
@@ -109,7 +82,7 @@ impl Swapchain
 			present_mode,
 			..Default::default()
 		};
-		let (swapchain, images) = vulkano::swapchain::Swapchain::new(vk_dev, surface, create_info)
+		let (swapchain, images) = vulkano::swapchain::Swapchain::new(device, surface, create_info)
 			.map_err(|e| EngineError::new("failed to create swapchain", e.unwrap()))?;
 		log::info!(
 			"Created a swapchain with {} images ({:?}, {:?}, {:?})",
@@ -127,68 +100,42 @@ impl Swapchain
 			.find_map(|arg| fps_max_regex.captures(arg))
 			.and_then(|caps| caps.name("value"))
 			.and_then(|value_match| value_match.as_str().parse().ok())
-			.unwrap_or(360);
-
-		// Subtract to account for sleep overshoot.
+			.unwrap_or(400);
 		let frame_time_min_limit = (Duration::from_secs(1) / fps_max)
 			.checked_sub(SLEEP_OVERSHOOT)
 			.unwrap_or_default();
 
 		Ok(Swapchain {
 			window,
-			graphics_queue,
 			swapchain,
 			images,
+			submission_future: None,
 			extent_changed: false,
 			recreate_pending: false,
-			acquire_future: None,
-			submission_future: None,
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: std::time::Duration::ZERO,
 			frame_time_min_limit,
 		})
 	}
 
-	pub fn set_fullscreen(&self, fullscreen: bool)
-	{
-		self.window
-			.set_fullscreen(fullscreen.then_some(winit::window::Fullscreen::Borderless(None)));
-	}
-	pub fn is_fullscreen(&self) -> bool
-	{
-		self.window.fullscreen().is_some()
-	}
-
-	pub fn is_minimized(&self) -> bool
-	{
-		self.window.is_minimized().unwrap_or(false)
-	}
-
-	pub fn get_next_image(&mut self) -> crate::Result<Option<Arc<Image>>>
+	/// Acquire the next swapchain image. Returns `None` if the swapchain is out of date (it'll be
+	/// recreated the next time this is called).
+	pub fn get_next_image(&mut self) -> crate::Result<Option<(Arc<Image>, SwapchainAcquireFuture)>>
 	{
 		if let Some(f) = self.submission_future.as_mut() {
 			f.cleanup_finished();
 		}
 
-		// If the window is minimized, don't acquire an image. This must be done because the window
-		// (often on Windows) may report an inner width or height of 0, which we can't resize the
-		// swapchain to. Presenting swapchain images anyways would cause an "out of date" error too.
-		if self.window.is_minimized().unwrap_or(false) {
-			return Ok(None);
-		}
-
-		// Recreate the swapchain if the surface's properties changed (e.g. window size changed).
+		// Recreate the swapchain if the surface's properties changed (e.g. window size changed),
+		// but only if the new extent is valid (neither width nor height are 0).
 		let prev_extent = self.swapchain.image_extent();
-		let new_inner_size = self.window.inner_size().into();
-		self.extent_changed = prev_extent != new_inner_size;
-		if self.extent_changed || self.recreate_pending {
-			log::info!("Recreating swapchain; size will change from {prev_extent:?} to {new_inner_size:?}");
-
-			// Set minimum size here to adapt to any DPI scale factor changes that may occur.
-			self.window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(1280, 720)));
+		let new_extent: [u32; 2] = self.window.inner_size().into();
+		self.extent_changed = prev_extent != new_extent;
+		if (self.extent_changed || self.recreate_pending) && new_extent[0] > 0 && new_extent[1] > 0 {
+			log::info!("Recreating swapchain; image extent will change from {prev_extent:?} to {new_extent:?}");
 
 			let create_info = SwapchainCreateInfo {
-				image_extent: new_inner_size,
+				image_extent: new_extent,
 				..self.swapchain.create_info()
 			};
 			let (new_swapchain, new_images) = self
@@ -204,105 +151,91 @@ impl Swapchain
 		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None);
 		let (image_num, suboptimal, acquire_future) = match acquire_result {
 			Err(Validated::Error(VulkanError::OutOfDate)) => {
-				// If the swapchain is out of date, don't return an image;
-				// recreate the swapchain before the next image is acquired.
-				log::info!("Swapchain is out of date, recreate pending...");
 				self.recreate_pending = true;
 				return Ok(None);
 			}
 			other => other?,
 		};
 		if suboptimal {
-			log::info!("Swapchain is suboptimal, recreate pending...");
 			self.recreate_pending = true;
 		}
 
-		// Panic if an image has been acquired without being submitted
-		assert!(self.acquire_future.replace(acquire_future).is_none());
-
-		Ok(Some(self.images[image_num as usize].clone()))
+		Ok(Some((self.images[image_num as usize].clone(), acquire_future)))
 	}
 
 	/// Submit a primary command buffer to the graphics queue, and then present the resulting image.
-	/// If `after` is `Some`, the submitted work won't begin until after it.
 	///
-	/// If this is called with no image acquired, it'll submit the command buffer without presenting
-	/// an image, which may be useful when the window is minimized.
-	pub fn submit(
+	/// This won't present an image if the swapchain is out of date, in which case, the swapchain
+	/// will be recreated the next time `get_next_image` is called. Everything else in the command
+	/// buffer will still be done.
+	pub fn present(
 		&mut self,
+		queue: Arc<Queue>,
 		cb: Arc<PrimaryAutoCommandBuffer>,
-		after: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
+		acquire_future: SwapchainAcquireFuture,
+		after: Option<impl GpuFuture + Send + Sync + 'static>,
 	) -> crate::Result<()>
 	{
-		let mut joined_futures = vulkano::sync::future::now(self.graphics_queue.device().clone()).boxed_send_sync();
+		let image_index = acquire_future.image_index();
+		let mut joined_futures = match self.submission_future.take() {
+			Some(f) => {
+				// Wait for the previous submission to finish to make sure resources are no longer in use.
+				f.wait(Some(Duration::from_secs(5)))?;
+				f.join(acquire_future).boxed_send_sync()
+			},
+			None => acquire_future.boxed_send_sync(),
+		};
 
 		if let Some(f) = after {
-			// Ideally we'd use a semaphore instead of a fence here, but it's borked in Vulkano right now.
-			f.wait(None)?;
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		if let Some(f) = self.submission_future.take() {
-			// Wait for the previous submission to finish to make sure resources are no longer in use.
-			f.wait(Some(Duration::from_secs(5)))?;
-			joined_futures = Box::new(joined_futures.join(f));
+		// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
+		let sleep_dur = self.last_frame_presented + self.frame_time_min_limit - std::time::Instant::now();
+		if sleep_dur > Duration::ZERO {
+			std::thread::sleep(sleep_dur);
 		}
+		let now = std::time::Instant::now();
+		self.frame_time = now - self.last_frame_presented;
+		self.last_frame_presented = now;
 
-		self.sleep_and_calculate_delta();
+		let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index);
+		let submit_result = joined_futures
+			.then_execute(queue.clone(), cb)
+			.unwrap()
+			.then_swapchain_present(queue, present_info)
+			.boxed_send_sync()
+			.then_signal_fence_and_flush();
 
-		self.submission_future = match self.acquire_future.take() {
-			Some(acquire_future) => {
-				let image_index = acquire_future.image_index();
-				let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index);
-
-				let submit_result = joined_futures
-					.join(acquire_future)
-					.then_execute(self.graphics_queue.clone(), cb)
-					.unwrap()
-					.then_swapchain_present(self.graphics_queue.clone(), present_info)
-					.boxed_send_sync()
-					.then_signal_fence_and_flush();
-
-				match submit_result {
-					Err(Validated::Error(VulkanError::OutOfDate)) => {
-						// If the swapchain is out of date, don't present;
-						// recreate the swapchain before the next image is acquired.
-						log::info!("Swapchain is out of date, recreate pending...");
-						self.recreate_pending = true;
-						None
-					}
-					other => Some(other?),
-				}
+		self.submission_future = match submit_result {
+			Err(Validated::Error(VulkanError::OutOfDate)) => {
+				self.recreate_pending = true;
+				None
 			}
-			None => joined_futures
-				.then_execute(self.graphics_queue.clone(), cb)
-				.unwrap()
-				.boxed_send_sync()
-				.then_signal_fence_and_flush()?
-				.into(),
+			other => Some(other?),
 		};
 
 		Ok(())
 	}
 
-	/// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
-	///
-	/// NOTE: High resolution timer on Windows is only available since Rust 1.75.
-	fn sleep_and_calculate_delta(&mut self)
+	pub fn set_fullscreen(&self, fullscreen: bool)
 	{
-		let sleep_dur = self.last_frame_presented + self.frame_time_min_limit - std::time::Instant::now();
-		if sleep_dur > Duration::ZERO {
-			std::thread::sleep(sleep_dur);
-		}
-
-		let now = std::time::Instant::now();
-		self.frame_time = now - self.last_frame_presented;
-		self.last_frame_presented = now;
+		self.window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+	}
+	pub fn is_fullscreen(&self) -> bool
+	{
+		self.window.fullscreen().is_some()
 	}
 
-	pub fn graphics_queue_family_index(&self) -> u32
+	/// Set minimum size again to adapt to any DPI scale factor changes that may occur.
+	pub fn reset_min_inner_size(&self)
 	{
-		self.graphics_queue.queue_family_index()
+		self.window.set_min_inner_size(Some(WINDOW_MIN_INNER_SIZE));
+	}
+
+	pub fn is_minimized(&self) -> bool
+	{
+		self.window.is_minimized().unwrap_or(false)
 	}
 
 	pub fn image_count(&self) -> usize
@@ -342,13 +275,13 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 	let (fullscreen, inner_size) = std::env::args()
 		.find(|arg| arg == "--fullscreen")
 		.map(|_| {
-			let inner_size = primary_monitor.as_ref().map_or_else(|| [1280, 720].into(), |mon| mon.size());
+			let inner_size = primary_monitor.as_ref().map_or(WINDOW_MIN_INNER_SIZE, |mon| mon.size());
 			(Some(Fullscreen::Borderless(primary_monitor.clone())), inner_size)
 		})
-		.unwrap_or_else(|| (None, [1280, 720].into()));
+		.unwrap_or_else(|| (None, WINDOW_MIN_INNER_SIZE));
 
 	let window = WindowBuilder::new()
-		.with_min_inner_size(winit::dpi::PhysicalSize::new(1280, 720))
+		.with_min_inner_size(WINDOW_MIN_INNER_SIZE)
 		.with_inner_size(inner_size)
 		.with_title(window_title)
 		.with_fullscreen(fullscreen)
@@ -373,4 +306,35 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 	}
 
 	Ok(Arc::new(window))
+}
+
+fn get_configured_present_mode(physical_device: &Arc<PhysicalDevice>, surface: &Surface) -> crate::Result<PresentMode>
+{
+	let surface_present_modes: smallvec::SmallVec<[_; 4]> =
+		physical_device.surface_present_modes(surface, SurfaceInfo::default())?.collect();
+	log::info!("Supported present modes: {:?}", &surface_present_modes);
+
+	let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
+	let present_mode = std::env::args()
+		.collect::<Vec<_>>()
+		.iter()
+		.find_map(|arg| present_mode_regex.captures(arg))
+		.and_then(|caps| caps.name("value"))
+		.and_then(|value_match| match value_match.as_str() {
+			"Immediate" => Some(PresentMode::Immediate),
+			"Mailbox" => Some(PresentMode::Mailbox),
+			"Fifo" => Some(PresentMode::Fifo),
+			"FifoRelaxed" => Some(PresentMode::FifoRelaxed),
+			_ => None,
+		})
+		.filter(|mode| {
+			let mode_supported = surface_present_modes.contains(mode);
+			if !mode_supported {
+				log::warn!("Requested present mode `{mode:?}` is not supported, falling back to `Fifo`...");
+			}
+			mode_supported
+		})
+		.unwrap_or(PresentMode::Fifo);
+
+	Ok(present_mode)
 }

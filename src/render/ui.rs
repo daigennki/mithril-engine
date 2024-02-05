@@ -562,7 +562,7 @@ impl Canvas
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
 			&render_ctx.command_buffer_allocator,
-			render_ctx.graphics_queue_family_index(),
+			render_ctx.graphics_queue.queue_family_index(),
 			CommandBufferUsage::OneTimeSubmit,
 			CommandBufferInheritanceInfo {
 				render_pass: Some(rendering_inheritance.into()),

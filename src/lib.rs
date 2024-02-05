@@ -125,7 +125,11 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			// We don't want the image to be upscaled by the OS, so we tell it here that that the inner size of the
 			// window in physical pixels should be exactly the same (dot-by-dot) as the swapchain's image extent.
 			// It would look blurry if we don't do this.
-			let extent = world.run(|render_ctx: UniqueView<RenderContext>| render_ctx.swapchain_dimensions());
+			let extent = world.run(|render_ctx: UniqueView<RenderContext>| {
+				// also reset minimum inner size because it seems to get changed with DPI scale factor changes
+				render_ctx.reset_window_min_inner_size();
+				render_ctx.swapchain_dimensions()
+			});
 			if let Err(e) = inner_size_writer.request_inner_size(extent.into()) {
 				log::error!("failed to request window inner size: {e}");
 			}

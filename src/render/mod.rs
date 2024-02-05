@@ -60,6 +60,7 @@ use ui::Canvas;
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
+	graphics_queue: Arc<Queue>,
 	swapchain: swapchain::Swapchain,
 	main_render_target: render_target::RenderTarget,
 	memory_allocator: Arc<StandardMemoryAllocator>,
@@ -110,7 +111,7 @@ impl RenderContext
 			log::info!("Enabling direct buffer writes.");
 		}
 
-		let swapchain = swapchain::Swapchain::new(graphics_queue.clone(), event_loop, game_name)?;
+		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), event_loop, game_name)?;
 
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
@@ -157,10 +158,11 @@ impl RenderContext
 		};
 		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)?;
 
-		let submit_transfers_to = transfer_queue.unwrap_or(graphics_queue);
+		let submit_transfers_to = transfer_queue.unwrap_or_else(|| graphics_queue.clone());
 		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
 
 		Ok(RenderContext {
+			graphics_queue,
 			swapchain,
 			memory_allocator,
 			command_buffer_allocator,
@@ -263,11 +265,6 @@ impl RenderContext
 		Ok(view)
 	}
 
-	fn graphics_queue_family_index(&self) -> u32
-	{
-		self.swapchain.graphics_queue_family_index()
-	}
-
 	/// Check if the window has been resized since the last frame submission.
 	pub fn window_resized(&self) -> bool
 	{
@@ -283,6 +280,10 @@ impl RenderContext
 		self.swapchain.is_fullscreen()
 	}
 
+	pub fn reset_window_min_inner_size(&self)
+	{
+		self.swapchain.reset_min_inner_size()
+	}
 	pub fn swapchain_dimensions(&self) -> [u32; 2]
 	{
 		self.swapchain.dimensions()
@@ -395,62 +396,75 @@ fn submit_frame(
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
+	// If the window is minimized, don't present an image. This must be done because the window
+	// (often on Windows) may report an inner width or height of 0, which we can't resize the
+	// swapchain to. Presenting swapchain images anyways would cause an "out of date" error too.
+	if render_ctx.swapchain.is_minimized() {
+		return Ok(());
+	}
+
 	let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 		&render_ctx.command_buffer_allocator,
-		render_ctx.graphics_queue_family_index(),
+		render_ctx.graphics_queue.queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
 
-	// Sometimes no image may be returned because the image is out of date or the window is
-	// minimized, in which case, don't present.
-	if !render_ctx.swapchain.is_minimized() {
-		let memory_allocator = render_ctx.memory_allocator.clone();
-		let swapchain_extent = render_ctx.swapchain.dimensions();
-		let (color_image, depth_image) = render_ctx
-			.main_render_target
-			.get_images(memory_allocator.clone(), swapchain_extent)?;
+	let memory_allocator = render_ctx.memory_allocator.clone();
+	let swapchain_extent = render_ctx.swapchain.dimensions();
+	let (color_image, depth_image) = render_ctx
+		.main_render_target
+		.get_images(memory_allocator.clone(), swapchain_extent)?;
 
-		// shadows
-		light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
+	// shadows
+	light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
 
-		// skybox (effectively clears the image)
-		skybox.draw(
+	// skybox (effectively clears the image)
+	skybox.draw(
+		&mut primary_cb_builder,
+		color_image.clone(),
+		camera_manager.sky_projview().as_mat4(),
+	)?;
+
+	// 3D
+	mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
+
+	// 3D OIT
+	if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
+		transparency_renderer.process_transparency(
 			&mut primary_cb_builder,
 			color_image.clone(),
-			camera_manager.sky_projview().as_mat4(),
+			depth_image,
+			memory_allocator,
 		)?;
-
-		// 3D
-		mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
-
-		// 3D OIT
-		if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
-			transparency_renderer.process_transparency(
-				&mut primary_cb_builder,
-				color_image.clone(),
-				depth_image,
-				memory_allocator,
-			)?;
-		}
-
-		// UI
-		canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
-
-		if let Some(swapchain_image) = render_ctx.swapchain.get_next_image()? {
-			// Blit the image to the swapchain image, after converting it to the swapchain's color
-			// space if necessary.
-			render_ctx.main_render_target.blit_to_swapchain(
-				&mut primary_cb_builder,
-				swapchain_image,
-				render_ctx.swapchain.color_space(),
-			)?;
-		}
 	}
 
-	// submit the built command buffer, presenting it if possible
-	let built_cb = primary_cb_builder.build()?;
-	let transfer_future = render_ctx.transfer_manager.take_transfer_future();
-	render_ctx.swapchain.submit(built_cb, transfer_future)
+	// UI
+	canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
+
+	if let Some((swapchain_image, acquire_future)) = render_ctx.swapchain.get_next_image()? {
+		// Blit the image to the swapchain image, after converting it to the swapchain's color space
+		// if necessary.
+		render_ctx.main_render_target.blit_to_swapchain(
+			&mut primary_cb_builder,
+			swapchain_image,
+			render_ctx.swapchain.color_space(),
+		)?;
+
+		let built_cb = primary_cb_builder.build()?;
+		let transfer_future = render_ctx.transfer_manager.take_transfer_future();
+		let graphics_queue = render_ctx.graphics_queue.clone();
+
+		// wait for any transfers to finish
+		// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
+		if let Some(f) = &transfer_future {
+			f.wait(None)?;
+		}
+
+		// submit the built command buffer, presenting it if possible
+		render_ctx.swapchain.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
+	}
+
+	Ok(())
 }
 
 //
