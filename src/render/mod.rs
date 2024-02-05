@@ -461,7 +461,9 @@ fn submit_frame(
 		}
 
 		// submit the built command buffer, presenting it if possible
-		render_ctx.swapchain.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
+		render_ctx
+			.swapchain
+			.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
 	}
 
 	Ok(())

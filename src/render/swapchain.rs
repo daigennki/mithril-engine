@@ -8,7 +8,7 @@
 use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use vulkano::command_buffer::PrimaryCommandBufferAbstract;
 use vulkano::device::{physical::PhysicalDevice, Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
@@ -32,7 +32,7 @@ const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
 
 	// sRGB 10bpc
 	(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
-	// sRGB 8bpc
+	// sRGB 8bpc (guaranteed to be supported by any physical device and surface)
 	(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
 ];
 
@@ -64,7 +64,7 @@ impl Swapchain
 		let window = create_window(event_loop, window_title)?;
 		let surface = Surface::from_window(device.instance().clone(), window.clone())?;
 
-		// Find the first format candidate supported by the physical device.
+		// Use the first format candidate supported by the physical device.
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let (image_format, image_color_space) = FORMAT_CANDIDATES
 			.into_iter()
@@ -82,8 +82,8 @@ impl Swapchain
 			present_mode,
 			..Default::default()
 		};
-		let (swapchain, images) = vulkano::swapchain::Swapchain::new(device, surface, create_info)
-			.map_err(|e| EngineError::new("failed to create swapchain", e.unwrap()))?;
+		let (swapchain, images) = vulkano::swapchain::Swapchain::new(device, surface, create_info)?;
+
 		log::info!(
 			"Created a swapchain with {} images ({:?}, {:?}, {:?})",
 			images.len(),
@@ -122,7 +122,7 @@ impl Swapchain
 	/// recreated the next time this is called).
 	pub fn get_next_image(&mut self) -> crate::Result<Option<(Arc<Image>, SwapchainAcquireFuture)>>
 	{
-		if let Some(f) = self.submission_future.as_mut() {
+		if let Some(f) = &mut self.submission_future {
 			f.cleanup_finished();
 		}
 
@@ -132,48 +132,37 @@ impl Swapchain
 		let new_extent: [u32; 2] = self.window.inner_size().into();
 		self.extent_changed = prev_extent != new_extent;
 		if (self.extent_changed || self.recreate_pending) && new_extent[0] > 0 && new_extent[1] > 0 {
-			log::info!("Recreating swapchain; image extent will change from {prev_extent:?} to {new_extent:?}");
-
+			log::info!("Recreating swapchain (size {prev_extent:?} -> {new_extent:?})");
 			let create_info = SwapchainCreateInfo {
 				image_extent: new_extent,
 				..self.swapchain.create_info()
 			};
-			let (new_swapchain, new_images) = self
-				.swapchain
-				.recreate(create_info)
-				.map_err(|e| EngineError::new("failed to recreate swapchain", e.unwrap()))?;
-
-			self.swapchain = new_swapchain;
-			self.images = new_images;
-			self.recreate_pending = false;
+			(self.swapchain, self.images) = self.swapchain.recreate(create_info)?;
 		}
 
 		let acquire_result = vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None);
-		let (image_num, suboptimal, acquire_future) = match acquire_result {
+		let (image_index, suboptimal, acquire_future) = match acquire_result {
 			Err(Validated::Error(VulkanError::OutOfDate)) => {
 				self.recreate_pending = true;
 				return Ok(None);
 			}
 			other => other?,
 		};
-		if suboptimal {
-			self.recreate_pending = true;
-		}
+		self.recreate_pending = suboptimal;
 
-		Ok(Some((self.images[image_num as usize].clone(), acquire_future)))
+		Ok(Some((self.images[image_index as usize].clone(), acquire_future)))
 	}
 
 	/// Submit a primary command buffer to the graphics queue, and then present the resulting image.
 	///
-	/// This won't present an image if the swapchain is out of date, in which case, the swapchain
-	/// will be recreated the next time `get_next_image` is called. Everything else in the command
-	/// buffer will still be done.
+	/// If the swapchain is out of date, this won't present an image, and the swapchain will be
+	/// recreated the next time `get_next_image` is called.
 	pub fn present(
 		&mut self,
 		queue: Arc<Queue>,
-		cb: Arc<PrimaryAutoCommandBuffer>,
+		cb: Arc<impl PrimaryCommandBufferAbstract + 'static>,
 		acquire_future: SwapchainAcquireFuture,
-		after: Option<impl GpuFuture + Send + Sync + 'static>,
+		join_with: Option<impl GpuFuture + Send + Sync + 'static>,
 	) -> crate::Result<()>
 	{
 		let image_index = acquire_future.image_index();
@@ -182,15 +171,14 @@ impl Swapchain
 				// Wait for the previous submission to finish to make sure resources are no longer in use.
 				f.wait(Some(Duration::from_secs(5)))?;
 				f.join(acquire_future).boxed_send_sync()
-			},
+			}
 			None => acquire_future.boxed_send_sync(),
 		};
-
-		if let Some(f) = after {
+		if let Some(f) = join_with {
 			joined_futures = Box::new(joined_futures.join(f));
 		}
 
-		// Sleep this thread so that the framerate stays below the limit, then calculate the delta time.
+		// Sleep this thread to limit the framerate, then calculate the frame time.
 		let sleep_dur = self.last_frame_presented + self.frame_time_min_limit - std::time::Instant::now();
 		if sleep_dur > Duration::ZERO {
 			std::thread::sleep(sleep_dur);
@@ -259,7 +247,7 @@ impl Swapchain
 		self.extent_changed
 	}
 
-	/// Get the delta time for last frame.
+	/// Get the frame time for last frame.
 	pub fn delta(&self) -> Duration
 	{
 		self.frame_time
@@ -270,15 +258,14 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 {
 	let primary_monitor = event_loop.primary_monitor();
 
-	// If "--fullscreen" was specified in the arguments, use "borderless" fullscreen on the primary
-	// monitor. ("exclusive" fullscreen provides no benefits for Vulkan)
+	// Use "borderless" fullscreen if requested. ("exclusive" fullscreen is meaningless for Vulkan)
 	let (fullscreen, inner_size) = std::env::args()
-		.find(|arg| arg == "--fullscreen")
-		.map(|_| {
+		.any(|arg| arg == "--fullscreen")
+		.then(|| {
 			let inner_size = primary_monitor.as_ref().map_or(WINDOW_MIN_INNER_SIZE, |mon| mon.size());
 			(Some(Fullscreen::Borderless(primary_monitor.clone())), inner_size)
 		})
-		.unwrap_or_else(|| (None, WINDOW_MIN_INNER_SIZE));
+		.unwrap_or((None, WINDOW_MIN_INNER_SIZE));
 
 	let window = WindowBuilder::new()
 		.with_min_inner_size(WINDOW_MIN_INNER_SIZE)
@@ -294,9 +281,9 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 	// On Wayland, this does nothing because `set_outer_position` is unsupported and
 	// `primary_monitor` returns `None`. That's fine since Wayland seems to usually center it on the
 	// current monitor by default.
-	if let Some(some_mon) = primary_monitor {
-		let mon_pos: [i32; 2] = some_mon.position().into();
-		let mon_size: [u32; 2] = some_mon.size().into();
+	if let Some(mon) = primary_monitor {
+		let mon_pos: [i32; 2] = mon.position().into();
+		let mon_size: [u32; 2] = mon.size().into();
 		let mon_size_half: IVec2 = (UVec2::from(mon_size) / 2).try_into().unwrap();
 		let mon_center = IVec2::from(mon_pos) + mon_size_half;
 		let outer_size: [u32; 2] = window.outer_size().into();
@@ -310,8 +297,9 @@ fn create_window(event_loop: &EventLoop<()>, window_title: &str) -> crate::Resul
 
 fn get_configured_present_mode(physical_device: &Arc<PhysicalDevice>, surface: &Surface) -> crate::Result<PresentMode>
 {
-	let surface_present_modes: smallvec::SmallVec<[_; 4]> =
-		physical_device.surface_present_modes(surface, SurfaceInfo::default())?.collect();
+	let surface_present_modes: smallvec::SmallVec<[_; 4]> = physical_device
+		.surface_present_modes(surface, SurfaceInfo::default())?
+		.collect();
 	log::info!("Supported present modes: {:?}", &surface_present_modes);
 
 	let present_mode_regex = regex::Regex::new("--present_mode=(?<value>\\w+)").unwrap();
