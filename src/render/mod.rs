@@ -24,7 +24,7 @@ use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
 use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer
+	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -269,9 +269,11 @@ impl RenderContext
 		Ok(view)
 	}
 
-	/// Get the color and depth images. They'll be resized before being returned if `extent` changed.
-	fn get_images(&mut self, extent2: [u32; 2]) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
+	/// Get the color and depth images. They'll be resized before being returned if the swapchain
+	/// image extent changed.
+	fn get_images(&mut self) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 	{
+		let extent2 = self.swapchain.dimensions();
 		let extent = [extent2[0], extent2[1], 1];
 		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
 			let color_create_info = ImageCreateInfo {
@@ -280,7 +282,11 @@ impl RenderContext
 				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
 				..Default::default()
 			};
-			let color_image = Image::new(self.memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
+			let color_image = Image::new(
+				self.memory_allocator.clone(),
+				color_create_info,
+				AllocationCreateInfo::default(),
+			)?;
 			let color = ImageView::new_default(color_image)?;
 			self.color_image = Some(color.clone());
 
@@ -290,7 +296,11 @@ impl RenderContext
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..Default::default()
 			};
-			let depth_image = Image::new(self.memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
+			let depth_image = Image::new(
+				self.memory_allocator.clone(),
+				depth_create_info,
+				AllocationCreateInfo::default(),
+			)?;
 			let depth = ImageView::new_default(depth_image)?;
 			self.depth_image = Some(depth);
 
@@ -303,27 +313,37 @@ impl RenderContext
 		Ok((self.color_image.clone().unwrap(), self.depth_image.clone().unwrap()))
 	}
 
-	/// Blit the color image to the swapchain image, after converting it to the swapchain's color
-	/// space if necessary.
-	fn blit_to_swapchain(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		swapchain_image: Arc<Image>,
-	) -> crate::Result<()>
+	fn present_image(&mut self, mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
-		let color_image = self.color_image.as_ref().unwrap().image().clone();
+		if let Some((swapchain_image, acquire_future)) = self.swapchain.get_next_image()? {
+			let color_image = self.color_image.as_ref().unwrap().image().clone();
 
-		if self.swapchain.color_space() == ColorSpace::SrgbNonLinear {
-			// perform gamma correction
-			let image_extent = color_image.extent();
-			let workgroups_x = image_extent[0].div_ceil(64);
-			let layout = self.gamma_pipeline.layout().clone();
-			cb.bind_pipeline_compute(self.gamma_pipeline.clone())?
-				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.color_set.clone().unwrap())?
-				.dispatch([workgroups_x, image_extent[1], 1])?;
+			if self.swapchain.color_space() == ColorSpace::SrgbNonLinear {
+				// perform gamma correction
+				let image_extent = color_image.extent();
+				let workgroups_x = image_extent[0].div_ceil(64);
+				let layout = self.gamma_pipeline.layout().clone();
+				cb.bind_pipeline_compute(self.gamma_pipeline.clone())?
+					.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.color_set.clone().unwrap())?
+					.dispatch([workgroups_x, image_extent[1], 1])?;
+			}
+
+			cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
+
+			let built_cb = cb.build()?;
+			let transfer_future = self.transfer_manager.take_transfer_future();
+			let graphics_queue = self.graphics_queue.clone();
+
+			// wait for any transfers to finish
+			// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
+			if let Some(f) = &transfer_future {
+				f.wait(None)?;
+			}
+
+			// submit the built command buffer, presenting it if possible
+			self.swapchain
+				.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
 		}
-
-		cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
 
 		Ok(())
 	}
@@ -494,15 +514,12 @@ fn submit_frame(
 		return Ok(());
 	}
 
+	let (color_image, depth_image) = render_ctx.get_images()?;
 	let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
 		&render_ctx.command_buffer_allocator,
 		render_ctx.graphics_queue.queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
-
-	let memory_allocator = render_ctx.memory_allocator.clone();
-	let swapchain_extent = render_ctx.swapchain.dimensions();
-	let (color_image, depth_image) = render_ctx.get_images(swapchain_extent)?;
 
 	// shadows
 	light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
@@ -518,6 +535,7 @@ fn submit_frame(
 	mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
 
 	// 3D OIT
+	let memory_allocator = render_ctx.memory_allocator.clone();
 	if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
 		transparency_renderer.process_transparency(
 			&mut primary_cb_builder,
@@ -530,26 +548,7 @@ fn submit_frame(
 	// UI
 	canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
 
-	if let Some((swapchain_image, acquire_future)) = render_ctx.swapchain.get_next_image()? {
-		render_ctx.blit_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
-
-		let built_cb = primary_cb_builder.build()?;
-		let transfer_future = render_ctx.transfer_manager.take_transfer_future();
-		let graphics_queue = render_ctx.graphics_queue.clone();
-
-		// wait for any transfers to finish
-		// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
-		if let Some(f) = &transfer_future {
-			f.wait(None)?;
-		}
-
-		// submit the built command buffer, presenting it if possible
-		render_ctx
-			.swapchain
-			.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
-	}
-
-	Ok(())
+	render_ctx.present_image(primary_cb_builder)
 }
 
 //
