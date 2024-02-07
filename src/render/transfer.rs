@@ -184,9 +184,14 @@ impl TransferManager
 		Ok(())
 	}
 
-	pub fn take_transfer_future(&mut self) -> Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>
+	pub fn take_transfer_future(&mut self) -> crate::Result<Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>>
 	{
-		self.transfer_future.take()
+		// wait for any transfers to finish
+		// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
+		if let Some(f) = &self.transfer_future {
+			f.wait(None)?;
+		}
+		Ok(self.transfer_future.take())
 	}
 }
 

@@ -453,14 +453,8 @@ impl RenderContext
 			cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
 
 			let built_cb = cb.build()?;
-			let transfer_future = self.transfer_manager.take_transfer_future();
 			let graphics_queue = self.graphics_queue.clone();
-
-			// wait for any transfers to finish
-			// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
-			if let Some(f) = &transfer_future {
-				f.wait(None)?;
-			}
+			let transfer_future = self.transfer_manager.take_transfer_future()?;
 
 			// submit the built command buffer, presenting it if possible
 			self.swapchain
