@@ -7,7 +7,6 @@
 
 pub mod lighting;
 pub mod model;
-mod skybox;
 mod swapchain;
 mod transfer;
 mod transparency;
@@ -24,7 +23,8 @@ use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
 use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer,
+	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderingAttachmentInfo,
+	RenderingInfo, SubpassContents,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -33,19 +33,33 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
+	Device, DeviceCreateInfo, DeviceExtensions, DeviceOwned, Features, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::format::{Format, FormatFeatures};
-use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::{
+	sampler::{Sampler, SamplerCreateInfo},
+	view::{ImageView, ImageViewCreateInfo, ImageViewType},
+	Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
+};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
 use vulkano::pipeline::{
-	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo, ComputePipeline, Pipeline, PipelineBindPoint,
-	PipelineLayout, PipelineShaderStageCreateInfo,
+	compute::ComputePipelineCreateInfo,
+	graphics::{
+		color_blend::ColorBlendState,
+		input_assembly::{InputAssemblyState, PrimitiveTopology},
+		subpass::PipelineRenderingCreateInfo,
+		viewport::Viewport,
+		GraphicsPipelineCreateInfo,
+	},
+	layout::{PipelineLayoutCreateInfo, PushConstantRange},
+	ComputePipeline, DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
+	PipelineShaderStageCreateInfo,
 };
+use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::{ColorSpace, Surface};
 use vulkano::{DeviceSize, VulkanLibrary};
@@ -76,14 +90,15 @@ pub struct RenderContext
 	graphics_queue: Arc<Queue>,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
+	single_set_allocator: StandardDescriptorSetAllocator,
 	direct_buffer_write: bool,
 	transfer_manager: transfer::TransferManager,
 	swapchain: swapchain::Swapchain,
-	skybox: Option<skybox::Skybox>,
+	skybox_pipeline: Arc<GraphicsPipeline>,
+	skybox_tex_set: Option<Arc<PersistentDescriptorSet>>,
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
 	// Things related to the output color/depth images and gamma correction.
-	color_set_allocator: StandardDescriptorSetAllocator,
 	color_set_layout: Arc<DescriptorSetLayout>,
 	depth_stencil_format: Format,
 	color_image: Option<Arc<ImageView>>,
@@ -122,11 +137,11 @@ impl RenderContext
 		let submit_transfers_to = transfer_queue.unwrap_or_else(|| graphics_queue.clone());
 		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
 
-		let color_set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+		let single_set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
 			set_count: 2,
 			..Default::default()
 		};
-		let color_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), color_set_alloc_info);
+		let single_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), single_set_alloc_info);
 
 		let depth_stencil_format = DEPTH_STENCIL_FORMAT_CANDIDATES
 			.into_iter()
@@ -161,16 +176,19 @@ impl RenderContext
 		let pipeline_create_info = ComputePipelineCreateInfo::stage_layout(stage, pipeline_layout);
 		let gamma_pipeline = ComputePipeline::new(vk_dev.clone(), None, pipeline_create_info)?;
 
+		let skybox_pipeline = create_sky_pipeline(vk_dev.clone())?;
+
 		Ok(Self {
 			graphics_queue,
 			memory_allocator,
 			command_buffer_allocator,
+			single_set_allocator,
 			direct_buffer_write,
 			transfer_manager,
 			swapchain,
-			skybox: None,
+			skybox_pipeline,
+			skybox_tex_set: None,
 			transparency_renderer: None,
-			color_set_allocator,
 			color_set_layout,
 			depth_stencil_format,
 			color_image: None,
@@ -179,12 +197,6 @@ impl RenderContext
 			gamma_pipeline,
 			textures: HashMap::new(),
 		})
-	}
-
-	pub fn set_skybox(&mut self, path_pattern: String) -> crate::Result<()>
-	{
-		self.skybox = Some(skybox::Skybox::new(self, path_pattern)?);
-		Ok(())
 	}
 
 	fn load_transparency(&mut self, material_textures_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
@@ -277,6 +289,108 @@ impl RenderContext
 		Ok(view)
 	}
 
+	/// Load six image files into a cubemap texture. `faces` is paths to textures of each face of the
+	/// cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
+	///
+	/// Unlike `new_texture`, the results of this are *not* cached.
+	fn new_cubemap(&mut self, faces: [PathBuf; 6]) -> crate::Result<Arc<ImageView>>
+	{
+		let mut combined_data = Vec::<u8>::new();
+		let mut cube_fmt = None;
+		let mut cube_dim = None;
+		for face_path in faces {
+			let (face_fmt, face_dim, _, img_raw) = load_texture(&face_path)?;
+
+			if face_fmt != *cube_fmt.get_or_insert(face_fmt) {
+				return Err("Not all faces of a cubemap have the same format!".into());
+			}
+			if face_dim != *cube_dim.get_or_insert(face_dim) {
+				return Err("Not all faces of a cubemap have the same dimensions!".into());
+			}
+
+			let mip_size = get_mip_size(face_fmt, face_dim[0], face_dim[1]).try_into().unwrap();
+			if combined_data.capacity() == 0 {
+				combined_data.reserve(mip_size * 6);
+			}
+			combined_data.extend(&img_raw[..mip_size]);
+		}
+
+		let extent = cube_dim.unwrap();
+		let image_info = ImageCreateInfo {
+			flags: ImageCreateFlags::CUBE_COMPATIBLE,
+			format: cube_fmt.unwrap(),
+			extent: [extent[0], extent[1], 1],
+			array_layers: 6,
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+			..Default::default()
+		};
+		let image = self.new_image(&combined_data, image_info)?;
+
+		let view_create_info = ImageViewCreateInfo {
+			view_type: ImageViewType::Cube,
+			..ImageViewCreateInfo::from_image(&image)
+		};
+		Ok(ImageView::new(image, view_create_info)?)
+	}
+
+	/// Set the skybox using 6 texture files for each face. They'll be loaded from paths with the
+	/// pattern specified in `tex_files_format` which should have an asterisk in it, for example
+	/// "sky/Daylight Box_*.png", which will be replaced with the face name. Face names are "Right",
+	/// "Left", "Top", "Bottom", "Front", and "Back".
+	pub fn set_skybox(&mut self, path_pattern: String) -> crate::Result<()>
+	{
+		let set_layout = self.skybox_pipeline.layout().set_layouts()[0].clone();
+		let face_names = ["Right", "Left", "Top", "Bottom", "Front", "Back"];
+		let face_paths = face_names.map(|face_name| path_pattern.replace('*', face_name).into());
+		let sky_cubemap = self.new_cubemap(face_paths)?;
+		self.skybox_tex_set = Some(PersistentDescriptorSet::new(
+			&self.single_set_allocator,
+			set_layout,
+			[WriteDescriptorSet::image_view(0, sky_cubemap)],
+			[],
+		)?);
+
+		Ok(())
+	}
+
+	fn draw_skybox(
+		&mut self,
+		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		color_image: Arc<ImageView>,
+		sky_projview: Mat4,
+	) -> crate::Result<()>
+	{
+		let viewport_extent = color_image.image().extent();
+		let viewport = Viewport {
+			offset: [0.0, 0.0],
+			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
+			depth_range: 0.0..=1.0,
+		};
+		let sky_render_info = RenderingInfo {
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::DontCare,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(color_image)
+			})],
+			contents: SubpassContents::Inline,
+			..Default::default()
+		};
+
+		if let Some(set) = self.skybox_tex_set.clone() {
+			let pipeline_layout = self.skybox_pipeline.layout().clone();
+			cb_builder
+				.begin_rendering(sky_render_info)?
+				.set_viewport(0, [viewport].as_slice().into())?
+				.bind_pipeline_graphics(self.skybox_pipeline.clone())?
+				.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, vec![set])?
+				.push_constants(pipeline_layout, 0, sky_projview)?
+				.draw(8, 2, 0, 0)?
+				.end_rendering()?;
+		}
+
+		Ok(())
+	}
+
 	/// Get the color and depth images. They'll be resized before being returned if the swapchain
 	/// image extent changed.
 	fn get_images(&mut self) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
@@ -314,7 +428,7 @@ impl RenderContext
 
 			let set_layout = self.color_set_layout.clone();
 			let set_write = [WriteDescriptorSet::image_view(0, color)];
-			let set = PersistentDescriptorSet::new(&self.color_set_allocator, set_layout, set_write, [])?;
+			let set = PersistentDescriptorSet::new(&self.single_set_allocator, set_layout, set_write, [])?;
 			self.color_set = Some(set);
 		}
 
@@ -387,6 +501,117 @@ impl RenderContext
 	}
 }
 
+fn create_sky_pipeline(device: Arc<Device>) -> crate::Result<Arc<GraphicsPipeline>>
+{
+	let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
+	let tex_binding = DescriptorSetLayoutBinding {
+		stages: ShaderStages::FRAGMENT,
+		immutable_samplers: vec![cubemap_sampler],
+		..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+	};
+	let set_layout_info = DescriptorSetLayoutCreateInfo {
+		bindings: [(0, tex_binding)].into(),
+		..Default::default()
+	};
+	let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
+
+	let pipeline_layout_info = PipelineLayoutCreateInfo {
+		set_layouts: vec![set_layout.clone()],
+		push_constant_ranges: vec![PushConstantRange {
+			stages: ShaderStages::VERTEX,
+			offset: 0,
+			size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+		}],
+		..Default::default()
+	};
+	let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
+
+	let input_assembly_state = InputAssemblyState {
+		topology: PrimitiveTopology::TriangleFan,
+		..Default::default()
+	};
+	let rendering_formats = PipelineRenderingCreateInfo {
+		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+		..Default::default()
+	};
+	let pipeline_info = GraphicsPipelineCreateInfo {
+		stages: smallvec::smallvec![
+			PipelineShaderStageCreateInfo::new(sky_vs::load(device.clone())?.entry_point("main").unwrap()),
+			PipelineShaderStageCreateInfo::new(sky_fs::load(device.clone())?.entry_point("main").unwrap()),
+		],
+		vertex_input_state: Some(Default::default()),
+		input_assembly_state: Some(input_assembly_state),
+		viewport_state: Some(Default::default()),
+		rasterization_state: Some(Default::default()),
+		multisample_state: Some(Default::default()),
+		color_blend_state: Some(ColorBlendState::with_attachment_states(1, Default::default())),
+		dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+		subpass: Some(rendering_formats.into()),
+		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
+	};
+	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
+}
+mod sky_vs
+{
+	vulkano_shaders::shader! {
+		ty: "vertex",
+		src: r"
+			#version 460
+
+			layout(push_constant) uniform pc
+			{
+				mat4 sky_projview;
+			};
+
+			// Sky cube, consisting of two fans with the center being opposite corners of the cube.
+			// Relative to camera at default state, -X is left, +Y is forward, and +Z is up.
+			const vec3 POSITIONS[8] = {
+				{ -1.0, -1.0, -1.0 },
+				{ -1.0, -1.0, 1.0 },
+				{ 1.0, -1.0, 1.0 },
+				{ 1.0, -1.0, -1.0 },
+				{ 1.0, 1.0, -1.0 },
+				{ -1.0, 1.0, -1.0 },
+				{ -1.0, 1.0, 1.0 },
+				{ 1.0, 1.0, 1.0 },
+			};
+			const int INDICES[2][8] = {
+				{ 0, 1, 2, 3, 4, 5, 6, 1 },
+				{ 7, 1, 2, 3, 4, 5, 6, 1 },
+			};
+
+			layout(location = 0) out vec3 cube_pos; // give original vertex position to fragment shader
+
+			void main()
+			{
+				int index = INDICES[gl_InstanceIndex][gl_VertexIndex];
+				cube_pos = POSITIONS[index];
+				vec4 new_pos = sky_projview * vec4(cube_pos, 1.0);
+				gl_Position = new_pos.xyww;
+			}
+		",
+	}
+}
+mod sky_fs
+{
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		src: r"
+			#version 460
+
+			layout(binding = 0) uniform samplerCube sky_tex;
+
+			layout(location = 0) in vec3 cube_pos;
+			layout(location = 0) out vec4 color_out;
+
+			void main()
+			{
+				color_out = texture(sky_tex, cube_pos.xzy);
+			}
+		",
+	}
+}
+
 mod compute_gamma
 {
 	vulkano_shaders::shader! {
@@ -415,6 +640,9 @@ mod compute_gamma
 	}
 }
 
+//
+/* Texture stuff */
+//
 fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 {
 	log::info!("Loading texture file '{}'...", path.display());
@@ -532,9 +760,7 @@ fn submit_frame(
 	light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
 
 	// skybox (effectively clears the image)
-	if let Some(skybox) = &render_ctx.skybox {
-		skybox.draw(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
-	}
+	render_ctx.draw_skybox(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
 
 	// 3D
 	mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
