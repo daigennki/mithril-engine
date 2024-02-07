@@ -780,7 +780,7 @@ impl MeshManager
 				log::debug!("Loading material pipeline '{mat_name}'...");
 				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
 				let pipeline_data = pipeline_config.into_pipelines(
-					render_ctx.main_render_target.depth_stencil_format(),
+					render_ctx.depth_stencil_format,
 					self.pipeline_layout.clone(),
 					self.pipeline_layout_oit.clone(),
 				)?;
@@ -825,7 +825,7 @@ impl MeshManager
 				(format, viewport_extent, true)
 			}
 			_ => (
-				render_ctx.main_render_target.depth_stencil_format(),
+				render_ctx.depth_stencil_format,
 				render_ctx.swapchain_dimensions(),
 				false,
 			),

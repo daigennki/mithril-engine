@@ -7,7 +7,6 @@
 
 pub mod lighting;
 pub mod model;
-mod render_target;
 pub mod skybox;
 mod swapchain;
 mod transfer;
@@ -25,21 +24,30 @@ use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
 use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, CommandBufferUsage,
+	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer
 };
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
+use vulkano::descriptor_set::{
+	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+	PersistentDescriptorSet, WriteDescriptorSet,
+};
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
 };
-use vulkano::format::Format;
+use vulkano::format::{Format, FormatFeatures};
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::swapchain::Surface;
+use vulkano::pipeline::{
+	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo, ComputePipeline, Pipeline, PipelineBindPoint,
+	PipelineLayout, PipelineShaderStageCreateInfo,
+};
+use vulkano::shader::ShaderStages;
+use vulkano::swapchain::{ColorSpace, Surface};
 use vulkano::{DeviceSize, VulkanLibrary};
 use winit::event_loop::EventLoop;
 
@@ -48,6 +56,19 @@ use crate::EngineError;
 use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
+
+// Some notes regarding observed support (with AMD, Intel, and NVIDIA GPUs) for depth/stencil formats:
+//
+// - `D16_UNORM`: Supported on all GPUs.
+// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
+// - `X8_D24_UNORM_PACK32`: Only supported on NVIDIA and Intel GPUs.
+// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
+// - `D32_SFLOAT`: Supported on all GPUs.
+// - `D32_SFLOAT_S8_UINT`: Supported on all GPUs.
+// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
+//
+// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
 
 #[derive(shipyard::Unique)]
 pub struct RenderContext
@@ -58,8 +79,16 @@ pub struct RenderContext
 	direct_buffer_write: bool,
 	transfer_manager: transfer::TransferManager,
 	swapchain: swapchain::Swapchain,
-	main_render_target: render_target::RenderTarget,
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
+
+	// Things related to the output color/depth images and gamma correction.
+	color_set_allocator: StandardDescriptorSetAllocator,
+	color_set_layout: Arc<DescriptorSetLayout>,
+	depth_stencil_format: Format,
+	color_image: Option<Arc<ImageView>>,
+	depth_image: Option<Arc<ImageView>>,
+	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `color_image` as a storage image binding.
+	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
 
 	// Loaded textures, with the key being the path relative to the current working directory.
 	textures: HashMap<PathBuf, Arc<ImageView>>,
@@ -79,7 +108,6 @@ impl RenderContext
 		}
 
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), event_loop, game_name)?;
-		let main_render_target = render_target::RenderTarget::new(vk_dev.clone())?;
 
 		// - Primary command buffers: One for each graphics submission.
 		// - Secondary command buffers: Only up to four should be created per thread.
@@ -93,6 +121,45 @@ impl RenderContext
 		let submit_transfers_to = transfer_queue.unwrap_or_else(|| graphics_queue.clone());
 		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
 
+		let color_set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
+			set_count: 2,
+			..Default::default()
+		};
+		let color_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), color_set_alloc_info);
+
+		let depth_stencil_format = DEPTH_STENCIL_FORMAT_CANDIDATES
+			.into_iter()
+			.find(|format| {
+				vk_dev
+					.physical_device()
+					.format_properties(*format)
+					.unwrap()
+					.optimal_tiling_features
+					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
+			})
+			.ok_or("none of the depth/stencil format candidates are supported")?;
+		log::debug!("using depth/stencil format {depth_stencil_format:?}");
+
+		let color_image_binding = DescriptorSetLayoutBinding {
+			stages: ShaderStages::COMPUTE,
+			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
+		};
+		let color_set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: [(0, color_image_binding)].into(),
+			..Default::default()
+		};
+		let color_set_layout = DescriptorSetLayout::new(vk_dev.clone(), color_set_layout_info)?;
+
+		let pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![color_set_layout.clone()],
+			..Default::default()
+		};
+		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), pipeline_layout_info)?;
+		let entry_point = compute_gamma::load(vk_dev.clone())?.entry_point("main").unwrap();
+		let stage = PipelineShaderStageCreateInfo::new(entry_point);
+		let pipeline_create_info = ComputePipelineCreateInfo::stage_layout(stage, pipeline_layout);
+		let gamma_pipeline = ComputePipeline::new(vk_dev.clone(), None, pipeline_create_info)?;
+
 		Ok(Self {
 			graphics_queue,
 			memory_allocator,
@@ -100,8 +167,14 @@ impl RenderContext
 			direct_buffer_write,
 			transfer_manager,
 			swapchain,
-			main_render_target,
 			transparency_renderer: None,
+			color_set_allocator,
+			color_set_layout,
+			depth_stencil_format,
+			color_image: None,
+			depth_image: None,
+			color_set: None,
+			gamma_pipeline,
 			textures: HashMap::new(),
 		})
 	}
@@ -112,7 +185,7 @@ impl RenderContext
 			self.memory_allocator.clone(),
 			material_textures_set_layout,
 			self.swapchain.dimensions(),
-			self.main_render_target.depth_stencil_format(),
+			self.depth_stencil_format,
 		)?);
 		Ok(())
 	}
@@ -196,6 +269,65 @@ impl RenderContext
 		Ok(view)
 	}
 
+	/// Get the color and depth images. They'll be resized before being returned if `extent` changed.
+	fn get_images(&mut self, extent2: [u32; 2]) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
+	{
+		let extent = [extent2[0], extent2[1], 1];
+		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
+			let color_create_info = ImageCreateInfo {
+				format: Format::R16G16B16A16_SFLOAT,
+				extent,
+				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
+				..Default::default()
+			};
+			let color_image = Image::new(self.memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
+			let color = ImageView::new_default(color_image)?;
+			self.color_image = Some(color.clone());
+
+			let depth_create_info = ImageCreateInfo {
+				format: self.depth_stencil_format,
+				extent,
+				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+				..Default::default()
+			};
+			let depth_image = Image::new(self.memory_allocator.clone(), depth_create_info, AllocationCreateInfo::default())?;
+			let depth = ImageView::new_default(depth_image)?;
+			self.depth_image = Some(depth);
+
+			let set_layout = self.color_set_layout.clone();
+			let set_write = [WriteDescriptorSet::image_view(0, color)];
+			let set = PersistentDescriptorSet::new(&self.color_set_allocator, set_layout, set_write, [])?;
+			self.color_set = Some(set);
+		}
+
+		Ok((self.color_image.clone().unwrap(), self.depth_image.clone().unwrap()))
+	}
+
+	/// Blit the color image to the swapchain image, after converting it to the swapchain's color
+	/// space if necessary.
+	fn blit_to_swapchain(
+		&self,
+		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		swapchain_image: Arc<Image>,
+	) -> crate::Result<()>
+	{
+		let color_image = self.color_image.as_ref().unwrap().image().clone();
+
+		if self.swapchain.color_space() == ColorSpace::SrgbNonLinear {
+			// perform gamma correction
+			let image_extent = color_image.extent();
+			let workgroups_x = image_extent[0].div_ceil(64);
+			let layout = self.gamma_pipeline.layout().clone();
+			cb.bind_pipeline_compute(self.gamma_pipeline.clone())?
+				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.color_set.clone().unwrap())?
+				.dispatch([workgroups_x, image_extent[1], 1])?;
+		}
+
+		cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
+
+		Ok(())
+	}
+
 	/// Check if the window has been resized since the last frame submission.
 	pub fn window_resized(&self) -> bool
 	{
@@ -224,6 +356,34 @@ impl RenderContext
 	pub fn delta(&self) -> std::time::Duration
 	{
 		self.swapchain.delta()
+	}
+}
+
+mod compute_gamma
+{
+	vulkano_shaders::shader! {
+		ty: "compute",
+		src: r"
+			#version 460
+
+			layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+			layout(binding = 0, rgba16f) uniform restrict image2D color_image;
+
+			void main()
+			{
+				const float gamma = 1.0 / 2.2;
+
+				ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
+				vec3 rgb_lin = imageLoad(color_image, image_coord).rgb;
+
+				float r = pow(rgb_lin.r, gamma);
+				float g = pow(rgb_lin.g, gamma);
+				float b = pow(rgb_lin.b, gamma);
+
+				imageStore(color_image, image_coord, vec4(r, g, b, 1.0));
+			}
+		",
 	}
 }
 
@@ -342,9 +502,7 @@ fn submit_frame(
 
 	let memory_allocator = render_ctx.memory_allocator.clone();
 	let swapchain_extent = render_ctx.swapchain.dimensions();
-	let (color_image, depth_image) = render_ctx
-		.main_render_target
-		.get_images(memory_allocator.clone(), swapchain_extent)?;
+	let (color_image, depth_image) = render_ctx.get_images(swapchain_extent)?;
 
 	// shadows
 	light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
@@ -373,11 +531,7 @@ fn submit_frame(
 	canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
 
 	if let Some((swapchain_image, acquire_future)) = render_ctx.swapchain.get_next_image()? {
-		render_ctx.main_render_target.blit_to_swapchain(
-			&mut primary_cb_builder,
-			swapchain_image,
-			render_ctx.swapchain.color_space(),
-		)?;
+		render_ctx.blit_to_swapchain(&mut primary_cb_builder, swapchain_image)?;
 
 		let built_cb = primary_cb_builder.build()?;
 		let transfer_future = render_ctx.transfer_manager.take_transfer_future();
