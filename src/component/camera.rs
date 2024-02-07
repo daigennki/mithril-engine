@@ -82,7 +82,7 @@ pub struct CameraManager
 
 	view: DMat4,
 	projview: DMat4,
-	sky_projview: DMat4,
+	sky_projview: Mat4,
 	current_fov_y_rad: f64,
 	current_aspect_ratio: f64,
 }
@@ -108,7 +108,7 @@ impl CameraManager
 			default_fov,
 			view,
 			projview,
-			sky_projview: projview,
+			sky_projview: projview.as_mat4(),
 			current_fov_y_rad: fov_y_rad,
 			current_aspect_ratio: aspect_ratio,
 		}
@@ -127,11 +127,11 @@ impl CameraManager
 
 		let proj = DMat4::perspective_lh(fov_y_rad, aspect_ratio, CAMERA_NEAR, CAMERA_FAR);
 		let view = DMat4::look_to_lh(current_pos, direction, DVec3::NEG_Z);
-		let sky_view = DMat4::look_to_lh(DVec3::ZERO, direction, DVec3::NEG_Z);
+		let sky_view = Mat4::look_to_lh(Vec3::ZERO, direction.as_vec3(), Vec3::NEG_Z);
 
 		self.view = view;
 		self.projview = proj * view;
-		self.sky_projview = proj * sky_view;
+		self.sky_projview = proj.as_mat4() * sky_view;
 		self.current_fov_y_rad = fov_y_rad;
 		self.current_aspect_ratio = aspect_ratio;
 	}
@@ -165,7 +165,7 @@ impl CameraManager
 
 	/// Get the multiplied projection and view matrix to be used specifically in the skybox shader.
 	/// The view matrix here never changes its eye position from (0, 0, 0).
-	pub fn sky_projview(&self) -> DMat4
+	pub fn sky_projview(&self) -> Mat4
 	{
 		self.sky_projview
 	}
