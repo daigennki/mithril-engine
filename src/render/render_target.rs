@@ -9,11 +9,11 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, PrimaryAu
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
 	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
+	PersistentDescriptorSet, WriteDescriptorSet,
 };
-use vulkano::device::DeviceOwned;
-use vulkano::format::Format;
-use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageFormatInfo, ImageUsage};
+use vulkano::device::Device;
+use vulkano::format::{Format, FormatFeatures};
+use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::{
 	compute::ComputePipelineCreateInfo, layout::PipelineLayoutCreateInfo, ComputePipeline, Pipeline, PipelineBindPoint,
@@ -22,14 +22,7 @@ use vulkano::pipeline::{
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 
-// # Notes about format used for main depth/stencil buffer
-//
-// While [NVIDIA recommends](https://developer.nvidia.com/blog/vulkan-dos-donts/) using a
-// 24-bit depth format (`D24_UNORM_S8_UINT`), it doesn't seem to be very well-supported outside of
-// NVIDIA GPUs. Only about 70% of GPUs on Windows and 50% of GPUs on Linux seem to support it,
-// while `D16_UNORM` and `D32_SFLOAT` both have 100% support.
-//
-// More notes regarding observed support for depth/stencil formats:
+// Some notes regarding observed support (with AMD, Intel, and NVIDIA GPUs) for depth/stencil formats:
 //
 // - `D16_UNORM`: Supported on all GPUs.
 // - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
@@ -40,6 +33,7 @@ use vulkano::swapchain::ColorSpace;
 // - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
 //
 // (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
 
 mod compute_gamma
 {
@@ -69,49 +63,39 @@ mod compute_gamma
 	}
 }
 
-const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
-
+/// Things related to the output color/depth images and gamma correction.
 pub struct RenderTarget
 {
-	descriptor_set_allocator: StandardDescriptorSetAllocator,
-
-	color_image: Arc<ImageView>, // An FP16, linear gamma image which everything will be rendered to.
-	depth_image: Arc<ImageView>,
-
-	// The pipeline used to apply gamma correction, and the descriptor set that contains the image
-	// it applies gamma correction to.
-	// Only used when the output color space is `SrgbNonLinear`.
-	gamma_pipeline: Arc<ComputePipeline>,
-	color_set: Arc<PersistentDescriptorSet>,
+	color_set_allocator: StandardDescriptorSetAllocator,
+	set_layout: Arc<DescriptorSetLayout>,
+	depth_stencil_format: Format,
+	color_image: Option<Arc<ImageView>>,
+	depth_image: Option<Arc<ImageView>>,
+	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `color_image` as a storage image binding.
+	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
 }
 impl RenderTarget
 {
-	pub fn new(memory_allocator: Arc<StandardMemoryAllocator>, extent: [u32; 2]) -> crate::Result<Self>
+	pub fn new(device: Arc<Device>) -> crate::Result<Self>
 	{
-		let device = memory_allocator.device().clone();
 		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
 			set_count: 2,
 			..Default::default()
 		};
-		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
+		let color_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
 
-		let mut selected_depth_format = None;
-		for format in DEPTH_STENCIL_FORMAT_CANDIDATES {
-			let image_format_info = ImageFormatInfo {
-				format,
-				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-				..Default::default()
-			};
-			if device.physical_device().image_format_properties(image_format_info)?.is_some() {
-				selected_depth_format = Some(format);
-				break;
-			}
-		}
-		let depth_format = selected_depth_format.ok_or("none of the depth/stencil format candidates are supported")?;
-		log::debug!("using depth/stencil format {depth_format:?}");
-
-		let extent3 = [extent[0], extent[1], 1];
-		let (color_image_view, depth_image_view) = create_images(memory_allocator.clone(), extent3, depth_format)?;
+		let depth_stencil_format = DEPTH_STENCIL_FORMAT_CANDIDATES
+			.into_iter()
+			.find(|format| {
+				device
+					.physical_device()
+					.format_properties(*format)
+					.unwrap()
+					.optimal_tiling_features
+					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
+			})
+			.ok_or("none of the depth/stencil format candidates are supported")?;
+		log::debug!("using depth/stencil format {depth_stencil_format:?}");
 
 		let image_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::COMPUTE,
@@ -122,30 +106,29 @@ impl RenderTarget
 			..Default::default()
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
-		let set_write = [WriteDescriptorSet::image_view(0, color_image_view.clone())];
-		let color_set = PersistentDescriptorSet::new(&descriptor_set_allocator, set_layout.clone(), set_write, [])?;
 
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![set_layout],
+			set_layouts: vec![set_layout.clone()],
 			..Default::default()
 		};
 		let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 		let entry_point = compute_gamma::load(device.clone())?.entry_point("main").unwrap();
 		let stage = PipelineShaderStageCreateInfo::new(entry_point);
 		let pipeline_create_info = ComputePipelineCreateInfo::stage_layout(stage, pipeline_layout);
-		let gamma_pipeline = ComputePipeline::new(device, None, pipeline_create_info)?;
+		let gamma_pipeline = ComputePipeline::new(device.clone(), None, pipeline_create_info)?;
 
 		Ok(Self {
-			descriptor_set_allocator,
-			color_image: color_image_view,
-			depth_image: depth_image_view,
+			color_set_allocator,
+			set_layout,
+			depth_stencil_format,
+			color_image: None,
+			depth_image: None,
+			color_set: None,
 			gamma_pipeline,
-			color_set,
 		})
 	}
 
-	/// Get the color and depth images. They will be resized before being returned if the given
-	/// `extent` changed.
+	/// Get the color and depth images. They'll be resized before being returned if `extent` changed.
 	pub fn get_images(
 		&mut self,
 		memory_allocator: Arc<StandardMemoryAllocator>,
@@ -153,24 +136,43 @@ impl RenderTarget
 	) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 	{
 		let extent = [extent2[0], extent2[1], 1];
-		if extent != self.color_image.image().extent() {
-			let (color, depth) = create_images(memory_allocator.clone(), extent, self.depth_image.format())?;
-			self.color_image = color;
-			self.depth_image = depth;
+		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
+			let color_create_info = ImageCreateInfo {
+				format: Format::R16G16B16A16_SFLOAT,
+				extent,
+				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
+				..Default::default()
+			};
+			let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
+			let color = ImageView::new_default(color_image)?;
+			self.color_image = Some(color.clone());
 
-			let set_layout = self.color_set.layout().clone();
-			let set_write = [WriteDescriptorSet::image_view(0, self.color_image.clone())];
-			self.color_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, set_write, [])?;
+			let depth_create_info = ImageCreateInfo {
+				format: self.depth_stencil_format,
+				extent,
+				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+				..Default::default()
+			};
+			let depth_image = Image::new(memory_allocator, depth_create_info, AllocationCreateInfo::default())?;
+			let depth = ImageView::new_default(depth_image)?;
+			self.depth_image = Some(depth);
+
+			let set_layout = self.set_layout.clone();
+			let set_write = [WriteDescriptorSet::image_view(0, color)];
+			let set = PersistentDescriptorSet::new(&self.color_set_allocator, set_layout, set_write, [])?;
+			self.color_set = Some(set);
 		}
 
-		Ok((self.color_image.clone(), self.depth_image.clone()))
+		Ok((self.color_image.clone().unwrap(), self.depth_image.clone().unwrap()))
 	}
 
 	pub fn depth_stencil_format(&self) -> Format
 	{
-		self.depth_image.format()
+		self.depth_stencil_format
 	}
 
+	/// Blit the color image to the swapchain image, after converting it to the swapchain color
+	/// space if necessary.
 	pub fn blit_to_swapchain(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -178,46 +180,20 @@ impl RenderTarget
 		color_space: ColorSpace,
 	) -> crate::Result<()>
 	{
-		// for rendering to non-linear sRGB, perform gamma correction before blitting to the swapchain image
+		let color_image = self.color_image.as_ref().unwrap().image().clone();
+
 		if color_space == ColorSpace::SrgbNonLinear {
-			let image_extent = self.color_image.image().extent();
+			// perform gamma correction
+			let image_extent = color_image.extent();
 			let workgroups_x = image_extent[0].div_ceil(64);
 			let layout = self.gamma_pipeline.layout().clone();
 			cb.bind_pipeline_compute(self.gamma_pipeline.clone())?
-				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.color_set.clone())?
+				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.color_set.clone().unwrap())?
 				.dispatch([workgroups_x, image_extent[1], 1])?;
 		}
 
-		cb.blit_image(BlitImageInfo::images(self.color_image.image().clone(), swapchain_image))?;
+		cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
 
 		Ok(())
 	}
-}
-
-// create the color and depth images
-fn create_images(
-	memory_allocator: Arc<StandardMemoryAllocator>,
-	extent: [u32; 3],
-	depth_format: Format,
-) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
-{
-	let color_create_info = ImageCreateInfo {
-		format: Format::R16G16B16A16_SFLOAT,
-		extent,
-		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
-		..Default::default()
-	};
-	let color_image = Image::new(memory_allocator.clone(), color_create_info, AllocationCreateInfo::default())?;
-	let color_image_view = ImageView::new_default(color_image)?;
-
-	let depth_create_info = ImageCreateInfo {
-		format: depth_format,
-		extent,
-		usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-		..Default::default()
-	};
-	let depth_image = Image::new(memory_allocator, depth_create_info, AllocationCreateInfo::default())?;
-	let depth_image_view = ImageView::new_default(depth_image)?;
-
-	Ok((color_image_view, depth_image_view))
 }

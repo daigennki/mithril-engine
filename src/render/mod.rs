@@ -53,19 +53,16 @@ use ui::Canvas;
 pub struct RenderContext
 {
 	graphics_queue: Arc<Queue>,
-	swapchain: swapchain::Swapchain,
-	main_render_target: render_target::RenderTarget,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
-
+	direct_buffer_write: bool,
+	transfer_manager: transfer::TransferManager,
+	swapchain: swapchain::Swapchain,
+	main_render_target: render_target::RenderTarget,
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
-	// Loaded textures, with the key being the path relative to the current working directory
+	// Loaded textures, with the key being the path relative to the current working directory.
 	textures: HashMap<PathBuf, Arc<ImageView>>,
-
-	direct_buffer_write: bool,
-
-	transfer_manager: transfer::TransferManager,
 }
 impl RenderContext
 {
@@ -73,37 +70,16 @@ impl RenderContext
 	{
 		let (graphics_queue, transfer_queue) = vulkan_setup(game_name, event_loop)?;
 		let vk_dev = graphics_queue.device().clone();
+		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// Check if we can directly write to device-local buffer memory, as doing so may be faster.
-		let physical_device = vk_dev.physical_device();
-		let direct_buffer_write = match physical_device.properties().device_type {
-			PhysicalDeviceType::IntegratedGpu => true, // Always possible for integrated GPU.
-			PhysicalDeviceType::DiscreteGpu => {
-				// For discrete GPUs, look for a host-visible memory type belonging to a device-local
-				// heap larger than **exactly** 256 **MiB**.
-				const DIRECT_WRITE_THRESHOLD: DeviceSize = 256 * 1024 * 1024;
-				let mem_properties = physical_device.memory_properties();
-				mem_properties
-					.memory_types
-					.iter()
-					.filter(|t| {
-						t.property_flags.contains(
-							MemoryPropertyFlags::DEVICE_LOCAL
-								| MemoryPropertyFlags::HOST_VISIBLE
-								| MemoryPropertyFlags::HOST_COHERENT,
-						)
-					})
-					.any(|t| mem_properties.memory_heaps[t.heap_index as usize].size > DIRECT_WRITE_THRESHOLD)
-			}
-			_ => unreachable!(),
-		};
+		let direct_buffer_write = check_direct_buffer_write(vk_dev.physical_device());
 		if direct_buffer_write {
 			log::info!("Enabling direct buffer writes.");
 		}
 
 		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), event_loop, game_name)?;
-
-		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
+		let main_render_target = render_target::RenderTarget::new(vk_dev.clone())?;
 
 		// - Primary command buffers: One for each graphics submission.
 		// - Secondary command buffers: Only up to four should be created per thread.
@@ -114,21 +90,19 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let main_render_target = render_target::RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
-
 		let submit_transfers_to = transfer_queue.unwrap_or_else(|| graphics_queue.clone());
 		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
 
-		Ok(RenderContext {
+		Ok(Self {
 			graphics_queue,
-			swapchain,
 			memory_allocator,
 			command_buffer_allocator,
+			direct_buffer_write,
+			transfer_manager,
+			swapchain,
 			main_render_target,
 			transparency_renderer: None,
 			textures: HashMap::new(),
-			direct_buffer_write,
-			transfer_manager,
 		})
 	}
 
@@ -399,8 +373,6 @@ fn submit_frame(
 	canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
 
 	if let Some((swapchain_image, acquire_future)) = render_ctx.swapchain.get_next_image()? {
-		// Blit the image to the swapchain image, after converting it to the swapchain's color space
-		// if necessary.
 		render_ctx.main_render_target.blit_to_swapchain(
 			&mut primary_cb_builder,
 			swapchain_image,
@@ -563,4 +535,29 @@ fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Ar
 	let graphics_queue = queues.next().unwrap();
 	let transfer_queue = queues.next();
 	Ok((graphics_queue, transfer_queue))
+}
+
+fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
+{
+	match physical_device.properties().device_type {
+		PhysicalDeviceType::IntegratedGpu => true, // Always possible for integrated GPU.
+		PhysicalDeviceType::DiscreteGpu => {
+			// For discrete GPUs, look for a host-visible memory type belonging to a device-local
+			// heap larger than **exactly** 256 **MiB**.
+			const DIRECT_WRITE_THRESHOLD: DeviceSize = 256 * 1024 * 1024;
+			let mem_properties = physical_device.memory_properties();
+			mem_properties
+				.memory_types
+				.iter()
+				.filter(|t| {
+					t.property_flags.contains(
+						MemoryPropertyFlags::DEVICE_LOCAL
+							| MemoryPropertyFlags::HOST_VISIBLE
+							| MemoryPropertyFlags::HOST_COHERENT,
+					)
+				})
+				.any(|t| mem_properties.memory_heaps[t.heap_index as usize].size > DIRECT_WRITE_THRESHOLD)
+		}
+		_ => unreachable!(),
+	}
 }
