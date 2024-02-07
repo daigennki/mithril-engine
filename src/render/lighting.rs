@@ -14,17 +14,19 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
+	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
 	PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
+	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::{ImageView, ImageViewCreateInfo},
 	Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
-	depth_stencil::{DepthState, DepthStencilState},
+	depth_stencil::{CompareOp, DepthState, DepthStencilState},
 	rasterization::{DepthBiasState, RasterizationState},
 	subpass::PipelineRenderingCreateInfo,
 	vertex_input::VertexInputState,
@@ -110,6 +112,38 @@ impl LightManager
 			..Default::default()
 		};
 
+		/* descriptor set with everything lighting- and shadow-related */
+		let shadow_sampler_info = SamplerCreateInfo {
+			mag_filter: Filter::Linear,
+			min_filter: Filter::Linear,
+			compare: Some(CompareOp::LessOrEqual),
+			..Default::default()
+		};
+		let shadow_sampler = Sampler::new(device.clone(), shadow_sampler_info)?;
+		let light_bindings = [
+			DescriptorSetLayoutBinding {
+				// binding 0: shadow sampler
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![shadow_sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 1: directional light buffer
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
+			},
+			DescriptorSetLayoutBinding {
+				// binding 2: directional light shadow
+				stages: ShaderStages::FRAGMENT,
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+			},
+		];
+		let light_set_layout_info = DescriptorSetLayoutCreateInfo {
+			bindings: (0..).zip(light_bindings).collect(),
+			..Default::default()
+		};
+		let light_set_layout = DescriptorSetLayout::new(device.clone(), light_set_layout_info)?;
+
 		/* directional light */
 		let dir_light_data = DirLightData::default();
 		let dir_light_buf =
@@ -144,7 +178,7 @@ impl LightManager
 		/* descriptor set with everything lighting- and shadow-related */
 		let all_lights_set = PersistentDescriptorSet::new(
 			&descriptor_set_allocator,
-			render_ctx.light_set_layout.clone(),
+			light_set_layout.clone(),
 			[
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),
 				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),

@@ -27,26 +27,18 @@ use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, CommandBufferUsage,
 };
-use vulkano::descriptor_set::layout::{
-	DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
-};
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::format::Format;
-use vulkano::image::{
-	sampler::{Filter, Sampler, SamplerCreateInfo},
-	view::ImageView,
-	Image, ImageCreateInfo, ImageUsage,
-};
+use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
 };
-use vulkano::pipeline::graphics::depth_stencil::CompareOp;
-use vulkano::shader::ShaderStages;
 use vulkano::swapchain::Surface;
 use vulkano::{DeviceSize, VulkanLibrary};
 use winit::event_loop::EventLoop;
@@ -67,8 +59,6 @@ pub struct RenderContext
 	command_buffer_allocator: StandardCommandBufferAllocator,
 
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
-
-	light_set_layout: Arc<DescriptorSetLayout>,
 
 	// Loaded textures, with the key being the path relative to the current working directory
 	textures: HashMap<PathBuf, Arc<ImageView>>,
@@ -126,38 +116,6 @@ impl RenderContext
 
 		let main_render_target = render_target::RenderTarget::new(memory_allocator.clone(), swapchain.dimensions())?;
 
-		/* descriptor set with everything lighting- and shadow-related */
-		let shadow_sampler_info = SamplerCreateInfo {
-			mag_filter: Filter::Linear,
-			min_filter: Filter::Linear,
-			compare: Some(CompareOp::LessOrEqual),
-			..Default::default()
-		};
-		let shadow_sampler = Sampler::new(vk_dev.clone(), shadow_sampler_info)?;
-		let light_bindings = [
-			DescriptorSetLayoutBinding {
-				// binding 0: shadow sampler
-				stages: ShaderStages::FRAGMENT,
-				immutable_samplers: vec![shadow_sampler],
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 1: directional light buffer
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::UniformBuffer)
-			},
-			DescriptorSetLayoutBinding {
-				// binding 2: directional light shadow
-				stages: ShaderStages::FRAGMENT,
-				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-			},
-		];
-		let light_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: (0..).zip(light_bindings).collect(),
-			..Default::default()
-		};
-		let light_set_layout = DescriptorSetLayout::new(vk_dev.clone(), light_set_layout_info)?;
-
 		let submit_transfers_to = transfer_queue.unwrap_or_else(|| graphics_queue.clone());
 		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
 
@@ -168,7 +126,6 @@ impl RenderContext
 			command_buffer_allocator,
 			main_render_target,
 			transparency_renderer: None,
-			light_set_layout,
 			textures: HashMap::new(),
 			direct_buffer_write,
 			transfer_manager,

@@ -673,7 +673,7 @@ pub struct MeshManager
 }
 impl MeshManager
 {
-	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
+	pub fn new(render_ctx: &mut RenderContext, light_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<Self>
 	{
 		let vk_dev = render_ctx.memory_allocator.device().clone();
 		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
@@ -708,8 +708,6 @@ impl MeshManager
 			..Default::default()
 		};
 		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
-
-		let light_set_layout = render_ctx.light_set_layout.clone();
 
 		render_ctx.load_transparency(material_textures_set_layout.clone())?;
 		let transparency_input_layout = render_ctx

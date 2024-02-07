@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
+use vulkano::descriptor_set::DescriptorSet;
 use vulkano::buffer::AllocateBufferError;
 use vulkano::image::AllocateImageError;
 use vulkano::memory::allocator::MemoryAllocatorError;
@@ -93,13 +94,16 @@ fn init_world(
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
 	let viewport_extent = render_ctx.swapchain_dimensions();
 
+	let light_manager = render::lighting::LightManager::new(&mut render_ctx)?;
+	let light_set_layout = light_manager.get_all_lights_set().layout().clone();
+
 	let (world, sky) = load_world(start_map)?;
 
 	world.add_unique(render::ui::Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(viewport_extent, CameraFov::Y(1.0_f64.to_degrees())));
-	world.add_unique(render::model::MeshManager::new(&mut render_ctx)?);
-	world.add_unique(render::lighting::LightManager::new(&mut render_ctx)?);
+	world.add_unique(render::model::MeshManager::new(&mut render_ctx, light_set_layout)?);
+	world.add_unique(light_manager);
 	world.add_unique(InputHelperWrapper::default());
 	world.add_unique(render_ctx);
 
