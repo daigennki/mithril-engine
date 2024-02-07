@@ -98,9 +98,9 @@ fn init_world(
 	let light_set_layout = light_manager.get_all_lights_set().layout().clone();
 
 	let (world, sky) = load_world(start_map)?;
+	render_ctx.set_skybox(sky)?;
 
 	world.add_unique(render::ui::Canvas::new(&mut render_ctx, 1280, 720)?);
-	world.add_unique(render::skybox::Skybox::new(&mut render_ctx, sky)?);
 	world.add_unique(CameraManager::new(viewport_extent, CameraFov::Y(1.0_f64.to_degrees())));
 	world.add_unique(render::model::MeshManager::new(&mut render_ctx, light_set_layout)?);
 	world.add_unique(light_manager);

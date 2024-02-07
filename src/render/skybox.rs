@@ -98,7 +98,6 @@ mod fs
 	}
 }
 
-#[derive(shipyard::Unique)]
 pub struct Skybox
 {
 	sky_pipeline: Arc<GraphicsPipeline>,
@@ -106,10 +105,10 @@ pub struct Skybox
 }
 impl Skybox
 {
-	/// Create a new skybox, using 6 texture files for each face, loaded from paths in the given format `tex_files_format`.
-	/// The format string should have an asterisk in it, for example "sky/Daylight Box_*.png", which will be replaced
-	/// with the face name.
-	/// Face names are "Right", "Left", "Top", "Bottom", "Front", and "Back".
+	/// Create a new skybox, using 6 texture files for each face, loaded from paths in the given
+	/// format `tex_files_format`. The format string should have an asterisk in it, for example
+	/// "sky/Daylight Box_*.png", which will be replaced with the face name. Face names are "Right",
+	/// "Left", "Top", "Bottom", "Front", and "Back".
 	pub fn new(render_ctx: &mut RenderContext, tex_files_format: String) -> crate::Result<Self>
 	{
 		let device = render_ctx.memory_allocator.device().clone();
@@ -185,7 +184,7 @@ impl Skybox
 	}
 
 	pub fn draw(
-		&mut self,
+		&self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		color_image: Arc<ImageView>,
 		sky_projview: Mat4,
@@ -226,9 +225,8 @@ impl Skybox
 	}
 }
 
-/// Load six image files as cubemap textures into memory.
-///
-/// `faces` is paths to textures of each face of the cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
+/// Load six image files into a cubemap texture. `faces` is paths to textures of each face of the
+/// cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
 ///
 /// Unlike `new_texture`, the results of this are *not* cached.
 fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Result<Arc<ImageView>>
@@ -236,7 +234,6 @@ fn new_cubemap(render_ctx: &mut RenderContext, faces: [PathBuf; 6]) -> crate::Re
 	let mut combined_data = Vec::<u8>::new();
 	let mut cube_fmt = None;
 	let mut cube_dim = None;
-
 	for face_path in faces {
 		let (face_fmt, face_dim, _, img_raw) = super::load_texture(&face_path)?;
 

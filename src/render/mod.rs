@@ -7,7 +7,7 @@
 
 pub mod lighting;
 pub mod model;
-pub mod skybox;
+mod skybox;
 mod swapchain;
 mod transfer;
 mod transparency;
@@ -79,6 +79,7 @@ pub struct RenderContext
 	direct_buffer_write: bool,
 	transfer_manager: transfer::TransferManager,
 	swapchain: swapchain::Swapchain,
+	skybox: Option<skybox::Skybox>,
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
 	// Things related to the output color/depth images and gamma correction.
@@ -167,6 +168,7 @@ impl RenderContext
 			direct_buffer_write,
 			transfer_manager,
 			swapchain,
+			skybox: None,
 			transparency_renderer: None,
 			color_set_allocator,
 			color_set_layout,
@@ -177,6 +179,12 @@ impl RenderContext
 			gamma_pipeline,
 			textures: HashMap::new(),
 		})
+	}
+
+	pub fn set_skybox(&mut self, path_pattern: String) -> crate::Result<()>
+	{
+		self.skybox = Some(skybox::Skybox::new(self, path_pattern)?);
+		Ok(())
 	}
 
 	fn load_transparency(&mut self, material_textures_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
@@ -500,7 +508,6 @@ fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canv
 // Submit all the command buffers for this frame to actually render them to the image.
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
-	mut skybox: UniqueViewMut<skybox::Skybox>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<Canvas>,
 	mut light_manager: UniqueViewMut<LightManager>,
@@ -525,7 +532,9 @@ fn submit_frame(
 	light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
 
 	// skybox (effectively clears the image)
-	skybox.draw(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
+	if let Some(skybox) = &render_ctx.skybox {
+		skybox.draw(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
+	}
 
 	// 3D
 	mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
