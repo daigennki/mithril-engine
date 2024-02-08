@@ -70,7 +70,7 @@ fn update_camera(
 {
 	let active_camera_id = camera_manager.active_camera();
 	if let Ok((t, cam)) = (&transforms, &cameras).get(active_camera_id) {
-		camera_manager.update(render_ctx.swapchain_dimensions(), t.position, &t.rotation_quat(), cam.fov);
+		camera_manager.update(render_ctx.window_dimensions(), t.position, &t.rotation_quat(), cam.fov);
 	}
 }
 

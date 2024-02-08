@@ -824,7 +824,7 @@ impl MeshManager
 				let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
 				(format, viewport_extent, true)
 			}
-			_ => (render_ctx.depth_stencil_format, render_ctx.swapchain_dimensions(), false),
+			_ => (render_ctx.depth_stencil_format, render_ctx.window_dimensions(), false),
 		};
 
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {

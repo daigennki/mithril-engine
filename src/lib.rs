@@ -92,7 +92,7 @@ fn init_world(
 	setup_log(&data_path);
 
 	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
-	let viewport_extent = render_ctx.swapchain_dimensions();
+	let viewport_extent = render_ctx.window_dimensions();
 
 	let light_manager = render::lighting::LightManager::new(&mut render_ctx)?;
 	let light_set_layout = light_manager.get_all_lights_set().layout().clone();
@@ -132,7 +132,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			let extent = world.run(|render_ctx: UniqueView<RenderContext>| {
 				// also reset minimum inner size because it seems to get changed with DPI scale factor changes
 				render_ctx.reset_window_min_inner_size();
-				render_ctx.swapchain_dimensions()
+				render_ctx.window_dimensions()
 			});
 			if let Err(e) = inner_size_writer.request_inner_size(extent.into()) {
 				log::error!("failed to request window inner size: {e}");

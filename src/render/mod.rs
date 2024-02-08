@@ -7,10 +7,10 @@
 
 pub mod lighting;
 pub mod model;
-mod swapchain;
 mod transfer;
 mod transparency;
 pub mod ui;
+mod window;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -93,7 +93,7 @@ pub struct RenderContext
 	single_set_allocator: StandardDescriptorSetAllocator,
 	direct_buffer_write: bool,
 	transfer_manager: transfer::TransferManager,
-	swapchain: swapchain::Swapchain,
+	window: window::GameWindow,
 	skybox_pipeline: Arc<GraphicsPipeline>,
 	skybox_tex_set: Option<Arc<PersistentDescriptorSet>>,
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
@@ -122,12 +122,12 @@ impl RenderContext
 			log::info!("Enabling direct buffer writes.");
 		}
 
-		let swapchain = swapchain::Swapchain::new(vk_dev.clone(), event_loop, game_name)?;
+		let window = window::GameWindow::new(vk_dev.clone(), event_loop, game_name)?;
 
 		// - Primary command buffers: One for each graphics submission.
 		// - Secondary command buffers: Only up to four should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
-			primary_buffer_count: swapchain.image_count(),
+			primary_buffer_count: window.image_count(),
 			secondary_buffer_count: 4,
 			..Default::default()
 		};
@@ -184,7 +184,7 @@ impl RenderContext
 			single_set_allocator,
 			direct_buffer_write,
 			transfer_manager,
-			swapchain,
+			window,
 			skybox_pipeline,
 			skybox_tex_set: None,
 			transparency_renderer: None,
@@ -202,7 +202,7 @@ impl RenderContext
 		self.transparency_renderer = Some(transparency::MomentTransparencyRenderer::new(
 			self.memory_allocator.clone(),
 			material_textures_set_layout,
-			self.swapchain.dimensions(),
+			self.window.dimensions(),
 			self.depth_stencil_format,
 		)?);
 		Ok(())
@@ -351,15 +351,15 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Get the color and depth images. They'll be resized before being returned if the swapchain
-	/// image extent changed.
+	/// Get the color and depth images. They'll be resized before being returned if the window size
+	/// changed.
 	fn get_render_images(
 		&mut self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		sky_projview: Mat4,
 	) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 	{
-		let extent2 = self.swapchain.dimensions();
+		let extent2 = self.window.dimensions();
 		let extent = [extent2[0], extent2[1], 1];
 		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
 			let color_create_info = ImageCreateInfo {
@@ -418,10 +418,10 @@ impl RenderContext
 
 	fn present_image(&mut self, mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
-		if let Some((swapchain_image, acquire_future)) = self.swapchain.get_next_image()? {
+		if let Some((swapchain_image, acquire_future)) = self.window.get_next_image()? {
 			let color_image = self.color_image.as_ref().unwrap().image().clone();
 
-			if self.swapchain.color_space() == ColorSpace::SrgbNonLinear {
+			if self.window.color_space() == ColorSpace::SrgbNonLinear {
 				// perform gamma correction
 				let image_extent = color_image.extent();
 				let workgroups_x = image_extent[0].div_ceil(64);
@@ -438,7 +438,7 @@ impl RenderContext
 			let transfer_future = self.transfer_manager.take_transfer_future()?;
 
 			// submit the built command buffer, presenting it if possible
-			self.swapchain
+			self.window
 				.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
 		}
 
@@ -448,31 +448,31 @@ impl RenderContext
 	/// Check if the window has been resized since the last frame submission.
 	pub fn window_resized(&self) -> bool
 	{
-		self.swapchain.extent_changed()
+		self.window.extent_changed()
 	}
 
 	pub fn set_fullscreen(&self, fullscreen: bool)
 	{
-		self.swapchain.set_fullscreen(fullscreen)
+		self.window.set_fullscreen(fullscreen)
 	}
 	pub fn is_fullscreen(&self) -> bool
 	{
-		self.swapchain.is_fullscreen()
+		self.window.is_fullscreen()
 	}
 
 	pub fn reset_window_min_inner_size(&self)
 	{
-		self.swapchain.reset_min_inner_size()
+		self.window.reset_min_inner_size()
 	}
-	pub fn swapchain_dimensions(&self) -> [u32; 2]
+	pub fn window_dimensions(&self) -> [u32; 2]
 	{
-		self.swapchain.dimensions()
+		self.window.dimensions()
 	}
 
 	/// Get the delta time for last frame.
 	pub fn delta(&self) -> std::time::Duration
 	{
-		self.swapchain.delta()
+		self.window.delta()
 	}
 }
 
@@ -718,7 +718,7 @@ fn submit_frame(
 {
 	// A minimized window sometimes reports an inner width or height of 0, which we can't resize
 	// the swapchain to. Presenting anyways causes an "out of date" error, so just don't present.
-	if render_ctx.swapchain.is_minimized() {
+	if render_ctx.window.is_minimized() {
 		return Ok(());
 	}
 

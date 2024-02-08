@@ -338,7 +338,7 @@ impl Canvas
 		let font_data = include_bytes!("../../resource/mplus-1m-medium.ttf");
 		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Font has invalid data")?;
 
-		let dim = render_ctx.swapchain_dimensions();
+		let dim = render_ctx.window_dimensions();
 
 		let (canvas_scaling, scale_factor) =
 			calculate_projection(canvas_width as f32, canvas_height as f32, dim[0] as f32, dim[1] as f32);
@@ -570,7 +570,7 @@ impl Canvas
 			},
 		)?;
 
-		let vp_extent = render_ctx.swapchain_dimensions();
+		let vp_extent = render_ctx.window_dimensions();
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [vp_extent[0] as f32, vp_extent[1] as f32],

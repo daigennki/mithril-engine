@@ -56,7 +56,7 @@ fn update_mesh(
 	}
 
 	if render_ctx.window_resized() {
-		let d = render_ctx.swapchain_dimensions();
+		let d = render_ctx.window_dimensions();
 		canvas.on_screen_resize(d[0], d[1]);
 
 		for (eid, (t, mesh)) in (&ui_transforms, &ui_meshes).iter().with_id() {

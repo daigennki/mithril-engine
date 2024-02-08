@@ -13,7 +13,7 @@ use vulkano::device::{physical::PhysicalDevice, Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::swapchain::{
-	ColorSpace, PresentMode, Surface, SurfaceInfo, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
+	ColorSpace, PresentMode, Surface, SurfaceInfo, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{Validated, VulkanError};
@@ -43,10 +43,10 @@ const SLEEP_OVERSHOOT: Duration = Duration::from_micros(260);
 #[cfg(not(target_family = "windows"))]
 const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
 
-pub struct Swapchain
+pub struct GameWindow
 {
 	window: Arc<Window>,
-	swapchain: Arc<vulkano::swapchain::Swapchain>,
+	swapchain: Arc<Swapchain>,
 	images: Vec<Arc<Image>>,
 	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
 
@@ -56,7 +56,7 @@ pub struct Swapchain
 	frame_time: Duration,
 	frame_time_min_limit: Duration, // minimum frame time, used for framerate limit
 }
-impl Swapchain
+impl GameWindow
 {
 	pub fn new(device: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
 	{
@@ -82,7 +82,7 @@ impl Swapchain
 			present_mode,
 			..Default::default()
 		};
-		let (swapchain, images) = vulkano::swapchain::Swapchain::new(device, surface, create_info)?;
+		let (swapchain, images) = Swapchain::new(device, surface, create_info)?;
 
 		log::info!(
 			"Created a swapchain with {} images ({:?}, {:?}, {:?})",
@@ -105,7 +105,7 @@ impl Swapchain
 			.checked_sub(SLEEP_OVERSHOOT)
 			.unwrap_or_default();
 
-		Ok(Swapchain {
+		Ok(Self {
 			window,
 			swapchain,
 			images,
