@@ -33,7 +33,7 @@ use vulkano::descriptor_set::{
 };
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	Device, DeviceCreateInfo, DeviceExtensions, DeviceOwned, Features, Queue, QueueCreateInfo, QueueFlags,
+	Device, DeviceOwned,
 };
 use vulkano::format::{Format, FormatFeatures};
 use vulkano::image::{
@@ -41,7 +41,6 @@ use vulkano::image::{
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
 	Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
 };
-use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
 use vulkano::memory::{
 	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
 	MemoryPropertyFlags,
@@ -61,8 +60,8 @@ use vulkano::pipeline::{
 };
 use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
-use vulkano::swapchain::{ColorSpace, Surface};
-use vulkano::{DeviceSize, VulkanLibrary};
+use vulkano::swapchain::ColorSpace;
+use vulkano::DeviceSize;
 use winit::event_loop::EventLoop;
 
 use crate::component::camera::CameraManager;
@@ -87,13 +86,12 @@ const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT,
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
-	graphics_queue: Arc<Queue>,
+	window: window::GameWindow,
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 	single_set_allocator: StandardDescriptorSetAllocator,
 	direct_buffer_write: bool,
 	transfer_manager: transfer::TransferManager,
-	window: window::GameWindow,
 	skybox_pipeline: Arc<GraphicsPipeline>,
 	skybox_tex_set: Option<Arc<PersistentDescriptorSet>>,
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
@@ -112,8 +110,8 @@ impl RenderContext
 {
 	pub fn new(game_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Self>
 	{
-		let (graphics_queue, transfer_queue) = vulkan_setup(game_name, event_loop)?;
-		let vk_dev = graphics_queue.device().clone();
+		let window = window::GameWindow::new(event_loop, game_name)?;
+		let vk_dev = window.graphics_queue().device().clone();
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// Check if we can directly write to device-local buffer memory, as doing so may be faster.
@@ -121,8 +119,6 @@ impl RenderContext
 		if direct_buffer_write {
 			log::info!("Enabling direct buffer writes.");
 		}
-
-		let window = window::GameWindow::new(vk_dev.clone(), event_loop, game_name)?;
 
 		// - Primary command buffers: One for each graphics submission.
 		// - Secondary command buffers: Only up to four should be created per thread.
@@ -133,7 +129,8 @@ impl RenderContext
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let submit_transfers_to = transfer_queue.unwrap_or_else(|| graphics_queue.clone());
+		let transfer_queue = window.transfer_queue().clone();
+		let submit_transfers_to = transfer_queue.unwrap_or_else(|| window.graphics_queue().clone());
 		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
 
 		let single_set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
@@ -178,13 +175,12 @@ impl RenderContext
 		let skybox_pipeline = create_sky_pipeline(vk_dev.clone())?;
 
 		Ok(Self {
-			graphics_queue,
+			window,
 			memory_allocator,
 			command_buffer_allocator,
 			single_set_allocator,
 			direct_buffer_write,
 			transfer_manager,
-			window,
 			skybox_pipeline,
 			skybox_tex_set: None,
 			transparency_renderer: None,
@@ -434,15 +430,18 @@ impl RenderContext
 			cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
 
 			let built_cb = cb.build()?;
-			let graphics_queue = self.graphics_queue.clone();
 			let transfer_future = self.transfer_manager.take_transfer_future()?;
 
 			// submit the built command buffer, presenting it if possible
-			self.window
-				.present(graphics_queue, built_cb, acquire_future, transfer_future)?;
+			self.window.present(built_cb, acquire_future, transfer_future)?;
 		}
 
 		Ok(())
+	}
+
+	pub fn graphics_queue_family_index(&self) -> u32
+	{
+		self.window.graphics_queue().queue_family_index()
 	}
 
 	/// Check if the window has been resized since the last frame submission.
@@ -724,7 +723,7 @@ fn submit_frame(
 
 	let mut cb_builder = AutoCommandBufferBuilder::primary(
 		&render_ctx.command_buffer_allocator,
-		render_ctx.graphics_queue.queue_family_index(),
+		render_ctx.graphics_queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
 
@@ -746,145 +745,6 @@ fn submit_frame(
 	canvas.execute_rendering(&mut cb_builder, color_image)?;
 
 	render_ctx.present_image(cb_builder)
-}
-
-//
-/* Vulkan initialization */
-//
-fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Arc<PhysicalDevice>>
-{
-	let lib = VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
-
-	// only use the validation layer in debug builds
-	#[cfg(debug_assertions)]
-	let enabled_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
-	#[cfg(not(debug_assertions))]
-	let enabled_layers = Vec::new();
-
-	const OPTIONAL_INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
-		ext_swapchain_colorspace: true,
-		..InstanceExtensions::empty()
-	};
-	// TODO: take app version as parameter
-	let inst_create_info = InstanceCreateInfo {
-		application_name: Some(app_name.into()),
-		engine_name: Some(env!("CARGO_PKG_NAME").into()),
-		engine_version: vulkano::Version {
-			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
-			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
-			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
-		},
-		enabled_layers,
-		enabled_extensions: OPTIONAL_INSTANCE_EXTENSIONS
-			.intersection(lib.supported_extensions())
-			.union(&Surface::required_extensions(event_loop)),
-		..Default::default()
-	};
-	log::info!("Enabling instance extensions: {:?}", &inst_create_info.enabled_extensions);
-
-	let physical_devices: smallvec::SmallVec<[_; 4]> = Instance::new(lib, inst_create_info)
-		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?
-		.enumerate_physical_devices()
-		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?
-		.collect();
-
-	log::info!("Available Vulkan physical devices:");
-	for (i, pd) in physical_devices.iter().enumerate() {
-		let device_name = &pd.properties().device_name;
-		let driver_name = pd.properties().driver_name.as_ref().map_or("[no driver name]", |name| name);
-		let driver_info = pd.properties().driver_info.as_ref().map_or("[no driver info]", |name| name);
-		log::info!("{i}: {device_name} (driver: {driver_name}, {driver_info})");
-	}
-
-	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
-	// discrete GPU.
-	let dgpu_i = physical_devices
-		.iter()
-		.position(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
-	let igpu_i = physical_devices
-		.iter()
-		.position(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
-	let pd_i = std::env::args()
-		.find(|arg| arg == "--prefer_igp")
-		.and_then(|_| igpu_i.or(dgpu_i))
-		.or_else(|| dgpu_i.or(igpu_i))
-		.ok_or("No GPUs were found!")?;
-	let physical_device = physical_devices.into_iter().nth(pd_i).unwrap();
-
-	let pd_api_ver = physical_device.properties().api_version;
-	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
-
-	Ok(physical_device)
-}
-
-// The features enabled here are supported by basically any Vulkan device on PC.
-const ENABLED_FEATURES: Features = Features {
-	descriptor_binding_variable_descriptor_count: true,
-	descriptor_indexing: true,
-	dynamic_rendering: true,
-	image_cube_array: true,
-	independent_blend: true,
-	runtime_descriptor_array: true,
-	sampler_anisotropy: true,
-	shader_sampled_image_array_non_uniform_indexing: true,
-	texture_compression_bc: true,
-	..Features::empty()
-};
-
-/// Create the Vulkan logical device. Returns a graphics queue (which owns the device) and an
-/// optional transfer queue.
-fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
-{
-	let physical_device = get_physical_device(app_name, event_loop)?;
-
-	let queue_family_properties = physical_device.queue_family_properties();
-	for (i, q) in queue_family_properties.iter().enumerate() {
-		log::info!("Queue family {i}: {} queue(s), {:?}", q.queue_count, q.queue_flags);
-	}
-
-	// Look for a graphics queue family and an optional (preferably dedicated) transfer queue
-	// family, and generate `QueueCreateInfo`s for one queue on each.
-	let (_, graphics_qfi) = queue_family_properties
-		.iter()
-		.zip(0..)
-		.find(|(q, _)| q.queue_flags.contains(QueueFlags::GRAPHICS))
-		.ok_or("No graphics queue family found!")?;
-
-	// For transfers, try to find a queue family with the TRANSFER flag and least number of flags.
-	let (_, transfer_qfi) = queue_family_properties
-		.iter()
-		.zip(0..)
-		.filter(|(q, i)| *i != graphics_qfi && q.queue_flags.contains(QueueFlags::TRANSFER))
-		.min_by_key(|(q, _)| q.queue_flags.count())
-		.unzip();
-	if let Some(tq) = transfer_qfi {
-		log::info!("Using queue family {} for transfers", tq);
-	}
-
-	let queue_create_infos = [graphics_qfi]
-		.into_iter()
-		.chain(transfer_qfi)
-		.map(|queue_family_index| QueueCreateInfo {
-			queue_family_index,
-			..Default::default()
-		})
-		.collect();
-
-	let dev_info = DeviceCreateInfo {
-		enabled_extensions: DeviceExtensions {
-			khr_swapchain: true,
-			..Default::default()
-		},
-		enabled_features: ENABLED_FEATURES,
-		queue_create_infos,
-		..Default::default()
-	};
-	let (_, mut queues) = Device::new(physical_device, dev_info)
-		.map_err(|e| EngineError::new("failed to create Vulkan logical device", e.unwrap()))?;
-
-	let graphics_queue = queues.next().unwrap();
-	let transfer_queue = queues.next();
-	Ok((graphics_queue, transfer_queue))
 }
 
 fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool

@@ -9,14 +9,18 @@ use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::PrimaryCommandBufferAbstract;
-use vulkano::device::{physical::PhysicalDevice, Device, Queue};
+use vulkano::device::{
+	physical::{PhysicalDevice, PhysicalDeviceType},
+	Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
+};
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
+use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
 use vulkano::swapchain::{
 	ColorSpace, PresentMode, Surface, SurfaceInfo, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
-use vulkano::{Validated, VulkanError};
+use vulkano::{Validated, VulkanError, VulkanLibrary};
 use winit::event_loop::EventLoop;
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
@@ -46,6 +50,8 @@ const SLEEP_OVERSHOOT: Duration = Duration::from_micros(50);
 pub struct GameWindow
 {
 	window: Arc<Window>,
+	graphics_queue: Arc<Queue>,
+	transfer_queue: Option<Arc<Queue>>,
 	swapchain: Arc<Swapchain>,
 	images: Vec<Arc<Image>>,
 	submission_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
@@ -58,10 +64,12 @@ pub struct GameWindow
 }
 impl GameWindow
 {
-	pub fn new(device: Arc<Device>, event_loop: &EventLoop<()>, window_title: &str) -> crate::Result<Self>
+	pub fn new(event_loop: &EventLoop<()>, app_name: &str) -> crate::Result<Self>
 	{
+		let (graphics_queue, transfer_queue) = vulkan_setup(app_name, event_loop)?;
+		let device = graphics_queue.device();
 		let pd = device.physical_device();
-		let window = create_window(event_loop, window_title)?;
+		let window = create_window(event_loop, app_name)?;
 		let surface = Surface::from_window(device.instance().clone(), window.clone())?;
 
 		// Use the first format candidate supported by the physical device.
@@ -82,7 +90,7 @@ impl GameWindow
 			present_mode,
 			..Default::default()
 		};
-		let (swapchain, images) = Swapchain::new(device, surface, create_info)?;
+		let (swapchain, images) = Swapchain::new(device.clone(), surface, create_info)?;
 
 		log::info!(
 			"Created a swapchain with {} images ({:?}, {:?}, {:?})",
@@ -107,6 +115,8 @@ impl GameWindow
 
 		Ok(Self {
 			window,
+			graphics_queue,
+			transfer_queue,
 			swapchain,
 			images,
 			submission_future: None,
@@ -159,12 +169,12 @@ impl GameWindow
 	/// recreated the next time `get_next_image` is called.
 	pub fn present(
 		&mut self,
-		queue: Arc<Queue>,
 		cb: Arc<impl PrimaryCommandBufferAbstract + 'static>,
 		acquire_future: SwapchainAcquireFuture,
 		join_with: Option<impl GpuFuture + Send + Sync + 'static>,
 	) -> crate::Result<()>
 	{
+		let queue = self.graphics_queue.clone();
 		let image_index = acquire_future.image_index();
 		let mut joined_futures = match self.submission_future.take() {
 			Some(f) => {
@@ -204,6 +214,15 @@ impl GameWindow
 		};
 
 		Ok(())
+	}
+
+	pub fn graphics_queue(&self) -> &Arc<Queue>
+	{
+		&self.graphics_queue
+	}
+	pub fn transfer_queue(&self) -> &Option<Arc<Queue>>
+	{
+		&self.transfer_queue
 	}
 
 	pub fn set_fullscreen(&self, fullscreen: bool)
@@ -319,4 +338,143 @@ fn get_configured_present_mode(physical_device: &Arc<PhysicalDevice>, surface: &
 		log::warn!("Requested present mode `{present_mode:?}` is not supported, falling back to `Fifo`...");
 		Ok(PresentMode::Fifo)
 	}
+}
+
+//
+/* Vulkan initialization */
+//
+fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Arc<PhysicalDevice>>
+{
+	let lib = VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
+
+	// only use the validation layer in debug builds
+	#[cfg(debug_assertions)]
+	let enabled_layers = vec!["VK_LAYER_KHRONOS_validation".into()];
+	#[cfg(not(debug_assertions))]
+	let enabled_layers = Vec::new();
+
+	const OPTIONAL_INSTANCE_EXTENSIONS: InstanceExtensions = InstanceExtensions {
+		ext_swapchain_colorspace: true,
+		..InstanceExtensions::empty()
+	};
+	// TODO: take app version as parameter
+	let inst_create_info = InstanceCreateInfo {
+		application_name: Some(app_name.into()),
+		engine_name: Some(env!("CARGO_PKG_NAME").into()),
+		engine_version: vulkano::Version {
+			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
+			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
+			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
+		},
+		enabled_layers,
+		enabled_extensions: OPTIONAL_INSTANCE_EXTENSIONS
+			.intersection(lib.supported_extensions())
+			.union(&Surface::required_extensions(event_loop)),
+		..Default::default()
+	};
+	log::info!("Enabling instance extensions: {:?}", &inst_create_info.enabled_extensions);
+
+	let physical_devices: smallvec::SmallVec<[_; 4]> = Instance::new(lib, inst_create_info)
+		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?
+		.enumerate_physical_devices()
+		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?
+		.collect();
+
+	log::info!("Available Vulkan physical devices:");
+	for (i, pd) in physical_devices.iter().enumerate() {
+		let device_name = &pd.properties().device_name;
+		let driver_name = pd.properties().driver_name.as_ref().map_or("[no driver name]", |name| name);
+		let driver_info = pd.properties().driver_info.as_ref().map_or("[no driver info]", |name| name);
+		log::info!("{i}: {device_name} (driver: {driver_name}, {driver_info})");
+	}
+
+	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
+	// discrete GPU.
+	let dgpu_i = physical_devices
+		.iter()
+		.position(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
+	let igpu_i = physical_devices
+		.iter()
+		.position(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
+	let pd_i = std::env::args()
+		.find(|arg| arg == "--prefer_igp")
+		.and_then(|_| igpu_i.or(dgpu_i))
+		.or_else(|| dgpu_i.or(igpu_i))
+		.ok_or("No GPUs were found!")?;
+	let physical_device = physical_devices.into_iter().nth(pd_i).unwrap();
+
+	let pd_api_ver = physical_device.properties().api_version;
+	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
+
+	Ok(physical_device)
+}
+
+// The features enabled here are supported by basically any Vulkan device on PC.
+const ENABLED_FEATURES: Features = Features {
+	descriptor_binding_variable_descriptor_count: true,
+	descriptor_indexing: true,
+	dynamic_rendering: true,
+	image_cube_array: true,
+	independent_blend: true,
+	runtime_descriptor_array: true,
+	sampler_anisotropy: true,
+	shader_sampled_image_array_non_uniform_indexing: true,
+	texture_compression_bc: true,
+	..Features::empty()
+};
+
+/// Create the Vulkan logical device. Returns a graphics queue (which owns the device) and an
+/// optional transfer queue.
+fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
+{
+	let physical_device = get_physical_device(app_name, event_loop)?;
+
+	let queue_family_properties = physical_device.queue_family_properties();
+	for (i, q) in queue_family_properties.iter().enumerate() {
+		log::info!("Queue family {i}: {} queue(s), {:?}", q.queue_count, q.queue_flags);
+	}
+
+	// Look for a graphics queue family and an optional (preferably dedicated) transfer queue
+	// family, and generate `QueueCreateInfo`s for one queue on each.
+	let (_, graphics_qfi) = queue_family_properties
+		.iter()
+		.zip(0..)
+		.find(|(q, _)| q.queue_flags.contains(QueueFlags::GRAPHICS))
+		.ok_or("No graphics queue family found!")?;
+
+	// For transfers, try to find a queue family with the TRANSFER flag and least number of flags.
+	let (_, transfer_qfi) = queue_family_properties
+		.iter()
+		.zip(0..)
+		.filter(|(q, i)| *i != graphics_qfi && q.queue_flags.contains(QueueFlags::TRANSFER))
+		.min_by_key(|(q, _)| q.queue_flags.count())
+		.unzip();
+	if let Some(tq) = transfer_qfi {
+		log::info!("Using queue family {} for transfers", tq);
+	}
+
+	let queue_create_infos = [graphics_qfi]
+		.into_iter()
+		.chain(transfer_qfi)
+		.map(|queue_family_index| QueueCreateInfo {
+			queue_family_index,
+			..Default::default()
+		})
+		.collect();
+
+	let dev_info = DeviceCreateInfo {
+		enabled_extensions: DeviceExtensions {
+			khr_swapchain: true,
+			..Default::default()
+		},
+		enabled_features: ENABLED_FEATURES,
+		queue_create_infos,
+		..Default::default()
+	};
+	let (_, mut queues) = Device::new(physical_device, dev_info)
+		.map_err(|e| EngineError::new("failed to create Vulkan logical device", e.unwrap()))?;
+
+	let graphics_queue = queues.next().unwrap();
+	let transfer_queue = queues.next();
+	Ok((graphics_queue, transfer_queue))
 }
