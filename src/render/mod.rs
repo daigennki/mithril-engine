@@ -24,7 +24,7 @@ use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreate
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
 	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderingAttachmentInfo,
-	RenderingInfo, SubpassContents,
+	RenderingInfo,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -59,7 +59,7 @@ use vulkano::pipeline::{
 	ComputePipeline, DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
 	PipelineShaderStageCreateInfo,
 };
-use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
+use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::{ColorSpace, Surface};
 use vulkano::{DeviceSize, VulkanLibrary};
@@ -99,10 +99,9 @@ pub struct RenderContext
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
 	// Things related to the output color/depth images and gamma correction.
-	color_set_layout: Arc<DescriptorSetLayout>,
 	depth_stencil_format: Format,
-	color_image: Option<Arc<ImageView>>,
 	depth_image: Option<Arc<ImageView>>,
+	color_image: Option<Arc<ImageView>>,
 	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `color_image` as a storage image binding.
 	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
 
@@ -166,15 +165,15 @@ impl RenderContext
 		};
 		let color_set_layout = DescriptorSetLayout::new(vk_dev.clone(), color_set_layout_info)?;
 
-		let pipeline_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![color_set_layout.clone()],
+		let gamma_pipeline_layout_info = PipelineLayoutCreateInfo {
+			set_layouts: vec![color_set_layout],
 			..Default::default()
 		};
-		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), pipeline_layout_info)?;
-		let entry_point = compute_gamma::load(vk_dev.clone())?.entry_point("main").unwrap();
-		let stage = PipelineShaderStageCreateInfo::new(entry_point);
-		let pipeline_create_info = ComputePipelineCreateInfo::stage_layout(stage, pipeline_layout);
-		let gamma_pipeline = ComputePipeline::new(vk_dev.clone(), None, pipeline_create_info)?;
+		let gamma_pipeline_layout = PipelineLayout::new(vk_dev.clone(), gamma_pipeline_layout_info)?;
+		let gamma_entry_point = compute_gamma::load(vk_dev.clone())?.entry_point("main").unwrap();
+		let gamma_stage = PipelineShaderStageCreateInfo::new(gamma_entry_point);
+		let gamma_pipeline_create_info = ComputePipelineCreateInfo::stage_layout(gamma_stage, gamma_pipeline_layout);
+		let gamma_pipeline = ComputePipeline::new(vk_dev.clone(), None, gamma_pipeline_create_info)?;
 
 		let skybox_pipeline = create_sky_pipeline(vk_dev.clone())?;
 
@@ -189,10 +188,9 @@ impl RenderContext
 			skybox_pipeline,
 			skybox_tex_set: None,
 			transparency_renderer: None,
-			color_set_layout,
 			depth_stencil_format,
-			color_image: None,
 			depth_image: None,
+			color_image: None,
 			color_set: None,
 			gamma_pipeline,
 			textures: HashMap::new(),
@@ -353,30 +351,57 @@ impl RenderContext
 		Ok(())
 	}
 
-	fn draw_skybox(
+	/// Get the color and depth images. They'll be resized before being returned if the swapchain
+	/// image extent changed.
+	fn get_render_images(
 		&mut self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		color_image: Arc<ImageView>,
 		sky_projview: Mat4,
-	) -> crate::Result<()>
+	) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
 	{
-		let viewport_extent = color_image.image().extent();
-		let viewport = Viewport {
-			offset: [0.0, 0.0],
-			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
-			depth_range: 0.0..=1.0,
-		};
-		let sky_render_info = RenderingInfo {
-			color_attachments: vec![Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::DontCare,
-				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(color_image)
-			})],
-			contents: SubpassContents::Inline,
-			..Default::default()
-		};
+		let extent2 = self.swapchain.dimensions();
+		let extent = [extent2[0], extent2[1], 1];
+		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
+			let color_create_info = ImageCreateInfo {
+				format: Format::R16G16B16A16_SFLOAT,
+				extent,
+				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
+				..Default::default()
+			};
+			let alloc_info = AllocationCreateInfo::default();
+			let color_image = Image::new(self.memory_allocator.clone(), color_create_info, alloc_info.clone())?;
+			let color = ImageView::new_default(color_image)?;
+			self.color_image = Some(color.clone());
 
+			let depth_create_info = ImageCreateInfo {
+				format: self.depth_stencil_format,
+				extent,
+				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+				..Default::default()
+			};
+			let depth_image = Image::new(self.memory_allocator.clone(), depth_create_info, alloc_info)?;
+			self.depth_image = Some(ImageView::new_default(depth_image)?);
+
+			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
+			let set_write = [WriteDescriptorSet::image_view(0, color)];
+			let set = PersistentDescriptorSet::new(&self.single_set_allocator, set_layout, set_write, [])?;
+			self.color_set = Some(set);
+		}
+
+		let color_image = self.color_image.clone().unwrap();
 		if let Some(set) = self.skybox_tex_set.clone() {
+			let viewport = Viewport {
+				offset: [0.0, 0.0],
+				extent: [extent[0] as f32, extent[1] as f32],
+				depth_range: 0.0..=1.0,
+			};
+			let sky_render_info = RenderingInfo {
+				color_attachments: vec![Some(RenderingAttachmentInfo {
+					store_op: AttachmentStoreOp::Store,
+					..RenderingAttachmentInfo::image_view(color_image.clone())
+				})],
+				..Default::default()
+			};
 			let pipeline_layout = self.skybox_pipeline.layout().clone();
 			cb_builder
 				.begin_rendering(sky_render_info)?
@@ -388,51 +413,7 @@ impl RenderContext
 				.end_rendering()?;
 		}
 
-		Ok(())
-	}
-
-	/// Get the color and depth images. They'll be resized before being returned if the swapchain
-	/// image extent changed.
-	fn get_images(&mut self) -> crate::Result<(Arc<ImageView>, Arc<ImageView>)>
-	{
-		let extent2 = self.swapchain.dimensions();
-		let extent = [extent2[0], extent2[1], 1];
-		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
-			let color_create_info = ImageCreateInfo {
-				format: Format::R16G16B16A16_SFLOAT,
-				extent,
-				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
-				..Default::default()
-			};
-			let color_image = Image::new(
-				self.memory_allocator.clone(),
-				color_create_info,
-				AllocationCreateInfo::default(),
-			)?;
-			let color = ImageView::new_default(color_image)?;
-			self.color_image = Some(color.clone());
-
-			let depth_create_info = ImageCreateInfo {
-				format: self.depth_stencil_format,
-				extent,
-				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-				..Default::default()
-			};
-			let depth_image = Image::new(
-				self.memory_allocator.clone(),
-				depth_create_info,
-				AllocationCreateInfo::default(),
-			)?;
-			let depth = ImageView::new_default(depth_image)?;
-			self.depth_image = Some(depth);
-
-			let set_layout = self.color_set_layout.clone();
-			let set_write = [WriteDescriptorSet::image_view(0, color)];
-			let set = PersistentDescriptorSet::new(&self.single_set_allocator, set_layout, set_write, [])?;
-			self.color_set = Some(set);
-		}
-
-		Ok((self.color_image.clone().unwrap(), self.depth_image.clone().unwrap()))
+		Ok((color_image, self.depth_image.clone().unwrap()))
 	}
 
 	fn present_image(&mut self, mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
@@ -717,7 +698,6 @@ pub fn render_workload() -> Workload
 {
 	(submit_transfers, model::draw_workload, draw_ui, submit_frame).into_workload()
 }
-
 fn submit_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
 {
 	render_ctx.transfer_manager.submit_transfers()
@@ -727,7 +707,7 @@ fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canv
 	canvas.draw(&render_ctx)
 }
 
-// Submit all the command buffers for this frame to actually render them to the image.
+// Submit all the command buffers for this frame to present the results.
 fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
@@ -736,44 +716,36 @@ fn submit_frame(
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
-	// If the window is minimized, don't present an image. This must be done because the window
-	// (often on Windows) may report an inner width or height of 0, which we can't resize the
-	// swapchain to. Presenting swapchain images anyways would cause an "out of date" error too.
+	// A minimized window sometimes reports an inner width or height of 0, which we can't resize
+	// the swapchain to. Presenting anyways causes an "out of date" error, so just don't present.
 	if render_ctx.swapchain.is_minimized() {
 		return Ok(());
 	}
 
-	let (color_image, depth_image) = render_ctx.get_images()?;
-	let mut primary_cb_builder = AutoCommandBufferBuilder::primary(
+	let mut cb_builder = AutoCommandBufferBuilder::primary(
 		&render_ctx.command_buffer_allocator,
 		render_ctx.graphics_queue.queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
 
-	// shadows
-	light_manager.execute_shadow_rendering(&mut primary_cb_builder)?;
+	light_manager.execute_shadow_rendering(&mut cb_builder)?;
 
-	// skybox (effectively clears the image)
-	render_ctx.draw_skybox(&mut primary_cb_builder, color_image.clone(), camera_manager.sky_projview())?;
+	// draw the skybox to clear the color image, and get the images
+	let (color_image, depth_image) = render_ctx.get_render_images(&mut cb_builder, camera_manager.sky_projview())?;
 
-	// 3D
-	mesh_manager.execute_rendering(&mut primary_cb_builder, color_image.clone(), depth_image.clone())?;
+	// opaque 3D objects
+	mesh_manager.execute_rendering(&mut cb_builder, color_image.clone(), depth_image.clone())?;
 
-	// 3D OIT
+	// transparent 3D objects (OIT)
 	let memory_allocator = render_ctx.memory_allocator.clone();
 	if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
-		transparency_renderer.process_transparency(
-			&mut primary_cb_builder,
-			color_image.clone(),
-			depth_image,
-			memory_allocator,
-		)?;
+		transparency_renderer.process_transparency(&mut cb_builder, color_image.clone(), depth_image, memory_allocator)?;
 	}
 
 	// UI
-	canvas.execute_rendering(&mut primary_cb_builder, color_image)?;
+	canvas.execute_rendering(&mut cb_builder, color_image)?;
 
-	render_ctx.present_image(primary_cb_builder)
+	render_ctx.present_image(cb_builder)
 }
 
 //
