@@ -67,7 +67,10 @@ mod fs_oit_compositing
 	}
 }
 
-/// A renderer that implements Moment-Based Order-Independent Transparency (MBOIT).
+/// A renderer that implements Order-Independent Transparency (OIT) using the Moment Transparency
+/// (Sharpe, 2018) algorithm.
+///
+/// Algorithm details: https://diglib.eg.org/handle/10.1145/3231578-3231585
 pub struct MomentTransparencyRenderer
 {
 	images: MomentImageBundle,
