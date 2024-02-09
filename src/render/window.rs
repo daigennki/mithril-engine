@@ -28,15 +28,15 @@ use crate::EngineError;
 
 const WINDOW_MIN_INNER_SIZE: winit::dpi::PhysicalSize<u32> = winit::dpi::PhysicalSize::new(1280, 720);
 
-// Pairs of surface format and color space we can support.
-const FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
+// Surface formats we can support, in order from most preferred to least preferred.
+const SURFACE_FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
 	// HDR via extended sRGB linear image
 	// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
 	//(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
 
 	// sRGB 10bpc
 	(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
-	// sRGB 8bpc (guaranteed to be supported by any physical device and surface)
+	// sRGB 8bpc (the most widely supported format)
 	(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
 ];
 
@@ -74,10 +74,10 @@ impl GameWindow
 
 		// Use the first format candidate supported by the physical device.
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
-		let (image_format, image_color_space) = FORMAT_CANDIDATES
+		let (image_format, image_color_space) = SURFACE_FORMAT_CANDIDATES
 			.into_iter()
 			.find(|candidate| surface_formats.contains(candidate))
-			.unwrap();
+			.ok_or("none of the surface format candidates are supported")?;
 
 		let present_mode = get_configured_present_mode(pd, &surface)?;
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
@@ -123,7 +123,7 @@ impl GameWindow
 			extent_changed: false,
 			recreate_pending: false,
 			last_frame_presented: std::time::Instant::now(),
-			frame_time: std::time::Duration::ZERO,
+			frame_time: Duration::ZERO,
 			frame_time_min_limit,
 		})
 	}
