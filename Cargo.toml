@@ -40,7 +40,7 @@ gltf = { version = "1.4", features = ["extras", "names", "utils", "import", "KHR
 winit_input_helper = "0.15"
 smallvec = "1.11"
 regex = "1.10"
-rapier3d-f64 = { version = "0.17", features = ["serde-serialize"] }
+rapier3d-f64 = { version = "0.18", features = ["serde-serialize"] }
 nalgebra = { version = "0.32", features = ["convert-glam024"] }
 #egui_winit_vulkano = { version = "0.22", optional = true }
 #kira = "0.7.1"
