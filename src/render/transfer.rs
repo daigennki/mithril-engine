@@ -61,16 +61,16 @@ impl TransferManager
 			..Default::default()
 		};
 		let total_arena_size = STAGING_ARENA_SIZE * 2;
-		let combined_staging_arenas = Buffer::new_slice(memory_allocator, buf_info, alloc_info, total_arena_size)?;
+		let staging_buf = Buffer::new_slice(memory_allocator, buf_info, alloc_info, total_arena_size)?;
 
 		Ok(Self {
 			command_buffer_allocator,
 			transfers: Vec::with_capacity(256),
-			staging_arenas: combined_staging_arenas.split_at(STAGING_ARENA_SIZE).into(),
+			staging_arenas: staging_buf.split_at(STAGING_ARENA_SIZE).into(),
 			current_arena: 0,
 			staging_layout: None,
 			queue,
-			transfer_future: Default::default(),
+			transfer_future: None,
 		})
 	}
 
@@ -85,19 +85,18 @@ impl TransferManager
 			return Err("buffer or image is too big (it must be no larger than 32 MiB)".into());
 		}
 
-		if !self.transfers.is_empty() {
-			let (extended_usage, _) = self.staging_layout.as_ref().unwrap().extend(transfer_layout).unwrap();
+		if let Some(pending_layout) = self.staging_layout {
+			let (extended_usage, _) = pending_layout.extend(transfer_layout).unwrap();
 			if extended_usage.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
 				log::debug!("staging arena size or transfer `Vec` capacity reached, submitting transfers now");
 				self.submit_transfers()?;
 			}
 		}
 
-		let (new_layout, offset) = self
-			.staging_layout
-			.take()
-			.map(|current_layout| current_layout.extend(transfer_layout).unwrap())
-			.unwrap_or((transfer_layout, 0));
+		let (new_layout, offset) = match self.staging_layout.take() {
+			Some(current_layout) => current_layout.extend(transfer_layout).unwrap(),
+			None => (transfer_layout, 0),
+		};
 
 		let arena = self.staging_arenas[self.current_arena].clone();
 		let staging_buf: Subbuffer<[T]> = arena.slice(offset..new_layout.size()).reinterpret();
@@ -146,7 +145,7 @@ impl TransferManager
 	/// transfers can be done while the CPU is busy.
 	pub fn submit_transfers(&mut self) -> crate::Result<()>
 	{
-		if !self.transfers.is_empty() {
+		if self.staging_layout.take().is_some() {
 			let mut cb = AutoCommandBufferBuilder::primary(
 				&self.command_buffer_allocator,
 				self.queue.queue_family_index(),
@@ -155,16 +154,13 @@ impl TransferManager
 
 			self.transfers.drain(..).for_each(|work| work.add_command(&mut cb));
 
-			self.staging_layout = None;
 			self.current_arena += 1;
 			if self.current_arena == self.staging_arenas.len() {
 				self.current_arena = 0;
 			}
 
 			let transfer_future = if let Some(f) = self.transfer_future.take() {
-				// wait to prevent resource conflicts
-				f.wait(None)?;
-
+				f.wait(None)?; // wait to prevent resource conflicts
 				cb.build()?
 					.execute_after(f, self.queue.clone())
 					.unwrap()
@@ -177,14 +173,13 @@ impl TransferManager
 					.boxed_send_sync()
 					.then_signal_fence_and_flush()?
 			};
-
 			self.transfer_future = Some(transfer_future);
 		}
 
 		Ok(())
 	}
 
-	pub fn take_transfer_future(&mut self) -> crate::Result<Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>>
+	pub fn take_transfer_future(&mut self) -> crate::Result<Option<impl GpuFuture + Send + Sync>>
 	{
 		// wait for any transfers to finish
 		// (ideally we'd use a semaphore, but it's borked in Vulkano right now)

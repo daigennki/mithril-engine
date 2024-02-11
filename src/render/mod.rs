@@ -475,6 +475,31 @@ impl RenderContext
 	}
 }
 
+fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
+{
+	match physical_device.properties().device_type {
+		PhysicalDeviceType::IntegratedGpu => true, // Always possible for integrated GPU.
+		PhysicalDeviceType::DiscreteGpu => {
+			// For discrete GPUs, look for a host-visible memory type belonging to a device-local
+			// heap larger than **exactly** 256 **MiB**.
+			const DIRECT_WRITE_THRESHOLD: DeviceSize = 256 * 1024 * 1024;
+			let mem_properties = physical_device.memory_properties();
+			mem_properties
+				.memory_types
+				.iter()
+				.filter(|t| {
+					t.property_flags.contains(
+						MemoryPropertyFlags::DEVICE_LOCAL
+							| MemoryPropertyFlags::HOST_VISIBLE
+							| MemoryPropertyFlags::HOST_COHERENT,
+					)
+				})
+				.any(|t| mem_properties.memory_heaps[t.heap_index as usize].size > DIRECT_WRITE_THRESHOLD)
+		}
+		_ => unreachable!(),
+	}
+}
+
 fn create_sky_pipeline(device: Arc<Device>) -> crate::Result<Arc<GraphicsPipeline>>
 {
 	let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
@@ -745,29 +770,4 @@ fn submit_frame(
 	canvas.execute_rendering(&mut cb_builder, color_image)?;
 
 	render_ctx.present_image(cb_builder)
-}
-
-fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
-{
-	match physical_device.properties().device_type {
-		PhysicalDeviceType::IntegratedGpu => true, // Always possible for integrated GPU.
-		PhysicalDeviceType::DiscreteGpu => {
-			// For discrete GPUs, look for a host-visible memory type belonging to a device-local
-			// heap larger than **exactly** 256 **MiB**.
-			const DIRECT_WRITE_THRESHOLD: DeviceSize = 256 * 1024 * 1024;
-			let mem_properties = physical_device.memory_properties();
-			mem_properties
-				.memory_types
-				.iter()
-				.filter(|t| {
-					t.property_flags.contains(
-						MemoryPropertyFlags::DEVICE_LOCAL
-							| MemoryPropertyFlags::HOST_VISIBLE
-							| MemoryPropertyFlags::HOST_COHERENT,
-					)
-				})
-				.any(|t| mem_properties.memory_heaps[t.heap_index as usize].size > DIRECT_WRITE_THRESHOLD)
-		}
-		_ => unreachable!(),
-	}
 }
