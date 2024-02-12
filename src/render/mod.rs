@@ -70,17 +70,12 @@ use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
 
-// Some notes regarding observed support (with AMD, Intel, and NVIDIA GPUs) for depth/stencil formats:
-//
-// - `D16_UNORM`: Supported on all GPUs.
-// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
-// - `X8_D24_UNORM_PACK32`: Only supported on NVIDIA and Intel GPUs.
-// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
-// - `D32_SFLOAT`: Supported on all GPUs.
-// - `D32_SFLOAT_S8_UINT`: Supported on all GPUs.
-// - `S8_UINT`: Only supported on AMD GPUs. Possibly supported on NVIDIA GPUs.
-//
-// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+/// Combined depth/stencil format support on PC hardware:
+///
+/// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
+/// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
+///
+/// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
 const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
 
 #[derive(shipyard::Unique)]
@@ -114,7 +109,6 @@ impl RenderContext
 		let vk_dev = window.graphics_queue().device().clone();
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
-		// Check if we can directly write to device-local buffer memory, as doing so may be faster.
 		let direct_buffer_write = check_direct_buffer_write(vk_dev.physical_device());
 		if direct_buffer_write {
 			log::info!("Enabling direct buffer writes.");
@@ -329,7 +323,7 @@ impl RenderContext
 
 	/// Set the skybox using 6 texture files for each face. They'll be loaded from paths with the
 	/// pattern specified in `tex_files_format` which should have an asterisk in it, for example
-	/// "sky/Daylight Box_*.png", which will be replaced with the face name. Face names are "Right",
+	/// "sky/Daylight_*.png", which will be replaced with the face name. Face names are "Right",
 	/// "Left", "Top", "Bottom", "Front", and "Back".
 	pub fn set_skybox(&mut self, path_pattern: String) -> crate::Result<()>
 	{
@@ -347,8 +341,8 @@ impl RenderContext
 		Ok(())
 	}
 
-	/// Get the color and depth images. They'll be resized before being returned if the window size
-	/// changed.
+	/// Draw the skybox to clear the color image, then get the color and depth images. They'll be
+	/// resized before being cleared and returned if the window size changed.
 	fn get_render_images(
 		&mut self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -475,6 +469,7 @@ impl RenderContext
 	}
 }
 
+/// Check if we can directly write to device-local buffer memory, as doing so may be faster.
 fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
 {
 	match physical_device.properties().device_type {
@@ -701,11 +696,10 @@ impl std::fmt::Display for UnsupportedDdsFormat
 	}
 }
 
-/// Calculate the size (in bytes) that a mip level with the given format, width, and height would
-/// take up.
+/// Calculate the size (in bytes) that a mip level with the given format and extent would take up.
 ///
-/// This does not take array layers into account; the returned value should be multiplied by the
-/// array layer count.
+/// This does not take array layers into account; the returned value must be multiplied by the
+/// array layer count to get the total size across all layers.
 fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 {
 	let block_extent = format.block_extent();
@@ -754,7 +748,6 @@ fn submit_frame(
 
 	light_manager.execute_shadow_rendering(&mut cb_builder)?;
 
-	// draw the skybox to clear the color image, and get the images
 	let (color_image, depth_image) = render_ctx.get_render_images(&mut cb_builder, camera_manager.sky_projview())?;
 
 	// opaque 3D objects

@@ -50,10 +50,8 @@ use crate::component::{camera::CameraManager, mesh::Mesh};
 use crate::material::{pbr::PBR, ColorInput, Material, MaterialPipelines};
 use crate::EngineError;
 
-/// Vertex attributes and bindings describing the vertex buffers bound by a model.
-///
-/// The indices in each of these slices are used as the binding and attribute indices respectively
-/// as-is.
+/// Vertex attributes and bindings describing the vertex buffers bound by a model. The indices in
+/// each slice are used as the binding and attribute indices respectively as-is.
 pub const VERTEX_BINDINGS: [VertexInputBindingDescription; 3] = [
 	VertexInputBindingDescription {
 		stride: 12,
@@ -201,9 +199,8 @@ This model may be inefficient to draw, so consider joining the meshes."
 		for user in self.users.values() {
 			let projviewmodel = *projview * DMat4::from(user.affine);
 
-			// Convert the matrix values from f64 to f32 only after multiplying the projview and
-			// model matrices. This prevents precision loss, especially with large values in the
-			// affine transformation.
+			// Convert the matrix values from f64 to f32 only after multiplying the matrices. This
+			// prevents precision loss, especially with large values in the affine transformation.
 			let pvm_f32 = projviewmodel.as_mat4();
 
 			// Filter visible submeshes. "Visible" here means it uses the currently bound material
@@ -226,7 +223,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 				.filter(|submesh| submesh.cull(&pvm_f32))
 				.peekable();
 
-			// Don't even bother with binds if no submeshes are visible in this model instance
+			// Don't even bother with binds if no submeshes are visible in this model instance.
 			if visible_submeshes.peek().is_some() {
 				if shadow_pass {
 					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32)?;
@@ -389,8 +386,8 @@ fn load_gltf_meshes(
 		normals.extend_from_slice(get_buf_data(&normals_accessor, data_buffers)?);
 	}
 
-	// Combine the vertex data into a single buffer,
-	// then split it into subbuffers for different types of vertex data.
+	// Combine the vertex data into a single buffer, then split it into subbuffers for different
+	// types of vertex data.
 	let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
 	combined_data.append(&mut positions);
 	let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
@@ -757,8 +754,8 @@ impl MeshManager
 	/// Load the model for the given `Mesh`.
 	pub fn load(&mut self, render_ctx: &mut RenderContext, eid: EntityId, component: &Mesh) -> crate::Result<()>
 	{
-		// Get a 3D model from `path`, relative to the current working directory.
-		// This attempts loading if it hasn't been loaded into memory yet.
+		// Get a 3D model from `path`, relative to the current working directory. This attempts
+		// loading if it hasn't been loaded into memory yet.
 		let loaded_model = match self.models.get_mut(&component.model_path) {
 			Some(m) => m,
 			None => {
@@ -915,6 +912,7 @@ impl MeshManager
 		Ok(None)
 	}
 
+	/// Execute the secondary command buffers for rendering the opaque 3D models.
 	pub fn execute_rendering(
 		&mut self,
 		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -930,7 +928,7 @@ impl MeshManager
 			})],
 			depth_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
-				store_op: AttachmentStoreOp::Store, // order-independent transparency needs this to be `Store`
+				store_op: AttachmentStoreOp::Store, // OIT needs this to be `Store`
 				clear_value: Some(ClearValue::Depth(1.0)),
 				..RenderingAttachmentInfo::image_view(depth_image)
 			}),
@@ -1023,9 +1021,9 @@ fn draw_3d_oit(
 	// We do both passes for OIT in this function, because there will almost always be fewer draw
 	// calls for transparent objects.
 	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
-		// First, collect moments for Moment-based OIT.
-		// This will bind the pipeline for us, since it doesn't need to do anything
-		// specific to materials (it only reads the alpha channel of each texture).
+		// First, collect moments for Moment Transparency (OIT). This will bind the pipeline for us,
+		// since it doesn't need to do anything specific to materials (it only reads the alpha
+		// channel of each texture).
 		let projview = camera_manager.projview();
 		let moments_pass = PassType::TransparencyMoments(transparency_renderer.get_moments_pipeline().clone());
 		let moments_cb = mesh_manager.draw(&render_ctx, projview, moments_pass, &[])?;

@@ -452,10 +452,10 @@ impl Canvas
 	{
 		let text_str = &text.text_str;
 
-		// If the string is longer than the maximum image array layers allowed by the driver, refuse
-		// to render it. On Windows/Linux desktop, the limit is always at least 2048, so it should
-		// be extremely rare that we get such a long string, but we should check it anyways just in
-		// case. We also check that it's no larger than 2048 characters because we use
+		// If the string is longer than the maximum image array layers allowed by the
+		// implementation, refuse to render it. On Windows/Linux desktop, the limit is always at
+		// least 2048 which is way more than enough, but we should check it anyways just in case.
+		// We also check that it's no larger than 2048 characters because we use
 		// `vkCmdUpdateBuffer`, which has a limit of 65536 (32 * 2048) bytes, to update vertices.
 		let image_format_info = ImageFormatInfo {
 			format: Format::R8_UNORM,
@@ -532,9 +532,8 @@ impl Canvas
 
 		let update_needed;
 		let glyph_info_buf = if glyph_count == prev_glyph_count {
-			// Reuse the buffer if the glyph count hasn't changed.
-			// If `prev_glyph_count` is greater than 0, we already know that `text_resources` for
-			// the given `eid` is `Some`, so we use `unwrap` here.
+			// Reuse the buffer if the glyph count hasn't changed. If `prev_glyph_count` is greater
+			// than 0, `text_resources` for the given `eid` must be `Some`, so we use `unwrap` here.
 			let resources = self.text_resources.get_mut(&eid).unwrap();
 			update_needed = Some(glyph_infos.into());
 			resources.glyph_info_buffer.clone().unwrap()
@@ -688,6 +687,7 @@ fn calculate_projection(canvas_width: f32, canvas_height: f32, screen_width: f32
 
 /// Create a combined image containing each glyph in order. Divide total image height by the length
 /// of the `Vec` containing glyph info to get the max height of the glyphs.
+///
 /// Each image is paired with a `GlyphInfo` containing a `Vec4` with xy representing the top left
 /// corner relative to the baseline, and zw representing the bounding box size. The `color` will be
 /// set to white, which you can change later for each glyph.
@@ -726,8 +726,7 @@ fn text_to_image(text: &str, font: &Font<'static>, size: f32) -> (Option<GrayIma
 		.map(|((glyph, bb), i)| {
 			let offset_lines = max_height * i;
 
-			// Draw the glyph into the image per-pixel by using the draw closure,
-			// and turn the coverage into an alpha value
+			// Draw the glyph into the image per-pixel, and turn the coverage into an alpha value.
 			glyph.draw(|x, y, v| combined_images.put_pixel(x, y + offset_lines, Luma([(v * 255.0) as u8])));
 
 			let position_size_int = IVec4::new(bb.min.x, bb.min.y, bb.max.x - bb.min.x, bb.max.y - bb.min.y);
