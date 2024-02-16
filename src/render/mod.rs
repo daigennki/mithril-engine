@@ -48,11 +48,7 @@ use vulkano::memory::{
 use vulkano::pipeline::{
 	compute::ComputePipelineCreateInfo,
 	graphics::{
-		color_blend::ColorBlendState,
-		input_assembly::{InputAssemblyState, PrimitiveTopology},
-		subpass::PipelineRenderingCreateInfo,
-		viewport::Viewport,
-		GraphicsPipelineCreateInfo,
+		color_blend::ColorBlendState, subpass::PipelineRenderingCreateInfo, viewport::Viewport, GraphicsPipelineCreateInfo,
 	},
 	layout::{PipelineLayoutCreateInfo, PushConstantRange},
 	ComputePipeline, DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
@@ -399,7 +395,7 @@ impl RenderContext
 				.bind_pipeline_graphics(self.skybox_pipeline.clone())?
 				.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, vec![set])?
 				.push_constants(pipeline_layout, 0, sky_projview)?
-				.draw(8, 2, 0, 0)?
+				.draw(36, 1, 0, 0)?
 				.end_rendering()?;
 		}
 
@@ -520,10 +516,6 @@ fn create_sky_pipeline(device: Arc<Device>) -> crate::Result<Arc<GraphicsPipelin
 	};
 	let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
 
-	let input_assembly_state = InputAssemblyState {
-		topology: PrimitiveTopology::TriangleFan,
-		..Default::default()
-	};
 	let rendering_formats = PipelineRenderingCreateInfo {
 		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 		..Default::default()
@@ -534,7 +526,7 @@ fn create_sky_pipeline(device: Arc<Device>) -> crate::Result<Arc<GraphicsPipelin
 			PipelineShaderStageCreateInfo::new(sky_fs::load(device.clone())?.entry_point("main").unwrap()),
 		],
 		vertex_input_state: Some(Default::default()),
-		input_assembly_state: Some(input_assembly_state),
+		input_assembly_state: Some(Default::default()),
 		viewport_state: Some(Default::default()),
 		rasterization_state: Some(Default::default()),
 		multisample_state: Some(Default::default()),
@@ -557,7 +549,10 @@ mod sky_vs
 				mat4 sky_projview;
 			};
 
-			// Sky cube, consisting of two fans with the center being opposite corners of the cube.
+			// The cube used for the skybox. It consists of 6 triangles for two opposite corners of
+			// the cube, drawn like two fans. (For compatibility with portability subset devices, we
+			// don't use the 'triangle fan' primitive topology.)
+			//
 			// Relative to camera at default state, -X is left, +Y is forward, and +Z is up.
 			const vec3 POSITIONS[8] = {
 				{ -1.0, -1.0, -1.0 },
@@ -569,16 +564,26 @@ mod sky_vs
 				{ -1.0, 1.0, 1.0 },
 				{ 1.0, 1.0, 1.0 },
 			};
-			const int INDICES[2][8] = {
-				{ 0, 1, 2, 3, 4, 5, 6, 1 },
-				{ 7, 1, 2, 3, 4, 5, 6, 1 },
+			const int INDICES[36] = {
+				0, 1, 2,
+				0, 2, 3,
+				0, 3, 4,
+				0, 4, 5,
+				0, 5, 6,
+				0, 6, 1,
+				7, 1, 2,
+				7, 2, 3,
+				7, 3, 4,
+				7, 4, 5,
+				7, 5, 6,
+				7, 6, 1,
 			};
 
 			layout(location = 0) out vec3 cube_pos; // give original vertex position to fragment shader
 
 			void main()
 			{
-				int index = INDICES[gl_InstanceIndex][gl_VertexIndex];
+				int index = INDICES[gl_VertexIndex];
 				cube_pos = POSITIONS[index];
 				vec4 new_pos = sky_projview * vec4(cube_pos, 1.0);
 				gl_Position = new_pos.xyww;

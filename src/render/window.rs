@@ -15,7 +15,7 @@ use vulkano::device::{
 };
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
-use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions};
+use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions};
 use vulkano::swapchain::{
 	ColorSpace, PresentMode, Surface, SurfaceInfo, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
@@ -359,6 +359,7 @@ fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Res
 	};
 	// TODO: take app version as parameter
 	let inst_create_info = InstanceCreateInfo {
+		flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
 		application_name: Some(app_name.into()),
 		engine_name: Some(env!("CARGO_PKG_NAME").into()),
 		engine_version: vulkano::Version {
