@@ -4,10 +4,8 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 pub mod lighting;
 pub mod model;
-mod transfer;
 mod transparency;
 pub mod ui;
 mod window;
@@ -20,11 +18,11 @@ use ddsfile::DxgiFormat;
 use glam::*;
 use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
 
-use vulkano::buffer::{subbuffer::Subbuffer, Buffer, BufferContents, BufferCreateInfo, BufferUsage};
+use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderingAttachmentInfo,
-	RenderingInfo,
+	AutoCommandBufferBuilder, BlitImageInfo, BufferImageCopy, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
+	PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo,
 };
 use vulkano::descriptor_set::{
 	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
@@ -39,11 +37,11 @@ use vulkano::format::{Format, FormatFeatures};
 use vulkano::image::{
 	sampler::{Sampler, SamplerCreateInfo},
 	view::{ImageView, ImageViewCreateInfo, ImageViewType},
-	Image, ImageCreateFlags, ImageCreateInfo, ImageUsage,
+	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
 };
 use vulkano::memory::{
-	allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator},
-	MemoryPropertyFlags,
+	allocator::{AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator},
+	DeviceAlignment, MemoryPropertyFlags,
 };
 use vulkano::pipeline::{
 	compute::ComputePipelineCreateInfo,
@@ -57,6 +55,7 @@ use vulkano::pipeline::{
 use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
+use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
 use vulkano::DeviceSize;
 use winit::event_loop::EventLoop;
 
@@ -74,6 +73,8 @@ use ui::Canvas;
 /// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
 const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
 
+const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
+
 #[derive(shipyard::Unique)]
 pub struct RenderContext
 {
@@ -82,9 +83,18 @@ pub struct RenderContext
 	command_buffer_allocator: StandardCommandBufferAllocator,
 	single_set_allocator: StandardDescriptorSetAllocator,
 	direct_buffer_write: bool,
-	transfer_manager: transfer::TransferManager,
+
+	// Transfers to initialize buffers and images.
+	// If this or the staging buffer arena gets full, the transfers will get submitted immediately.
+	transfers: Vec<StagingWork>,
+	staging_arenas: [Subbuffer<[u8]>; 2],
+	current_arena: usize,
+	staging_layout: Option<DeviceLayout>, // Current layout inside the current arena.
+	transfer_future: Option<FenceSignalFuture<Box<dyn GpuFuture + Send + Sync>>>,
+
 	skybox_pipeline: Arc<GraphicsPipeline>,
 	skybox_tex_set: Option<Arc<PersistentDescriptorSet>>,
+
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
 	// Things related to the output color/depth images and gamma correction.
@@ -110,18 +120,31 @@ impl RenderContext
 			log::info!("Enabling direct buffer writes.");
 		}
 
-		// - Primary command buffers: One for each graphics submission.
+		// - Primary command buffers: One for each graphics submission, plus four for transfers.
 		// - Secondary command buffers: Only up to four should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
-			primary_buffer_count: window.image_count(),
+			primary_buffer_count: window.image_count() + 4,
 			secondary_buffer_count: 4,
 			..Default::default()
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
 
-		let transfer_queue = window.transfer_queue().clone();
-		let submit_transfers_to = transfer_queue.unwrap_or_else(|| window.graphics_queue().clone());
-		let transfer_manager = transfer::TransferManager::new(submit_transfers_to, memory_allocator.clone())?;
+		let staging_buf_info = BufferCreateInfo {
+			usage: BufferUsage::TRANSFER_SRC,
+			..Default::default()
+		};
+		let staging_alloc_info = AllocationCreateInfo {
+			memory_type_filter: MemoryTypeFilter::PREFER_HOST | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+			allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+			..Default::default()
+		};
+		let total_arena_size = STAGING_ARENA_SIZE * 2;
+		let staging_buf = Buffer::new_slice(
+			memory_allocator.clone(),
+			staging_buf_info,
+			staging_alloc_info,
+			total_arena_size,
+		)?;
 
 		let single_set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
 			set_count: 2,
@@ -142,43 +165,25 @@ impl RenderContext
 			.ok_or("none of the depth/stencil format candidates are supported")?;
 		log::debug!("using depth/stencil format {depth_stencil_format:?}");
 
-		let color_image_binding = DescriptorSetLayoutBinding {
-			stages: ShaderStages::COMPUTE,
-			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
-		};
-		let color_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [(0, color_image_binding)].into(),
-			..Default::default()
-		};
-		let color_set_layout = DescriptorSetLayout::new(vk_dev.clone(), color_set_layout_info)?;
-
-		let gamma_pipeline_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![color_set_layout],
-			..Default::default()
-		};
-		let gamma_pipeline_layout = PipelineLayout::new(vk_dev.clone(), gamma_pipeline_layout_info)?;
-		let gamma_entry_point = compute_gamma::load(vk_dev.clone())?.entry_point("main").unwrap();
-		let gamma_stage = PipelineShaderStageCreateInfo::new(gamma_entry_point);
-		let gamma_pipeline_create_info = ComputePipelineCreateInfo::stage_layout(gamma_stage, gamma_pipeline_layout);
-		let gamma_pipeline = ComputePipeline::new(vk_dev.clone(), None, gamma_pipeline_create_info)?;
-
-		let skybox_pipeline = create_sky_pipeline(vk_dev.clone())?;
-
 		Ok(Self {
 			window,
 			memory_allocator,
 			command_buffer_allocator,
 			single_set_allocator,
 			direct_buffer_write,
-			transfer_manager,
-			skybox_pipeline,
+			transfers: Vec::with_capacity(256),
+			staging_arenas: staging_buf.split_at(STAGING_ARENA_SIZE).into(),
+			current_arena: 0,
+			staging_layout: None,
+			transfer_future: None,
+			skybox_pipeline: create_sky_pipeline(vk_dev.clone())?,
 			skybox_tex_set: None,
 			transparency_renderer: None,
 			depth_stencil_format,
 			depth_image: None,
 			color_image: None,
 			color_set: None,
-			gamma_pipeline,
+			gamma_pipeline: create_gamma_pipeline(vk_dev.clone())?,
 			textures: HashMap::new(),
 		})
 	}
@@ -229,11 +234,22 @@ impl RenderContext
 			};
 			let alloc_info = AllocationCreateInfo::default();
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
-			self.transfer_manager.copy_to_buffer(data, buf.clone())?;
+			self.add_transfer(data, StagingDst::Buffer(buf.clone().into_bytes()), T::LAYOUT.alignment())?;
 		}
 		Ok(buf)
 	}
 
+	/// Create a new image from raw data.
+	///
+	/// `data` will be used to initialize the full extent of all mipmap levels and array layers (in
+	/// that order), and it must be tightly packed together. For example, data for an image with 2
+	/// mip levels and 2 array layers must be structured like:
+	///
+	/// - mip level 0, array layer 0
+	/// - mip level 0, array layer 1
+	/// - mip level 1, array layer 0
+	/// - mip level 1, array layer 1
+	///
 	pub fn new_image<Px>(&mut self, data: &[Px], create_info: ImageCreateInfo) -> crate::Result<Arc<Image>>
 	where
 		Px: BufferContents + Copy,
@@ -241,7 +257,8 @@ impl RenderContext
 		let alloc_info = AllocationCreateInfo::default();
 		let image = Image::new(self.memory_allocator.clone(), create_info, alloc_info)?;
 
-		self.transfer_manager.copy_to_image(data, image.clone())?;
+		let alignment = image.format().block_size().try_into().unwrap();
+		self.add_transfer(data, StagingDst::Image(image.clone()), alignment)?;
 
 		Ok(image)
 	}
@@ -315,6 +332,82 @@ impl RenderContext
 			..ImageViewCreateInfo::from_image(&image)
 		};
 		Ok(ImageView::new(image, view_create_info)?)
+	}
+
+	fn add_transfer<T>(&mut self, data: &[T], dst: StagingDst, alignment: DeviceAlignment) -> crate::Result<()>
+	where
+		T: BufferContents + Copy,
+	{
+		let data_size_bytes: DeviceSize = std::mem::size_of_val(data).try_into().unwrap();
+		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
+		let transfer_layout = DeviceLayout::new(nonzero_size, alignment).unwrap();
+		if transfer_layout.size() > STAGING_ARENA_SIZE {
+			return Err("buffer or image is too big (it must be no larger than 32 MiB)".into());
+		}
+
+		if let Some(pending_layout) = self.staging_layout {
+			let (extended_usage, _) = pending_layout.extend(transfer_layout).unwrap();
+			if extended_usage.size() > STAGING_ARENA_SIZE || self.transfers.len() == self.transfers.capacity() {
+				log::debug!("staging arena size or transfer `Vec` capacity reached, submitting transfers now");
+				self.submit_transfers()?;
+			}
+		}
+
+		let (new_layout, offset) = match self.staging_layout.take() {
+			Some(current_layout) => current_layout.extend(transfer_layout).unwrap(),
+			None => (transfer_layout, 0),
+		};
+
+		let arena = self.staging_arenas[self.current_arena].clone();
+		let staging_buf: Subbuffer<[T]> = arena.slice(offset..new_layout.size()).reinterpret();
+		staging_buf.write().unwrap().copy_from_slice(data);
+
+		self.transfers.push(StagingWork(staging_buf.into_bytes(), dst));
+		self.staging_layout = Some(new_layout);
+
+		Ok(())
+	}
+
+	/// Submit pending transfers. Run this just before building the draw command buffers so that the
+	/// transfers can be done while the CPU is busy.
+	fn submit_transfers(&mut self) -> crate::Result<()>
+	{
+		if self.staging_layout.take().is_some() {
+			let queue = match self.window.transfer_queue() {
+				Some(q) => q.clone(),
+				None => self.window.graphics_queue().clone(),
+			};
+			let mut cb = AutoCommandBufferBuilder::primary(
+				&self.command_buffer_allocator,
+				queue.queue_family_index(),
+				CommandBufferUsage::OneTimeSubmit,
+			)?;
+
+			self.transfers.drain(..).for_each(|work| work.into_cmd(&mut cb));
+
+			self.current_arena += 1;
+			if self.current_arena == self.staging_arenas.len() {
+				self.current_arena = 0;
+			}
+
+			let transfer_future = if let Some(f) = self.transfer_future.take() {
+				f.wait(None)?; // wait to prevent resource conflicts
+				cb.build()?
+					.execute_after(f, queue.clone())
+					.unwrap()
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			} else {
+				cb.build()?
+					.execute(queue)
+					.unwrap()
+					.boxed_send_sync()
+					.then_signal_fence_and_flush()?
+			};
+			self.transfer_future = Some(transfer_future);
+		}
+
+		Ok(())
 	}
 
 	/// Set the skybox using 6 texture files for each face. They'll be loaded from paths with the
@@ -420,7 +513,13 @@ impl RenderContext
 			cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
 
 			let built_cb = cb.build()?;
-			let transfer_future = self.transfer_manager.take_transfer_future()?;
+
+			// wait for any transfers to finish
+			// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
+			if let Some(f) = &self.transfer_future {
+				f.wait(None)?;
+			}
+			let transfer_future = self.transfer_future.take();
 
 			// submit the built command buffer, presenting it if possible
 			self.window.present(built_cb, acquire_future, transfer_future)?;
@@ -552,6 +651,28 @@ mod sky_fs
 	}
 }
 
+fn create_gamma_pipeline(device: Arc<Device>) -> crate::Result<Arc<ComputePipeline>>
+{
+	let color_image_binding = DescriptorSetLayoutBinding {
+		stages: ShaderStages::COMPUTE,
+		..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
+	};
+	let color_set_layout_info = DescriptorSetLayoutCreateInfo {
+		bindings: [(0, color_image_binding)].into(),
+		..Default::default()
+	};
+	let color_set_layout = DescriptorSetLayout::new(device.clone(), color_set_layout_info)?;
+
+	let gamma_pipeline_layout_info = PipelineLayoutCreateInfo {
+		set_layouts: vec![color_set_layout],
+		..Default::default()
+	};
+	let gamma_pipeline_layout = PipelineLayout::new(device.clone(), gamma_pipeline_layout_info)?;
+	let gamma_entry_point = compute_gamma::load(device.clone())?.entry_point("main").unwrap();
+	let gamma_stage = PipelineShaderStageCreateInfo::new(gamma_entry_point);
+	let gamma_pipeline_create_info = ComputePipelineCreateInfo::stage_layout(gamma_stage, gamma_pipeline_layout);
+	Ok(ComputePipeline::new(device, None, gamma_pipeline_create_info)?)
+}
 mod compute_gamma
 {
 	vulkano_shaders::shader! {
@@ -577,6 +698,55 @@ mod compute_gamma
 				imageStore(color_image, image_coord, vec4(r, g, b, 1.0));
 			}
 		",
+	}
+}
+
+enum StagingDst
+{
+	Buffer(Subbuffer<[u8]>),
+	Image(Arc<Image>),
+}
+struct StagingWork(Subbuffer<[u8]>, StagingDst);
+impl StagingWork
+{
+	fn into_cmd(self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
+	{
+		let Self(src, dst) = self;
+		match dst {
+			StagingDst::Buffer(dst_buf) => cb.copy_buffer(CopyBufferInfo::buffers(src, dst_buf)),
+			StagingDst::Image(dst_image) => {
+				let format = dst_image.format();
+				let mip_levels = dst_image.mip_levels();
+				let array_layers = dst_image.array_layers();
+
+				// generate copies for every mipmap level
+				let mut regions = smallvec::SmallVec::with_capacity(mip_levels as usize);
+				let [mut mip_w, mut mip_h, _] = dst_image.extent();
+				let mut buffer_offset: DeviceSize = 0;
+				for mip_level in 0..mip_levels {
+					regions.push(BufferImageCopy {
+						buffer_offset,
+						image_subresource: ImageSubresourceLayers {
+							mip_level,
+							..ImageSubresourceLayers::from_parameters(format, array_layers)
+						},
+						image_extent: [mip_w, mip_h, 1],
+						..Default::default()
+					});
+
+					buffer_offset += get_mip_size(format, mip_w, mip_h) * (array_layers as DeviceSize);
+					mip_w /= 2;
+					mip_h /= 2;
+				}
+
+				let copy_info = CopyBufferToImageInfo {
+					regions,
+					..CopyBufferToImageInfo::buffer_image(src, dst_image)
+				};
+				cb.copy_buffer_to_image(copy_info)
+			}
+		}
+		.unwrap();
 	}
 }
 
@@ -664,7 +834,7 @@ pub fn render_workload() -> Workload
 }
 fn submit_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
 {
-	render_ctx.transfer_manager.submit_transfers()
+	render_ctx.submit_transfers()
 }
 fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
 {
