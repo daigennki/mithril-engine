@@ -4,9 +4,7 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use std::sync::Arc;
-
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
@@ -102,11 +100,7 @@ impl TransferManager
 		let staging_buf: Subbuffer<[T]> = arena.slice(offset..new_layout.size()).reinterpret();
 		staging_buf.write().unwrap().copy_from_slice(data);
 
-		let work = StagingWork {
-			src: staging_buf.into_bytes(),
-			dst,
-		};
-		self.transfers.push(work);
+		self.transfers.push(StagingWork(staging_buf.into_bytes(), dst));
 		self.staging_layout = Some(new_layout);
 
 		Ok(())
@@ -152,7 +146,7 @@ impl TransferManager
 				CommandBufferUsage::OneTimeSubmit,
 			)?;
 
-			self.transfers.drain(..).for_each(|work| work.add_command(&mut cb));
+			self.transfers.drain(..).for_each(|work| work.into_cmd(&mut cb));
 
 			self.current_arena += 1;
 			if self.current_arena == self.staging_arenas.len() {
@@ -195,17 +189,14 @@ enum StagingDst
 	Buffer(Subbuffer<[u8]>),
 	Image(Arc<Image>),
 }
-struct StagingWork
-{
-	src: Subbuffer<[u8]>,
-	dst: StagingDst,
-}
+struct StagingWork(Subbuffer<[u8]>, StagingDst);
 impl StagingWork
 {
-	fn add_command(self, cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
+	fn into_cmd(self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 	{
-		match self.dst {
-			StagingDst::Buffer(dst_buf) => cb_builder.copy_buffer(CopyBufferInfo::buffers(self.src, dst_buf)),
+		let Self(src, dst) = self;
+		match dst {
+			StagingDst::Buffer(dst_buf) => cb.copy_buffer(CopyBufferInfo::buffers(src, dst_buf)),
 			StagingDst::Image(dst_image) => {
 				let format = dst_image.format();
 				let mip_levels = dst_image.mip_levels();
@@ -213,7 +204,7 @@ impl StagingWork
 
 				// generate copies for every mipmap level
 				let mut regions = smallvec::SmallVec::with_capacity(mip_levels as usize);
-				let [mut mip_width, mut mip_height, _] = dst_image.extent();
+				let [mut mip_w, mut mip_h, _] = dst_image.extent();
 				let mut buffer_offset: DeviceSize = 0;
 				for mip_level in 0..mip_levels {
 					regions.push(BufferImageCopy {
@@ -222,20 +213,21 @@ impl StagingWork
 							mip_level,
 							..ImageSubresourceLayers::from_parameters(format, array_layers)
 						},
-						image_extent: [mip_width, mip_height, 1],
+						image_extent: [mip_w, mip_h, 1],
 						..Default::default()
 					});
 
-					buffer_offset += super::get_mip_size(format, mip_width, mip_height) * (array_layers as DeviceSize);
-					mip_width /= 2;
-					mip_height /= 2;
+					let mip_size = super::get_mip_size(format, mip_w, mip_h);
+					buffer_offset += mip_size * (array_layers as DeviceSize);
+					mip_w /= 2;
+					mip_h /= 2;
 				}
 
 				let copy_info = CopyBufferToImageInfo {
 					regions,
-					..CopyBufferToImageInfo::buffer_image(self.src, dst_image)
+					..CopyBufferToImageInfo::buffer_image(src, dst_image)
 				};
-				cb_builder.copy_buffer_to_image(copy_info)
+				cb.copy_buffer_to_image(copy_info)
 			}
 		}
 		.unwrap();
