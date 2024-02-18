@@ -24,7 +24,6 @@ use vulkano::memory::allocator::MemoryAllocatorError;
 use vulkano::{Validated, ValidationError, VulkanError};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
-use winit::keyboard::{KeyCode, PhysicalKey};
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{CameraFov, CameraManager};
@@ -122,43 +121,20 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			event: WindowEvent::CloseRequested,
 			..
 		} => return Ok(true),
-		Event::WindowEvent {
-			event: WindowEvent::ScaleFactorChanged { inner_size_writer, .. },
-			..
-		} => {
-			// We don't want the image to be upscaled by the OS, so we tell it here that that the inner size of the
-			// window in physical pixels should be exactly the same (dot-by-dot) as the swapchain's image extent.
-			// It would look blurry if we don't do this.
-			let extent = world.run(|render_ctx: UniqueView<RenderContext>| {
-				// also reset minimum inner size because it seems to get changed with DPI scale factor changes
-				render_ctx.reset_window_min_inner_size();
-				render_ctx.window_dimensions()
-			});
-			if let Err(e) = inner_size_writer.request_inner_size(extent.into()) {
-				log::error!("failed to request window inner size: {e}");
-			}
-		}
-		Event::WindowEvent {
-			event: WindowEvent::KeyboardInput { event: key_event, .. },
-			..
-		} => {
-			if !key_event.repeat && !key_event.state.is_pressed() {
-				if let PhysicalKey::Code(KeyCode::F12) = key_event.physical_key {
-					// Toggle fullscreen
-					world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.set_fullscreen(!r_ctx.is_fullscreen()));
-				}
-			}
+		Event::WindowEvent { event: window_event, .. } => {
+			world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.handle_window_event(window_event));
 		}
 		Event::AboutToWait => {
-			// Game logic: run systems usually specific to custom components in a project
+			// Game logic: run systems usually specific to custom components in a project.
 			if world.contains_workload("Game logic") {
 				world.run_workload("Game logic").unwrap();
 			}
 
-			// Pre-render: update GPU resources for various components, to reflect the changes made in game logic systems
+			// Pre-render: update GPU resources for various components, to reflect the changes made
+			// in game logic systems.
 			world.run_workload("Pre-render").unwrap();
 
-			// Main rendering: build the command buffers, then submit them for presentation
+			// Main rendering: build the command buffers, then submit them for presentation.
 			world
 				.run_workload(render::render_workload)
 				.map_err(|e| EngineError::new("failed to run render workload", e))?;

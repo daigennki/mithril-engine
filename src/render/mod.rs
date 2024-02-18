@@ -10,14 +10,12 @@ mod transparency;
 pub mod ui;
 mod window;
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
 use ddsfile::DxgiFormat;
 use glam::*;
 use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
-
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
 	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
@@ -57,6 +55,7 @@ use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
 use vulkano::DeviceSize;
+use winit::event::WindowEvent;
 use winit::event_loop::EventLoop;
 
 use crate::component::camera::CameraManager;
@@ -548,9 +547,9 @@ impl RenderContext
 		self.window.is_fullscreen()
 	}
 
-	pub fn reset_window_min_inner_size(&self)
+	pub fn handle_window_event(&self, window_event: &mut WindowEvent)
 	{
-		self.window.reset_min_inner_size()
+		self.window.handle_window_event(window_event)
 	}
 	pub fn window_dimensions(&self) -> [u32; 2]
 	{

@@ -21,7 +21,9 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{Validated, VulkanError, VulkanLibrary};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::EventLoop;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use crate::EngineError;
@@ -234,10 +236,33 @@ impl GameWindow
 		self.window.fullscreen().is_some()
 	}
 
-	/// Set minimum size again to adapt to any DPI scale factor changes that may occur.
-	pub fn reset_min_inner_size(&self)
+	pub fn handle_window_event(&self, window_event: &mut WindowEvent)
 	{
-		self.window.set_min_inner_size(Some(WINDOW_MIN_INNER_SIZE));
+		match window_event {
+			WindowEvent::ScaleFactorChanged { inner_size_writer, .. } => {
+				// Reset minimum inner size because it seems to get changed with DPI scale factor changes.
+				self.window.set_min_inner_size(Some(WINDOW_MIN_INNER_SIZE));
+
+				// We don't want the image to be upscaled by the OS, so we tell it here that the
+				// inner size of the window in physical pixels should be exactly the same
+				// (dot-by-dot) as the swapchain's image extent. It would look blurry otherwise.
+				let extent = self.swapchain.image_extent();
+				if let Err(e) = inner_size_writer.request_inner_size(extent.into()) {
+					log::error!("failed to request window inner size: {e}");
+				}
+			}
+			WindowEvent::KeyboardInput {
+				event:
+					KeyEvent {
+						physical_key: PhysicalKey::Code(KeyCode::F12),
+						state: ElementState::Released,
+						repeat: false,
+						..
+					},
+				..
+			} => self.set_fullscreen(!self.is_fullscreen()), // Toggle fullscreen
+			_ => (),
+		}
 	}
 
 	pub fn is_minimized(&self) -> bool
