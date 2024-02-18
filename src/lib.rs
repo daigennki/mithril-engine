@@ -11,7 +11,7 @@ pub mod render;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{UniqueView, UniqueViewMut, Workload, World};
+use shipyard::{UniqueViewMut, Workload, World};
 use simplelog::*;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -122,7 +122,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			..
 		} => return Ok(true),
 		Event::WindowEvent { event: window_event, .. } => {
-			world.run(|r_ctx: UniqueView<RenderContext>| r_ctx.handle_window_event(window_event));
+			world.run(|mut r_ctx: UniqueViewMut<RenderContext>| r_ctx.handle_window_event(window_event));
 		}
 		Event::AboutToWait => {
 			// Game logic: run systems usually specific to custom components in a project.

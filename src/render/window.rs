@@ -23,7 +23,7 @@ use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{Validated, VulkanError, VulkanLibrary};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
 use crate::EngineError;
@@ -63,6 +63,8 @@ pub struct GameWindow
 	last_frame_presented: std::time::Instant,
 	frame_time: Duration,
 	frame_time_min_limit: Duration, // minimum frame time, used for framerate limit
+
+	alt_pressed: bool,
 }
 impl GameWindow
 {
@@ -127,6 +129,7 @@ impl GameWindow
 			last_frame_presented: std::time::Instant::now(),
 			frame_time: Duration::ZERO,
 			frame_time_min_limit,
+			alt_pressed: false,
 		})
 	}
 
@@ -236,7 +239,7 @@ impl GameWindow
 		self.window.fullscreen().is_some()
 	}
 
-	pub fn handle_window_event(&self, window_event: &mut WindowEvent)
+	pub fn handle_window_event(&mut self, window_event: &mut WindowEvent)
 	{
 		match window_event {
 			WindowEvent::ScaleFactorChanged { inner_size_writer, .. } => {
@@ -254,13 +257,20 @@ impl GameWindow
 			WindowEvent::KeyboardInput {
 				event:
 					KeyEvent {
-						physical_key: PhysicalKey::Code(KeyCode::F12),
+						physical_key: PhysicalKey::Code(KeyCode::Enter),
 						state: ElementState::Released,
 						repeat: false,
 						..
 					},
 				..
-			} => self.set_fullscreen(!self.is_fullscreen()), // Toggle fullscreen
+			} => {
+				if self.alt_pressed {
+					self.set_fullscreen(!self.is_fullscreen()); // Toggle fullscreen
+				}
+			}
+			WindowEvent::ModifiersChanged(modifiers) => {
+				self.alt_pressed = modifiers.state().contains(ModifiersState::ALT);
+			}
 			_ => (),
 		}
 	}

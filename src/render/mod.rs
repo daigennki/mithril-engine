@@ -547,7 +547,7 @@ impl RenderContext
 		self.window.is_fullscreen()
 	}
 
-	pub fn handle_window_event(&self, window_event: &mut WindowEvent)
+	pub fn handle_window_event(&mut self, window_event: &mut WindowEvent)
 	{
 		self.window.handle_window_event(window_event)
 	}
