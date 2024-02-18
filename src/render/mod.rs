@@ -81,7 +81,6 @@ pub struct RenderContext
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	command_buffer_allocator: StandardCommandBufferAllocator,
 	single_set_allocator: StandardDescriptorSetAllocator,
-	direct_buffer_write: bool,
 
 	// Transfers to initialize buffers and images.
 	// If this or the staging buffer arena gets full, the transfers will get submitted immediately.
@@ -113,11 +112,6 @@ impl RenderContext
 		let window = window::GameWindow::new(event_loop, game_name)?;
 		let vk_dev = window.graphics_queue().device().clone();
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
-
-		let direct_buffer_write = check_direct_buffer_write(vk_dev.physical_device());
-		if direct_buffer_write {
-			log::info!("Enabling direct buffer writes.");
-		}
 
 		// - Primary command buffers: One for each graphics submission, plus four for transfers.
 		// - Secondary command buffers: Only up to four should be created per thread.
@@ -169,7 +163,6 @@ impl RenderContext
 			memory_allocator,
 			command_buffer_allocator,
 			single_set_allocator,
-			direct_buffer_write,
 			transfers: Vec::with_capacity(256),
 			staging_arenas: staging_buf.split_at(STAGING_ARENA_SIZE).into(),
 			current_arena: 0,
@@ -207,8 +200,8 @@ impl RenderContext
 		let data_len = data.len().try_into().unwrap();
 		let data_size_bytes = std::mem::size_of_val(data);
 		let buf;
-		if self.direct_buffer_write {
-			// When possible, upload directly to the new buffer memory.
+		if check_direct_buffer_write(self.memory_allocator.device().physical_device()) {
+			// When possible, write directly to the new buffer memory.
 			log::debug!("Allocating direct buffer of {data_size_bytes} bytes");
 			let buf_info = BufferCreateInfo {
 				usage,
@@ -224,8 +217,7 @@ impl RenderContext
 			buf = Buffer::new_slice(self.memory_allocator.clone(), buf_info, alloc_info, data_len)?;
 			buf.write().unwrap().copy_from_slice(data);
 		} else {
-			// If direct uploads aren't possible, create a staging buffer on the CPU side,
-			// then submit a transfer command to the new buffer on the GPU side.
+			// If direct writes aren't possible, use a staging buffer.
 			log::debug!("Allocating buffer of {data_size_bytes} bytes");
 			let buf_info = BufferCreateInfo {
 				usage: usage | BufferUsage::TRANSFER_DST,
@@ -568,7 +560,7 @@ fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
 {
 	match physical_device.properties().device_type {
 		PhysicalDeviceType::IntegratedGpu => true, // Always possible for integrated GPU.
-		PhysicalDeviceType::DiscreteGpu => {
+		_ => {
 			// For discrete GPUs, look for a host-visible memory type belonging to a device-local
 			// heap larger than **exactly** 256 **MiB**.
 			const DIRECT_WRITE_THRESHOLD: DeviceSize = 256 * 1024 * 1024;
@@ -585,7 +577,6 @@ fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
 				})
 				.any(|t| mem_properties.memory_heaps[t.heap_index as usize].size > DIRECT_WRITE_THRESHOLD)
 		}
-		_ => unreachable!(),
 	}
 }
 
