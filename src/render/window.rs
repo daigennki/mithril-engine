@@ -412,7 +412,6 @@ fn get_physical_device(
 			.union(&Surface::required_extensions(event_loop)),
 		..Default::default()
 	};
-	log::info!("Enabling instance extensions: {:?}", &inst_create_info.enabled_extensions);
 
 	let physical_devices: smallvec::SmallVec<[_; 4]> = Instance::new(lib, inst_create_info)
 		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?
@@ -420,7 +419,7 @@ fn get_physical_device(
 		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?
 		.collect();
 
-	log::info!("Available Vulkan physical devices:");
+	log::info!("Available physical devices:");
 	for (i, pd) in physical_devices.iter().enumerate() {
 		let device_name = &pd.properties().device_name;
 		let driver_name = pd.properties().driver_name.as_ref().map_or("[no driver name]", |name| name);

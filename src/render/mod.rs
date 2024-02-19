@@ -59,7 +59,6 @@ use winit::event::WindowEvent;
 use winit::event_loop::EventLoop;
 
 use crate::component::camera::CameraManager;
-use crate::EngineError;
 use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
@@ -742,13 +741,14 @@ impl StagingWork
 //
 /* Texture stuff */
 //
-fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
+fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), TextureLoadingError>
 {
-	log::info!("Loading texture file '{}'...", path.display());
 	match path.extension().and_then(|ext| ext.to_str()) {
 		Some("dds") => {
-			let dds_file = std::fs::File::open(path).map_err(|e| EngineError::new("couldn't open DDS file", e))?;
-			let dds = ddsfile::Dds::read(dds_file).map_err(|e| EngineError::new("failed to read DDS file", e))?;
+			let dds_file =
+				std::fs::File::open(path).map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::FileOpen(e)))?;
+			let dds =
+				ddsfile::Dds::read(dds_file).map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::DdsRead(e)))?;
 
 			// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
 			// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
@@ -759,10 +759,13 @@ fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 				Some(DxgiFormat::BC7_UNorm) => Format::BC7_SRGB_BLOCK,
 				Some(DxgiFormat::BC7_UNorm_sRGB) => Format::BC7_SRGB_BLOCK,
 				Some(format) => {
-					let e = UnsupportedDdsFormat { format };
-					return Err(EngineError::new("failed to read DDS file", e));
+					let e = UnsupportedDdsFormat { format: Some(format) };
+					return Err(TextureLoadingError::new(path, TexLoadErrVariant::DdsFormat(e)));
 				}
-				None => return Err("DDS file doesn't have a DXGI format".into()),
+				None => {
+					let e = UnsupportedDdsFormat { format: None };
+					return Err(TextureLoadingError::new(path, TexLoadErrVariant::DdsFormat(e)));
+				}
 			};
 			let dim = [dds.get_width(), dds.get_height()];
 			let mip_count = dds.get_num_mipmap_levels();
@@ -772,9 +775,9 @@ fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
 			let img = image::io::Reader::open(path)
-				.map_err(|e| EngineError::new("failed to open image file", e))?
+				.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::FileOpen(e)))?
 				.decode()
-				.map_err(|e| EngineError::new("failed to decode image file", e))?
+				.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::ImageDecode(e)))?
 				.into_rgba8();
 			Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
 		}
@@ -782,9 +785,61 @@ fn load_texture(path: &Path) -> crate::Result<(Format, [u32; 2], u32, Vec<u8>)>
 }
 
 #[derive(Debug)]
+enum TexLoadErrVariant
+{
+	FileOpen(std::io::Error),
+	DdsRead(ddsfile::Error),
+	DdsFormat(UnsupportedDdsFormat),
+	ImageDecode(image::error::ImageError),
+}
+impl std::fmt::Display for TexLoadErrVariant
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		match self {
+			Self::FileOpen(e) => write!(f, "failed to open: {e}"),
+			Self::DdsRead(e) => write!(f, "failed to read DDS file: {e}"),
+			Self::DdsFormat(e) => write!(f, "failed to validate DDS format: {e}"),
+			Self::ImageDecode(e) => write!(f, "failed to decode: {e}"),
+		}
+	}
+}
+
+#[derive(Debug)]
+pub struct TextureLoadingError
+{
+	file_path: PathBuf,
+	error: TexLoadErrVariant,
+}
+impl TextureLoadingError
+{
+	fn new(path: &Path, error: TexLoadErrVariant) -> Self
+	{
+		Self {
+			file_path: path.to_path_buf(),
+			error,
+		}
+	}
+}
+impl std::error::Error for TextureLoadingError
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for TextureLoadingError
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(f, "{}: {}", self.file_path.display(), self.error)
+	}
+}
+
+#[derive(Debug)]
 struct UnsupportedDdsFormat
 {
-	format: DxgiFormat,
+	format: Option<DxgiFormat>,
 }
 impl std::error::Error for UnsupportedDdsFormat
 {
@@ -797,7 +852,10 @@ impl std::fmt::Display for UnsupportedDdsFormat
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "DDS format '{:?}' is unsupported", self.format)
+		match self.format {
+			Some(format) => write!(f, "DDS format '{format:?}' is unsupported"),
+			None => write!(f, "DDS file doesn't have a DXGI format"),
+		}
 	}
 }
 

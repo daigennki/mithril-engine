@@ -259,8 +259,6 @@ fn setup_log(data_path: &Path)
 	};
 
 	CombinedLogger::init(loggers).unwrap();
-
-	log::info!("--- Initializing MithrilEngine... ---");
 }
 
 fn log_error(e: &dyn std::error::Error)
@@ -398,6 +396,16 @@ impl From<MemoryAllocatorError> for EngineError
 		Self {
 			source: Some(source),
 			context: "Vulkan memory allocation failed",
+		}
+	}
+}
+impl From<render::TextureLoadingError> for EngineError
+{
+	fn from(error: render::TextureLoadingError) -> Self
+	{
+		Self {
+			source: Some(Box::new(error)),
+			context: "failed to load texture",
 		}
 	}
 }
