@@ -31,6 +31,9 @@ use render::RenderContext;
 
 type Result<T> = std::result::Result<T, EngineError>;
 
+/// Same as `run_game`, but this will get the version of your application using the
+/// `CARGO_PKG_VERSION_*` environment variables. It only takes `org_name`, `game_name`, and
+/// `start_map`.
 #[macro_export]
 macro_rules! run {
 	($org_name:expr, $game_name:expr, $start_map:expr) => {
@@ -48,11 +51,8 @@ macro_rules! run {
 /// - `org_name` and `game_name` will be used for the data directory.
 /// - `game_name` will also be used for the window title.
 /// - `start_map` is the first map (level/world) to be loaded.
-/// - `app_version` is the version of the game/application.
+/// - `app_version` is the version of your game/application.
 ///
-/// There is also the macro simply named `run` which will get the version of your application using
-/// the `CARGO_PKG_VERSION_*` environment variables. That macro only takes `org_name`, `game_name`,
-/// and `start_map`, in that order.
 pub fn run_game(org_name: &str, game_name: &str, start_map: &str, app_version: Version)
 {
 	let event_loop = match EventLoop::new() {

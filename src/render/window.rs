@@ -396,7 +396,6 @@ fn get_physical_device(
 		ext_swapchain_colorspace: true,
 		..InstanceExtensions::empty()
 	};
-	// TODO: take app version as parameter
 	let inst_create_info = InstanceCreateInfo {
 		flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
 		application_name: Some(app_name.into()),
