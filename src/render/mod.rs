@@ -156,7 +156,6 @@ impl RenderContext
 					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
 			})
 			.ok_or("none of the depth/stencil format candidates are supported")?;
-		log::debug!("using depth/stencil format {depth_stencil_format:?}");
 
 		Ok(Self {
 			window,

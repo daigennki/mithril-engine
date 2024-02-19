@@ -204,10 +204,16 @@ fn load_world(file: &str) -> crate::Result<(World, String)>
 	Ok((world, world_data.sky))
 }
 
+// Use the "force_enable_log_file" feature to always write a log file regardless of the
+// "--logfile" command line argument being set or not.
+#[cfg(feature = "force_enable_log_file")]
+const FORCE_ENABLE_LOG_FILE: bool = true;
+#[cfg(not(feature = "force_enable_log_file"))]
+const FORCE_ENABLE_LOG_FILE: bool = false;
+
 fn setup_log(data_path: &Path)
 {
-	// set up logger
-	let logger_config = ConfigBuilder::new()
+	let config = ConfigBuilder::new()
 		.set_time_offset_to_local()
 		.unwrap_or_else(|config_builder| {
 			println!("WARNING: simplelog::ConfigBuilder::set_time_offset_to_local failed! Using UTC+0 instead.");
@@ -217,24 +223,20 @@ fn setup_log(data_path: &Path)
 		.build();
 
 	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
-	let term_logger = TermLogger::new(
-		LevelFilter::Debug,
-		logger_config.clone(),
-		TerminalMode::Mixed,
-		ColorChoice::Auto,
-	);
+	let term_logger = TermLogger::new(LevelFilter::Debug, config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
 
-	// open log file
-	let log_file_path = data_path.join("game.log");
-	let loggers: Vec<Box<dyn SharedLogger>> = match std::fs::File::create(&log_file_path) {
-		Ok(log_file) => {
-			let write_logger = WriteLogger::new(LevelFilter::Debug, logger_config, log_file);
-			vec![term_logger, write_logger]
+	let log_file_requested = std::env::args().any(|arg| arg == "--logfile");
+	let loggers: Vec<Box<dyn SharedLogger>> = if log_file_requested || FORCE_ENABLE_LOG_FILE {
+		let log_file_path = data_path.join("game.log");
+		match std::fs::File::create(&log_file_path) {
+			Ok(log_file) => vec![term_logger, WriteLogger::new(LevelFilter::Debug, config, log_file)],
+			Err(e) => {
+				println!("ERROR: Failed to create log file '{}': {}", log_file_path.display(), e);
+				vec![term_logger]
+			}
 		}
-		Err(e) => {
-			println!("ERROR: Failed to create log file '{}': {}", log_file_path.display(), e);
-			vec![term_logger]
-		}
+	} else {
+		vec![term_logger]
 	};
 
 	CombinedLogger::init(loggers).unwrap();

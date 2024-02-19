@@ -11,8 +11,9 @@ rust-version = "1.75"
 [profile.dev]
 opt-level = 1 # needed to stop stack overflow in Windows debug build; see https://github.com/vulkano-rs/vulkano/issues/1790#issuecomment-1023222638
 
-#[features]
+[features]
 #egui = ["dep:egui_winit_vulkano"]
+force_enable_log_file = []
 
 [build-dependencies]
 shaderc = "0.8"
