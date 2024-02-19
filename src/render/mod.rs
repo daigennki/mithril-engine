@@ -54,7 +54,7 @@ use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
-use vulkano::DeviceSize;
+use vulkano::{DeviceSize, Version};
 use winit::event::WindowEvent;
 use winit::event_loop::EventLoop;
 
@@ -107,9 +107,9 @@ pub struct RenderContext
 }
 impl RenderContext
 {
-	pub fn new(game_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Self>
+	pub fn new(game_name: &str, app_version: Version, event_loop: &EventLoop<()>) -> crate::Result<Self>
 	{
-		let window = window::GameWindow::new(event_loop, game_name)?;
+		let window = window::GameWindow::new(event_loop, game_name, app_version)?;
 		let vk_dev = window.graphics_queue().device().clone();
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 

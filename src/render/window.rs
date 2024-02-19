@@ -20,7 +20,7 @@ use vulkano::swapchain::{
 	ColorSpace, PresentMode, Surface, SurfaceInfo, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
-use vulkano::{Validated, VulkanError, VulkanLibrary};
+use vulkano::{Validated, Version, VulkanError, VulkanLibrary};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
@@ -68,9 +68,9 @@ pub struct GameWindow
 }
 impl GameWindow
 {
-	pub fn new(event_loop: &EventLoop<()>, app_name: &str) -> crate::Result<Self>
+	pub fn new(event_loop: &EventLoop<()>, app_name: &str, app_version: Version) -> crate::Result<Self>
 	{
-		let (graphics_queue, transfer_queue) = vulkan_setup(app_name, event_loop)?;
+		let (graphics_queue, transfer_queue) = vulkan_setup(app_name, app_version, event_loop)?;
 		let device = graphics_queue.device();
 		let pd = device.physical_device();
 		let window = create_window(event_loop, app_name)?;
@@ -378,7 +378,11 @@ fn get_configured_present_mode(physical_device: &Arc<PhysicalDevice>, surface: &
 //
 /* Vulkan initialization */
 //
-fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<Arc<PhysicalDevice>>
+fn get_physical_device(
+	app_name: &str,
+	application_version: Version,
+	event_loop: &EventLoop<()>,
+) -> crate::Result<Arc<PhysicalDevice>>
 {
 	let lib = VulkanLibrary::new().map_err(|e| EngineError::new("failed to load Vulkan library", e))?;
 
@@ -396,8 +400,9 @@ fn get_physical_device(app_name: &str, event_loop: &EventLoop<()>) -> crate::Res
 	let inst_create_info = InstanceCreateInfo {
 		flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
 		application_name: Some(app_name.into()),
+		application_version,
 		engine_name: Some(env!("CARGO_PKG_NAME").into()),
-		engine_version: vulkano::Version {
+		engine_version: Version {
 			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
 			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
 			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
@@ -461,9 +466,13 @@ const ENABLED_FEATURES: Features = Features {
 
 /// Create the Vulkan logical device. Returns a graphics queue (which owns the device) and an
 /// optional transfer queue.
-fn vulkan_setup(app_name: &str, event_loop: &EventLoop<()>) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
+fn vulkan_setup(
+	app_name: &str,
+	app_version: Version,
+	event_loop: &EventLoop<()>,
+) -> crate::Result<(Arc<Queue>, Option<Arc<Queue>>)>
 {
-	let physical_device = get_physical_device(app_name, event_loop)?;
+	let physical_device = get_physical_device(app_name, app_version, event_loop)?;
 
 	let queue_family_properties = physical_device.queue_family_properties();
 	for (i, q) in queue_family_properties.iter().enumerate() {

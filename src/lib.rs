@@ -21,9 +21,9 @@ use vulkano::buffer::AllocateBufferError;
 use vulkano::descriptor_set::DescriptorSet;
 use vulkano::image::AllocateImageError;
 use vulkano::memory::allocator::MemoryAllocatorError;
-use vulkano::{Validated, ValidationError, VulkanError};
+use vulkano::{Validated, ValidationError, Version, VulkanError};
 use winit::event::{Event, WindowEvent};
-use winit::event_loop::ControlFlow;
+use winit::event_loop::{ControlFlow, EventLoop};
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{CameraFov, CameraManager};
@@ -31,13 +31,31 @@ use render::RenderContext;
 
 type Result<T> = std::result::Result<T, EngineError>;
 
+#[macro_export]
+macro_rules! run {
+	($org_name:expr, $game_name:expr, $start_map:expr) => {
+		let app_version = vulkano::Version {
+			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
+			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
+			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
+		};
+		mithrilengine::run_game($org_name, $game_name, $start_map, app_version)
+	};
+}
+
 /// Run the game. This should be called from your `main.rs`.
-/// `org_name` and `game_name` will be used for the data directory.
-/// `game_name` will also be used for the window title.
-/// `start_map` is the first map (level/world) to be loaded.
-pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
+///
+/// - `org_name` and `game_name` will be used for the data directory.
+/// - `game_name` will also be used for the window title.
+/// - `start_map` is the first map (level/world) to be loaded.
+/// - `app_version` is the version of the game/application.
+///
+/// There is also the macro simply named `run` which will get the version of your application using
+/// the `CARGO_PKG_VERSION_*` environment variables. That macro only takes `org_name`, `game_name`,
+/// and `start_map`, in that order.
+pub fn run_game(org_name: &str, game_name: &str, start_map: &str, app_version: Version)
 {
-	let event_loop = match winit::event_loop::EventLoop::new() {
+	let event_loop = match EventLoop::new() {
 		Ok(el) => el,
 		Err(e) => {
 			log_error(&e);
@@ -47,7 +65,7 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str)
 
 	event_loop.set_control_flow(ControlFlow::Poll);
 
-	let mut world = match init_world(org_name, game_name, start_map, &event_loop) {
+	let mut world = match init_world(org_name, game_name, app_version, start_map, &event_loop) {
 		Ok(w) => w,
 		Err(e) => {
 			log_error(&e);
@@ -76,8 +94,9 @@ pub struct InputHelperWrapper
 fn init_world(
 	org_name: &str,
 	game_name: &str,
+	app_version: Version,
 	start_map: &str,
-	event_loop: &winit::event_loop::EventLoop<()>,
+	event_loop: &EventLoop<()>,
 ) -> crate::Result<World>
 {
 	// Create the game data directory. Log, config, and save data files will be saved here.
@@ -90,7 +109,7 @@ fn init_world(
 
 	setup_log(&data_path);
 
-	let mut render_ctx = render::RenderContext::new(game_name, event_loop)?;
+	let mut render_ctx = render::RenderContext::new(game_name, app_version, event_loop)?;
 	let viewport_extent = render_ctx.window_dimensions();
 
 	let light_manager = render::lighting::LightManager::new(&mut render_ctx)?;
