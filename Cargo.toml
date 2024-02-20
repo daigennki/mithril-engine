@@ -13,7 +13,6 @@ opt-level = 1 # needed to stop stack overflow in Windows debug build; see https:
 
 [features]
 #egui = ["dep:egui_winit_vulkano"]
-force_enable_log_file = []
 
 [build-dependencies]
 shaderc = "0.8"

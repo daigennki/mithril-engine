@@ -16,7 +16,6 @@ use simplelog::*;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
-use std::path::Path;
 use vulkano::buffer::AllocateBufferError;
 use vulkano::descriptor_set::DescriptorSet;
 use vulkano::image::AllocateImageError;
@@ -99,7 +98,7 @@ fn init_world(
 	event_loop: &EventLoop<()>,
 ) -> crate::Result<World>
 {
-	// Create the game data directory. Log, config, and save data files will be saved here.
+	// Create the game data directory. Config and save data files will be saved here.
 	let data_path = dirs::data_dir()
 		.ok_or("Failed to get data directory")?
 		.join(org_name)
@@ -107,7 +106,7 @@ fn init_world(
 	println!("Using data directory: {}", data_path.display());
 	std::fs::create_dir_all(&data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
 
-	setup_log(&data_path);
+	setup_log();
 
 	let mut render_ctx = render::RenderContext::new(game_name, app_version, event_loop)?;
 	let viewport_extent = render_ctx.window_dimensions();
@@ -223,19 +222,12 @@ fn load_world(file: &str) -> crate::Result<(World, String)>
 	Ok((world, world_data.sky))
 }
 
-// Use the "force_enable_log_file" feature to always write a log file regardless of the
-// "--logfile" command line argument being set or not.
-#[cfg(feature = "force_enable_log_file")]
-const FORCE_ENABLE_LOG_FILE: bool = true;
-#[cfg(not(feature = "force_enable_log_file"))]
-const FORCE_ENABLE_LOG_FILE: bool = false;
-
-fn setup_log(data_path: &Path)
+fn setup_log()
 {
 	let config = ConfigBuilder::new()
 		.set_time_offset_to_local()
 		.unwrap_or_else(|config_builder| {
-			println!("WARNING: simplelog::ConfigBuilder::set_time_offset_to_local failed! Using UTC+0 instead.");
+			println!("simplelog `set_time_offset_to_local` failed, using UTC+0 instead.");
 			config_builder
 		})
 		.set_time_format_rfc3339()
@@ -243,14 +235,11 @@ fn setup_log(data_path: &Path)
 
 	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
 	let term_logger = TermLogger::new(LevelFilter::Debug, config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
-
-	let log_file_requested = std::env::args().any(|arg| arg == "--logfile");
-	let loggers: Vec<Box<dyn SharedLogger>> = if log_file_requested || FORCE_ENABLE_LOG_FILE {
-		let log_file_path = data_path.join("game.log");
-		match std::fs::File::create(&log_file_path) {
-			Ok(log_file) => vec![term_logger, WriteLogger::new(LevelFilter::Debug, config, log_file)],
+	let loggers: Vec<Box<dyn SharedLogger>> = if std::env::args().any(|arg| arg == "--logfile") {
+		match File::create("game.log") {
+			Ok(log_file) => vec![term_logger, WriteLogger::new(LevelFilter::Info, config, log_file)],
 			Err(e) => {
-				println!("ERROR: Failed to create log file '{}': {}", log_file_path.display(), e);
+				eprintln!("failed to create log file: {e}");
 				vec![term_logger]
 			}
 		}
@@ -273,7 +262,7 @@ fn log_error(e: &dyn std::error::Error)
 	if log::log_enabled!(log::Level::Error) {
 		log::error!("{e}");
 	} else {
-		println!("{e}");
+		eprintln!("{e}");
 	}
 	if let Err(mbe) = msgbox::create("Engine Error", &format!("{e}"), msgbox::common::IconType::Error) {
 		log::error!("Failed to create error message box: {mbe}");
