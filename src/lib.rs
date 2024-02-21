@@ -54,6 +54,8 @@ macro_rules! run {
 ///
 pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Version)
 {
+	setup_log();
+
 	let event_loop = match EventLoop::new() {
 		Ok(el) => el,
 		Err(e) => {
@@ -62,8 +64,6 @@ pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Ve
 		}
 	};
 	event_loop.set_control_flow(ControlFlow::Poll);
-
-	setup_log();
 
 	let mut world = match init_world(org_name, app_name, app_version, &event_loop) {
 		Ok(w) => w,
@@ -255,20 +255,10 @@ fn setup_log()
 
 fn log_error(e: &dyn Error)
 {
-	log::debug!("top level error: {e:?}");
-	let mut next_err_source = e.source();
-	while let Some(src) = next_err_source {
-		log::debug!("caused by: {src:?}");
-		next_err_source = src.source();
-	}
-
-	if log::log_enabled!(log::Level::Error) {
-		log::error!("{e}");
-	} else {
-		eprintln!("{e}");
-	}
-	if let Err(mbe) = msgbox::create("Engine Error", &format!("{e}"), msgbox::common::IconType::Error) {
-		log::error!("Failed to create error message box: {mbe}");
+	log::debug!("error debug: {e:?}");
+	log::error!("{e}");
+	if let Err(mbe) = msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
+		log::error!("failed to create error message box: {mbe}");
 	}
 }
 
