@@ -1338,6 +1338,7 @@ dependencies = [
  "glam",
  "gltf",
  "image",
+ "inventory",
  "log",
  "mithrilengine-derive",
  "msgbox",

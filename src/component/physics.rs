@@ -12,6 +12,7 @@ use shipyard::{EntityId, Get, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueVi
 use std::collections::HashMap;
 
 use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::SystemBundle;
 
 const DEFAULT_GRAVITY: DVec3 = DVec3 {
 	x: 0.0,
@@ -54,11 +55,11 @@ pub struct Collider
 }
 impl WantsSystemAdded for Collider
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
@@ -72,11 +73,11 @@ pub struct RigidBody
 }
 impl WantsSystemAdded for RigidBody
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		Some(simulate_physics.into_workload_system().unwrap())
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}

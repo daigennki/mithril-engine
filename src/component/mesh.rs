@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::{model::MeshManager, RenderContext};
+use crate::SystemBundle;
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -24,11 +25,11 @@ pub struct Mesh
 }
 impl WantsSystemAdded for Mesh
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		Some(update_meshes.into_workload_system().unwrap())
 	}

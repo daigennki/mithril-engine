@@ -1,5 +1,6 @@
 use mithrilengine::component::{ui, EntityComponent, WantsSystemAdded};
 use mithrilengine::render::RenderContext;
+use mithrilengine::SystemBundle;
 use mithrilengine_derive::EntityComponent;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, ViewMut, WorkloadSystem};
@@ -48,11 +49,11 @@ impl FpsCounter
 }
 impl WantsSystemAdded for FpsCounter
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		Some(update_fps_counter.into_workload_system().unwrap())
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}

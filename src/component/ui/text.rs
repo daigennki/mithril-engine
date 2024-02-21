@@ -10,6 +10,7 @@ use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 
 use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::SystemBundle;
 
 /// UI component meant to render the text to a quad.
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
@@ -22,11 +23,11 @@ pub struct UIText
 }
 impl WantsSystemAdded for UIText
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		Some(update_text.into_workload_system().unwrap())
 	}

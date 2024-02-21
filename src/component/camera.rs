@@ -14,6 +14,7 @@ use shipyard::{
 
 use crate::component::{EntityComponent, WantsSystemAdded};
 use crate::render::RenderContext;
+use crate::SystemBundle;
 
 pub const CAMERA_NEAR: f64 = 0.25;
 pub const CAMERA_FAR: f64 = 500.0;
@@ -43,11 +44,11 @@ pub struct Camera
 }
 impl WantsSystemAdded for Camera
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		Some(select_default_camera.into_workload_system().unwrap())
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		Some(update_camera.into_workload_system().unwrap())
 	}

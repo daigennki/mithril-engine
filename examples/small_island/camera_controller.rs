@@ -1,4 +1,5 @@
 use mithrilengine::component::{EntityComponent, WantsSystemAdded};
+use mithrilengine::SystemBundle;
 use mithrilengine_derive::EntityComponent;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, View, ViewMut, WorkloadSystem};
@@ -9,11 +10,11 @@ use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, View, ViewMut, Workload
 struct CameraController;
 impl WantsSystemAdded for CameraController
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		Some(update_controllable_camera.into_workload_system().unwrap())
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}

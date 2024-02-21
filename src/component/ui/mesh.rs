@@ -35,11 +35,11 @@ pub struct Mesh
 }
 impl WantsSystemAdded for Mesh
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		Some(update_mesh.into_workload_system().unwrap())
 	}

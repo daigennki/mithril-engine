@@ -16,6 +16,7 @@ use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, ViewMut, WorkloadSystem};
 
 use mithrilengine_derive::EntityComponent;
+use crate::SystemBundle;
 
 /// A component representing transformation characteristics of an entity.
 ///
@@ -46,11 +47,11 @@ impl Transform
 }
 impl WantsSystemAdded for Transform
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		Some(wrap_rotation.into_workload_system().unwrap())
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
@@ -79,19 +80,20 @@ pub trait EntityComponent: WantsSystemAdded + Send + Sync
 	fn type_name(&self) -> &'static str;
 }
 
-/// The trait that allows components to return a system relevant to themselves, which will be run every tick.
-/// Every `EntityComponent` must also have this trait implemented, even if it doesn't need to add any systems.
+/// The trait that allows components to return a system relevant to themselves, which will be run
+/// every tick. Every `EntityComponent` must also have this trait implemented, even if it doesn't
+/// need to add any systems.
 ///
-/// NOTE: The caveat with this is that the system will only be added if the component is specified in the map file!
-/// The system won't be added if you insert the component through the program. (TODO: figure out a way to get the
-/// system added even when the component is added through the program)
-///
-/// NOTE: This might also have some issues with changes made to components from other components not becoming visible
-/// until the next frame. (TODO: add a " update" system for components that need to make changes earlier, or instead
-/// make some components update later than others)
+/// NOTE: This might have some issues with changes made to components from other components not
+/// becoming visible until the next frame. (TODO: somehow let some components to update later than
+/// others)
 pub trait WantsSystemAdded
 {
-	fn add_system(&self) -> Option<WorkloadSystem>;
+	fn add_system() -> Option<WorkloadSystem>
+	where
+		Self: Sized;
 
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>;
+	fn add_prerender_system() -> Option<WorkloadSystem>
+	where
+		Self: Sized;
 }

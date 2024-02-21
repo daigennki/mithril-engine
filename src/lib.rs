@@ -10,9 +10,8 @@ pub mod render;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{UniqueViewMut, Workload, World};
+use shipyard::{UniqueViewMut, Workload, WorkloadSystem, World};
 use simplelog::*;
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
@@ -100,7 +99,7 @@ pub struct InputHelperWrapper
 	pub inner: WinitInputHelper,
 }
 
-/// Initialize the world with the uniques that components will need.
+/// Initialize the world with the uniques and systems that components will need.
 fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop: &EventLoop<()>) -> crate::Result<World>
 {
 	let mut render_ctx = render::RenderContext::new(app_name, app_version, event_loop)?;
@@ -118,8 +117,47 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 	world.add_unique(render_ctx);
 	world.add_unique(component::physics::PhysicsManager::default());
 
+	// add the relevant systems for components that return them
+	let system_bundles: Vec<_> = inventory::iter::<SystemBundle>.into_iter().collect();
+	let mut systems = Vec::with_capacity(system_bundles.len());
+	let mut prerender_systems = Vec::with_capacity(system_bundles.len());
+	for system_bundle in system_bundles {
+		if let Some(game_logic_system) = (system_bundle.game_logic)() {
+			log::debug!("inserting system for {}", system_bundle.component_name);
+			systems.push(game_logic_system);
+		}
+		if let Some(prerender_system) = (system_bundle.prerender)() {
+			log::debug!("inserting pre-render system for {}", system_bundle.component_name);
+			prerender_systems.push(prerender_system);
+		}
+	}
+
+	if !systems.is_empty() {
+		systems
+			.into_iter()
+			.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
+			.add_to_world(&world)
+			.expect("failed to add game logic workload to world");
+	}
+
+	prerender_systems
+		.into_iter()
+		.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
+		.add_to_world(&world)
+		.expect("failed to add pre-render workload to world");
+
+	world.add_workload(render::render_workload);
+
 	Ok(world)
 }
+
+pub struct SystemBundle
+{
+	pub component_name: &'static str,
+	pub game_logic: &'static (dyn Fn() -> Option<WorkloadSystem> + Send + Sync),
+	pub prerender: &'static (dyn Fn() -> Option<WorkloadSystem> + Send + Sync),
+}
+inventory::collect!(SystemBundle);
 
 #[derive(Deserialize)]
 struct MapData
@@ -146,48 +184,12 @@ impl MapData
 			}
 		});
 
-		let mut systems = BTreeMap::new();
-		let mut prerender_systems = BTreeMap::new();
-
 		for entity in self.entities {
 			let eid = world.add_entity(());
 			for component in entity {
-				let type_id = component.type_id();
-
-				// add the relevant system if the component returns one
-				if let Some(add_system) = component.add_system() {
-					systems.entry(type_id).or_insert_with(|| {
-						log::debug!("inserting system for {}", component.type_name());
-						add_system
-					});
-				}
-
-				if let Some(add_system) = component.add_prerender_system() {
-					prerender_systems.entry(type_id).or_insert_with(|| {
-						log::debug!("inserting pre-render system for {}", component.type_name());
-						add_system
-					});
-				}
-
 				component.add_to_entity(world, eid);
 			}
 		}
-
-		if !systems.is_empty() {
-			systems
-				.into_values()
-				.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
-				.add_to_world(world)
-				.expect("failed to add game logic workload to world");
-		}
-
-		prerender_systems
-			.into_values()
-			.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
-			.add_to_world(world)
-			.expect("failed to add pre-render workload to world");
-
-		world.add_workload(render::render_workload);
 	}
 }
 

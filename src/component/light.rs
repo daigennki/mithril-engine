@@ -11,6 +11,7 @@ use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, Wo
 
 use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
 use crate::render::lighting::LightManager;
+use crate::SystemBundle;
 
 /// These are various components that represent light sources in the world.
 ///
@@ -24,11 +25,11 @@ pub struct DirectionalLight
 }
 impl WantsSystemAdded for DirectionalLight
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		Some(update_directional_light.into_workload_system().unwrap())
 	}

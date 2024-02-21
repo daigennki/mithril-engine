@@ -13,6 +13,7 @@ use serde::Deserialize;
 use shipyard::WorkloadSystem;
 
 use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::SystemBundle;
 
 #[derive(Default, shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -25,11 +26,11 @@ pub struct UITransform
 }
 impl WantsSystemAdded for UITransform
 {
-	fn add_system(&self) -> Option<WorkloadSystem>
+	fn add_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system(&self) -> Option<WorkloadSystem>
+	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}

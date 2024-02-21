@@ -42,6 +42,7 @@ smallvec = "1.11"
 regex = "1.10"
 rapier3d-f64 = { version = "0.18", features = ["serde-serialize"] }
 nalgebra = { version = "0.32", features = ["convert-glam024"] }
+inventory = "0.3"
 #egui_winit_vulkano = { version = "0.22", optional = true }
 #kira = "0.7.1"
 
