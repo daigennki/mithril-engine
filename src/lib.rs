@@ -4,11 +4,11 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 pub mod component;
 pub mod material;
 pub mod render;
 
+use directories::ProjectDirs;
 use glam::*;
 use serde::Deserialize;
 use shipyard::{UniqueViewMut, Workload, World};
@@ -99,12 +99,10 @@ fn init_world(
 ) -> crate::Result<World>
 {
 	// Create the game data directory. Config and save data files will be saved here.
-	let data_path = dirs::data_dir()
-		.ok_or("Failed to get data directory")?
-		.join(org_name)
-		.join(game_name);
+	let project_dirs = ProjectDirs::from("", org_name, game_name).ok_or("failed to retrieve valid home directory path")?;
+	let data_path = project_dirs.data_dir();
 	println!("Using data directory: {}", data_path.display());
-	std::fs::create_dir_all(&data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
+	std::fs::create_dir_all(data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
 
 	setup_log();
 

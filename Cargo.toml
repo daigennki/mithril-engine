@@ -31,7 +31,7 @@ log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"
 simplelog = "0.12"
 shipyard = "0.6"
 bytemuck = { version = "1.9", features = ["extern_crate_alloc"] }
-dirs = "5.0"
+directories = "5.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = { version = "1.0", features = ["raw_value"] }
