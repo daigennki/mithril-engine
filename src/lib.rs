@@ -8,7 +8,6 @@ pub mod component;
 pub mod material;
 pub mod render;
 
-use directories::ProjectDirs;
 use glam::*;
 use serde::Deserialize;
 use shipyard::{UniqueViewMut, Workload, World};
@@ -62,8 +61,9 @@ pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Ve
 			return;
 		}
 	};
-
 	event_loop.set_control_flow(ControlFlow::Poll);
+
+	setup_log();
 
 	let mut world = match init_world(org_name, app_name, app_version, &event_loop) {
 		Ok(w) => w,
@@ -101,16 +101,8 @@ pub struct InputHelperWrapper
 }
 
 /// Initialize the world with the uniques that components will need.
-fn init_world(org_name: &str, app_name: &str, app_version: Version, event_loop: &EventLoop<()>) -> crate::Result<World>
+fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop: &EventLoop<()>) -> crate::Result<World>
 {
-	// Create the game data directory. Config and save data files will be saved here.
-	let project_dirs = ProjectDirs::from("", org_name, app_name).ok_or("failed to retrieve valid home directory path")?;
-	let data_path = project_dirs.data_dir();
-	println!("Using data directory: {}", data_path.display());
-	//std::fs::create_dir_all(data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
-
-	setup_log();
-
 	let mut render_ctx = render::RenderContext::new(app_name, app_version, event_loop)?;
 	let viewport_extent = render_ctx.window_dimensions();
 
@@ -261,7 +253,7 @@ fn setup_log()
 	CombinedLogger::init(loggers).unwrap();
 }
 
-fn log_error(e: &dyn std::error::Error)
+fn log_error(e: &dyn Error)
 {
 	log::debug!("top level error: {e:?}");
 	let mut next_err_source = e.source();
