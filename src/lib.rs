@@ -249,13 +249,11 @@ fn setup_log()
 	} else {
 		vec![term_logger]
 	};
-
 	CombinedLogger::init(loggers).unwrap();
 }
-
 fn log_error(e: &dyn Error)
 {
-	log::debug!("error debug: {e:?}");
+	log::debug!("error debug: {e:#?}");
 	log::error!("{e}");
 	if let Err(mbe) = msgbox::create("Engine Error", &e.to_string(), msgbox::common::IconType::Error) {
 		log::error!("failed to create error message box: {mbe}");
