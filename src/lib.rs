@@ -16,6 +16,7 @@ use simplelog::*;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::File;
+use std::path::Path;
 use vulkano::buffer::AllocateBufferError;
 use vulkano::descriptor_set::DescriptorSet;
 use vulkano::image::AllocateImageError;
@@ -31,28 +32,28 @@ use render::RenderContext;
 type Result<T> = std::result::Result<T, EngineError>;
 
 /// Same as `run_game`, but this will get the version of your application using the
-/// `CARGO_PKG_VERSION_*` environment variables. It only takes `org_name`, `game_name`, and
+/// `CARGO_PKG_VERSION_*` environment variables. It only takes `org_name`, `app_name`, and
 /// `start_map`.
 #[macro_export]
 macro_rules! run {
-	($org_name:expr, $game_name:expr, $start_map:expr) => {
+	($org_name:expr, $app_name:expr, $start_map:expr) => {
 		let app_version = vulkano::Version {
 			major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
 			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
 			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
 		};
-		mithrilengine::run_game($org_name, $game_name, $start_map, app_version)
+		mithrilengine::run_game($org_name, $app_name, $start_map, app_version)
 	};
 }
 
 /// Run the game. This should be called from your `main.rs`.
 ///
-/// - `org_name` and `game_name` will be used for the data directory.
-/// - `game_name` will also be used for the window title.
-/// - `start_map` is the first map (level/world) to be loaded.
-/// - `app_version` is the version of your game/application.
+/// - `org_name` and `app_name` will be used for the data directory.
+/// - `app_name` will also be used for the window title.
+/// - `start_map` is the first map to be loaded.
+/// - `app_version` is the version of your application.
 ///
-pub fn run_game(org_name: &str, game_name: &str, start_map: &str, app_version: Version)
+pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Version)
 {
 	let event_loop = match EventLoop::new() {
 		Ok(el) => el,
@@ -64,8 +65,17 @@ pub fn run_game(org_name: &str, game_name: &str, start_map: &str, app_version: V
 
 	event_loop.set_control_flow(ControlFlow::Poll);
 
-	let mut world = match init_world(org_name, game_name, app_version, start_map, &event_loop) {
+	let mut world = match init_world(org_name, app_name, app_version, &event_loop) {
 		Ok(w) => w,
+		Err(e) => {
+			log_error(&e);
+			return;
+		}
+	};
+
+	// Load the first map from `start_map`.
+	match MapData::new(Path::new(start_map)) {
+		Ok(map_data) => map_data.into_world(&mut world),
 		Err(e) => {
 			log_error(&e);
 			return;
@@ -90,41 +100,103 @@ pub struct InputHelperWrapper
 	pub inner: WinitInputHelper,
 }
 
-fn init_world(
-	org_name: &str,
-	game_name: &str,
-	app_version: Version,
-	start_map: &str,
-	event_loop: &EventLoop<()>,
-) -> crate::Result<World>
+/// Initialize the world with the uniques that components will need.
+fn init_world(org_name: &str, app_name: &str, app_version: Version, event_loop: &EventLoop<()>) -> crate::Result<World>
 {
 	// Create the game data directory. Config and save data files will be saved here.
-	let project_dirs = ProjectDirs::from("", org_name, game_name).ok_or("failed to retrieve valid home directory path")?;
+	let project_dirs = ProjectDirs::from("", org_name, app_name).ok_or("failed to retrieve valid home directory path")?;
 	let data_path = project_dirs.data_dir();
 	println!("Using data directory: {}", data_path.display());
-	std::fs::create_dir_all(data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
+	//std::fs::create_dir_all(data_path).map_err(|e| EngineError::new("Failed to create data directory", e))?;
 
 	setup_log();
 
-	let mut render_ctx = render::RenderContext::new(game_name, app_version, event_loop)?;
+	let mut render_ctx = render::RenderContext::new(app_name, app_version, event_loop)?;
 	let viewport_extent = render_ctx.window_dimensions();
 
 	let light_manager = render::lighting::LightManager::new(&mut render_ctx)?;
 	let light_set_layout = light_manager.get_all_lights_set().layout().clone();
 
-	let (world, sky) = load_world(start_map)?;
-	render_ctx.set_skybox(sky)?;
-
+	let world = World::new();
 	world.add_unique(render::ui::Canvas::new(&mut render_ctx, 1280, 720)?);
 	world.add_unique(CameraManager::new(viewport_extent, CameraFov::Y(1.0_f64.to_degrees())));
 	world.add_unique(render::model::MeshManager::new(&mut render_ctx, light_set_layout)?);
 	world.add_unique(light_manager);
 	world.add_unique(InputHelperWrapper::default());
 	world.add_unique(render_ctx);
-
 	world.add_unique(component::physics::PhysicsManager::default());
 
 	Ok(world)
+}
+
+#[derive(Deserialize)]
+struct MapData
+{
+	sky: String,
+	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
+}
+impl MapData
+{
+	/// Deserialize a map file into this struct.
+	fn new(file: &Path) -> crate::Result<Self>
+	{
+		log::info!("Loading world map file '{}'...", file.display());
+		let map_file = File::open(file).map_err(|e| EngineError::new("failed to open world map file", e))?;
+		serde_yaml::from_reader(map_file).map_err(|e| EngineError::new("failed to parse world map file", e))
+	}
+
+	/// Use the data in this struct to add entities and components into the given world.
+	fn into_world(self, world: &mut World)
+	{
+		world.run(|mut render_ctx: UniqueViewMut<RenderContext>| {
+			if let Err(e) = render_ctx.set_skybox(self.sky.clone()) {
+				log::error!("failed to set skybox to `{}`: {}", &self.sky, e);
+			}
+		});
+
+		let mut systems = BTreeMap::new();
+		let mut prerender_systems = BTreeMap::new();
+
+		for entity in self.entities {
+			let eid = world.add_entity(());
+			for component in entity {
+				let type_id = component.type_id();
+
+				// add the relevant system if the component returns one
+				if let Some(add_system) = component.add_system() {
+					systems.entry(type_id).or_insert_with(|| {
+						log::debug!("inserting system for {}", component.type_name());
+						add_system
+					});
+				}
+
+				if let Some(add_system) = component.add_prerender_system() {
+					prerender_systems.entry(type_id).or_insert_with(|| {
+						log::debug!("inserting pre-render system for {}", component.type_name());
+						add_system
+					});
+				}
+
+				component.add_to_entity(world, eid);
+			}
+		}
+
+		if !systems.is_empty() {
+			systems
+				.into_values()
+				.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
+				.add_to_world(world)
+				.expect("failed to add game logic workload to world");
+		}
+
+		prerender_systems
+			.into_values()
+			.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
+			.add_to_world(world)
+			.expect("failed to add pre-render workload to world");
+
+		world.add_workload(render::render_workload);
+	}
 }
 
 // returns true if the application should exit
@@ -159,65 +231,6 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 	}
 
 	Ok(false)
-}
-
-#[derive(Deserialize)]
-struct WorldData
-{
-	sky: String,
-	entities: Vec<Vec<Box<dyn component::EntityComponent>>>,
-}
-fn load_world(file: &str) -> crate::Result<(World, String)>
-{
-	log::info!("Loading world map file '{file}'...");
-	let world_file = File::open(file).map_err(|e| EngineError::new("failed to open world map file", e))?;
-	let world_data: WorldData =
-		serde_yaml::from_reader(world_file).map_err(|e| EngineError::new("failed to parse world map file", e))?;
-	let mut world = World::new();
-	let mut systems = BTreeMap::new();
-	let mut prerender_systems = BTreeMap::new();
-
-	for entity in world_data.entities {
-		let eid = world.add_entity(());
-		for component in entity {
-			let type_id = component.type_id();
-
-			// add the relevant system if the component returns one
-			if let Some(add_system) = component.add_system() {
-				systems.entry(type_id).or_insert_with(|| {
-					log::debug!("inserting system for {}", component.type_name());
-					add_system
-				});
-			}
-
-			if let Some(add_system) = component.add_prerender_system() {
-				prerender_systems.entry(type_id).or_insert_with(|| {
-					log::debug!("inserting pre-render system for {}", component.type_name());
-					add_system
-				});
-			}
-
-			component.add_to_entity(&mut world, eid);
-		}
-	}
-
-	if !systems.is_empty() {
-		systems
-			.into_values()
-			.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
-			.add_to_world(&world)
-			.expect("failed to add game logic workload to world");
-	}
-
-	prerender_systems
-		.into_values()
-		.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
-		.add_to_world(&world)
-		.expect("failed to add pre-render workload to world");
-
-	world.add_workload(render::render_workload);
-
-	Ok((world, world_data.sky))
 }
 
 fn setup_log()
