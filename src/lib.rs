@@ -140,6 +140,8 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 			.expect("failed to add game logic workload to world");
 	}
 
+	world.add_workload(component::physics::physics_workload);
+
 	prerender_systems
 		.into_iter()
 		.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
@@ -211,6 +213,8 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			if world.contains_workload("Game logic") {
 				world.run_workload("Game logic").unwrap();
 			}
+
+			world.run_workload(component::physics::physics_workload).unwrap();
 
 			// Pre-render: update GPU resources for various components, to reflect the changes made
 			// in game logic systems.

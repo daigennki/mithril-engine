@@ -8,7 +8,7 @@
 use glam::*;
 use rapier3d_f64::prelude::{ColliderBuilder, RigidBodyType};
 use serde::Deserialize;
-use shipyard::{EntityId, Get, IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, ViewMut, WorkloadSystem};
+use shipyard::{EntityId, Get, IntoIter, IntoWithId, IntoWorkload, UniqueViewMut, View, ViewMut, Workload, WorkloadSystem};
 use std::collections::HashMap;
 
 use crate::component::{EntityComponent, WantsSystemAdded};
@@ -75,12 +75,17 @@ impl WantsSystemAdded for RigidBody
 {
 	fn add_system() -> Option<WorkloadSystem>
 	{
-		Some(simulate_physics.into_workload_system().unwrap())
+		None
 	}
 	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
 		None
 	}
+}
+
+pub(crate) fn physics_workload() -> Workload
+{
+	(simulate_physics).into_workload()
 }
 fn simulate_physics(
 	mut physics_manager: UniqueViewMut<PhysicsManager>,
@@ -149,7 +154,7 @@ fn simulate_physics(
 }
 
 #[derive(shipyard::Unique, Default)]
-pub struct PhysicsManager
+pub(crate) struct PhysicsManager
 {
 	rigid_body_set: rapier3d_f64::prelude::RigidBodySet,
 	rigid_body_handles: HashMap<EntityId, rapier3d_f64::prelude::RigidBodyHandle>,

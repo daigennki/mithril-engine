@@ -49,11 +49,11 @@ impl WantsSystemAdded for Transform
 {
 	fn add_system() -> Option<WorkloadSystem>
 	{
-		Some(wrap_rotation.into_workload_system().unwrap())
+		None
 	}
 	fn add_prerender_system() -> Option<WorkloadSystem>
 	{
-		None
+		Some(wrap_rotation.into_workload_system().unwrap())
 	}
 }
 
