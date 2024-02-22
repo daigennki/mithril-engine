@@ -4,12 +4,11 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 
-use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::component::{EntityComponent, ComponentSystems};
 use crate::SystemBundle;
 
 /// UI component meant to render the text to a quad.
@@ -21,13 +20,13 @@ pub struct UIText
 	pub size: f32,
 	pub color: Vec4,
 }
-impl WantsSystemAdded for UIText
+impl ComponentSystems for UIText
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_text.into_workload_system().unwrap())
 	}

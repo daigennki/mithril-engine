@@ -4,7 +4,6 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 pub mod camera;
 pub mod light;
 pub mod mesh;
@@ -45,13 +44,13 @@ impl Transform
 		DAffine3::from_scale_rotation_translation(self.scale, quat, self.position)
 	}
 }
-impl WantsSystemAdded for Transform
+impl ComponentSystems for Transform
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(wrap_rotation.into_workload_system().unwrap())
 	}
@@ -67,12 +66,13 @@ fn wrap_rotation(mut transforms: ViewMut<Transform>)
 	}
 }
 
-/// The trait that every component to be used in a map file must implement.
-/// This allows a deserialized component to add itself to the world, so that it can be
-/// deserialized as `Box<dyn EntityComponent>` but still keep its concrete type in the world.
+/// The trait that every component to be used in a map must implement. Implement this using
+/// `#[derive(EntityComponent)]`.
 #[typetag::deserialize]
-pub trait EntityComponent: WantsSystemAdded + Send + Sync
+pub trait EntityComponent: ComponentSystems + Send + Sync
 {
+	/// Allows a deserialized component to add itself to the world, so that it can be deserialized
+	/// as `Box<dyn EntityComponent>` but still keep its concrete type in the world.
 	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
 
 	fn type_id(&self) -> std::any::TypeId;
@@ -80,20 +80,17 @@ pub trait EntityComponent: WantsSystemAdded + Send + Sync
 	fn type_name(&self) -> &'static str;
 }
 
-/// The trait that allows components to return a system relevant to themselves, which will be run
-/// every tick. Every `EntityComponent` must also have this trait implemented, even if it doesn't
-/// need to add any systems.
-///
-/// NOTE: This might have some issues with changes made to components from other components not
-/// becoming visible until the next frame. (TODO: somehow let some components to update later than
-/// others)
-pub trait WantsSystemAdded
+/// The trait that allows components to return systems relevant to themselves. Every
+/// `EntityComponent` must have this trait implemented, even if it doesn't need to add any systems.
+pub trait ComponentSystems
 {
-	fn add_system() -> Option<WorkloadSystem>
+	/// Run before physics updates every tick.
+	fn update() -> Option<WorkloadSystem>
 	where
 		Self: Sized;
 
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	/// Run after physics updates every tick.
+	fn late_update() -> Option<WorkloadSystem>
 	where
 		Self: Sized;
 }

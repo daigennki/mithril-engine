@@ -4,11 +4,10 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 use std::path::PathBuf;
 
-use crate::component::WantsSystemAdded;
+use crate::component::ComponentSystems;
 use crate::render::ui::Canvas;
 
 #[derive(Clone, Copy)]
@@ -33,13 +32,13 @@ pub struct Mesh
 	pub mesh_type: MeshType,
 	pub image_path: PathBuf,
 }
-impl WantsSystemAdded for Mesh
+impl ComponentSystems for Mesh
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_mesh.into_workload_system().unwrap())
 	}

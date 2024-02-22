@@ -29,8 +29,8 @@ pub fn derive_entity_component(input: TokenStream) -> TokenStream
 		inventory::submit! {
 			SystemBundle {
 				component_name: stringify!(#ident),
-				game_logic: &#ident::add_system,
-				prerender: &#ident::add_prerender_system,
+				update: &#ident::update,
+				late_update: &#ident::late_update,
 			}
 		}
 	};

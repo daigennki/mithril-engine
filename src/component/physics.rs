@@ -4,14 +4,13 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use rapier3d_f64::prelude::{ColliderBuilder, RigidBodyType};
 use serde::Deserialize;
 use shipyard::{EntityId, Get, IntoIter, IntoWithId, IntoWorkload, UniqueViewMut, View, ViewMut, Workload, WorkloadSystem};
 use std::collections::HashMap;
 
-use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::component::{EntityComponent, ComponentSystems};
 use crate::SystemBundle;
 
 const DEFAULT_GRAVITY: DVec3 = DVec3 {
@@ -53,13 +52,13 @@ pub struct Collider
 	#[serde(default)]
 	pub restitution: f64,
 }
-impl WantsSystemAdded for Collider
+impl ComponentSystems for Collider
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		None
 	}
@@ -71,13 +70,13 @@ pub struct RigidBody
 {
 	pub rigid_body_type: RigidBodyType,
 }
-impl WantsSystemAdded for RigidBody
+impl ComponentSystems for RigidBody
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		None
 	}

@@ -4,7 +4,6 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use serde::Deserialize;
 use shipyard::{
@@ -12,7 +11,7 @@ use shipyard::{
 	EntityId, Get, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem,
 };
 
-use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::component::{EntityComponent, ComponentSystems};
 use crate::render::RenderContext;
 use crate::SystemBundle;
 
@@ -42,13 +41,13 @@ pub struct Camera
 	/// If this is `None`, then the `CameraManager`'s default FoV will be used instead.
 	pub fov: Option<CameraFov>,
 }
-impl WantsSystemAdded for Camera
+impl ComponentSystems for Camera
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_camera.into_workload_system().unwrap())
 	}

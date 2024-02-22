@@ -119,32 +119,32 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 
 	// add the relevant systems for components that return them
 	let system_bundles: Vec<_> = inventory::iter::<SystemBundle>.into_iter().collect();
-	let mut systems = Vec::with_capacity(system_bundles.len());
-	let mut prerender_systems = Vec::with_capacity(system_bundles.len());
+	let mut update_systems = Vec::with_capacity(system_bundles.len());
+	let mut late_update_systems = Vec::with_capacity(system_bundles.len());
 	for system_bundle in system_bundles {
-		if let Some(game_logic_system) = (system_bundle.game_logic)() {
-			log::debug!("inserting system for {}", system_bundle.component_name);
-			systems.push(game_logic_system);
+		if let Some(system) = (system_bundle.update)() {
+			log::debug!("inserting `update` system for {}", system_bundle.component_name);
+			update_systems.push(system);
 		}
-		if let Some(prerender_system) = (system_bundle.prerender)() {
-			log::debug!("inserting pre-render system for {}", system_bundle.component_name);
-			prerender_systems.push(prerender_system);
+		if let Some(system) = (system_bundle.late_update)() {
+			log::debug!("inserting `late_update` system for {}", system_bundle.component_name);
+			late_update_systems.push(system);
 		}
 	}
 
-	if !systems.is_empty() {
-		systems
+	if !update_systems.is_empty() {
+		update_systems
 			.into_iter()
-			.fold(Workload::new("Game logic"), |w, s| w.with_system(s))
+			.fold(Workload::new("update"), |w, s| w.with_system(s))
 			.add_to_world(&world)
 			.expect("failed to add game logic workload to world");
 	}
 
 	world.add_workload(component::physics::physics_workload);
 
-	prerender_systems
+	late_update_systems	
 		.into_iter()
-		.fold(Workload::new("Pre-render"), |w, s| w.with_system(s))
+		.fold(Workload::new("late_update"), |w, s| w.with_system(s))
 		.add_to_world(&world)
 		.expect("failed to add pre-render workload to world");
 
@@ -156,8 +156,8 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 pub struct SystemBundle
 {
 	pub component_name: &'static str,
-	pub game_logic: &'static (dyn Fn() -> Option<WorkloadSystem> + Send + Sync),
-	pub prerender: &'static (dyn Fn() -> Option<WorkloadSystem> + Send + Sync),
+	pub update: &'static (dyn Fn() -> Option<WorkloadSystem> + Send + Sync),
+	pub late_update: &'static (dyn Fn() -> Option<WorkloadSystem> + Send + Sync),
 }
 inventory::collect!(SystemBundle);
 
@@ -209,16 +209,13 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			world.run(|mut r_ctx: UniqueViewMut<RenderContext>| r_ctx.handle_window_event(window_event));
 		}
 		Event::AboutToWait => {
-			// Game logic: run systems usually specific to custom components in a project.
-			if world.contains_workload("Game logic") {
-				world.run_workload("Game logic").unwrap();
+			if world.contains_workload("update") {
+				world.run_workload("update").unwrap();
 			}
 
 			world.run_workload(component::physics::physics_workload).unwrap();
 
-			// Pre-render: update GPU resources for various components, to reflect the changes made
-			// in game logic systems.
-			world.run_workload("Pre-render").unwrap();
+			world.run_workload("late_update").unwrap();
 
 			// Main rendering: build the command buffers, then submit them for presentation.
 			world

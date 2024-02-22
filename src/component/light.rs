@@ -4,12 +4,11 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
 
-use super::{camera::CameraManager, EntityComponent, Transform, WantsSystemAdded};
+use super::{camera::CameraManager, EntityComponent, Transform, ComponentSystems};
 use crate::render::lighting::LightManager;
 use crate::SystemBundle;
 
@@ -23,13 +22,13 @@ pub struct DirectionalLight
 	pub color: Vec3,
 	pub intensity: f32,
 }
-impl WantsSystemAdded for DirectionalLight
+impl ComponentSystems for DirectionalLight
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_directional_light.into_workload_system().unwrap())
 	}

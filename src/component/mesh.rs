@@ -4,13 +4,12 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 use std::path::PathBuf;
 
-use crate::component::{EntityComponent, WantsSystemAdded};
+use crate::component::{EntityComponent, ComponentSystems};
 use crate::render::{model::MeshManager, RenderContext};
 use crate::SystemBundle;
 
@@ -23,13 +22,13 @@ pub struct Mesh
 	#[serde(default)]
 	pub material_variant: Option<String>,
 }
-impl WantsSystemAdded for Mesh
+impl ComponentSystems for Mesh
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		None
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_meshes.into_workload_system().unwrap())
 	}

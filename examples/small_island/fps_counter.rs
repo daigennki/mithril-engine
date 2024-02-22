@@ -1,4 +1,4 @@
-use mithrilengine::component::{ui, EntityComponent, WantsSystemAdded};
+use mithrilengine::component::{ui, EntityComponent, ComponentSystems};
 use mithrilengine::render::RenderContext;
 use mithrilengine::SystemBundle;
 use mithrilengine_derive::EntityComponent;
@@ -47,13 +47,13 @@ impl FpsCounter
 		})
 	}
 }
-impl WantsSystemAdded for FpsCounter
+impl ComponentSystems for FpsCounter
 {
-	fn add_system() -> Option<WorkloadSystem>
+	fn update() -> Option<WorkloadSystem>
 	{
 		Some(update_fps_counter.into_workload_system().unwrap())
 	}
-	fn add_prerender_system() -> Option<WorkloadSystem>
+	fn late_update() -> Option<WorkloadSystem>
 	{
 		None
 	}
