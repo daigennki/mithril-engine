@@ -12,7 +12,7 @@ mod window;
 
 use ddsfile::DxgiFormat;
 use glam::*;
-use shipyard::{IntoWorkload, UniqueView, UniqueViewMut, Workload};
+use shipyard::{UniqueView, UniqueViewMut};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -875,21 +875,17 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 //
 /* Render workload */
 //
-pub fn render_workload() -> Workload
-{
-	(submit_transfers, model::draw_workload, draw_ui, submit_frame).into_workload()
-}
-fn submit_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
+pub(crate) fn submit_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
 {
 	render_ctx.submit_transfers()
 }
-fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
+pub(crate) fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
 {
 	canvas.draw(&render_ctx)
 }
 
 // Submit all the command buffers for this frame to present the results.
-fn submit_frame(
+pub(crate) fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<Canvas>,

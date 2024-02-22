@@ -7,7 +7,7 @@
 use glam::*;
 use rapier3d_f64::prelude::{ColliderBuilder, RigidBodyType};
 use serde::Deserialize;
-use shipyard::{EntityId, Get, IntoIter, IntoWithId, IntoWorkload, UniqueViewMut, View, ViewMut, Workload, WorkloadSystem};
+use shipyard::{EntityId, Get, IntoIter, IntoWithId, UniqueViewMut, View, ViewMut, WorkloadSystem};
 use std::collections::HashMap;
 
 use crate::component::{EntityComponent, ComponentSystems};
@@ -82,11 +82,7 @@ impl ComponentSystems for RigidBody
 	}
 }
 
-pub(crate) fn physics_workload() -> Workload
-{
-	(simulate_physics).into_workload()
-}
-fn simulate_physics(
+pub(crate) fn simulate_physics(
 	mut physics_manager: UniqueViewMut<PhysicsManager>,
 	mut transforms: ViewMut<super::Transform>,
 	rigid_body_components: View<RigidBody>,

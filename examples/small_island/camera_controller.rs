@@ -1,5 +1,5 @@
 use mithrilengine::component::{EntityComponent, ComponentSystems};
-use mithrilengine::SystemBundle;
+use mithrilengine::{InputHelperWrapper, SystemBundle};
 use mithrilengine_derive::EntityComponent;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, View, ViewMut, WorkloadSystem};
@@ -20,13 +20,13 @@ impl ComponentSystems for CameraController
 	}
 }
 fn update_controllable_camera(
-	input_helper_wrapper: UniqueView<mithrilengine::InputHelperWrapper>,
+	input_helper_wrapper: UniqueView<InputHelperWrapper>,
 	mut transforms: ViewMut<mithrilengine::component::Transform>,
 	cameras: View<mithrilengine::component::camera::Camera>,
 	camera_controller: View<CameraController>,
 )
 {
-	let input_helper = &input_helper_wrapper.inner;
+	let InputHelperWrapper(input_helper) = input_helper_wrapper.as_ref();
 	if input_helper.mouse_held(1) {
 		let delta = input_helper.mouse_diff();
 		let sensitivity = 0.05;

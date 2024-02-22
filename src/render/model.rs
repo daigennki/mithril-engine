@@ -8,7 +8,7 @@ use glam::*;
 use gltf::accessor::DataType;
 use gltf::Semantic;
 use serde::Deserialize;
-use shipyard::{EntityId, IntoWorkload, UniqueView, Workload};
+use shipyard::{EntityId, UniqueView};
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -979,13 +979,9 @@ impl PassType<'_>
 //
 /* Workloads and systems for drawing models */
 //
-pub fn draw_workload() -> Workload
-{
-	(draw_shadows, draw_3d, draw_3d_oit).into_workload()
-}
 
 // Render shadow maps.
-fn draw_shadows(
+pub(crate) fn draw_shadows(
 	render_ctx: UniqueView<RenderContext>,
 	mesh_manager: UniqueView<MeshManager>,
 	light_manager: UniqueView<LightManager>,
@@ -998,7 +994,7 @@ fn draw_shadows(
 }
 
 // Draw opaque 3D objects.
-fn draw_3d(
+pub(crate) fn draw_3d(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<MeshManager>,
@@ -1011,7 +1007,7 @@ fn draw_3d(
 }
 
 // Draw objects for OIT (order-independent transparency).
-fn draw_3d_oit(
+pub(crate) fn draw_3d_oit(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<MeshManager>,

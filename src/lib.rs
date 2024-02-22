@@ -94,10 +94,7 @@ pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Ve
 }
 
 #[derive(shipyard::Unique, Default)]
-pub struct InputHelperWrapper
-{
-	pub inner: WinitInputHelper,
-}
+pub struct InputHelperWrapper(pub WinitInputHelper);
 
 /// Initialize the world with the uniques and systems that components will need.
 fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop: &EventLoop<()>) -> crate::Result<World>
@@ -117,7 +114,7 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 	world.add_unique(render_ctx);
 	world.add_unique(component::physics::PhysicsManager::default());
 
-	// add the relevant systems for components that return them
+	// add the systems that components need
 	let mut update_workload = Workload::new("update");
 	let mut late_update_workload = Workload::new("late_update");
 	for system_bundle in inventory::iter::<SystemBundle> {
@@ -132,9 +129,23 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 	}
 
 	update_workload.add_to_world(&world).unwrap();
-	world.add_workload(component::physics::physics_workload);
+
+	Workload::new("physics")
+		.with_system(component::physics::simulate_physics)
+		.add_to_world(&world)
+		.unwrap();
+
 	late_update_workload.add_to_world(&world).unwrap();
-	world.add_workload(render::render_workload);
+
+	Workload::new("render")
+		.with_try_system(render::submit_transfers)
+		.with_try_system(render::model::draw_shadows)
+		.with_try_system(render::model::draw_3d)
+		.with_try_system(render::model::draw_3d_oit)
+		.with_try_system(render::draw_ui)
+		.with_try_system(render::submit_frame)
+		.add_to_world(&world)
+		.unwrap();
 
 	Ok(world)
 }
@@ -184,7 +195,7 @@ impl MapData
 // returns true if the application should exit
 fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 {
-	world.run(|mut wrapper: UniqueViewMut<InputHelperWrapper>| wrapper.inner.update(event));
+	world.run(|mut wrapper: UniqueViewMut<InputHelperWrapper>| wrapper.0.update(event));
 
 	match event {
 		Event::WindowEvent {
@@ -199,14 +210,12 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 				world.run_workload("update").unwrap();
 			}
 
-			world.run_workload(component::physics::physics_workload).unwrap();
+			world.run_workload("physics").unwrap();
 
 			world.run_workload("late_update").unwrap();
 
 			// Main rendering: build the command buffers, then submit them for presentation.
-			world
-				.run_workload(render::render_workload)
-				.map_err(|e| EngineError::new("failed to run render workload", e))?;
+			world.run_workload("render")?;
 		}
 		_ => (),
 	}
@@ -375,6 +384,16 @@ impl From<render::TextureLoadingError> for EngineError
 		Self {
 			source: Some(Box::new(error)),
 			context: "failed to load texture",
+		}
+	}
+}
+impl From<shipyard::error::RunWorkload> for EngineError
+{
+	fn from(error: shipyard::error::RunWorkload) -> Self
+	{
+		Self {
+			source: Some(Box::new(error)),
+			context: "failed to run workload",
 		}
 	}
 }
