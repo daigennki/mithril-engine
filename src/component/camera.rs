@@ -11,7 +11,7 @@ use shipyard::{
 	EntityId, Get, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem,
 };
 
-use crate::component::{EntityComponent, ComponentSystems};
+use crate::component::{ComponentSystems, EntityComponent};
 use crate::render::RenderContext;
 use crate::SystemBundle;
 
@@ -43,10 +43,6 @@ pub struct Camera
 }
 impl ComponentSystems for Camera
 {
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
 	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_camera.into_workload_system().unwrap())

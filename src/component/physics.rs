@@ -7,10 +7,10 @@
 use glam::*;
 use rapier3d_f64::prelude::{ColliderBuilder, RigidBodyType};
 use serde::Deserialize;
-use shipyard::{EntityId, Get, IntoIter, IntoWithId, UniqueViewMut, View, ViewMut, WorkloadSystem};
+use shipyard::{EntityId, Get, IntoIter, IntoWithId, UniqueViewMut, View, ViewMut};
 use std::collections::HashMap;
 
-use crate::component::{EntityComponent, ComponentSystems};
+use crate::component::{ComponentSystems, EntityComponent};
 use crate::SystemBundle;
 
 const DEFAULT_GRAVITY: DVec3 = DVec3 {
@@ -52,17 +52,7 @@ pub struct Collider
 	#[serde(default)]
 	pub restitution: f64,
 }
-impl ComponentSystems for Collider
-{
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
-	fn late_update() -> Option<WorkloadSystem>
-	{
-		None
-	}
-}
+impl ComponentSystems for Collider {}
 
 #[derive(shipyard::Component, Deserialize, EntityComponent)]
 #[track(All)]
@@ -70,17 +60,7 @@ pub struct RigidBody
 {
 	pub rigid_body_type: RigidBodyType,
 }
-impl ComponentSystems for RigidBody
-{
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
-	fn late_update() -> Option<WorkloadSystem>
-	{
-		None
-	}
-}
+impl ComponentSystems for RigidBody {}
 
 pub(crate) fn simulate_physics(
 	mut physics_manager: UniqueViewMut<PhysicsManager>,

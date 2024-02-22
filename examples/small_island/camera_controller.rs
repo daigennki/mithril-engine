@@ -1,4 +1,4 @@
-use mithrilengine::component::{EntityComponent, ComponentSystems};
+use mithrilengine::component::{ComponentSystems, EntityComponent};
 use mithrilengine::{InputHelperWrapper, SystemBundle};
 use mithrilengine_derive::EntityComponent;
 use serde::Deserialize;
@@ -13,10 +13,6 @@ impl ComponentSystems for CameraController
 	fn update() -> Option<WorkloadSystem>
 	{
 		Some(update_controllable_camera.into_workload_system().unwrap())
-	}
-	fn late_update() -> Option<WorkloadSystem>
-	{
-		None
 	}
 }
 fn update_controllable_camera(

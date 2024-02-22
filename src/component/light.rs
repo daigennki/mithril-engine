@@ -8,7 +8,7 @@ use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
 
-use super::{camera::CameraManager, EntityComponent, Transform, ComponentSystems};
+use super::{camera::CameraManager, ComponentSystems, EntityComponent, Transform};
 use crate::render::lighting::LightManager;
 use crate::SystemBundle;
 
@@ -24,10 +24,6 @@ pub struct DirectionalLight
 }
 impl ComponentSystems for DirectionalLight
 {
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
 	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_directional_light.into_workload_system().unwrap())

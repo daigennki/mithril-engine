@@ -34,10 +34,6 @@ pub struct Mesh
 }
 impl ComponentSystems for Mesh
 {
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
 	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_mesh.into_workload_system().unwrap())

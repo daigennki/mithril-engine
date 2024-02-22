@@ -1,4 +1,4 @@
-use mithrilengine::component::{ui, EntityComponent, ComponentSystems};
+use mithrilengine::component::{ui, ComponentSystems, EntityComponent};
 use mithrilengine::render::RenderContext;
 use mithrilengine::SystemBundle;
 use mithrilengine_derive::EntityComponent;
@@ -52,10 +52,6 @@ impl ComponentSystems for FpsCounter
 	fn update() -> Option<WorkloadSystem>
 	{
 		Some(update_fps_counter.into_workload_system().unwrap())
-	}
-	fn late_update() -> Option<WorkloadSystem>
-	{
-		None
 	}
 }
 fn update_fps_counter(

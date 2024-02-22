@@ -9,7 +9,7 @@ use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 use std::path::PathBuf;
 
-use crate::component::{EntityComponent, ComponentSystems};
+use crate::component::{ComponentSystems, EntityComponent};
 use crate::render::{model::MeshManager, RenderContext};
 use crate::SystemBundle;
 
@@ -24,10 +24,6 @@ pub struct Mesh
 }
 impl ComponentSystems for Mesh
 {
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
 	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_meshes.into_workload_system().unwrap())

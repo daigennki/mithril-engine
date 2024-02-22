@@ -9,9 +9,8 @@ pub mod text;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::WorkloadSystem;
 
-use crate::component::{EntityComponent, ComponentSystems};
+use crate::component::{ComponentSystems, EntityComponent};
 use crate::SystemBundle;
 
 #[derive(Default, shipyard::Component, Deserialize, EntityComponent)]
@@ -23,14 +22,4 @@ pub struct UITransform
 
 	                         // TODO: parent-child relationship
 }
-impl ComponentSystems for UITransform
-{
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
-	fn late_update() -> Option<WorkloadSystem>
-	{
-		None
-	}
-}
+impl ComponentSystems for UITransform {}

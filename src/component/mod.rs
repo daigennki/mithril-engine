@@ -14,8 +14,8 @@ use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, ViewMut, WorkloadSystem};
 
-use mithrilengine_derive::EntityComponent;
 use crate::SystemBundle;
+use mithrilengine_derive::EntityComponent;
 
 /// A component representing transformation characteristics of an entity.
 ///
@@ -46,10 +46,6 @@ impl Transform
 }
 impl ComponentSystems for Transform
 {
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
 	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(wrap_rotation.into_workload_system().unwrap())
@@ -87,10 +83,16 @@ pub trait ComponentSystems
 	/// Run before physics updates every tick.
 	fn update() -> Option<WorkloadSystem>
 	where
-		Self: Sized;
+		Self: Sized,
+	{
+		None
+	}
 
 	/// Run after physics updates every tick.
 	fn late_update() -> Option<WorkloadSystem>
 	where
-		Self: Sized;
+		Self: Sized,
+	{
+		None
+	}
 }

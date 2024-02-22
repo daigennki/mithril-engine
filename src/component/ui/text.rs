@@ -8,7 +8,7 @@ use glam::*;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 
-use crate::component::{EntityComponent, ComponentSystems};
+use crate::component::{ComponentSystems, EntityComponent};
 use crate::SystemBundle;
 
 /// UI component meant to render the text to a quad.
@@ -22,10 +22,6 @@ pub struct UIText
 }
 impl ComponentSystems for UIText
 {
-	fn update() -> Option<WorkloadSystem>
-	{
-		None
-	}
 	fn late_update() -> Option<WorkloadSystem>
 	{
 		Some(update_text.into_workload_system().unwrap())
