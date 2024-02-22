@@ -118,36 +118,22 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 	world.add_unique(component::physics::PhysicsManager::default());
 
 	// add the relevant systems for components that return them
-	let system_bundles: Vec<_> = inventory::iter::<SystemBundle>.into_iter().collect();
-	let mut update_systems = Vec::with_capacity(system_bundles.len());
-	let mut late_update_systems = Vec::with_capacity(system_bundles.len());
-	for system_bundle in system_bundles {
+	let mut update_workload = Workload::new("update");
+	let mut late_update_workload = Workload::new("late_update");
+	for system_bundle in inventory::iter::<SystemBundle> {
 		if let Some(system) = (system_bundle.update)() {
 			log::debug!("inserting `update` system for {}", system_bundle.component_name);
-			update_systems.push(system);
+			update_workload = update_workload.with_system(system);
 		}
 		if let Some(system) = (system_bundle.late_update)() {
 			log::debug!("inserting `late_update` system for {}", system_bundle.component_name);
-			late_update_systems.push(system);
+			late_update_workload = late_update_workload.with_system(system);
 		}
 	}
 
-	if !update_systems.is_empty() {
-		update_systems
-			.into_iter()
-			.fold(Workload::new("update"), |w, s| w.with_system(s))
-			.add_to_world(&world)
-			.expect("failed to add game logic workload to world");
-	}
-
+	update_workload.add_to_world(&world).unwrap();
 	world.add_workload(component::physics::physics_workload);
-
-	late_update_systems	
-		.into_iter()
-		.fold(Workload::new("late_update"), |w, s| w.with_system(s))
-		.add_to_world(&world)
-		.expect("failed to add pre-render workload to world");
-
+	late_update_workload.add_to_world(&world).unwrap();
 	world.add_workload(render::render_workload);
 
 	Ok(world)
