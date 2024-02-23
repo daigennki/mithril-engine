@@ -53,44 +53,59 @@ macro_rules! run {
 ///
 pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Version)
 {
-	setup_log();
+	let log_config = ConfigBuilder::new()
+		.set_time_offset_to_local()
+		.unwrap_or_else(|config_builder| {
+			println!("simplelog `set_time_offset_to_local` failed, using UTC+0 instead.");
+			config_builder
+		})
+		.set_time_format_rfc3339()
+		.build();
 
-	let event_loop = match EventLoop::new() {
-		Ok(el) => el,
-		Err(e) => {
-			log_error(&e);
-			return;
+	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
+	let term_logger = TermLogger::new(LevelFilter::Debug, log_config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
+	let loggers: Vec<Box<dyn SharedLogger>> = if std::env::args().any(|arg| arg == "--logfile") {
+		match File::create("game.log") {
+			Ok(log_file) => vec![term_logger, WriteLogger::new(LevelFilter::Info, log_config, log_file)],
+			Err(e) => {
+				eprintln!("failed to create log file: {e}");
+				vec![term_logger]
+			}
 		}
+	} else {
+		vec![term_logger]
 	};
+	CombinedLogger::init(loggers).unwrap();
+
+	if let Err(e) = run_game_inner(org_name, app_name, start_map, app_version) {
+		log_error(e);
+	}
+}
+fn run_game_inner(
+	org_name: &str,
+	app_name: &str,
+	start_map: &str,
+	app_version: Version,
+) -> std::result::Result<(), Box<dyn Error>>
+{
+	let event_loop = EventLoop::new()?;
 	event_loop.set_control_flow(ControlFlow::Poll);
 
-	let mut world = match init_world(org_name, app_name, app_version, &event_loop) {
-		Ok(w) => w,
-		Err(e) => {
-			log_error(&e);
-			return;
-		}
-	};
+	let mut world = init_world(org_name, app_name, app_version, &event_loop)?;
 
 	// Load the first map from `start_map`.
-	match MapData::new(Path::new(start_map)) {
-		Ok(map_data) => map_data.into_world(&mut world),
-		Err(e) => {
-			log_error(&e);
-			return;
-		}
-	};
+	MapData::new(Path::new(start_map))?.into_world(&mut world);
 
-	if let Err(e) = event_loop.run(move |mut event, window_target| match handle_event(&mut world, &mut event) {
+	event_loop.run(move |mut event, window_target| match handle_event(&mut world, &mut event) {
 		Ok(true) => window_target.exit(),
 		Ok(false) => (),
 		Err(e) => {
-			log_error(&e);
+			log_error(Box::new(e));
 			window_target.exit();
 		}
-	}) {
-		log_error(&e);
-	}
+	})?;
+
+	Ok(())
 }
 
 #[derive(shipyard::Unique, Default)]
@@ -137,6 +152,7 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 
 	late_update_workload.add_to_world(&world).unwrap();
 
+	// Main rendering: build the command buffers, then submit them for presentation.
 	Workload::new("render")
 		.with_try_system(render::submit_transfers)
 		.with_try_system(render::model::draw_shadows)
@@ -206,15 +222,9 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			world.run(|mut r_ctx: UniqueViewMut<RenderContext>| r_ctx.handle_window_event(window_event));
 		}
 		Event::AboutToWait => {
-			if world.contains_workload("update") {
-				world.run_workload("update").unwrap();
-			}
-
+			world.run_workload("update").unwrap();
 			world.run_workload("physics").unwrap();
-
 			world.run_workload("late_update").unwrap();
-
-			// Main rendering: build the command buffers, then submit them for presentation.
 			world.run_workload("render")?;
 		}
 		_ => (),
@@ -223,33 +233,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 	Ok(false)
 }
 
-fn setup_log()
-{
-	let config = ConfigBuilder::new()
-		.set_time_offset_to_local()
-		.unwrap_or_else(|config_builder| {
-			println!("simplelog `set_time_offset_to_local` failed, using UTC+0 instead.");
-			config_builder
-		})
-		.set_time_format_rfc3339()
-		.build();
-
-	// Debug messages are disabled in release builds via the `log` crate's max level feature in Cargo.toml.
-	let term_logger = TermLogger::new(LevelFilter::Debug, config.clone(), TerminalMode::Mixed, ColorChoice::Auto);
-	let loggers: Vec<Box<dyn SharedLogger>> = if std::env::args().any(|arg| arg == "--logfile") {
-		match File::create("game.log") {
-			Ok(log_file) => vec![term_logger, WriteLogger::new(LevelFilter::Info, config, log_file)],
-			Err(e) => {
-				eprintln!("failed to create log file: {e}");
-				vec![term_logger]
-			}
-		}
-	} else {
-		vec![term_logger]
-	};
-	CombinedLogger::init(loggers).unwrap();
-}
-fn log_error(e: &dyn Error)
+fn log_error(e: Box<dyn Error>)
 {
 	log::debug!("error debug: {e:#?}");
 	log::error!("{e}");
