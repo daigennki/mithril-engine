@@ -14,7 +14,7 @@ entities:
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/common_models/test_floor.glb
+      model_path: examples/models/test_floor.glb
 -
   - Transform:
       position: [0.0, 0.0, 0.0]
@@ -37,103 +37,103 @@ entities:
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [2.0, 0.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [-2.0, 0.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [0.0, 2.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [2.0, 2.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [-2.0, 2.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [0.0, 4.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [2.0, 4.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [-2.0, 4.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [0.0, 6.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [-2.0, 6.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [2.0, 6.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [0.0, 8.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [2.0, 8.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 - 
   - Transform:
       position: [-2.0, 8.0, 0.0]
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/ferris/models/ferris3d.glb
+      model_path: examples/models/ferris/ferris3d.glb
 

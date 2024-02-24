@@ -20,7 +20,7 @@ entities:
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/common_models/test_floor.glb
+      model_path: examples/models/test_floor.glb
   - RigidBody:
       rigid_body_type: Fixed
   - Collider:
@@ -33,7 +33,7 @@ entities:
       scale: [1.0, 1.0, 1.0]
       rotation: [0.0, 0.0, 0.0]
   - Mesh:
-      model_path: examples/common_models/sphere.glb
+      model_path: examples/models/sphere.glb
   - RigidBody:
       rigid_body_type: Dynamic
   - Collider:
