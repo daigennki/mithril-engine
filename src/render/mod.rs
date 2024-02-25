@@ -65,11 +65,16 @@ use ui::Canvas;
 
 /// Combined depth/stencil format support on PC hardware:
 ///
+/// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs. Also supported on some Macs.
 /// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
-/// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs.
+/// - `D32_SFLOAT_S8_UINT`: Last resort. Supported on almost all machines, and 100% supported on Macs.
 ///
 /// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
-const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 2] = [Format::D24_UNORM_S8_UINT, Format::D16_UNORM_S8_UINT];
+const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 3] = [
+	Format::D24_UNORM_S8_UINT,
+	Format::D16_UNORM_S8_UINT,
+	Format::D32_SFLOAT_S8_UINT,
+];
 
 const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
 
