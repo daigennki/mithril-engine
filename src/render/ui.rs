@@ -467,7 +467,7 @@ impl Canvas
 			.device()
 			.physical_device()
 			.image_format_properties(image_format_info)?
-			.ok_or("text image format is not supported by the physical device")?
+			.unwrap() // Vulkan spec says that sampled image usage must be supported for `R8_UNORM`
 			.max_array_layers
 			.min(2048)
 			.try_into()

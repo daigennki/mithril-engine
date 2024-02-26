@@ -275,27 +275,33 @@ struct MaterialExtras
 
 fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> crate::Result<Box<dyn Material>>
 {
-	// Use an external material file if specified in the extras.
-	// This can be specified in Blender by giving a material a custom property called "external"
-	// with a boolean value of `true` (box is checked).
-	let use_external = if let Some(extras) = mat.extras() {
+	// Use an external material file if specified in the extras. This can be specified in Blender by
+	// giving a material a custom property called "external" with a boolean value of `true` (box is
+	// checked).
+	let external_mat = if let Some(extras) = mat.extras() {
 		let parse_result: Result<MaterialExtras, _> = serde_json::from_str(extras.get());
 		match parse_result {
-			Ok(parsed_extras) => parsed_extras.external,
+			Ok(parsed_extras) => parsed_extras
+				.external
+				.then(|| match mat.name() {
+					Some(name) => Some(name),
+					None => {
+						log::error!("a model wants an external material, but the glTF material has no name");
+						None
+					}
+				})
+				.flatten(),
 			Err(e) => {
 				log::error!("external materials unavailable because parsing glTF material extras failed: {e}");
-				false
+				None
 			}
 		}
 	} else {
-		false
+		None
 	};
 
-	if use_external {
-		let material_name = mat
-			.name()
-			.ok_or("a model wants an external material, but the glTF material has no name")?;
-		let mat_path = search_folder.join(material_name).with_extension("yaml");
+	if let Some(external_mat_name) = external_mat {
+		let mat_path = search_folder.join(external_mat_name).with_extension("yaml");
 
 		log::info!("Loading external material file '{}'...", mat_path.display());
 
