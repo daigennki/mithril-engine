@@ -439,8 +439,8 @@ fn get_physical_device(
 		.find(|arg| arg == "--prefer_igp")
 		.and_then(|_| igpu_i.or(dgpu_i))
 		.or_else(|| dgpu_i.or(igpu_i))
-		.ok_or("No GPUs were found!")?;
-	let physical_device = physical_devices.into_iter().nth(pd_i).unwrap();
+		.unwrap_or(0); // If neither a dGPU nor an iGPU were found, use the first physical device.
+	let physical_device = physical_devices.into_iter().nth(pd_i).ok_or("No GPUs were found!")?;
 
 	let pd_api_ver = physical_device.properties().api_version;
 	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
