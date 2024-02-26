@@ -291,7 +291,7 @@ impl MomentTransparencyRenderer
 		&mut self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		color_image: Arc<ImageView>,
-		depth_image: Arc<ImageView>,
+		depth_stencil_image: Arc<ImageView>,
 		memory_allocator: Arc<StandardMemoryAllocator>,
 	) -> crate::Result<()>
 	{
@@ -308,7 +308,7 @@ impl MomentTransparencyRenderer
 		let depth_attachment = Some(RenderingAttachmentInfo {
 			load_op: AttachmentLoadOp::Load,
 			store_op: AttachmentStoreOp::Store,
-			..RenderingAttachmentInfo::image_view(depth_image.clone())
+			..RenderingAttachmentInfo::image_view(depth_stencil_image.clone())
 		});
 
 		let moments_rendering_info = RenderingInfo {
@@ -351,7 +351,7 @@ impl MomentTransparencyRenderer
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
 				clear_value: Some(ClearValue::Stencil(0)),
-				..RenderingAttachmentInfo::image_view(depth_image.clone())
+				..RenderingAttachmentInfo::image_view(depth_stencil_image.clone())
 			}),
 			contents: SubpassContents::SecondaryCommandBuffers,
 			..Default::default()
@@ -365,7 +365,7 @@ impl MomentTransparencyRenderer
 			})],
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
-				..RenderingAttachmentInfo::image_view(depth_image)
+				..RenderingAttachmentInfo::image_view(depth_stencil_image)
 			}),
 			..Default::default()
 		};

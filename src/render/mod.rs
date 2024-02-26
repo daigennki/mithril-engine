@@ -63,17 +63,12 @@ use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
 
-/// Combined depth/stencil format support on PC hardware:
-///
-/// - `D24_UNORM_S8_UINT`: Only supported on NVIDIA and Intel GPUs. Also supported on some Macs.
-/// - `D16_UNORM_S8_UINT`: Only supported on AMD GPUs.
-/// - `D32_SFLOAT_S8_UINT`: Last resort. Supported on almost all machines, and 100% supported on Macs.
-///
-/// (source: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+/// Formats allowed for the main depth/stencil image, in order from most to least preferred.
+/// (source for device support: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
 const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 3] = [
-	Format::D24_UNORM_S8_UINT,
-	Format::D16_UNORM_S8_UINT,
-	Format::D32_SFLOAT_S8_UINT,
+	Format::D24_UNORM_S8_UINT,  // NVIDIA, Intel, some Macs
+	Format::D16_UNORM_S8_UINT,  // AMD only
+	Format::D32_SFLOAT_S8_UINT, // all Macs
 ];
 
 const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
@@ -99,9 +94,9 @@ pub struct RenderContext
 
 	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
 
-	// Things related to the output color/depth images and gamma correction.
+	// Things related to the main color/depth/stencil images and gamma correction.
 	depth_stencil_format: Format,
-	depth_image: Option<Arc<ImageView>>,
+	depth_stencil_image: Option<Arc<ImageView>>,
 	color_image: Option<Arc<ImageView>>,
 	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `color_image` as a storage image binding.
 	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
@@ -175,7 +170,7 @@ impl RenderContext
 			skybox_tex_set: None,
 			transparency_renderer: None,
 			depth_stencil_format,
-			depth_image: None,
+			depth_stencil_image: None,
 			color_image: None,
 			color_set: None,
 			gamma_pipeline: create_gamma_pipeline(vk_dev.clone())?,
@@ -446,14 +441,14 @@ impl RenderContext
 			let color = ImageView::new_default(color_image)?;
 			self.color_image = Some(color.clone());
 
-			let depth_create_info = ImageCreateInfo {
+			let depth_stencil_create_info = ImageCreateInfo {
 				format: self.depth_stencil_format,
 				extent,
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..Default::default()
 			};
-			let depth_image = Image::new(self.memory_allocator.clone(), depth_create_info, alloc_info)?;
-			self.depth_image = Some(ImageView::new_default(depth_image)?);
+			let depth_stencil_image = Image::new(self.memory_allocator.clone(), depth_stencil_create_info, alloc_info)?;
+			self.depth_stencil_image = Some(ImageView::new_default(depth_stencil_image)?);
 
 			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
 			let set_write = [WriteDescriptorSet::image_view(0, color)];
@@ -486,7 +481,7 @@ impl RenderContext
 				.end_rendering()?;
 		}
 
-		Ok((color_image, self.depth_image.clone().unwrap()))
+		Ok((color_image, self.depth_stencil_image.clone().unwrap()))
 	}
 
 	fn present_image(&mut self, mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
@@ -912,15 +907,20 @@ pub(crate) fn submit_frame(
 
 	light_manager.execute_shadow_rendering(&mut cb_builder)?;
 
-	let (color_image, depth_image) = render_ctx.get_render_images(&mut cb_builder, camera_manager.sky_projview())?;
+	let (color_image, depth_stencil_image) = render_ctx.get_render_images(&mut cb_builder, camera_manager.sky_projview())?;
 
 	// opaque 3D objects
-	mesh_manager.execute_rendering(&mut cb_builder, color_image.clone(), depth_image.clone())?;
+	mesh_manager.execute_rendering(&mut cb_builder, color_image.clone(), depth_stencil_image.clone())?;
 
 	// transparent 3D objects (OIT)
 	let memory_allocator = render_ctx.memory_allocator.clone();
 	if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
-		transparency_renderer.process_transparency(&mut cb_builder, color_image.clone(), depth_image, memory_allocator)?;
+		transparency_renderer.process_transparency(
+			&mut cb_builder,
+			color_image.clone(),
+			depth_stencil_image,
+			memory_allocator,
+		)?;
 	}
 
 	// UI
