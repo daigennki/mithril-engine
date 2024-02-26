@@ -63,12 +63,13 @@ use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
 
-/// Formats allowed for the main depth/stencil image, in order from most to least preferred.
-/// (source for device support: https://vulkan.gpuinfo.org/listoptimaltilingformats.php)
+/// Main depth/stencil image formats, in order from most to least preferred. Vulkan spec (1.3 with
+/// registered extensions, chapter 49 table 82) says that at least one of `D24_UNORM_S8_UINT` or
+/// `D32_SFLOAT_S8_UINT` must be supported.
 const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 3] = [
-	Format::D24_UNORM_S8_UINT,  // NVIDIA, Intel, some Macs
-	Format::D16_UNORM_S8_UINT,  // AMD only
-	Format::D32_SFLOAT_S8_UINT, // all Macs
+	Format::D24_UNORM_S8_UINT, // the most efficient in terms of overall performance, if available
+	Format::D16_UNORM_S8_UINT, // AMD only
+	Format::D32_SFLOAT_S8_UINT,
 ];
 
 const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
@@ -154,7 +155,7 @@ impl RenderContext
 					.optimal_tiling_features
 					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
 			})
-			.ok_or("none of the depth/stencil format candidates are supported")?;
+			.unwrap(); // unwrap since at least one of the formats must be supported
 
 		Ok(Self {
 			window,
