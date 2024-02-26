@@ -31,7 +31,7 @@ use crate::EngineError;
 const WINDOW_MIN_INNER_SIZE: winit::dpi::PhysicalSize<u32> = winit::dpi::PhysicalSize::new(1280, 720);
 
 // Surface formats we can support, in order from most preferred to least preferred.
-const SURFACE_FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
+const SURFACE_FORMAT_CANDIDATES: [(Format, ColorSpace); 4] = [
 	// HDR via extended sRGB linear image
 	// (disabled for now since this is sometimes "supported" on Windows when HDR is disabled for some reason)
 	//(Format::R16G16B16A16_SFLOAT, ColorSpace::ExtendedSrgbLinear),
@@ -40,6 +40,11 @@ const SURFACE_FORMAT_CANDIDATES: [(Format, ColorSpace); 2] = [
 	(Format::A2B10G10R10_UNORM_PACK32, ColorSpace::SrgbNonLinear),
 	// sRGB 8bpc (the most widely supported format)
 	(Format::B8G8R8A8_UNORM, ColorSpace::SrgbNonLinear),
+	// Alternate sRGB 8bpc formats, just to make sure we don't accidentally use their `_SRGB`
+	// counterparts when falling back to the first supported format. (the VK_KHR_surface spec states
+	// that the `_UNORM` counterpart must also be supported for every support `_SRGB` format)
+	(Format::R8G8B8A8_UNORM, ColorSpace::SrgbNonLinear),
+	(Format::A8B8G8R8_UNORM_PACK32, ColorSpace::SrgbNonLinear),
 ];
 
 // The sleep overshoot that gets subtracted from the minimum frame time for the framerate limiter.
@@ -76,12 +81,26 @@ impl GameWindow
 		let window = create_window(event_loop, app_name)?;
 		let surface = Surface::from_window(device.instance().clone(), window.clone())?;
 
-		// Use the first format candidate supported by the physical device.
+		// Use the first format candidate supported by the physical device. If none of the format
+		// candidates are supported, fall back to the first format returned by `surface_formats`.
+		// (the VK_KHR_surface spec states that there must be at least one pair returned)
 		let surface_formats = pd.surface_formats(&surface, SurfaceInfo::default())?;
 		let (image_format, image_color_space) = SURFACE_FORMAT_CANDIDATES
 			.into_iter()
 			.find(|candidate| surface_formats.contains(candidate))
-			.ok_or("none of the surface format candidates are supported")?;
+			.unwrap_or_else(|| {
+				log::warn!(
+					"None of the surface format candidates are supported! Falling back to the first supported format,\
+					so the image might look weird!",
+				);
+				// Try to get the first supported sRGB non-linear format, and if that doesn't turn
+				// up anything, just get the first one without filtering.
+				surface_formats
+					.iter()
+					.find(|(_, color_space)| *color_space == ColorSpace::SrgbNonLinear)
+					.copied()
+					.unwrap_or_else(|| surface_formats[0])
+			});
 
 		let present_mode = get_configured_present_mode(pd, &surface)?;
 		let surface_caps = pd.surface_capabilities(&surface, SurfaceInfo::default())?;
