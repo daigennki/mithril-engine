@@ -606,23 +606,25 @@ fn get_buf_data<T: Copy + 'static>(
 	}
 
 	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
-	if view.stride().is_some() {
-		return Err("unexpected interleaved data in glTF file".into());
-	}
+	let stride = view.stride().unwrap_or_else(|| accessor.size());
+	let buf = &buffers[view.buffer().index()];
 
-	let start = view.offset();
-	let end = start + view.length();
-	let buf_i = view.buffer().index();
+	dst_vec.reserve(accessor.count());
+	let mut element_start = view.offset();
+	for _ in 0..accessor.count() {
+		// The offset and count should've been validated by the glTF loader, so we use functions
+		// that may panic here.
+		let element_end = element_start + accessor.size();
+		let data_slice = &buf[element_start..element_end];
+		let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
 
-	// The offset and length should've been validated by the glTF loader,
-	// hence why we use functions that may panic here.
-	let data_slice = &buffers[buf_i][start..end];
-	let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
+		if convert_u16_to_u32 {
+			dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| index as T));
+		} else {
+			dst_vec.extend_from_slice(reinterpreted_slice);
+		}
 
-	if convert_u16_to_u32 {
-		dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| index as T));
-	} else {
-		dst_vec.extend_from_slice(reinterpreted_slice);
+		element_start += stride;
 	}
 
 	Ok(())
