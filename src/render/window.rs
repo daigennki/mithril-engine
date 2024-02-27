@@ -446,20 +446,43 @@ fn get_physical_device(
 		log::info!("{i}: {device_name} (driver: {driver_name}, {driver_info})");
 	}
 
-	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
-	// discrete GPU.
+	// Look for discrete and integrated GPUs. Also, for each type of GPU, make sure it actually has
+	// a graphics queue family.
 	let dgpu_i = physical_devices
 		.iter()
-		.position(|pd| pd.properties().device_type == PhysicalDeviceType::DiscreteGpu);
+		.enumerate()
+		.filter(|(_, pd)| {
+			pd.queue_family_properties()
+				.iter()
+				.any(|qf| qf.queue_flags.contains(QueueFlags::GRAPHICS))
+		})
+		.find_map(|(i, pd)| (pd.properties().device_type == PhysicalDeviceType::DiscreteGpu).then_some(i));
 	let igpu_i = physical_devices
 		.iter()
-		.position(|pd| pd.properties().device_type == PhysicalDeviceType::IntegratedGpu);
+		.enumerate()
+		.filter(|(_, pd)| {
+			pd.queue_family_properties()
+				.iter()
+				.any(|qf| qf.queue_flags.contains(QueueFlags::GRAPHICS))
+		})
+		.find_map(|(i, pd)| (pd.properties().device_type == PhysicalDeviceType::IntegratedGpu).then_some(i));
+
+	// Prefer an integrated GPU if the "--prefer_igp" argument was provided. Otherwise, prefer a
+	// discrete GPU. If neither a dGPU nor an iGPU were found, use the first physical device with a
+	// graphics queue family.
 	let pd_i = std::env::args()
 		.find(|arg| arg == "--prefer_igp")
 		.and_then(|_| igpu_i.or(dgpu_i))
 		.or_else(|| dgpu_i.or(igpu_i))
-		.unwrap_or(0); // If neither a dGPU nor an iGPU were found, use the first physical device.
-	let physical_device = physical_devices.into_iter().nth(pd_i).ok_or("No GPUs were found!")?;
+		.or_else(|| {
+			physical_devices.iter().position(|pd| {
+				pd.queue_family_properties()
+					.iter()
+					.any(|qf| qf.queue_flags.contains(QueueFlags::GRAPHICS))
+			})
+		})
+		.ok_or("No GPUs with a graphics queue family were found!")?;
+	let physical_device = physical_devices.into_iter().nth(pd_i).unwrap();
 
 	let pd_api_ver = physical_device.properties().api_version;
 	log::info!("Using physical device {pd_i} (Vulkan {pd_api_ver})");
@@ -502,7 +525,7 @@ fn vulkan_setup(
 		.iter()
 		.zip(0..)
 		.find(|(q, _)| q.queue_flags.contains(QueueFlags::GRAPHICS))
-		.ok_or("No graphics queue family found!")?;
+		.unwrap();
 
 	// For transfers, try to find a queue family with the TRANSFER flag and least number of flags.
 	let (_, transfer_qfi) = queue_family_properties
