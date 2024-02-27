@@ -5,7 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
-use gltf::accessor::DataType;
+use gltf::accessor::{sparse::IndexType, DataType};
 use gltf::Semantic;
 use serde::Deserialize;
 use shipyard::{EntityId, UniqueView};
@@ -586,7 +586,7 @@ impl std::fmt::Display for BufferTypeMismatch
 
 /// Get a slice of the part of the buffer that the accessor points to. `dst_vec` will be extended
 /// with the data.
-fn get_buf_data<T: Copy + 'static>(
+fn get_buf_data<T: Copy + Default + 'static>(
 	accessor: &gltf::Accessor,
 	buffers: &[gltf::buffer::Data],
 	dst_vec: &mut Vec<T>,
@@ -605,26 +605,57 @@ fn get_buf_data<T: Copy + 'static>(
 		return Err(EngineError::new("failed to validate glTF buffer type", mismatch_error));
 	}
 
-	let view = accessor.view().ok_or("unexpected sparse accessor in glTF file")?;
-	let stride = view.stride().unwrap_or_else(|| accessor.size());
-	let buf = &buffers[view.buffer().index()];
-
 	dst_vec.reserve(accessor.count());
-	let mut element_start = view.offset();
-	for _ in 0..accessor.count() {
-		// The offset and count should've been validated by the glTF loader, so we use functions
-		// that may panic here.
-		let element_end = element_start + accessor.size();
-		let data_slice = &buf[element_start..element_end];
-		let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
+	if let Some(view) = accessor.view() {
+		let stride = view.stride().unwrap_or_else(|| accessor.size());
+		let buf = &buffers[view.buffer().index()];
 
-		if convert_u16_to_u32 {
-			dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| index as T));
-		} else {
-			dst_vec.extend_from_slice(reinterpreted_slice);
+		let mut element_start = view.offset();
+		for _ in 0..accessor.count() {
+			// The offset and count should've been validated by the glTF loader, so we use functions
+			// that may panic here.
+			let element_end = element_start + accessor.size();
+			let data_slice = &buf[element_start..element_end];
+			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
+
+			if convert_u16_to_u32 {
+				dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| index as T));
+			} else {
+				dst_vec.extend_from_slice(reinterpreted_slice);
+			}
+
+			element_start += stride;
 		}
+	} else {
+		let sparse = accessor.sparse().unwrap();
+		let indices_view = sparse.indices().view();
+		let indices_start = indices_view.offset();
+		let indices_end = indices_start + indices_view.length();
+		let indices_slice = &buffers[indices_view.buffer().index()][indices_start..indices_end];
 
-		element_start += stride;
+		let values_view = sparse.values().view();
+		let values_start = values_view.offset();
+		let values_end = values_start + values_view.length();
+		let values_slice = &buffers[values_view.buffer().index()][values_start..values_end];
+		let (_, reinterpreted_values, _) = unsafe { values_slice.align_to::<T>() };
+
+		let prev_dst_len = dst_vec.len();
+		dst_vec.resize_with(prev_dst_len + accessor.count(), T::default);
+
+		for sparse_i in 0..sparse.count() {
+			let index: usize = match sparse.indices().index_type() {
+				IndexType::U8 => indices_slice[sparse_i] as usize,
+				IndexType::U16 => {
+					let (_, reinterpreted_indices, _) = unsafe { indices_slice.align_to::<u16>() };
+					reinterpreted_indices[sparse_i] as usize
+				}
+				IndexType::U32 => {
+					let (_, reinterpreted_indices, _) = unsafe { indices_slice.align_to::<u32>() };
+					reinterpreted_indices[sparse_i] as usize
+				}
+			};
+			dst_vec[prev_dst_len + index] = reinterpreted_values[sparse_i];
+		}
 	}
 
 	Ok(())
