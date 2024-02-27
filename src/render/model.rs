@@ -368,12 +368,10 @@ fn load_gltf_meshes(
 
 		match indices_accessor.data_type() {
 			DataType::U16 => {
-				let slice_u16: &[u16] = get_buf_data(&indices_accessor, data_buffers)?;
 				if !indices_u32.is_empty() {
-					// convert the indices to u32 if mixed with u32 indices
-					indices_u32.extend(slice_u16.iter().copied().map(|index| index as u32));
+					get_buf_data(&indices_accessor, data_buffers, &mut indices_u32, true)?;
 				} else {
-					indices_u16.extend_from_slice(slice_u16);
+					get_buf_data(&indices_accessor, data_buffers, &mut indices_u16, false)?;
 				}
 			}
 			DataType::U32 => {
@@ -382,14 +380,14 @@ fn load_gltf_meshes(
 					indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
 					indices_u16 = Vec::new(); // free some memory
 				}
-				indices_u32.extend_from_slice(get_buf_data(&indices_accessor, data_buffers)?);
+				get_buf_data(&indices_accessor, data_buffers, &mut indices_u32, false)?;
 			}
 			_ => unreachable!(),
 		};
 
-		positions.extend_from_slice(get_buf_data(&positions_accessor, data_buffers)?);
-		texcoords.extend_from_slice(get_buf_data(&texcoords_accessor, data_buffers)?);
-		normals.extend_from_slice(get_buf_data(&normals_accessor, data_buffers)?);
+		get_buf_data(&positions_accessor, data_buffers, &mut positions, false)?;
+		get_buf_data(&texcoords_accessor, data_buffers, &mut texcoords, false)?;
+		get_buf_data(&normals_accessor, data_buffers, &mut normals, false)?;
 	}
 
 	// Combine the vertex data into a single buffer, then split it into subbuffers for different
@@ -586,10 +584,20 @@ impl std::fmt::Display for BufferTypeMismatch
 	}
 }
 
-/// Get a slice of the part of the buffer that the accessor points to.
-fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a [gltf::buffer::Data]) -> crate::Result<&'a [T]>
+/// Get a slice of the part of the buffer that the accessor points to. `dst_vec` will be extended
+/// with the data.
+fn get_buf_data<T: Copy + 'static>(
+	accessor: &gltf::Accessor,
+	buffers: &[gltf::buffer::Data],
+	dst_vec: &mut Vec<T>,
+	allow_conversion: bool,
+) -> crate::Result<()>
 {
-	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
+	// convert `u16` to `u32` if `dst_vec` has `u32` data but the accessor has `u16` data
+	let convert_u16_to_u32 =
+		TypeId::of::<T>() == data_type_to_id(DataType::U32) && accessor.data_type() == DataType::U16 && allow_conversion;
+
+	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) && !convert_u16_to_u32 {
 		let mismatch_error = BufferTypeMismatch {
 			expected: accessor.data_type(),
 			got: std::any::type_name::<T>(),
@@ -601,14 +609,23 @@ fn get_buf_data<'a, T: 'static>(accessor: &gltf::Accessor, buffers: &'a [gltf::b
 	if view.stride().is_some() {
 		return Err("unexpected interleaved data in glTF file".into());
 	}
+
 	let start = view.offset();
 	let end = start + view.length();
 	let buf_i = view.buffer().index();
+
 	// The offset and length should've been validated by the glTF loader,
 	// hence why we use functions that may panic here.
 	let data_slice = &buffers[buf_i][start..end];
 	let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
-	Ok(reinterpreted_slice)
+
+	if convert_u16_to_u32 {
+		dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| index as T));
+	} else {
+		dst_vec.extend_from_slice(reinterpreted_slice);
+	}
+
+	Ok(())
 }
 
 struct ModelInstance
