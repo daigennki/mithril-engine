@@ -551,23 +551,11 @@ impl SubMesh
 	}
 }
 
-fn data_type_to_id(value: DataType) -> TypeId
-{
-	match value {
-		DataType::I8 => TypeId::of::<i8>(),
-		DataType::U8 => TypeId::of::<u8>(),
-		DataType::I16 => TypeId::of::<i16>(),
-		DataType::U16 => TypeId::of::<u16>(),
-		DataType::U32 => TypeId::of::<u32>(),
-		DataType::F32 => TypeId::of::<f32>(),
-	}
-}
-
 #[derive(Debug)]
 struct BufferTypeMismatch
 {
-	expected: DataType,
-	got: &'static str,
+	expected: &'static str,
+	got: DataType,
 }
 impl std::error::Error for BufferTypeMismatch
 {
@@ -580,22 +568,18 @@ impl std::fmt::Display for BufferTypeMismatch
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "expected '{:?}', but given glTF buffer has `{:?}", self.expected, self.got)
+		write!(f, "expected '{}', but given glTF buffer has `{:?}", self.expected, self.got)
 	}
 }
 
 /// Get a slice of the part of the buffer that the accessor points to. `dst_vec` will be extended
 /// with the data.
-fn get_buf_data<T: Copy + Default + 'static>(
-	accessor: &gltf::Accessor,
-	buffers: &[gltf::buffer::Data],
-	dst_vec: &mut Vec<T>,
-) -> crate::Result<()>
+fn get_buf_data(accessor: &gltf::Accessor, buffers: &[gltf::buffer::Data], dst_vec: &mut Vec<f32>) -> crate::Result<()>
 {
-	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
+	if accessor.data_type() != DataType::F32 {
 		let mismatch_error = BufferTypeMismatch {
-			expected: accessor.data_type(),
-			got: std::any::type_name::<T>(),
+			expected: std::any::type_name::<f32>(),
+			got: accessor.data_type(),
 		};
 		return Err(EngineError::new("failed to validate glTF buffer type", mismatch_error));
 	}
@@ -611,7 +595,7 @@ fn get_buf_data<T: Copy + Default + 'static>(
 			// that may panic here.
 			let element_end = element_start + accessor.size();
 			let data_slice = &buf[element_start..element_end];
-			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
+			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<f32>() };
 			dst_vec.extend_from_slice(reinterpreted_slice);
 
 			element_start += stride;
@@ -627,10 +611,10 @@ fn get_buf_data<T: Copy + Default + 'static>(
 		let values_start = values_view.offset();
 		let values_end = values_start + values_view.length();
 		let values_slice = &buffers[values_view.buffer().index()][values_start..values_end];
-		let (_, reinterpreted_values, _) = unsafe { values_slice.align_to::<T>() };
+		let (_, reinterpreted_values, _) = unsafe { values_slice.align_to::<f32>() };
 
 		let prev_dst_len = dst_vec.len();
-		dst_vec.resize_with(prev_dst_len + accessor.count(), T::default);
+		dst_vec.resize_with(prev_dst_len + accessor.count(), f32::default);
 
 		for sparse_i in 0..sparse.count() {
 			let index: usize = match sparse.indices().index_type() {
@@ -651,6 +635,18 @@ fn get_buf_data<T: Copy + Default + 'static>(
 	Ok(())
 }
 
+fn data_type_to_id(value: DataType) -> TypeId
+{
+	match value {
+		DataType::I8 => TypeId::of::<i8>(),
+		DataType::U8 => TypeId::of::<u8>(),
+		DataType::I16 => TypeId::of::<i16>(),
+		DataType::U16 => TypeId::of::<u16>(),
+		DataType::U32 => TypeId::of::<u32>(),
+		DataType::F32 => TypeId::of::<f32>(),
+	}
+}
+
 /// Like `get_buf_data`, but made specifically for index buffers.
 fn get_index_buf_data<T: Copy + From<u16> + 'static>(
 	accessor: &gltf::Accessor,
@@ -658,8 +654,6 @@ fn get_index_buf_data<T: Copy + From<u16> + 'static>(
 	dst_vec: &mut Vec<T>,
 ) -> crate::Result<()>
 {
-	let convert_to_u32 = TypeId::of::<T>() == data_type_to_id(DataType::U32) && accessor.data_type() == DataType::U16;
-
 	// We already checked that the indices accessor is either u16 or u32, so we don't need to check it here.
 
 	let view = accessor
@@ -675,7 +669,7 @@ fn get_index_buf_data<T: Copy + From<u16> + 'static>(
 		let element_end = element_start + accessor.size();
 		let data_slice = &buf[element_start..element_end];
 
-		if convert_to_u32 {
+		if TypeId::of::<T>() == data_type_to_id(DataType::U32) && accessor.data_type() == DataType::U16 {
 			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<u16>() };
 			dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| T::from(index)));
 		} else {
