@@ -335,8 +335,8 @@ impl Canvas
 		];
 		let quad_vbo = render_ctx.new_buffer(&quad_verts, BufferUsage::VERTEX_BUFFER)?;
 
-		let font_data = include_bytes!("../../resource/mplus-1m-medium.ttf");
-		let default_font = Font::try_from_bytes(font_data as &[u8]).ok_or("Font has invalid data")?;
+		const DEFAULT_FONT_BYTES: &[u8] = include_bytes!("../../resource/mplus-1m-medium.ttf");
+		let default_font = Font::try_from_bytes(DEFAULT_FONT_BYTES).unwrap();
 
 		let dim = render_ctx.window_dimensions();
 

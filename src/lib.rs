@@ -371,6 +371,16 @@ impl From<render::TextureLoadingError> for EngineError
 		}
 	}
 }
+impl From<render::TransferTooBig> for EngineError
+{
+	fn from(error: render::TransferTooBig) -> Self
+	{
+		Self {
+			source: Some(Box::new(error)),
+			context: "buffer/image transfer is too big",
+		}
+	}
+}
 impl From<shipyard::error::RunWorkload> for EngineError
 {
 	fn from(error: shipyard::error::RunWorkload) -> Self

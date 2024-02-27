@@ -72,6 +72,7 @@ const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 3] = [
 	Format::D32_SFLOAT_S8_UINT,
 ];
 
+/// The arena size for buffer/image transfers. A single transfer must be no larger than this.
 const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
 
 #[derive(shipyard::Unique)]
@@ -332,7 +333,7 @@ impl RenderContext
 		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
 		let transfer_layout = DeviceLayout::new(nonzero_size, alignment).unwrap();
 		if transfer_layout.size() > STAGING_ARENA_SIZE {
-			return Err("buffer or image is too big (it must be no larger than 32 MiB)".into());
+			return Err(TransferTooBig(transfer_layout.size()).into());
 		}
 
 		if let Some(pending_layout) = self.staging_layout {
@@ -551,6 +552,27 @@ impl RenderContext
 	pub fn delta(&self) -> std::time::Duration
 	{
 		self.window.delta()
+	}
+}
+
+#[derive(Debug)]
+pub struct TransferTooBig(DeviceSize);
+impl std::error::Error for TransferTooBig
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for TransferTooBig
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(
+			f,
+			"buffer/image transfers must be no larger than {} bytes, but the transfer is {} bytes",
+			STAGING_ARENA_SIZE, self.0,
+		)
 	}
 }
 
