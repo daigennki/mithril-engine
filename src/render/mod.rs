@@ -288,16 +288,16 @@ impl RenderContext
 	fn new_cubemap(&mut self, faces: [PathBuf; 6]) -> crate::Result<Arc<ImageView>>
 	{
 		let mut combined_data = Vec::<u8>::new();
-		let mut cube_fmt = None;
-		let mut cube_dim = None;
+		let mut cube_fmt_dim = None;
 		for face_path in faces {
 			let (face_fmt, face_dim, _, img_raw) = load_texture(&face_path)?;
 
-			if face_fmt != *cube_fmt.get_or_insert(face_fmt) {
-				return Err("Not all faces of a cubemap have the same format!".into());
-			}
-			if face_dim != *cube_dim.get_or_insert(face_dim) {
-				return Err("Not all faces of a cubemap have the same dimensions!".into());
+			if (face_fmt, face_dim) != *cube_fmt_dim.get_or_insert((face_fmt, face_dim)) {
+				return Err(CubemapFaceMismatch {
+					existing: *cube_fmt_dim.as_ref().unwrap(),
+					new_face: (face_fmt, face_dim),
+				}
+				.into());
 			}
 
 			let mip_size = get_mip_size(face_fmt, face_dim[0], face_dim[1]).try_into().unwrap();
@@ -307,10 +307,10 @@ impl RenderContext
 			combined_data.extend(&img_raw[..mip_size]);
 		}
 
-		let extent = cube_dim.unwrap();
+		let (format, extent) = cube_fmt_dim.unwrap();
 		let image_info = ImageCreateInfo {
 			flags: ImageCreateFlags::CUBE_COMPATIBLE,
-			format: cube_fmt.unwrap(),
+			format,
 			extent: [extent[0], extent[1], 1],
 			array_layers: 6,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
@@ -552,6 +552,31 @@ impl RenderContext
 	pub fn delta(&self) -> std::time::Duration
 	{
 		self.window.delta()
+	}
+}
+
+#[derive(Debug)]
+pub struct CubemapFaceMismatch
+{
+	existing: (Format, [u32; 2]),
+	new_face: (Format, [u32; 2]),
+}
+impl std::error::Error for CubemapFaceMismatch
+{
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
+	{
+		None
+	}
+}
+impl std::fmt::Display for CubemapFaceMismatch
+{
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
+	{
+		write!(
+			f,
+			"existing cubemap face has format and extent of {:?}, but attempted to add face with {:?}",
+			self.existing, self.new_face,
+		)
 	}
 }
 

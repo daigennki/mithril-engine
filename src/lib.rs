@@ -371,6 +371,16 @@ impl From<render::TextureLoadingError> for EngineError
 		}
 	}
 }
+impl From<render::CubemapFaceMismatch> for EngineError
+{
+	fn from(error: render::CubemapFaceMismatch) -> Self
+	{
+		Self {
+			source: Some(Box::new(error)),
+			context: "format or extent differs between cubemap faces",
+		}
+	}
+}
 impl From<render::TransferTooBig> for EngineError
 {
 	fn from(error: render::TransferTooBig) -> Self
