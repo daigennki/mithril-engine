@@ -369,25 +369,25 @@ fn load_gltf_meshes(
 		match indices_accessor.data_type() {
 			DataType::U16 => {
 				if !indices_u32.is_empty() {
-					get_buf_data(&indices_accessor, data_buffers, &mut indices_u32, true)?;
+					get_index_buf_data(&indices_accessor, data_buffers, &mut indices_u32)?;
 				} else {
-					get_buf_data(&indices_accessor, data_buffers, &mut indices_u16, false)?;
+					get_index_buf_data(&indices_accessor, data_buffers, &mut indices_u16)?;
 				}
 			}
 			DataType::U32 => {
 				if !indices_u16.is_empty() {
 					// convert existing indices to u32 if they're u16
 					indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
-					indices_u16 = Vec::new(); // free some memory
+					indices_u16.shrink_to_fit(); // free some memory
 				}
-				get_buf_data(&indices_accessor, data_buffers, &mut indices_u32, false)?;
+				get_index_buf_data(&indices_accessor, data_buffers, &mut indices_u32)?;
 			}
-			_ => unreachable!(),
+			_ => return Err("glTF indices data type is neither u16 nor u32".into()),
 		};
 
-		get_buf_data(&positions_accessor, data_buffers, &mut positions, false)?;
-		get_buf_data(&texcoords_accessor, data_buffers, &mut texcoords, false)?;
-		get_buf_data(&normals_accessor, data_buffers, &mut normals, false)?;
+		get_buf_data(&positions_accessor, data_buffers, &mut positions)?;
+		get_buf_data(&texcoords_accessor, data_buffers, &mut texcoords)?;
+		get_buf_data(&normals_accessor, data_buffers, &mut normals)?;
 	}
 
 	// Combine the vertex data into a single buffer, then split it into subbuffers for different
@@ -590,14 +590,9 @@ fn get_buf_data<T: Copy + Default + 'static>(
 	accessor: &gltf::Accessor,
 	buffers: &[gltf::buffer::Data],
 	dst_vec: &mut Vec<T>,
-	allow_conversion: bool,
 ) -> crate::Result<()>
 {
-	// convert `u16` to `u32` if `dst_vec` has `u32` data but the accessor has `u16` data
-	let convert_u16_to_u32 =
-		TypeId::of::<T>() == data_type_to_id(DataType::U32) && accessor.data_type() == DataType::U16 && allow_conversion;
-
-	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) && !convert_u16_to_u32 {
+	if TypeId::of::<T>() != data_type_to_id(accessor.data_type()) {
 		let mismatch_error = BufferTypeMismatch {
 			expected: accessor.data_type(),
 			got: std::any::type_name::<T>(),
@@ -617,12 +612,7 @@ fn get_buf_data<T: Copy + Default + 'static>(
 			let element_end = element_start + accessor.size();
 			let data_slice = &buf[element_start..element_end];
 			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
-
-			if convert_u16_to_u32 {
-				dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| index as T));
-			} else {
-				dst_vec.extend_from_slice(reinterpreted_slice);
-			}
+			dst_vec.extend_from_slice(reinterpreted_slice);
 
 			element_start += stride;
 		}
@@ -656,6 +646,44 @@ fn get_buf_data<T: Copy + Default + 'static>(
 			};
 			dst_vec[prev_dst_len + index] = reinterpreted_values[sparse_i];
 		}
+	}
+
+	Ok(())
+}
+
+/// Like `get_buf_data`, but made specifically for index buffers.
+fn get_index_buf_data<T: Copy + From<u16> + 'static>(
+	accessor: &gltf::Accessor,
+	buffers: &[gltf::buffer::Data],
+	dst_vec: &mut Vec<T>,
+) -> crate::Result<()>
+{
+	let convert_to_u32 = TypeId::of::<T>() == data_type_to_id(DataType::U32) && accessor.data_type() == DataType::U16;
+
+	// We already checked that the indices accessor is either u16 or u32, so we don't need to check it here.
+
+	let view = accessor
+		.view()
+		.ok_or("expected glTF index buffer without sparse binding, but got glTF buffer with sparse binding")?;
+	let stride = view.stride().unwrap_or_else(|| accessor.size());
+	let buf = &buffers[view.buffer().index()];
+
+	let mut element_start = view.offset();
+	for _ in 0..accessor.count() {
+		// The offset and count should've been validated by the glTF loader, so we use functions
+		// that may panic here.
+		let element_end = element_start + accessor.size();
+		let data_slice = &buf[element_start..element_end];
+
+		if convert_to_u32 {
+			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<u16>() };
+			dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| T::from(index)));
+		} else {
+			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
+			dst_vec.extend_from_slice(reinterpreted_slice);
+		}
+
+		element_start += stride;
 	}
 
 	Ok(())
