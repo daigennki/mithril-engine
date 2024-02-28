@@ -290,7 +290,7 @@ struct SubMesh
 }
 impl SubMesh
 {
-	fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> crate::Result<Self>
+	fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Self
 	{
 		// Get the material index for each material variant. If this glTF document doesn't have
 		// material variants, `mat_indices` will contain exactly one index, the material index
@@ -304,14 +304,14 @@ impl SubMesh
 			vec![primitive.material().index().unwrap_or(0)]
 		};
 
-		Ok(SubMesh {
+		SubMesh {
 			first_index,
 			index_count: primitive.indices().unwrap().count().try_into().unwrap(),
 			vertex_offset,
 			mat_indices,
 			corner_min: primitive.bounding_box().min.into(),
 			corner_max: primitive.bounding_box().max.into(),
-		})
+		}
 	}
 
 	/// Perform frustum culling. Returns `true` if visible.
@@ -392,8 +392,7 @@ fn load_gltf_meshes(
 	for prim in primitives {
 		let first_index = indices_u32.len().max(indices_u16.len()).try_into().unwrap();
 		let vertex_offset = (positions.len() / 3).try_into().unwrap();
-		let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
-		submeshes.push(submesh);
+		submeshes.push(SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset));
 
 		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
 		positions.extend(reader.read_positions().unwrap().flatten());
