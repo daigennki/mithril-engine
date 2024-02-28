@@ -5,11 +5,9 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
-use gltf::accessor::{sparse::IndexType, DataType};
-use gltf::Semantic;
+use gltf::mesh::util::ReadIndices;
 use serde::Deserialize;
 use shipyard::{EntityId, UniqueView};
-use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -338,26 +336,21 @@ fn load_gltf_meshes(
 		.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
 		.flatten();
 	for prim in primitives {
-		let positions_accessor = match prim.get(&Semantic::Positions) {
-			Some(accessor) => accessor,
+		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
+		let read_positions = match reader.read_positions() {
+			Some(read) => read,
 			None => continue,
 		};
-		let texcoords_accessor = match prim.get(&Semantic::TexCoords(0)) {
-			Some(accessor) => accessor,
+		let read_texcoords = match reader.read_tex_coords(0) {
+			Some(read) => read,
 			None => continue,
 		};
-		let normals_accessor = match prim.get(&Semantic::Normals) {
-			Some(accessor) => accessor,
+		let read_normals = match reader.read_normals() {
+			Some(read) => read,
 			None => continue,
 		};
-		let indices_accessor = match prim.indices() {
-			Some(accessor) => match accessor.data_type() {
-				DataType::U16 | DataType::U32 => accessor,
-				other => {
-					log::warn!("glTF primitive has invalid index buffer data type '{other:?}', skipping primitive...");
-					continue;
-				}
-			},
+		let read_indices = match reader.read_indices() {
+			Some(read) => read,
 			None => continue,
 		};
 
@@ -366,28 +359,33 @@ fn load_gltf_meshes(
 		let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
 		submeshes.push(submesh);
 
-		match indices_accessor.data_type() {
-			DataType::U16 => {
+		positions.extend(read_positions.flatten());
+		texcoords.extend(read_texcoords.into_f32().flatten());
+		normals.extend(read_normals.flatten());
+		match read_indices {
+			ReadIndices::U8(read_u8) => {
 				if !indices_u32.is_empty() {
-					get_index_buf_data(&indices_accessor, data_buffers, &mut indices_u32)?;
+					indices_u32.extend(read_u8.map(|index| index as u32));
 				} else {
-					get_index_buf_data(&indices_accessor, data_buffers, &mut indices_u16)?;
+					indices_u16.extend(read_u8.map(|index| index as u16));
 				}
 			}
-			DataType::U32 => {
+			ReadIndices::U16(read_u16) => {
+				if !indices_u32.is_empty() {
+					indices_u32.extend(read_u16.map(|index| index as u32));
+				} else {
+					indices_u16.extend(read_u16);
+				}
+			}
+			ReadIndices::U32(iter_u32) => {
 				if !indices_u16.is_empty() {
 					// convert existing indices to u32 if they're u16
 					indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
 					indices_u16.shrink_to_fit(); // free some memory
 				}
-				get_index_buf_data(&indices_accessor, data_buffers, &mut indices_u32)?;
+				indices_u32.extend(iter_u32);
 			}
-			_ => return Err("glTF indices data type is neither u16 nor u32".into()),
-		};
-
-		get_buf_data(&positions_accessor, data_buffers, &mut positions)?;
-		get_buf_data(&texcoords_accessor, data_buffers, &mut texcoords)?;
-		get_buf_data(&normals_accessor, data_buffers, &mut normals)?;
+		}
 	}
 
 	// Combine the vertex data into a single buffer, then split it into subbuffers for different
@@ -549,138 +547,6 @@ impl SubMesh
 		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
 		Ok(())
 	}
-}
-
-#[derive(Debug)]
-struct BufferTypeMismatch
-{
-	expected: &'static str,
-	got: DataType,
-}
-impl std::error::Error for BufferTypeMismatch
-{
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
-	{
-		None
-	}
-}
-impl std::fmt::Display for BufferTypeMismatch
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-	{
-		write!(f, "expected '{}', but given glTF buffer has `{:?}", self.expected, self.got)
-	}
-}
-
-/// Get a slice of the part of the buffer that the accessor points to. `dst_vec` will be extended
-/// with the data.
-fn get_buf_data(accessor: &gltf::Accessor, buffers: &[gltf::buffer::Data], dst_vec: &mut Vec<f32>) -> crate::Result<()>
-{
-	if accessor.data_type() != DataType::F32 {
-		let mismatch_error = BufferTypeMismatch {
-			expected: std::any::type_name::<f32>(),
-			got: accessor.data_type(),
-		};
-		return Err(EngineError::new("failed to validate glTF buffer type", mismatch_error));
-	}
-
-	dst_vec.reserve(accessor.count());
-	if let Some(view) = accessor.view() {
-		let stride = view.stride().unwrap_or_else(|| accessor.size());
-		let buf = &buffers[view.buffer().index()];
-
-		let mut element_start = view.offset();
-		for _ in 0..accessor.count() {
-			// The offset and count should've been validated by the glTF loader, so we use functions
-			// that may panic here.
-			let element_end = element_start + accessor.size();
-			let data_slice = &buf[element_start..element_end];
-			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<f32>() };
-			dst_vec.extend_from_slice(reinterpreted_slice);
-
-			element_start += stride;
-		}
-	} else {
-		let sparse = accessor.sparse().unwrap();
-		let indices_view = sparse.indices().view();
-		let indices_start = indices_view.offset();
-		let indices_end = indices_start + indices_view.length();
-		let indices_slice = &buffers[indices_view.buffer().index()][indices_start..indices_end];
-
-		let values_view = sparse.values().view();
-		let values_start = values_view.offset();
-		let values_end = values_start + values_view.length();
-		let values_slice = &buffers[values_view.buffer().index()][values_start..values_end];
-		let (_, reinterpreted_values, _) = unsafe { values_slice.align_to::<f32>() };
-
-		let prev_dst_len = dst_vec.len();
-		dst_vec.resize_with(prev_dst_len + accessor.count(), f32::default);
-
-		for sparse_i in 0..sparse.count() {
-			let index: usize = match sparse.indices().index_type() {
-				IndexType::U8 => indices_slice[sparse_i] as usize,
-				IndexType::U16 => {
-					let (_, reinterpreted_indices, _) = unsafe { indices_slice.align_to::<u16>() };
-					reinterpreted_indices[sparse_i] as usize
-				}
-				IndexType::U32 => {
-					let (_, reinterpreted_indices, _) = unsafe { indices_slice.align_to::<u32>() };
-					reinterpreted_indices[sparse_i] as usize
-				}
-			};
-			dst_vec[prev_dst_len + index] = reinterpreted_values[sparse_i];
-		}
-	}
-
-	Ok(())
-}
-
-fn data_type_to_id(value: DataType) -> TypeId
-{
-	match value {
-		DataType::I8 => TypeId::of::<i8>(),
-		DataType::U8 => TypeId::of::<u8>(),
-		DataType::I16 => TypeId::of::<i16>(),
-		DataType::U16 => TypeId::of::<u16>(),
-		DataType::U32 => TypeId::of::<u32>(),
-		DataType::F32 => TypeId::of::<f32>(),
-	}
-}
-
-/// Like `get_buf_data`, but made specifically for index buffers.
-fn get_index_buf_data<T: Copy + From<u16> + 'static>(
-	accessor: &gltf::Accessor,
-	buffers: &[gltf::buffer::Data],
-	dst_vec: &mut Vec<T>,
-) -> crate::Result<()>
-{
-	// We already checked that the indices accessor is either u16 or u32, so we don't need to check it here.
-
-	let view = accessor
-		.view()
-		.ok_or("expected glTF index buffer without sparse binding, but got glTF buffer with sparse binding")?;
-	let stride = view.stride().unwrap_or_else(|| accessor.size());
-	let buf = &buffers[view.buffer().index()];
-
-	let mut element_start = view.offset();
-	for _ in 0..accessor.count() {
-		// The offset and count should've been validated by the glTF loader, so we use functions
-		// that may panic here.
-		let element_end = element_start + accessor.size();
-		let data_slice = &buf[element_start..element_end];
-
-		if TypeId::of::<T>() == data_type_to_id(DataType::U32) && accessor.data_type() == DataType::U16 {
-			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<u16>() };
-			dst_vec.extend(reinterpreted_slice.iter().copied().map(|index| T::from(index)));
-		} else {
-			let (_, reinterpreted_slice, _) = unsafe { data_slice.align_to::<T>() };
-			dst_vec.extend_from_slice(reinterpreted_slice);
-		}
-
-		element_start += stride;
-	}
-
-	Ok(())
 }
 
 struct ModelInstance
