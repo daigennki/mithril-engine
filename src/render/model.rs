@@ -119,11 +119,7 @@ impl Model
 		let (vertex_subbuffers, index_buffer, submeshes) = load_gltf_meshes(render_ctx, &doc, &data_buffers)?;
 
 		let parent_folder = path.parent().unwrap();
-		let materials: Vec<_> = doc
-			.materials()
-			.map(|mat| load_gltf_material(&mat, parent_folder))
-			.collect::<Result<_, _>>()?;
-
+		let materials: Vec<_> = doc.materials().map(|mat| load_gltf_material(&mat, parent_folder)).collect();
 		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
 			render_ctx,
 			descriptor_set_allocator,
@@ -265,176 +261,6 @@ This model may be inefficient to draw, so consider joining the meshes."
 	}
 }
 
-#[derive(Deserialize)]
-struct MaterialExtras
-{
-	#[serde(default)]
-	external: bool,
-}
-
-fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> crate::Result<Box<dyn Material>>
-{
-	// Use an external material file if specified in the extras. This can be specified in Blender by
-	// giving a material a custom property called "external" with a boolean value of `true` (box is
-	// checked).
-	let external_mat = if let Some(extras) = mat.extras() {
-		let parse_result: Result<MaterialExtras, _> = serde_json::from_str(extras.get());
-		match parse_result {
-			Ok(parsed_extras) => parsed_extras
-				.external
-				.then(|| match mat.name() {
-					Some(name) => Some(name),
-					None => {
-						log::error!("a model wants an external material, but the glTF material has no name");
-						None
-					}
-				})
-				.flatten(),
-			Err(e) => {
-				log::error!("external materials unavailable because parsing glTF material extras failed: {e}");
-				None
-			}
-		}
-	} else {
-		None
-	};
-
-	if let Some(external_mat_name) = external_mat {
-		let mat_path = search_folder.join(external_mat_name).with_extension("yaml");
-
-		log::info!("Loading external material file '{}'...", mat_path.display());
-
-		let mat_file = File::open(&mat_path).map_err(|e| EngineError::new("failed to open material file", e))?;
-		serde_yaml::from_reader(mat_file).map_err(|e| EngineError::new("failed to parse material file", e))
-	} else {
-		let loaded_mat = PBR {
-			base_color: ColorInput::Color(mat.pbr_metallic_roughness().base_color_factor().into()),
-			transparent: mat.alpha_mode() == gltf::material::AlphaMode::Blend,
-		};
-		Ok(Box::new(loaded_mat))
-	}
-}
-
-// (vertex buffers, index buffer, submeshes)
-type LoadedMeshData = (Vec<Subbuffer<[f32]>>, IndexBufferVariant, Vec<SubMesh>);
-fn load_gltf_meshes(
-	render_ctx: &mut RenderContext,
-	doc: &gltf::Document,
-	data_buffers: &[gltf::buffer::Data],
-) -> crate::Result<LoadedMeshData>
-{
-	// Collect all of the vertex data into buffers shared by all submeshes to reduce the number of binds.
-	let mut submeshes = Vec::new();
-	let mut positions = Vec::new();
-	let mut texcoords = Vec::new();
-	let mut normals = Vec::new();
-	let mut indices_u16 = Vec::new();
-	let mut indices_u32 = Vec::new();
-
-	// skip the primitive if it doesn't have all the semantics we need
-	const REQUIRED_SEMANTICS: [Semantic; 3] = [Semantic::Positions, Semantic::Normals, Semantic::TexCoords(0)];
-
-	// Create submeshes from glTF "primitives".
-	let primitives = doc
-		.nodes()
-		.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-		.flatten()
-		.filter(|prim| REQUIRED_SEMANTICS.iter().all(|s| prim.get(s).is_some()) && prim.indices().is_some());
-	for prim in primitives {
-		let first_index = indices_u32.len().max(indices_u16.len()).try_into().unwrap();
-		let vertex_offset = (positions.len() / 3).try_into().unwrap();
-		let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
-		submeshes.push(submesh);
-
-		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
-		positions.extend(reader.read_positions().unwrap().flatten());
-		texcoords.extend(reader.read_tex_coords(0).unwrap().into_f32().flatten());
-		normals.extend(reader.read_normals().unwrap().flatten());
-		match reader.read_indices().unwrap() {
-			ReadIndices::U8(read_u8) => {
-				if !indices_u32.is_empty() {
-					indices_u32.extend(read_u8.map(|index| index as u32));
-				} else {
-					indices_u16.extend(read_u8.map(|index| index as u16));
-				}
-			}
-			ReadIndices::U16(read_u16) => {
-				if !indices_u32.is_empty() {
-					indices_u32.extend(read_u16.map(|index| index as u32));
-				} else {
-					indices_u16.extend(read_u16);
-				}
-			}
-			ReadIndices::U32(iter_u32) => {
-				if !indices_u16.is_empty() {
-					// convert existing indices to u32 if they're u16
-					indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
-					indices_u16.shrink_to_fit(); // free some memory
-				}
-				indices_u32.extend(iter_u32);
-			}
-		}
-	}
-
-	// Combine the vertex data into a single buffer, then split it into subbuffers for different
-	// types of vertex data.
-	let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
-	combined_data.append(&mut positions);
-	let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
-	combined_data.append(&mut texcoords);
-	let normals_offset: u64 = combined_data.len().try_into().unwrap();
-	combined_data.append(&mut normals);
-
-	let vertex_buffer = render_ctx.new_buffer(&combined_data, BufferUsage::VERTEX_BUFFER)?;
-	let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
-	let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
-	let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
-	let vertex_subbuffers = vec![vbo_positions, vbo_texcoords, vbo_normals];
-
-	let index_buffer = if !indices_u32.is_empty() {
-		IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, BufferUsage::INDEX_BUFFER)?)
-	} else {
-		IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, BufferUsage::INDEX_BUFFER)?)
-	};
-
-	Ok((vertex_subbuffers, index_buffer, submeshes))
-}
-
-fn descriptor_set_from_materials(
-	render_ctx: &mut RenderContext,
-	set_alloc: &StandardDescriptorSetAllocator,
-	set_layout: Arc<DescriptorSetLayout>,
-	parent_folder: &Path,
-	materials: &[Box<dyn Material>],
-) -> crate::Result<(Arc<PersistentDescriptorSet>, Vec<u32>)>
-{
-	// Get the image views for each material, and calculate the base index in the variable descriptor count.
-	let mut image_views = Vec::with_capacity(materials.len());
-	let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
-	let mut last_tex_index_stride = 0;
-	for mat in materials {
-		let mat_image_views: Vec<_> = mat
-			.get_shader_inputs()
-			.into_iter()
-			.map(|input| input.into_texture(parent_folder, render_ctx))
-			.collect::<Result<_, _>>()?;
-
-		let mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
-		last_tex_index_stride = mat_image_views.len().try_into().unwrap();
-
-		image_views.push(mat_image_views);
-		mat_tex_base_indices.push(mat_tex_base_index);
-	}
-
-	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
-	let write = WriteDescriptorSet::image_view_array(1, 0, image_views.into_iter().flatten());
-	let texture_count = write.elements().len();
-	log::debug!("texture count (variable descriptor count): {}", texture_count);
-	let textures_set = PersistentDescriptorSet::new_variable(set_alloc, set_layout, texture_count, [write], [])?;
-
-	Ok((textures_set, mat_tex_base_indices))
-}
-
 enum IndexBufferVariant
 {
 	U16(Subbuffer<[u16]>),
@@ -535,6 +361,165 @@ impl SubMesh
 		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
 		Ok(())
 	}
+}
+
+// (vertex buffers, index buffer, submeshes)
+type LoadedMeshData = (Vec<Subbuffer<[f32]>>, IndexBufferVariant, Vec<SubMesh>);
+fn load_gltf_meshes(
+	render_ctx: &mut RenderContext,
+	doc: &gltf::Document,
+	data_buffers: &[gltf::buffer::Data],
+) -> crate::Result<LoadedMeshData>
+{
+	// Collect all of the vertex data into buffers shared by all submeshes to reduce the number of binds.
+	let mut submeshes = Vec::new();
+	let mut positions = Vec::new();
+	let mut texcoords = Vec::new();
+	let mut normals = Vec::new();
+	let mut indices_u16 = Vec::new();
+	let mut indices_u32 = Vec::new();
+
+	// skip the primitive if it doesn't have all the semantics we need
+	const REQUIRED_SEMANTICS: [Semantic; 3] = [Semantic::Positions, Semantic::Normals, Semantic::TexCoords(0)];
+
+	// Create submeshes from glTF "primitives".
+	let primitives = doc
+		.nodes()
+		.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
+		.flatten()
+		.filter(|prim| REQUIRED_SEMANTICS.iter().all(|s| prim.get(s).is_some()) && prim.indices().is_some());
+	for prim in primitives {
+		let first_index = indices_u32.len().max(indices_u16.len()).try_into().unwrap();
+		let vertex_offset = (positions.len() / 3).try_into().unwrap();
+		let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
+		submeshes.push(submesh);
+
+		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
+		positions.extend(reader.read_positions().unwrap().flatten());
+		texcoords.extend(reader.read_tex_coords(0).unwrap().into_f32().flatten());
+		normals.extend(reader.read_normals().unwrap().flatten());
+		match reader.read_indices().unwrap() {
+			ReadIndices::U8(read_u8) => {
+				if !indices_u32.is_empty() {
+					indices_u32.extend(read_u8.map(|index| index as u32));
+				} else {
+					indices_u16.extend(read_u8.map(|index| index as u16));
+				}
+			}
+			ReadIndices::U16(read_u16) => {
+				if !indices_u32.is_empty() {
+					indices_u32.extend(read_u16.map(|index| index as u32));
+				} else {
+					indices_u16.extend(read_u16);
+				}
+			}
+			ReadIndices::U32(iter_u32) => {
+				if !indices_u16.is_empty() {
+					// convert existing indices to u32 if they're u16
+					indices_u32 = indices_u16.drain(..).map(|index| index as u32).collect();
+					indices_u16.shrink_to_fit(); // free some memory
+				}
+				indices_u32.extend(iter_u32);
+			}
+		}
+	}
+
+	// Combine the vertex data into a single buffer, then split it into subbuffers for different
+	// types of vertex data.
+	let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
+	combined_data.append(&mut positions);
+	let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
+	combined_data.append(&mut texcoords);
+	let normals_offset: u64 = combined_data.len().try_into().unwrap();
+	combined_data.append(&mut normals);
+
+	let vertex_buffer = render_ctx.new_buffer(&combined_data, BufferUsage::VERTEX_BUFFER)?;
+	let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
+	let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
+	let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
+	let vertex_subbuffers = vec![vbo_positions, vbo_texcoords, vbo_normals];
+
+	let index_buffer = if !indices_u32.is_empty() {
+		IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, BufferUsage::INDEX_BUFFER)?)
+	} else {
+		IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, BufferUsage::INDEX_BUFFER)?)
+	};
+
+	Ok((vertex_subbuffers, index_buffer, submeshes))
+}
+
+#[derive(Deserialize)]
+struct MaterialExtras
+{
+	#[serde(default)]
+	external: bool,
+}
+fn load_external_material(path: &Path) -> crate::Result<Box<dyn Material>>
+{
+	log::info!("Loading external material file '{}'...", path.display());
+	let mat_file = File::open(path).map_err(|e| EngineError::new("failed to open material file", e))?;
+	serde_yaml::from_reader(mat_file).map_err(|e| EngineError::new("failed to parse material file", e))
+}
+fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Box<dyn Material>
+{
+	// Use an external material file if specified in the extras. This can be specified in Blender by
+	// giving a material a custom property called "external" with a boolean value of `true` (box is
+	// checked).
+	if let Some(extras) = mat.extras() {
+		match serde_json::from_str(extras.get()) {
+			Ok(MaterialExtras { external: true }) => match mat.name() {
+				Some(name) => {
+					let mat_path = search_folder.join(name).with_extension("yaml");
+					match load_external_material(&mat_path) {
+						Ok(mat) => return mat,
+						Err(e) => log::error!("{e}"),
+					}
+				}
+				None => log::error!("a model wants an external material, but the glTF material has no name"),
+			},
+			Err(e) => log::error!("external materials unavailable because parsing glTF material extras failed: {e}"),
+			_ => (),
+		}
+	}
+
+	Box::new(PBR {
+		base_color: ColorInput::Color(mat.pbr_metallic_roughness().base_color_factor().into()),
+		transparent: mat.alpha_mode() == gltf::material::AlphaMode::Blend,
+	})
+}
+fn descriptor_set_from_materials(
+	render_ctx: &mut RenderContext,
+	set_alloc: &StandardDescriptorSetAllocator,
+	set_layout: Arc<DescriptorSetLayout>,
+	parent_folder: &Path,
+	materials: &[Box<dyn Material>],
+) -> crate::Result<(Arc<PersistentDescriptorSet>, Vec<u32>)>
+{
+	// Get the image views for each material, and calculate the base index in the variable descriptor count.
+	let mut image_views = Vec::with_capacity(materials.len());
+	let mut mat_tex_base_indices = Vec::with_capacity(materials.len());
+	let mut last_tex_index_stride = 0;
+	for mat in materials {
+		let mat_image_views: Vec<_> = mat
+			.get_shader_inputs()
+			.into_iter()
+			.map(|input| input.into_texture(parent_folder, render_ctx))
+			.collect::<Result<_, _>>()?;
+
+		let mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
+		last_tex_index_stride = mat_image_views.len().try_into().unwrap();
+
+		image_views.push(mat_image_views);
+		mat_tex_base_indices.push(mat_tex_base_index);
+	}
+
+	// Make a single write out of the image views of all of the materials, and create a single descriptor set.
+	let write = WriteDescriptorSet::image_view_array(1, 0, image_views.into_iter().flatten());
+	let texture_count = write.elements().len();
+	log::debug!("texture count (variable descriptor count): {}", texture_count);
+	let textures_set = PersistentDescriptorSet::new_variable(set_alloc, set_layout, texture_count, [write], [])?;
+
+	Ok((textures_set, mat_tex_base_indices))
 }
 
 struct ModelInstance
