@@ -6,6 +6,7 @@
 ----------------------------------------------------------------------------- */
 use glam::*;
 use gltf::mesh::util::ReadIndices;
+use gltf::Semantic;
 use serde::Deserialize;
 use shipyard::{EntityId, UniqueView};
 use std::collections::{BTreeMap, HashMap};
@@ -330,39 +331,26 @@ fn load_gltf_meshes(
 	let mut indices_u16 = Vec::new();
 	let mut indices_u32 = Vec::new();
 
+	// skip the primitive if it doesn't have all the semantics we need
+	const REQUIRED_SEMANTICS: [Semantic; 3] = [Semantic::Positions, Semantic::Normals, Semantic::TexCoords(0)];
+
 	// Create submeshes from glTF "primitives".
 	let primitives = doc
 		.nodes()
 		.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-		.flatten();
+		.flatten()
+		.filter(|prim| REQUIRED_SEMANTICS.iter().all(|s| prim.get(s).is_some()) && prim.indices().is_some());
 	for prim in primitives {
-		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
-		let read_positions = match reader.read_positions() {
-			Some(read) => read,
-			None => continue,
-		};
-		let read_texcoords = match reader.read_tex_coords(0) {
-			Some(read) => read,
-			None => continue,
-		};
-		let read_normals = match reader.read_normals() {
-			Some(read) => read,
-			None => continue,
-		};
-		let read_indices = match reader.read_indices() {
-			Some(read) => read,
-			None => continue,
-		};
-
 		let first_index = indices_u32.len().max(indices_u16.len()).try_into().unwrap();
 		let vertex_offset = (positions.len() / 3).try_into().unwrap();
 		let submesh = SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset)?;
 		submeshes.push(submesh);
 
-		positions.extend(read_positions.flatten());
-		texcoords.extend(read_texcoords.into_f32().flatten());
-		normals.extend(read_normals.flatten());
-		match read_indices {
+		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
+		positions.extend(reader.read_positions().unwrap().flatten());
+		texcoords.extend(reader.read_tex_coords(0).unwrap().into_f32().flatten());
+		normals.extend(reader.read_normals().unwrap().flatten());
+		match reader.read_indices().unwrap() {
 			ReadIndices::U8(read_u8) => {
 				if !indices_u32.is_empty() {
 					indices_u32.extend(read_u8.map(|index| index as u32));
