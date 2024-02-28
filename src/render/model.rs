@@ -42,6 +42,7 @@ use vulkano::pipeline::{
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
+use vulkano::DeviceSize;
 
 use super::lighting::LightManager;
 use super::RenderContext;
@@ -426,12 +427,9 @@ fn load_gltf_meshes(
 
 	// Combine the vertex data into a single buffer, then split it into subbuffers for different
 	// types of vertex data.
-	let mut combined_data = Vec::with_capacity(positions.len() + texcoords.len() + normals.len());
-	combined_data.append(&mut positions);
-	let texcoords_offset: u64 = combined_data.len().try_into().unwrap();
-	combined_data.append(&mut texcoords);
-	let normals_offset: u64 = combined_data.len().try_into().unwrap();
-	combined_data.append(&mut normals);
+	let texcoords_offset: DeviceSize = positions.len().try_into().unwrap();
+	let normals_offset = texcoords_offset + DeviceSize::try_from(texcoords.len()).unwrap();
+	let combined_data = [positions, texcoords, normals].concat();
 
 	let vertex_buffer = render_ctx.new_buffer(&combined_data, BufferUsage::VERTEX_BUFFER)?;
 	let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
