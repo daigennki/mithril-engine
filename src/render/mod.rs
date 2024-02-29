@@ -14,6 +14,7 @@ use ddsfile::DxgiFormat;
 use glam::*;
 use shipyard::{UniqueView, UniqueViewMut};
 use std::collections::HashMap;
+use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
@@ -264,7 +265,7 @@ impl RenderContext
 		}
 
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
-		let (format, extent, mip_levels, img_raw) = load_texture(path)?;
+		let (format, extent, mip_levels, img_raw) = load_texture(TextureSource::File(path))?;
 
 		let image_info = ImageCreateInfo {
 			format,
@@ -290,7 +291,7 @@ impl RenderContext
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt_dim = None;
 		for face_path in faces {
-			let (face_fmt, face_dim, _, img_raw) = load_texture(&face_path)?;
+			let (face_fmt, face_dim, _, img_raw) = load_texture(TextureSource::File(&face_path))?;
 
 			if (face_fmt, face_dim) != *cube_fmt_dim.get_or_insert((face_fmt, face_dim)) {
 				return Err(CubemapFaceMismatch {
@@ -789,14 +790,54 @@ impl StagingWork
 //
 /* Texture stuff */
 //
-fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), TextureLoadingError>
+pub enum TextureSource<'a>
 {
-	match path.extension().and_then(|ext| ext.to_str()) {
+	File(&'a Path),
+	EmbeddedDds(&'static [u8]),
+	EmbeddedImage(&'static [u8]),
+}
+impl<'a> TextureSource<'a>
+{
+	fn file_type(&'a self) -> Option<&'a str>
+	{
+		match self {
+			Self::File(path) => path.extension().and_then(|ext| ext.to_str()),
+			Self::EmbeddedDds(_) => Some("dds"),
+			_ => None,
+		}
+	}
+
+	fn open(&self) -> Result<BufReader<Box<dyn SeekRead>>, TextureLoadingError>
+	{
+		match self {
+			Self::File(path) => {
+				let file = std::fs::File::open(path)
+					.map_err(|e| TextureLoadingError::new(Some(path.to_path_buf()), TexLoadErrVariant::FileOpen(e)))?;
+				Ok(BufReader::new(Box::new(file)))
+			}
+			Self::EmbeddedDds(data) | Self::EmbeddedImage(data) => Ok(BufReader::new(Box::new(Cursor::new(*data)))),
+		}
+	}
+
+	fn path(&self) -> Option<PathBuf>
+	{
+		match self {
+			Self::File(path) => Some(path.to_path_buf()),
+			_ => None,
+		}
+	}
+}
+trait SeekRead: Seek + Read {}
+impl<T: Seek + Read> SeekRead for T {}
+
+fn load_texture(src: TextureSource) -> Result<(Format, [u32; 2], u32, Vec<u8>), TextureLoadingError>
+{
+	let reader = src.open()?;
+	let path = src.path();
+	match src.file_type() {
 		Some("dds") => {
-			let dds_file =
-				std::fs::File::open(path).map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::FileOpen(e)))?;
-			let dds =
-				ddsfile::Dds::read(dds_file).map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::DdsRead(e)))?;
+			let dds = ddsfile::Dds::read(reader)
+				.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::DdsRead(e)))?;
 
 			// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
 			// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
@@ -822,8 +863,7 @@ fn load_texture(path: &Path) -> Result<(Format, [u32; 2], u32, Vec<u8>), Texture
 		}
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
-			let img = image::io::Reader::open(path)
-				.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::FileOpen(e)))?
+			let img = image::io::Reader::new(reader)
 				.decode()
 				.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::ImageDecode(e)))?
 				.into_rgba8();
@@ -856,17 +896,14 @@ impl std::fmt::Display for TexLoadErrVariant
 #[derive(Debug)]
 pub struct TextureLoadingError
 {
-	file_path: PathBuf,
+	file_path: Option<PathBuf>,
 	error: TexLoadErrVariant,
 }
 impl TextureLoadingError
 {
-	fn new(path: &Path, error: TexLoadErrVariant) -> Self
+	fn new(file_path: Option<PathBuf>, error: TexLoadErrVariant) -> Self
 	{
-		Self {
-			file_path: path.to_path_buf(),
-			error,
-		}
+		Self { file_path, error }
 	}
 }
 impl std::error::Error for TextureLoadingError
@@ -880,7 +917,11 @@ impl std::fmt::Display for TextureLoadingError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		write!(f, "{}: {}", self.file_path.display(), self.error)
+		let print_path_str = self
+			.file_path
+			.as_ref()
+			.map_or("<embedded file>", |p| p.to_str().unwrap_or("<invalid UTF-8>"));
+		write!(f, "{}: {}", print_path_str, self.error)
 	}
 }
 
