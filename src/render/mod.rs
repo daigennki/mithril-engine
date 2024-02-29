@@ -106,6 +106,7 @@ pub struct RenderContext
 
 	// Loaded textures, with the key being the path relative to the current working directory.
 	textures: HashMap<PathBuf, Arc<ImageView>>,
+	error_texture: Option<Arc<ImageView>>, // fallback texture to use when errors occur in texture loading
 }
 impl RenderContext
 {
@@ -159,7 +160,7 @@ impl RenderContext
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
 
-		Ok(Self {
+		let mut new_self = Self {
 			window,
 			memory_allocator,
 			command_buffer_allocator,
@@ -178,7 +179,25 @@ impl RenderContext
 			color_set: None,
 			gamma_pipeline: create_gamma_pipeline(vk_dev.clone())?,
 			textures: HashMap::new(),
-		})
+			error_texture: None,
+		};
+
+		{
+			const ERROR_TEXTURE_BYTES: &[u8] = include_bytes!("error.dds");
+			let (format, extent, mip_levels, img_raw) =
+				load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap();
+			let image_info = ImageCreateInfo {
+				format,
+				extent: [extent[0], extent[1], 1],
+				mip_levels,
+				usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+				..Default::default()
+			};
+			let image = new_self.new_image(&img_raw, image_info)?;
+			new_self.error_texture = Some(ImageView::new_default(image)?);
+		}
+
+		Ok(new_self)
 	}
 
 	fn load_transparency(&mut self, material_textures_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
@@ -255,15 +274,8 @@ impl RenderContext
 		Ok(image)
 	}
 
-	/// Load an image file as a 2D texture into memory.
-	///
-	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
-	pub fn new_texture(&mut self, path: &Path) -> crate::Result<Arc<ImageView>>
+	fn new_texture_inner(&mut self, path: &Path) -> crate::Result<Arc<ImageView>>
 	{
-		if let Some(tex) = self.textures.get(path) {
-			return Ok(tex.clone());
-		}
-
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
 		let (format, extent, mip_levels, img_raw) = load_texture(TextureSource::File(path))?;
 
@@ -280,6 +292,24 @@ impl RenderContext
 		self.textures.insert(path.to_path_buf(), view.clone());
 
 		Ok(view)
+	}
+
+	/// Load an image file as a 2D texture into memory.
+	///
+	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
+	pub fn new_texture(&mut self, path: &Path) -> Arc<ImageView>
+	{
+		if let Some(tex) = self.textures.get(path) {
+			return tex.clone();
+		}
+
+		match self.new_texture_inner(path) {
+			Ok(view) => view,
+			Err(e) => {
+				log::error!("{e}");
+				self.error_texture.clone().unwrap()
+			}
+		}
 	}
 
 	/// Load six image files into a cubemap texture. `faces` is paths to textures of each face of the
@@ -864,6 +894,8 @@ fn load_texture(src: TextureSource) -> Result<(Format, [u32; 2], u32, Vec<u8>), 
 		_ => {
 			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
 			let img = image::io::Reader::new(reader)
+				.with_guessed_format()
+				.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::FileOpen(e)))?
 				.decode()
 				.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::ImageDecode(e)))?
 				.into_rgba8();

@@ -430,7 +430,7 @@ impl Canvas
 	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
-			let tex = render_ctx.new_texture(&mesh.image_path)?;
+			let tex = render_ctx.new_texture(&mesh.image_path);
 			let image_extent = tex.image().extent();
 			let image_dimensions = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
 			let resources = self.update_transform(self.set_layout.clone(), transform, tex, image_dimensions, None)?;
