@@ -129,8 +129,6 @@ impl Model
 			&materials,
 		)?;
 
-		// Collect material variants. If there are no material variants, only one material
-		// group will be set up in the end.
 		let material_variants: Vec<_> = doc
 			.variants()
 			.into_iter()
@@ -141,8 +139,8 @@ impl Model
 			log::debug!("no material variants in model");
 			if submeshes.len() > materials.len() {
 				log::warn!(
-					r"There are more meshes than materials in the model, even though there are no material variants!
-This model may be inefficient to draw, so consider joining the meshes."
+					"There are more meshes than materials in the model, even though there are no material variants! \
+					This model may be inefficient to draw, so consider joining the meshes."
 				);
 			}
 		} else {
@@ -174,7 +172,8 @@ This model may be inefficient to draw, so consider joining the meshes."
 		self.users.remove(&eid);
 	}
 
-	/// Draw this model for all visible users. Returns `Ok(true)` if any submeshes were drawn at all.
+	/// Draw this model's submeshes for all visible users. Returns `true` if any submeshes were
+	/// drawn at all.
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
@@ -183,11 +182,8 @@ This model may be inefficient to draw, so consider joining the meshes."
 		transparency_pass: bool,
 		shadow_pass: bool,
 		projview: &DMat4,
-	) -> crate::Result<bool>
+	) -> bool
 	{
-		// `bool` indicating if any submeshes for any users have been drawn, and as such, resources
-		// such as the material descriptor set and the vertex/index buffers have been bound.
-		//
 		// TODO: We should separately handle users with custom material variants after ones without
 		// custom material variants, so that the wrong descriptor set doesn't get bound.
 		let mut any_drawn = false;
@@ -222,7 +218,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 			// Don't even bother with binds if no submeshes are visible in this model instance.
 			if visible_submeshes.peek().is_some() {
 				if shadow_pass {
-					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32)?;
+					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32).unwrap();
 				} else {
 					let affine_mat_f32 = user.affine.matrix3.as_mat3();
 					let translation = user.affine.translation.as_vec3();
@@ -232,7 +228,7 @@ This model may be inefficient to draw, so consider joining the meshes."
 						model_y: affine_mat_f32.y_axis.extend(translation.y),
 						model_z: affine_mat_f32.z_axis.extend(translation.z),
 					};
-					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
+					cb.push_constants(pipeline_layout.clone(), 0, push_data).unwrap();
 				}
 
 				if !any_drawn {
@@ -240,25 +236,26 @@ This model may be inefficient to draw, so consider joining the meshes."
 						vec![self.vertex_subbuffers[0].clone()]
 					} else {
 						let set = self.textures_set.clone();
-						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?;
+						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)
+							.unwrap();
 						self.vertex_subbuffers.clone()
 					};
 
-					cb.bind_vertex_buffers(0, vbo)?;
-					self.index_buffer.bind(cb)?;
+					cb.bind_vertex_buffers(0, vbo).unwrap();
+					self.index_buffer.bind(cb);
 				}
 
 				for submesh in visible_submeshes {
 					let mat_index = submesh.mat_indices[user.material_variant];
 					let instance_index = self.mat_tex_base_indices[mat_index];
-					submesh.draw(cb, instance_index)?;
+					submesh.draw(cb, instance_index);
 				}
 
 				any_drawn = true;
 			}
 		}
 
-		Ok(any_drawn)
+		any_drawn
 	}
 }
 
@@ -269,13 +266,13 @@ enum IndexBufferVariant
 }
 impl IndexBufferVariant
 {
-	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>) -> crate::Result<()>
+	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
 	{
 		match self {
 			Self::U16(buf) => cb.bind_index_buffer(buf.clone()),
 			Self::U32(buf) => cb.bind_index_buffer(buf.clone()),
-		}?;
-		Ok(())
+		}
+		.unwrap();
 	}
 }
 
@@ -292,9 +289,8 @@ impl SubMesh
 {
 	fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Self
 	{
-		// Get the material index for each material variant. If this glTF document doesn't have
-		// material variants, `mat_indices` will contain exactly one index, the material index
-		// from the regular material.
+		// Get the material index for each material variant. If the glTF document has no material
+		// variants, `mat_indices` will contain only the material index of the regular material.
 		let mat_indices = if primitive.mappings().len() > 0 {
 			primitive
 				.mappings()
@@ -357,10 +353,10 @@ impl SubMesh
 		true
 	}
 
-	fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32) -> crate::Result<()>
+	fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
 	{
-		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)?;
-		Ok(())
+		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)
+			.unwrap();
 	}
 }
 
@@ -380,14 +376,13 @@ fn load_gltf_meshes(
 	let mut indices_u16 = Vec::new();
 	let mut indices_u32 = Vec::new();
 
-	// skip the primitive if it doesn't have all the semantics we need
+	// Skip the primitive if it doesn't have all the semantics we need.
 	const REQUIRED_SEMANTICS: [Semantic; 3] = [Semantic::Positions, Semantic::Normals, Semantic::TexCoords(0)];
 
 	// Create submeshes from glTF "primitives".
 	let primitives = doc
-		.nodes()
-		.filter_map(|node| node.mesh().map(|mesh| mesh.primitives()))
-		.flatten()
+		.meshes()
+		.flat_map(|mesh| mesh.primitives())
 		.filter(|prim| REQUIRED_SEMANTICS.iter().all(|s| prim.get(s).is_some()) && prim.indices().is_some());
 	for prim in primitives {
 		let first_index = indices_u32.len().max(indices_u16.len()).try_into().unwrap();
@@ -451,30 +446,28 @@ struct MaterialExtras
 	#[serde(default)]
 	external: bool,
 }
-fn load_external_material(path: &Path) -> crate::Result<Box<dyn Material>>
-{
-	log::info!("Loading external material file '{}'...", path.display());
-	let mat_file = File::open(path).map_err(|e| EngineError::new("failed to open material file", e))?;
-	serde_yaml::from_reader(mat_file).map_err(|e| EngineError::new("failed to parse material file", e))
-}
 fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Box<dyn Material>
 {
 	// Use an external material file if specified in the extras. This can be specified in Blender by
 	// giving a material a custom property called "external" with a boolean value of `true` (box is
-	// checked).
+	// checked). This will fall back to the embedded glTF material if this fails.
 	if let Some(extras) = mat.extras() {
 		match serde_json::from_str(extras.get()) {
 			Ok(MaterialExtras { external: true }) => match mat.name() {
 				Some(name) => {
 					let mat_path = search_folder.join(name).with_extension("yaml");
-					match load_external_material(&mat_path) {
-						Ok(mat) => return mat,
-						Err(e) => log::error!("{e}"),
+					log::info!("Loading external material file '{}'...", mat_path.display());
+					match File::open(&mat_path) {
+						Ok(file) => match serde_yaml::from_reader(file) {
+							Ok(mat) => return mat,
+							Err(e) => log::error!("failed to parse material file: {e}"),
+						},
+						Err(e) => log::error!("failed to open material file: {e}"),
 					}
 				}
 				None => log::error!("a model wants an external material, but the glTF material has no name"),
 			},
-			Err(e) => log::error!("external materials unavailable because parsing glTF material extras failed: {e}"),
+			Err(e) => log::error!("external material unavailable because parsing glTF material extras failed: {e}"),
 			_ => (),
 		}
 	}
@@ -797,7 +790,7 @@ impl MeshManager
 					transparency_pass,
 					shadow_pass,
 					&projview,
-				)? {
+				) {
 					any_drawn = true;
 				}
 			}

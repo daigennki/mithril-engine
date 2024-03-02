@@ -184,8 +184,7 @@ impl RenderContext
 
 		{
 			const ERROR_TEXTURE_BYTES: &[u8] = include_bytes!("error.dds");
-			let (format, extent, mip_levels, img_raw) =
-				load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap();
+			let (format, extent, mip_levels, img_raw) = load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap();
 			let image_info = ImageCreateInfo {
 				format,
 				extent: [extent[0], extent[1], 1],
