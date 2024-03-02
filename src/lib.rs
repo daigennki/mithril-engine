@@ -298,21 +298,28 @@ impl From<Box<ValidationError>> for EngineError
 		panic!("{error}");
 	}
 }
-impl From<Validated<VulkanError>> for EngineError
+impl<E: Into<Self>> From<Validated<E>> for EngineError
 {
-	fn from(error: Validated<VulkanError>) -> Self
+	fn from(error: Validated<E>) -> Self
+	{
+		error.unwrap().into()
+	}
+}
+impl From<VulkanError> for EngineError
+{
+	fn from(error: VulkanError) -> Self
 	{
 		Self {
-			source: Some(Box::new(error.unwrap())),
+			source: Some(Box::new(error)),
 			context: "a Vulkan error has occurred",
 		}
 	}
 }
-impl From<Validated<AllocateImageError>> for EngineError
+impl From<AllocateImageError> for EngineError
 {
-	fn from(error: Validated<AllocateImageError>) -> Self
+	fn from(error: AllocateImageError) -> Self
 	{
-		match error.unwrap() {
+		match error {
 			AllocateImageError::CreateImage(source) => Self {
 				context: "failed to create a Vulkan image",
 				source: Some(Box::new(source)),
@@ -328,11 +335,11 @@ impl From<Validated<AllocateImageError>> for EngineError
 		}
 	}
 }
-impl From<Validated<AllocateBufferError>> for EngineError
+impl From<AllocateBufferError> for EngineError
 {
-	fn from(error: Validated<AllocateBufferError>) -> Self
+	fn from(error: AllocateBufferError) -> Self
 	{
-		match error.unwrap() {
+		match error {
 			AllocateBufferError::CreateBuffer(source) => Self {
 				context: "failed to create a Vulkan buffer",
 				source: Some(Box::new(source)),
