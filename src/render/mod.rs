@@ -64,9 +64,8 @@ use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
 
-/// Main depth/stencil image formats, in order from most to least preferred. Vulkan spec (1.3 with
-/// registered extensions, chapter 49 table 82) says that at least one of `D24_UNORM_S8_UINT` or
-/// `D32_SFLOAT_S8_UINT` must be supported.
+/// Main depth/stencil image formats, in order from most to least preferred. Vulkan spec requires
+/// either `D24_UNORM_S8_UINT` or `D32_SFLOAT_S8_UINT` to be supported.
 const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 3] = [
 	Format::D24_UNORM_S8_UINT, // the most efficient in terms of overall performance, if available
 	Format::D16_UNORM_S8_UINT, // AMD only
@@ -75,6 +74,9 @@ const DEPTH_STENCIL_FORMAT_CANDIDATES: [Format; 3] = [
 
 /// The arena size for buffer/image transfers. A single transfer must be no larger than this.
 const STAGING_ARENA_SIZE: DeviceSize = 32 * 1024 * 1024;
+
+/// The embedded texture file used when other texture files couldn't be loaded.
+const ERROR_TEXTURE_BYTES: &[u8] = include_bytes!("error.dds");
 
 #[derive(shipyard::Unique)]
 pub struct RenderContext
@@ -183,7 +185,6 @@ impl RenderContext
 		};
 
 		{
-			const ERROR_TEXTURE_BYTES: &[u8] = include_bytes!("error.dds");
 			let (format, extent, mip_levels, img_raw) = load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap();
 			let image_info = ImageCreateInfo {
 				format,
@@ -273,10 +274,23 @@ impl RenderContext
 		Ok(image)
 	}
 
-	fn new_texture_inner(&mut self, path: &Path) -> crate::Result<Arc<ImageView>>
+	/// Load an image file as a 2D texture into memory.
+	///
+	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
+	pub fn new_texture(&mut self, path: &Path) -> crate::Result<Arc<ImageView>>
 	{
+		if let Some(tex) = self.textures.get(path) {
+			return Ok(tex.clone());
+		}
+
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
-		let (format, extent, mip_levels, img_raw) = load_texture(TextureSource::File(path))?;
+		let (format, extent, mip_levels, img_raw) = match load_texture(TextureSource::File(path)) {
+			Ok(view) => view,
+			Err(e) => {
+				log::error!("failed to load texture: {e}");
+				return Ok(self.error_texture.clone().unwrap())
+			}
+		};
 
 		let image_info = ImageCreateInfo {
 			format,
@@ -293,24 +307,6 @@ impl RenderContext
 		Ok(view)
 	}
 
-	/// Load an image file as a 2D texture into memory.
-	///
-	/// The results of this are cached; if the image was already loaded, it'll use the loaded texture.
-	pub fn new_texture(&mut self, path: &Path) -> Arc<ImageView>
-	{
-		if let Some(tex) = self.textures.get(path) {
-			return tex.clone();
-		}
-
-		match self.new_texture_inner(path) {
-			Ok(view) => view,
-			Err(e) => {
-				log::error!("{e}");
-				self.error_texture.clone().unwrap()
-			}
-		}
-	}
-
 	/// Load six image files into a cubemap texture. `faces` is paths to textures of each face of the
 	/// cubemap, in order of +X, -X, +Y, -Y, +Z, -Z.
 	///
@@ -320,7 +316,13 @@ impl RenderContext
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt_dim = None;
 		for face_path in faces {
-			let (face_fmt, face_dim, _, img_raw) = load_texture(TextureSource::File(&face_path))?;
+			let (face_fmt, face_dim, _, img_raw) = match load_texture(TextureSource::File(&face_path)) {
+				Ok(ok) => ok,
+				Err(e) => {
+					log::error!("failed to load cubemap face texture file: {e}");
+					load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap()
+				}
+			};
 
 			if (face_fmt, face_dim) != *cube_fmt_dim.get_or_insert((face_fmt, face_dim)) {
 				return Err(CubemapFaceMismatch {
@@ -916,7 +918,7 @@ impl std::fmt::Display for TexLoadErrVariant
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
 		match self {
-			Self::FileOpen(e) => write!(f, "failed to open: {e}"),
+			Self::FileOpen(e) => write!(f, "failed to open texture file: {e}"),
 			Self::DdsRead(e) => write!(f, "failed to read DDS file: {e}"),
 			Self::DdsFormat(e) => write!(f, "failed to validate DDS format: {e}"),
 			Self::ImageDecode(e) => write!(f, "failed to decode: {e}"),
@@ -925,7 +927,7 @@ impl std::fmt::Display for TexLoadErrVariant
 }
 
 #[derive(Debug)]
-pub struct TextureLoadingError
+struct TextureLoadingError
 {
 	file_path: Option<PathBuf>,
 	error: TexLoadErrVariant,

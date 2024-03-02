@@ -361,16 +361,6 @@ impl From<MemoryAllocatorError> for EngineError
 		}
 	}
 }
-impl From<render::TextureLoadingError> for EngineError
-{
-	fn from(error: render::TextureLoadingError) -> Self
-	{
-		Self {
-			source: Some(Box::new(error)),
-			context: "failed to load texture",
-		}
-	}
-}
 impl From<render::CubemapFaceMismatch> for EngineError
 {
 	fn from(error: render::CubemapFaceMismatch) -> Self
