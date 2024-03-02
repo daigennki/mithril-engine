@@ -324,9 +324,12 @@ impl From<AllocateImageError> for EngineError
 				context: "failed to create a Vulkan image",
 				source: Some(Box::new(source)),
 			},
-			AllocateImageError::AllocateMemory(source) => Self {
+			AllocateImageError::AllocateMemory(mem_alloc_error) => Self {
 				context: "failed to allocate memory for a Vulkan image",
-				..source.into()
+				source: Some(match mem_alloc_error {
+					MemoryAllocatorError::AllocateDeviceMemory(inner) => Box::new(inner.unwrap()),
+					other => Box::new(other),
+				}),
 			},
 			AllocateImageError::BindMemory(source) => Self {
 				context: "failed to bind memory to a Vulkan image",
@@ -344,29 +347,17 @@ impl From<AllocateBufferError> for EngineError
 				context: "failed to create a Vulkan buffer",
 				source: Some(Box::new(source)),
 			},
-			AllocateBufferError::AllocateMemory(source) => Self {
+			AllocateBufferError::AllocateMemory(mem_alloc_error) => Self {
 				context: "failed to allocate memory for a Vulkan buffer",
-				..source.into()
+				source: Some(match mem_alloc_error {
+					MemoryAllocatorError::AllocateDeviceMemory(inner) => Box::new(inner.unwrap()),
+					other => Box::new(other),
+				}),
 			},
 			AllocateBufferError::BindMemory(source) => Self {
 				context: "failed to bind memory to a Vulkan buffer",
 				source: Some(Box::new(source)),
 			},
-		}
-	}
-}
-impl From<MemoryAllocatorError> for EngineError
-{
-	fn from(error: MemoryAllocatorError) -> Self
-	{
-		let source: Box<dyn Error + Send + Sync + 'static> = match error {
-			MemoryAllocatorError::AllocateDeviceMemory(inner) => Box::new(inner.unwrap()),
-			other => Box::new(other),
-		};
-
-		Self {
-			source: Some(source),
-			context: "Vulkan memory allocation failed",
 		}
 	}
 }
