@@ -432,8 +432,7 @@ fn get_physical_device(
 		..Default::default()
 	};
 
-	let physical_devices: smallvec::SmallVec<[_; 4]> = Instance::new(lib, inst_create_info)
-		.map_err(|e| EngineError::new("failed to create Vulkan instance", e.unwrap()))?
+	let physical_devices: smallvec::SmallVec<[_; 4]> = Instance::new(lib, inst_create_info)?
 		.enumerate_physical_devices()
 		.map_err(|e| EngineError::new("failed to enumerate physical devices", e))?
 		.collect();

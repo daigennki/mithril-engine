@@ -225,7 +225,9 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			world.run_workload("update").unwrap();
 			world.run_workload("physics").unwrap();
 			world.run_workload("late_update").unwrap();
-			world.run_workload("render")?;
+			if let Err(e) = world.run_workload("render") {
+				return Err(EngineError::new("failed to run workload", e));
+			}
 		}
 		_ => (),
 	}
@@ -358,36 +360,6 @@ impl From<MemoryAllocatorError> for EngineError
 		Self {
 			source: Some(source),
 			context: "Vulkan memory allocation failed",
-		}
-	}
-}
-impl From<render::CubemapFaceMismatch> for EngineError
-{
-	fn from(error: render::CubemapFaceMismatch) -> Self
-	{
-		Self {
-			source: Some(Box::new(error)),
-			context: "format or extent differs between cubemap faces",
-		}
-	}
-}
-impl From<render::TransferTooBig> for EngineError
-{
-	fn from(error: render::TransferTooBig) -> Self
-	{
-		Self {
-			source: Some(Box::new(error)),
-			context: "buffer/image transfer is too big",
-		}
-	}
-}
-impl From<shipyard::error::RunWorkload> for EngineError
-{
-	fn from(error: shipyard::error::RunWorkload) -> Self
-	{
-		Self {
-			source: Some(Box::new(error)),
-			context: "failed to run workload",
 		}
 	}
 }

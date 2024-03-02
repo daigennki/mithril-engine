@@ -60,6 +60,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::EventLoop;
 
 use crate::component::camera::CameraManager;
+use crate::EngineError;
 use lighting::LightManager;
 use model::MeshManager;
 use ui::Canvas;
@@ -288,7 +289,7 @@ impl RenderContext
 			Ok(view) => view,
 			Err(e) => {
 				log::error!("failed to load texture: {e}");
-				return Ok(self.error_texture.clone().unwrap())
+				return Ok(self.error_texture.clone().unwrap());
 			}
 		};
 
@@ -325,11 +326,13 @@ impl RenderContext
 			};
 
 			if (face_fmt, face_dim) != *cube_fmt_dim.get_or_insert((face_fmt, face_dim)) {
-				return Err(CubemapFaceMismatch {
-					existing: *cube_fmt_dim.as_ref().unwrap(),
-					new_face: (face_fmt, face_dim),
-				}
-				.into());
+				return Err(EngineError::new(
+					"format or extent differs between cubemap faces",
+					CubemapFaceMismatch {
+						existing: *cube_fmt_dim.as_ref().unwrap(),
+						new_face: (face_fmt, face_dim),
+					},
+				));
 			}
 
 			let mip_size = get_mip_size(face_fmt, face_dim[0], face_dim[1]).try_into().unwrap();
@@ -365,7 +368,10 @@ impl RenderContext
 		let nonzero_size = data_size_bytes.try_into().expect("`data` for transfer is empty");
 		let transfer_layout = DeviceLayout::new(nonzero_size, alignment).unwrap();
 		if transfer_layout.size() > STAGING_ARENA_SIZE {
-			return Err(TransferTooBig(transfer_layout.size()).into());
+			return Err(EngineError::new(
+				"buffer/image transfer is too big",
+				TransferTooBig(transfer_layout.size()),
+			));
 		}
 
 		if let Some(pending_layout) = self.staging_layout {
@@ -588,7 +594,7 @@ impl RenderContext
 }
 
 #[derive(Debug)]
-pub struct CubemapFaceMismatch
+struct CubemapFaceMismatch
 {
 	existing: (Format, [u32; 2]),
 	new_face: (Format, [u32; 2]),
@@ -613,7 +619,7 @@ impl std::fmt::Display for CubemapFaceMismatch
 }
 
 #[derive(Debug)]
-pub struct TransferTooBig(DeviceSize);
+struct TransferTooBig(DeviceSize);
 impl std::error::Error for TransferTooBig
 {
 	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
