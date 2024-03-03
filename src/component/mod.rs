@@ -12,7 +12,7 @@ pub mod ui;
 
 use glam::*;
 use serde::Deserialize;
-use shipyard::{IntoIter, IntoWorkloadSystem, ViewMut, WorkloadSystem};
+use shipyard::{EntityId, IntoIter, IntoWorkloadSystem, ViewMut, WorkloadSystem, World};
 
 use crate::SystemBundle;
 use mithrilengine_derive::EntityComponent;
@@ -69,11 +69,7 @@ pub trait EntityComponent: ComponentSystems + Send + Sync
 {
 	/// Allows a deserialized component to add itself to the world, so that it can be deserialized
 	/// as `Box<dyn EntityComponent>` but still keep its concrete type in the world.
-	fn add_to_entity(self: Box<Self>, world: &mut shipyard::World, eid: shipyard::EntityId);
-
-	fn type_id(&self) -> std::any::TypeId;
-
-	fn type_name(&self) -> &'static str;
+	fn add_to_entity(self: Box<Self>, world: &mut World, eid: EntityId);
 }
 
 /// The trait that allows components to return systems relevant to themselves. Every

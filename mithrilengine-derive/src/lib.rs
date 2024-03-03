@@ -14,18 +14,7 @@ pub fn derive_entity_component(input: TokenStream) -> TokenStream
 			{
 				world.add_component(eid, (*self,));
 			}
-
-			fn type_id(&self) -> std::any::TypeId
-			{
-				std::any::TypeId::of::<Self>()
-			}
-
-			fn type_name(&self) -> &'static str
-			{
-				stringify!(#ident)
-			}
 		}
-
 		inventory::submit! {
 			SystemBundle {
 				component_name: stringify!(#ident),
