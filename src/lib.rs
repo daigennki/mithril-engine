@@ -78,7 +78,7 @@ pub fn run_game(org_name: &str, app_name: &str, start_map: &str, app_version: Ve
 	CombinedLogger::init(loggers).unwrap();
 
 	if let Err(e) = run_game_inner(org_name, app_name, start_map, app_version) {
-		log_error(e);
+		log_error(e.as_ref());
 	}
 }
 fn run_game_inner(
@@ -100,7 +100,7 @@ fn run_game_inner(
 		Ok(true) => window_target.exit(),
 		Ok(false) => (),
 		Err(e) => {
-			log_error(Box::new(e));
+			log_error(&e);
 			window_target.exit();
 		}
 	})?;
@@ -209,7 +209,7 @@ impl MapData
 }
 
 // returns true if the application should exit
-fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
+fn handle_event(world: &mut World, event: &mut Event<()>) -> std::result::Result<bool, shipyard::error::RunWorkload>
 {
 	world.run(|mut wrapper: UniqueViewMut<InputHelperWrapper>| wrapper.0.update(event));
 
@@ -222,12 +222,10 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 			world.run(|mut r_ctx: UniqueViewMut<RenderContext>| r_ctx.handle_window_event(window_event));
 		}
 		Event::AboutToWait => {
-			world.run_workload("update").unwrap();
-			world.run_workload("physics").unwrap();
-			world.run_workload("late_update").unwrap();
-			if let Err(e) = world.run_workload("render") {
-				return Err(EngineError::new("failed to run workload", e));
-			}
+			world.run_workload("update")?;
+			world.run_workload("physics")?;
+			world.run_workload("late_update")?;
+			world.run_workload("render")?;
 		}
 		_ => (),
 	}
@@ -235,7 +233,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> crate::Result<bool>
 	Ok(false)
 }
 
-fn log_error(e: Box<dyn Error>)
+fn log_error(e: &dyn Error)
 {
 	log::debug!("error debug: {e:#?}");
 	log::error!("{e}");
