@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use vulkano::buffer::{BufferUsage, Subbuffer};
+use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
@@ -78,7 +78,7 @@ struct Model
 	material_variants: Vec<String>,
 	submeshes: Vec<SubMesh>,
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
-	index_buffer: IndexBufferVariant,
+	index_buffer: IndexBuffer,
 
 	// Image views for all materials used by all material variants the glTF document comes with.
 	// Uses variable descriptor count.
@@ -229,7 +229,7 @@ impl Model
 					};
 
 					cb.bind_vertex_buffers(0, vbo).unwrap();
-					self.index_buffer.bind(cb);
+					cb.bind_index_buffer(self.index_buffer.clone()).unwrap();
 				}
 
 				for submesh in visible_submeshes {
@@ -243,23 +243,6 @@ impl Model
 		}
 
 		any_drawn
-	}
-}
-
-enum IndexBufferVariant
-{
-	U16(Subbuffer<[u16]>),
-	U32(Subbuffer<[u32]>),
-}
-impl IndexBufferVariant
-{
-	pub fn bind(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>)
-	{
-		match self {
-			Self::U16(buf) => cb.bind_index_buffer(buf.clone()),
-			Self::U32(buf) => cb.bind_index_buffer(buf.clone()),
-		}
-		.unwrap();
 	}
 }
 
@@ -348,7 +331,7 @@ impl SubMesh
 }
 
 // (vertex buffers, index buffer, submeshes)
-type LoadedMeshData = (Vec<Subbuffer<[f32]>>, IndexBufferVariant, Vec<SubMesh>);
+type LoadedMeshData = (Vec<Subbuffer<[f32]>>, IndexBuffer, Vec<SubMesh>);
 fn load_gltf_meshes(
 	render_ctx: &mut RenderContext,
 	doc: &gltf::Document,
@@ -419,9 +402,9 @@ fn load_gltf_meshes(
 	let vertex_subbuffers = vec![vbo_positions, vbo_texcoords, vbo_normals];
 
 	let index_buffer = if !indices_u32.is_empty() {
-		IndexBufferVariant::U32(render_ctx.new_buffer(&indices_u32, BufferUsage::INDEX_BUFFER)?)
+		IndexBuffer::U32(render_ctx.new_buffer(&indices_u32, BufferUsage::INDEX_BUFFER)?)
 	} else {
-		IndexBufferVariant::U16(render_ctx.new_buffer(&indices_u16, BufferUsage::INDEX_BUFFER)?)
+		IndexBuffer::U16(render_ctx.new_buffer(&indices_u16, BufferUsage::INDEX_BUFFER)?)
 	};
 
 	Ok((vertex_subbuffers, index_buffer, submeshes))
