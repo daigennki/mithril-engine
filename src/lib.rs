@@ -243,10 +243,14 @@ fn log_error(e: &dyn Error)
 }
 
 #[derive(Debug)]
-pub struct EngineError
+pub enum EngineError
 {
-	source: Option<Box<dyn Error + Send + Sync + 'static>>,
-	context: &'static str,
+	SourceContext
+	{
+		source: Box<dyn Error + Send + Sync + 'static>,
+		context: &'static str,
+	},
+	WrapError(Box<dyn Error + Send + Sync + 'static>),
 }
 impl EngineError
 {
@@ -254,8 +258,8 @@ impl EngineError
 	where
 		E: Error + Send + Sync + 'static,
 	{
-		Self {
-			source: Some(Box::new(error)),
+		Self::SourceContext {
+			source: Box::new(error),
 			context,
 		}
 	}
@@ -264,9 +268,12 @@ impl std::fmt::Display for EngineError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		match &self.source {
-			Some(e) => write!(f, "{}: {}", self.context, e),
-			None => write!(f, "{}", self.context),
+		match self {
+			Self::SourceContext { source, context } => write!(f, "{context}: {source}"),
+			Self::WrapError(e) => match e.source() {
+				Some(source) => write!(f, "{e}: {source}"),
+				None => write!(f, "{e}"),
+			},
 		}
 	}
 }
@@ -274,19 +281,17 @@ impl Error for EngineError
 {
 	fn source(&self) -> Option<&(dyn Error + 'static)>
 	{
-		self.source
-			.as_ref()
-			.map(|src_box| -> &(dyn Error + 'static) { src_box.as_ref() })
+		match self {
+			Self::SourceContext { source, .. } => Some(source.as_ref()),
+			Self::WrapError(e) => e.source(),
+		}
 	}
 }
 impl From<&'static str> for EngineError
 {
 	fn from(string: &'static str) -> Self
 	{
-		Self {
-			source: None,
-			context: string,
-		}
+		Self::WrapError(string.into())
 	}
 }
 impl From<Box<ValidationError>> for EngineError
@@ -307,8 +312,8 @@ impl From<VulkanError> for EngineError
 {
 	fn from(error: VulkanError) -> Self
 	{
-		Self {
-			source: Some(Box::new(error)),
+		Self::SourceContext {
+			source: Box::new(error),
 			context: "a Vulkan error has occurred",
 		}
 	}
@@ -318,21 +323,11 @@ impl From<AllocateImageError> for EngineError
 	fn from(error: AllocateImageError) -> Self
 	{
 		match error {
-			AllocateImageError::CreateImage(source) => Self {
-				context: "failed to create a Vulkan image",
-				source: Some(Box::new(source)),
+			AllocateImageError::AllocateMemory(MemoryAllocatorError::AllocateDeviceMemory(inner)) => Self::SourceContext {
+				context: "allocating device memory for the image failed",
+				source: Box::new(inner.unwrap()),
 			},
-			AllocateImageError::AllocateMemory(mem_alloc_error) => Self {
-				context: "failed to allocate memory for a Vulkan image",
-				source: Some(match mem_alloc_error {
-					MemoryAllocatorError::AllocateDeviceMemory(inner) => Box::new(inner.unwrap()),
-					other => Box::new(other),
-				}),
-			},
-			AllocateImageError::BindMemory(source) => Self {
-				context: "failed to bind memory to a Vulkan image",
-				source: Some(Box::new(source)),
-			},
+			other => Self::WrapError(Box::new(other)),
 		}
 	}
 }
@@ -341,21 +336,11 @@ impl From<AllocateBufferError> for EngineError
 	fn from(error: AllocateBufferError) -> Self
 	{
 		match error {
-			AllocateBufferError::CreateBuffer(source) => Self {
-				context: "failed to create a Vulkan buffer",
-				source: Some(Box::new(source)),
+			AllocateBufferError::AllocateMemory(MemoryAllocatorError::AllocateDeviceMemory(inner)) => Self::SourceContext {
+				context: "allocating device memory for the buffer failed",
+				source: Box::new(inner.unwrap()),
 			},
-			AllocateBufferError::AllocateMemory(mem_alloc_error) => Self {
-				context: "failed to allocate memory for a Vulkan buffer",
-				source: Some(match mem_alloc_error {
-					MemoryAllocatorError::AllocateDeviceMemory(inner) => Box::new(inner.unwrap()),
-					other => Box::new(other),
-				}),
-			},
-			AllocateBufferError::BindMemory(source) => Self {
-				context: "failed to bind memory to a Vulkan buffer",
-				source: Some(Box::new(source)),
-			},
+			other => Self::WrapError(Box::new(other)),
 		}
 	}
 }
