@@ -3,5 +3,5 @@ mod fps_counter;
 
 fn main()
 {
-	mithrilengine::run!("daigennki", "Untitled Game Project", "examples/maps/ferris.yaml");
+	mithril_engine::run!("daigennki", "Untitled Game Project", "examples/maps/ferris.yaml");
 }

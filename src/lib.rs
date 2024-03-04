@@ -37,7 +37,7 @@ macro_rules! run {
 			minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
 			patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
 		};
-		mithrilengine::run_game($org_name, $app_name, $start_map, app_version)
+		mithril_engine::run_game($org_name, $app_name, $start_map, app_version)
 	};
 }
 

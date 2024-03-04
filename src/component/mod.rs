@@ -15,7 +15,7 @@ use serde::Deserialize;
 use shipyard::{EntityId, IntoIter, IntoWorkloadSystem, ViewMut, WorkloadSystem, World};
 
 use crate::SystemBundle;
-use mithrilengine_derive::EntityComponent;
+use mithril_engine_derive::EntityComponent;
 
 /// A component representing transformation characteristics of an entity.
 ///

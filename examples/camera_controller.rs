@@ -1,6 +1,6 @@
-use mithrilengine::component::{ComponentSystems, EntityComponent};
-use mithrilengine::{InputHelperWrapper, SystemBundle};
-use mithrilengine_derive::EntityComponent;
+use mithril_engine::component::{ComponentSystems, EntityComponent};
+use mithril_engine::{InputHelperWrapper, SystemBundle};
+use mithril_engine_derive::EntityComponent;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, View, ViewMut, WorkloadSystem};
 
@@ -17,8 +17,8 @@ impl ComponentSystems for CameraController
 }
 fn update_controllable_camera(
 	input_helper_wrapper: UniqueView<InputHelperWrapper>,
-	mut transforms: ViewMut<mithrilengine::component::Transform>,
-	cameras: View<mithrilengine::component::camera::Camera>,
+	mut transforms: ViewMut<mithril_engine::component::Transform>,
+	cameras: View<mithril_engine::component::camera::Camera>,
 	camera_controller: View<CameraController>,
 )
 {

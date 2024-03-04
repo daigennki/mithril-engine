@@ -1,7 +1,7 @@
-use mithrilengine::component::{ui, ComponentSystems, EntityComponent};
-use mithrilengine::render::RenderContext;
-use mithrilengine::SystemBundle;
-use mithrilengine_derive::EntityComponent;
+use mithril_engine::component::{ui, ComponentSystems, EntityComponent};
+use mithril_engine::render::RenderContext;
+use mithril_engine::SystemBundle;
+use mithril_engine_derive::EntityComponent;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, ViewMut, WorkloadSystem};
 

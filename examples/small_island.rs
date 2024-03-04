@@ -7,5 +7,5 @@ mod fps_counter;
 fn main()
 {
 	// Run the game with this developer name, game name, and first map.
-	mithrilengine::run!("daigennki", "Small island", "examples/maps/small_island.yaml");
+	mithril_engine::run!("daigennki", "Small island", "examples/maps/small_island.yaml");
 }
