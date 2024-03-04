@@ -8,8 +8,6 @@ pub mod component;
 pub mod material;
 pub mod render;
 
-use glam::*;
-use serde::Deserialize;
 use shipyard::{UniqueViewMut, Workload, WorkloadSystem, World};
 use simplelog::*;
 use std::error::Error;
@@ -25,7 +23,6 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit_input_helper::WinitInputHelper;
 
 use component::camera::{CameraFov, CameraManager};
-use render::RenderContext;
 
 type Result<T> = std::result::Result<T, EngineError>;
 
@@ -100,7 +97,7 @@ fn run_game_inner(
 		Ok(true) => window_target.exit(),
 		Ok(false) => (),
 		Err(e) => {
-			log_error(&e);
+			log_error(e.custom_error().unwrap().as_ref());
 			window_target.exit();
 		}
 	})?;
@@ -174,7 +171,7 @@ pub struct SystemBundle
 }
 inventory::collect!(SystemBundle);
 
-#[derive(Deserialize)]
+#[derive(serde::Deserialize)]
 struct MapData
 {
 	sky: String,
@@ -193,7 +190,7 @@ impl MapData
 	/// Use the data in this struct to add entities and components into the given world.
 	fn into_world(self, world: &mut World)
 	{
-		world.run(|mut render_ctx: UniqueViewMut<RenderContext>| {
+		world.run(|mut render_ctx: UniqueViewMut<render::RenderContext>| {
 			if let Err(e) = render_ctx.set_skybox(self.sky.clone()) {
 				log::error!("failed to set skybox to `{}`: {}", &self.sky, e);
 			}
@@ -219,7 +216,7 @@ fn handle_event(world: &mut World, event: &mut Event<()>) -> std::result::Result
 			..
 		} => return Ok(true),
 		Event::WindowEvent { event: window_event, .. } => {
-			world.run(|mut r_ctx: UniqueViewMut<RenderContext>| r_ctx.handle_window_event(window_event));
+			world.run(|mut r_ctx: UniqueViewMut<render::RenderContext>| r_ctx.handle_window_event(window_event));
 		}
 		Event::AboutToWait => {
 			world.run_workload("update")?;

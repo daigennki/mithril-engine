@@ -41,7 +41,6 @@ use vulkano::shader::ShaderStages;
 
 use crate::component::light::DirectionalLight;
 use crate::component::Transform;
-use crate::RenderContext;
 
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -94,7 +93,7 @@ pub struct LightManager
 }
 impl LightManager
 {
-	pub fn new(render_ctx: &mut RenderContext) -> crate::Result<Self>
+	pub fn new(render_ctx: &mut super::RenderContext) -> crate::Result<Self>
 	{
 		let device = render_ctx.memory_allocator.device().clone();
 		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
