@@ -17,17 +17,9 @@ use std::collections::HashMap;
 use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{
-	allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo},
-	AutoCommandBufferBuilder, BlitImageInfo, BufferImageCopy, CommandBufferUsage, CopyBufferInfo, CopyBufferToImageInfo,
-	PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo,
-};
-use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::buffer::*;
+use vulkano::command_buffer::{allocator::*, *};
+use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	Device, DeviceOwned,
@@ -35,29 +27,24 @@ use vulkano::device::{
 use vulkano::format::{Format, FormatFeatures};
 use vulkano::image::{
 	sampler::{Sampler, SamplerCreateInfo},
-	view::{ImageView, ImageViewCreateInfo, ImageViewType},
-	Image, ImageCreateFlags, ImageCreateInfo, ImageSubresourceLayers, ImageUsage,
+	view::*,
+	*,
 };
-use vulkano::memory::{
-	allocator::{AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator},
-	DeviceAlignment, MemoryPropertyFlags,
-};
+use vulkano::memory::{allocator::*, DeviceAlignment, MemoryPropertyFlags};
 use vulkano::pipeline::{
 	compute::ComputePipelineCreateInfo,
 	graphics::{
 		color_blend::ColorBlendState, subpass::PipelineRenderingCreateInfo, viewport::Viewport, GraphicsPipelineCreateInfo,
 	},
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	ComputePipeline, DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
-	PipelineShaderStageCreateInfo,
+	layout::*,
+	*,
 };
 use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
 use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
 use vulkano::{DeviceSize, Version};
-use winit::event::WindowEvent;
-use winit::event_loop::EventLoop;
+use winit::{event::WindowEvent, event_loop::EventLoop};
 
 use crate::component::camera::CameraManager;
 use crate::EngineError;

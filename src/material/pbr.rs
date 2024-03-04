@@ -4,7 +4,6 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::device::Device;

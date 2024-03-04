@@ -4,7 +4,6 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use image::{DynamicImage, GrayImage, Luma};
 use rusttype::{Font, Scale};
@@ -12,15 +11,8 @@ use shipyard::EntityId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, CommandBufferUsage,
-	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
-};
-use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::command_buffer::*;
+use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
 use vulkano::image::{
@@ -33,12 +25,12 @@ use vulkano::pipeline::{
 		color_blend::{AttachmentBlend, ColorBlendAttachmentState, ColorBlendState},
 		input_assembly::{InputAssemblyState, PrimitiveTopology},
 		subpass::PipelineRenderingCreateInfo,
-		vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState},
+		vertex_input::*,
 		viewport::Viewport,
 		GraphicsPipeline, GraphicsPipelineCreateInfo,
 	},
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	DynamicState, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+	layout::*,
+	*,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;

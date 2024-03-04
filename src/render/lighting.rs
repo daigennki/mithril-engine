@@ -6,35 +6,24 @@
 ----------------------------------------------------------------------------- */
 use glam::*;
 use std::sync::{Arc, Mutex};
-
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
-	SubpassContents,
-};
-use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::command_buffer::*;
+use vulkano::descriptor_set::{allocator::*, layout::*, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
 	sampler::{Filter, Sampler, SamplerCreateInfo},
 	view::{ImageView, ImageViewCreateInfo},
-	Image, ImageAspects, ImageCreateInfo, ImageSubresourceRange, ImageUsage,
+	*,
 };
 use vulkano::memory::allocator::AllocationCreateInfo;
-use vulkano::pipeline::graphics::{
-	depth_stencil::{CompareOp, DepthState, DepthStencilState},
-	rasterization::{DepthBiasState, RasterizationState},
-	subpass::PipelineRenderingCreateInfo,
-	vertex_input::VertexInputState,
-	GraphicsPipeline, GraphicsPipelineCreateInfo,
-};
 use vulkano::pipeline::{
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	DynamicState, PipelineLayout, PipelineShaderStageCreateInfo,
+	graphics::{
+		depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState,
+		GraphicsPipeline, GraphicsPipelineCreateInfo,
+	},
+	layout::*,
+	*,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;

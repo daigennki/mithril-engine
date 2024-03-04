@@ -13,11 +13,10 @@ use simplelog::*;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
-use vulkano::buffer::AllocateBufferError;
-use vulkano::descriptor_set::DescriptorSet;
-use vulkano::image::AllocateImageError;
-use vulkano::memory::allocator::MemoryAllocatorError;
-use vulkano::{Validated, ValidationError, Version, VulkanError};
+use vulkano::{
+	buffer::AllocateBufferError, descriptor_set::DescriptorSet, image::AllocateImageError,
+	memory::allocator::MemoryAllocatorError, Validated, ValidationError, Version, VulkanError,
+};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit_input_helper::WinitInputHelper;

@@ -4,37 +4,20 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer,
-	SubpassContents,
-};
-use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::command_buffer::*;
+use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
-	color_blend::{AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState},
-	depth_stencil::{CompareOp, DepthState, DepthStencilState, StencilOpState, StencilOps, StencilState},
-	rasterization::{CullMode, RasterizationState},
-	subpass::PipelineRenderingCreateInfo,
-	vertex_input::VertexInputState,
-	viewport::Viewport,
-	GraphicsPipeline, GraphicsPipelineCreateInfo,
+	color_blend::*, depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState,
+	viewport::Viewport, GraphicsPipeline, GraphicsPipelineCreateInfo,
 };
-use vulkano::pipeline::{
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	DynamicState, PipelineLayout, PipelineShaderStageCreateInfo,
-};
-use vulkano::pipeline::{Pipeline, PipelineBindPoint};
+use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 

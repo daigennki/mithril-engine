@@ -4,21 +4,18 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-
 use glam::*;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::PrimaryCommandBufferAbstract;
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
-	Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
+	*,
 };
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageUsage};
-use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions};
-use vulkano::swapchain::{
-	ColorSpace, PresentMode, Surface, SurfaceInfo, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo,
-};
+use vulkano::instance::*;
+use vulkano::swapchain::*;
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{Validated, Version, VulkanError, VulkanLibrary};
 use winit::event::{ElementState, KeyEvent, WindowEvent};

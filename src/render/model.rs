@@ -13,19 +13,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-
 use vulkano::buffer::{BufferUsage, Subbuffer};
-use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderingInfo, CommandBufferUsage,
-	PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo, SecondaryAutoCommandBuffer, SubpassContents,
-};
-use vulkano::descriptor_set::{
-	allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo},
-	layout::{
-		DescriptorBindingFlags, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType,
-	},
-	DescriptorSet, PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::command_buffer::*;
+use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{
@@ -33,12 +23,9 @@ use vulkano::image::{
 	view::ImageView,
 };
 use vulkano::pipeline::{
-	graphics::{
-		vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate},
-		viewport::Viewport,
-	},
-	layout::{PipelineLayoutCreateInfo, PushConstantRange},
-	GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
+	graphics::{vertex_input::*, viewport::Viewport},
+	layout::*,
+	*,
 };
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
