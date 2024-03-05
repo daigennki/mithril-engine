@@ -577,14 +577,14 @@ impl MeshManager
 		};
 		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
 
-		render_ctx.load_transparency(material_textures_set_layout.clone())?;
-		let transparency_input_layout = render_ctx
-			.transparency_renderer
-			.as_ref()
-			.unwrap()
-			.get_moments_images_set()
-			.layout()
-			.clone();
+		render_ctx.load_transparency(/*material_textures_set_layout.clone()*/)?;
+		/*let transparency_input_layout = render_ctx
+		.transparency_renderer
+		.as_ref()
+		.unwrap()
+		.get_moments_images_set()
+		.layout()
+		.clone();*/
 
 		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
 		let push_constant_range = PushConstantRange {
@@ -603,7 +603,7 @@ impl MeshManager
 			set_layouts: vec![
 				material_textures_set_layout.clone(),
 				light_set_layout,
-				transparency_input_layout,
+				//transparency_input_layout,
 			],
 			push_constant_ranges: vec![push_constant_range],
 			..Default::default()
@@ -719,7 +719,8 @@ impl MeshManager
 		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		let pipeline_override = pass_type.pipeline();
-		let transparency_pass = matches!(pass_type, PassType::TransparencyMoments(_) | PassType::Transparency);
+		//let transparency_pass = matches!(pass_type, PassType::TransparencyMoments(_) | PassType::Transparency);
+		let transparency_pass = matches!(pass_type, PassType::Transparency);
 
 		let mut any_drawn = false;
 		for (pipeline_name, mat_pl) in &self.material_pipelines {
@@ -771,7 +772,8 @@ impl MeshManager
 			PassType::Opaque => {
 				*self.cb_3d.lock().unwrap() = Some(cb.build()?);
 			}
-			PassType::TransparencyMoments(_) | PassType::Transparency => {
+			/*PassType::TransparencyMoments(_) |*/
+			PassType::Transparency => {
 				if any_drawn {
 					return Ok(Some(cb.build()?));
 				}
@@ -820,7 +822,7 @@ enum PassType<'a>
 {
 	Shadow(&'a LightManager),
 	Opaque,
-	TransparencyMoments(Arc<GraphicsPipeline>),
+	//TransparencyMoments(Arc<GraphicsPipeline>),
 	Transparency,
 }
 impl PassType<'_>
@@ -830,9 +832,9 @@ impl PassType<'_>
 		let formats: &'static [Format] = match self {
 			PassType::Shadow { .. } => &[],
 			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
-			PassType::TransparencyMoments(_) => {
+			/*PassType::TransparencyMoments(_) => {
 				&[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT /*, Format::R32_SFLOAT*/]
-			}
+			}*/
 			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
 		};
 		formats.iter().copied().map(Some).collect()
@@ -841,7 +843,7 @@ impl PassType<'_>
 	{
 		match self {
 			PassType::Shadow(light_manager) => Some(light_manager.get_shadow_pipeline()),
-			PassType::TransparencyMoments(pipeline) => Some(pipeline),
+			//PassType::TransparencyMoments(pipeline) => Some(pipeline),
 			_ => None,
 		}
 	}
@@ -885,7 +887,8 @@ pub(crate) fn draw_3d_oit(
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
-	// We do both passes for OIT in this function, because there will almost always be fewer draw
+	/* for Moment Transparency */
+	/*// We do both passes for OIT in this function, because there will almost always be fewer draw
 	// calls for transparent objects.
 	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
 		// First, collect moments for Moment Transparency (OIT). This will bind the pipeline for us,
@@ -903,6 +906,16 @@ pub(crate) fn draw_3d_oit(
 			];
 			let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
 			transparency_renderer.add_transparency_cb(some_moments_cb, weights_cb.unwrap());
+		}
+	}*/
+
+	/* for WBOIT */
+	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
+		let projview = camera_manager.projview();
+		let common_sets = [light_manager.get_all_lights_set().clone()];
+		let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
+		if let Some(some_weights_cb) = weights_cb {
+			transparency_renderer.add_transparency_cb(some_weights_cb);
 		}
 	}
 

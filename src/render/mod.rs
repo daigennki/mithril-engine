@@ -6,8 +6,9 @@
 ----------------------------------------------------------------------------- */
 pub mod lighting;
 pub mod model;
-mod transparency;
+//mod moment_transparency;
 pub mod ui;
+mod wboit;
 mod window;
 
 use ddsfile::DxgiFormat;
@@ -77,7 +78,7 @@ pub struct RenderContext
 	skybox_pipeline: Arc<GraphicsPipeline>,
 	skybox_tex_set: Option<Arc<PersistentDescriptorSet>>,
 
-	transparency_renderer: Option<transparency::MomentTransparencyRenderer>,
+	transparency_renderer: Option<wboit::WboitRenderer>,
 
 	// Things related to the main color/depth/stencil images and gamma correction.
 	depth_stencil_format: Format,
@@ -180,11 +181,10 @@ impl RenderContext
 		Ok(new_self)
 	}
 
-	fn load_transparency(&mut self, material_textures_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
+	fn load_transparency(&mut self) -> crate::Result<()>
 	{
-		self.transparency_renderer = Some(transparency::MomentTransparencyRenderer::new(
+		self.transparency_renderer = Some(wboit::WboitRenderer::new(
 			self.memory_allocator.clone(),
-			material_textures_set_layout,
 			self.window.dimensions(),
 			self.depth_stencil_format,
 		)?);

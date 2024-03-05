@@ -7,7 +7,8 @@ layout(location = 2) in vec3 world_pos;
 layout(location = 3) flat in int instance_index;
 
 #ifdef TRANSPARENCY_PASS
-#include "mboit_weights.glsl"
+//#include "mboit_weights.glsl"
+#include "wboit_accum.glsl"
 #endif
 
 /* Material parameters */
