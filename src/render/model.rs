@@ -18,15 +18,9 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{
-	sampler::{Sampler, SamplerCreateInfo},
-	view::ImageView,
-};
-use vulkano::pipeline::{
-	graphics::{vertex_input::*, viewport::Viewport},
-	layout::*,
-	*,
-};
+use vulkano::image::{sampler::*, view::ImageView};
+use vulkano::pipeline::graphics::{vertex_input::*, viewport::Viewport};
+use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 use vulkano::DeviceSize;

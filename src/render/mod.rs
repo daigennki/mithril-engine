@@ -25,20 +25,12 @@ use vulkano::device::{
 	Device, DeviceOwned,
 };
 use vulkano::format::{Format, FormatFeatures};
-use vulkano::image::{
-	sampler::{Sampler, SamplerCreateInfo},
-	view::*,
-	*,
-};
+use vulkano::image::{sampler::*, view::*, *};
 use vulkano::memory::{allocator::*, DeviceAlignment, MemoryPropertyFlags};
-use vulkano::pipeline::{
-	compute::ComputePipelineCreateInfo,
-	graphics::{
-		color_blend::ColorBlendState, subpass::PipelineRenderingCreateInfo, viewport::Viewport, GraphicsPipelineCreateInfo,
-	},
-	layout::*,
-	*,
+use vulkano::pipeline::graphics::{
+	color_blend::ColorBlendState, subpass::PipelineRenderingCreateInfo, viewport::Viewport, GraphicsPipelineCreateInfo,
 };
+use vulkano::pipeline::{compute::ComputePipelineCreateInfo, layout::*, *};
 use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;

@@ -33,7 +33,7 @@ pub enum ColliderType
 }
 impl ColliderType
 {
-	fn collider_builder(&self) -> rapier3d_f64::prelude::ColliderBuilder
+	fn collider_builder(&self) -> ColliderBuilder
 	{
 		match self {
 			Self::Cuboid { half_extents } => ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z),

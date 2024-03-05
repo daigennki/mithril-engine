@@ -11,20 +11,12 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{
-	sampler::{Filter, Sampler, SamplerCreateInfo},
-	view::{ImageView, ImageViewCreateInfo},
-	*,
-};
+use vulkano::image::{sampler::*, view::*, *};
 use vulkano::memory::allocator::AllocationCreateInfo;
-use vulkano::pipeline::{
-	graphics::{
-		depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState,
-		GraphicsPipeline, GraphicsPipelineCreateInfo,
-	},
-	layout::*,
-	*,
+use vulkano::pipeline::graphics::{
+	depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState, *,
 };
+use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 

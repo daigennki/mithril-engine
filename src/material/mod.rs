@@ -13,13 +13,11 @@ use std::sync::Arc;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, ImageCreateInfo, ImageUsage};
-use vulkano::pipeline::{
-	graphics::{
-		color_blend::*, depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo,
-		vertex_input::VertexInputState, GraphicsPipelineCreateInfo,
-	},
-	*,
+use vulkano::pipeline::graphics::{
+	color_blend::*, depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState,
+	GraphicsPipelineCreateInfo,
 };
+use vulkano::pipeline::*;
 use vulkano::shader::ShaderModule;
 
 use crate::render::RenderContext;
