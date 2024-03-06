@@ -90,8 +90,9 @@ impl WboitRenderer
 			blend: Some(AttachmentBlend {
 				src_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
 				dst_color_blend_factor: BlendFactor::SrcAlpha,
-				color_blend_op: BlendOp::Add,
-				..AttachmentBlend::ignore_source()
+				src_alpha_blend_factor: BlendFactor::Zero,
+				dst_alpha_blend_factor: BlendFactor::One,
+				..Default::default()
 			}),
 			..Default::default()
 		};

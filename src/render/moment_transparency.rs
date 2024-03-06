@@ -88,8 +88,11 @@ impl MomentTransparencyRenderer
 		//
 		let all_additive_blend = ColorBlendAttachmentState {
 			blend: Some(AttachmentBlend {
-				alpha_blend_op: BlendOp::Add,
-				..AttachmentBlend::additive()
+				src_color_blend_factor: BlendFactor::One,
+				dst_color_blend_factor: BlendFactor::One,
+				src_alpha_blend_factor: BlendFactor::One,
+				dst_alpha_blend_factor: BlendFactor::One,
+				..Default::default()
 			}),
 			..Default::default()
 		};

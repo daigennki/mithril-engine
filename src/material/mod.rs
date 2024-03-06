@@ -206,7 +206,10 @@ impl MaterialPipelineConfig
 		};
 
 		let depth_stencil_state = DepthStencilState {
-			depth: Some(DepthState::simple()),
+			depth: Some(DepthState {
+				write_enable: true,
+				compare_op: CompareOp::Less,
+			}),
 			..Default::default()
 		};
 
@@ -256,15 +259,17 @@ impl MaterialPipelineConfig
 						ColorBlendAttachmentState {
 							// accum
 							blend: Some(AttachmentBlend {
-								alpha_blend_op: BlendOp::Add,
-								..AttachmentBlend::additive()
+								src_color_blend_factor: BlendFactor::One,
+								dst_color_blend_factor: BlendFactor::One,
+								src_alpha_blend_factor: BlendFactor::One,
+								dst_alpha_blend_factor: BlendFactor::One,
+								..Default::default()
 							}),
 							..Default::default()
 						},
 						ColorBlendAttachmentState {
 							// revealage
 							blend: Some(AttachmentBlend {
-								color_blend_op: BlendOp::Add,
 								src_color_blend_factor: BlendFactor::Zero,
 								dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
 								..Default::default()

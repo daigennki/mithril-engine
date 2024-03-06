@@ -188,7 +188,10 @@ impl LightManager
 			..Default::default()
 		};
 		let depth_stencil_state = DepthStencilState {
-			depth: Some(DepthState::simple()),
+			depth: Some(DepthState {
+				compare_op: CompareOp::Less,
+				write_enable: true,
+			}),
 			..Default::default()
 		};
 		let vs_entry_point = vs_shadow::load(device.clone())?.entry_point("main").unwrap();
