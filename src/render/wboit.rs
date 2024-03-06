@@ -20,14 +20,14 @@ use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
-mod vs_fill_viewport
+mod vs_compositing
 {
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		path: "src/shaders/fill_viewport.vert.glsl",
 	}
 }
-mod fs_oit_compositing
+mod fs_compositing
 {
 	vulkano_shaders::shader! {
 		ty: "fragment",
@@ -43,7 +43,7 @@ pub struct WboitRenderer
 {
 	accum_image: Arc<ImageView>,
 	revealage_image: Arc<ImageView>,
-	transparency_compositing_pl: Arc<GraphicsPipeline>,
+	compositing_pipeline: Arc<GraphicsPipeline>,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	weights_images: Arc<PersistentDescriptorSet>,
 	transparency_cb: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
@@ -120,8 +120,8 @@ impl WboitRenderer
 		};
 		let compositing_pipeline_info = GraphicsPipelineCreateInfo {
 			stages: smallvec::smallvec![
-				PipelineShaderStageCreateInfo::new(vs_fill_viewport::load(device.clone())?.entry_point("main").unwrap()),
-				PipelineShaderStageCreateInfo::new(fs_oit_compositing::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(vs_compositing::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(fs_compositing::load(device.clone())?.entry_point("main").unwrap()),
 			],
 			vertex_input_state: Some(Default::default()),
 			input_assembly_state: Some(Default::default()),
@@ -134,7 +134,7 @@ impl WboitRenderer
 			subpass: Some(compositing_rendering_info.into()),
 			..GraphicsPipelineCreateInfo::layout(compositing_pipeline_layout)
 		};
-		let transparency_compositing_pl = GraphicsPipeline::new(device, None, compositing_pipeline_info)?;
+		let compositing_pipeline = GraphicsPipeline::new(device, None, compositing_pipeline_info)?;
 
 		/* Create the images and descriptor sets */
 		let (accum_image, revealage_image, weights_images) =
@@ -143,7 +143,7 @@ impl WboitRenderer
 		Ok(Self {
 			accum_image,
 			revealage_image,
-			transparency_compositing_pl,
+			compositing_pipeline,
 			descriptor_set_allocator,
 			weights_images,
 			transparency_cb: Mutex::new(None),
@@ -185,12 +185,6 @@ impl WboitRenderer
 			None => return Ok(()), // Skip OIT processing if no transparent submeshes are in view
 		};
 
-		let depth_attachment = Some(RenderingAttachmentInfo {
-			load_op: AttachmentLoadOp::Load,
-			store_op: AttachmentStoreOp::Store,
-			..RenderingAttachmentInfo::image_view(depth_stencil_image.clone())
-		});
-
 		let weights_rendering_info = RenderingInfo {
 			color_attachments: vec![
 				Some(RenderingAttachmentInfo {
@@ -206,7 +200,11 @@ impl WboitRenderer
 					..RenderingAttachmentInfo::image_view(self.revealage_image.clone())
 				}),
 			],
-			depth_attachment,
+			depth_attachment: Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Load,
+				store_op: AttachmentStoreOp::Store,
+				..RenderingAttachmentInfo::image_view(depth_stencil_image.clone())
+			}),
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
@@ -236,14 +234,14 @@ impl WboitRenderer
 			depth_range: 0.0..=1.0,
 		};
 
-		let compositing_layout = self.transparency_compositing_pl.layout().clone();
+		let compositing_layout = self.compositing_pipeline.layout().clone();
 		let compositing_sets = vec![self.weights_images.clone()];
 		cb.begin_rendering(weights_rendering_info)?
 			.execute_commands(weights_cb)?
 			.end_rendering()?
 			.begin_rendering(compositing_rendering_info)?
 			.set_viewport(0, [viewport].as_slice().into())?
-			.bind_pipeline_graphics(self.transparency_compositing_pl.clone())?
+			.bind_pipeline_graphics(self.compositing_pipeline.clone())?
 			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, compositing_sets)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
