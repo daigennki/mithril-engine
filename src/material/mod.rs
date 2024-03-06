@@ -135,24 +135,6 @@ fn new_single_color_texture(render_ctx: &mut RenderContext, color: Vec4) -> crat
 	Ok(ImageView::new_default(image)?)
 }
 
-pub enum MaterialTransparencyMode
-{
-	NoTransparency,
-	Blend(AttachmentBlend),
-	OIT(Arc<ShaderModule>),
-}
-impl MaterialTransparencyMode
-{
-	fn into_blend_or_shader(self) -> (Option<AttachmentBlend>, Option<Arc<ShaderModule>>)
-	{
-		match self {
-			Self::NoTransparency => (None, None),
-			Self::Blend(blend) => (Some(blend), None),
-			Self::OIT(fs_oit) => (None, Some(fs_oit.clone())),
-		}
-	}
-}
-
 pub struct MaterialPipelines
 {
 	pub opaque_pipeline: Arc<GraphicsPipeline>,
@@ -163,7 +145,7 @@ pub struct MaterialPipelineConfig
 {
 	pub vertex_shader: Arc<ShaderModule>,
 	pub fragment_shader: Arc<ShaderModule>,
-	pub transparency: MaterialTransparencyMode,
+	pub fragment_shader_oit: Option<Arc<ShaderModule>>,
 }
 impl MaterialPipelineConfig
 {
@@ -177,8 +159,6 @@ impl MaterialPipelineConfig
 		let device = pipeline_layout.device().clone();
 
 		let vs_stage = PipelineShaderStageCreateInfo::new(self.vertex_shader.entry_point("main").unwrap());
-
-		let (attachment_blend, fs_oit) = self.transparency.into_blend_or_shader();
 
 		let vertex_input_state = VertexInputState {
 			bindings: (0..).zip(crate::render::model::VERTEX_BINDINGS).collect(),
@@ -198,10 +178,7 @@ impl MaterialPipelineConfig
 		};
 
 		let color_blend_state = ColorBlendState {
-			attachments: vec![ColorBlendAttachmentState {
-				blend: attachment_blend,
-				..Default::default()
-			}],
+			attachments: vec![ColorBlendAttachmentState::default()],
 			..Default::default()
 		};
 
@@ -233,76 +210,76 @@ impl MaterialPipelineConfig
 		let opaque_pipeline = GraphicsPipeline::new(device.clone(), None, opaque_pipeline_info)?;
 
 		// Create the transparency pass pipeline.
-		let oit_pipeline = fs_oit
-			.map(|fs| {
-				let oit_depth_stencil_state = DepthStencilState {
-					depth: Some(DepthState {
-						write_enable: false,
-						compare_op: CompareOp::Less,
-					}),
-					stencil: Some(StencilState {
-						front: StencilOpState {
-							ops: StencilOps {
-								pass_op: StencilOp::IncrementAndClamp,
-								compare_op: CompareOp::Always,
-								..Default::default()
-							},
+		let oit_pipeline = if let Some(fs) = self.fragment_shader_oit {
+			let oit_depth_stencil_state = DepthStencilState {
+				depth: Some(DepthState {
+					write_enable: false,
+					compare_op: CompareOp::Less,
+				}),
+				stencil: Some(StencilState {
+					front: StencilOpState {
+						ops: StencilOps {
+							pass_op: StencilOp::IncrementAndClamp,
+							compare_op: CompareOp::Always,
 							..Default::default()
 						},
 						..Default::default()
-					}),
+					},
 					..Default::default()
-				};
+				}),
+				..Default::default()
+			};
 
-				let oit_color_blend_state = ColorBlendState {
-					attachments: vec![
-						ColorBlendAttachmentState {
-							// accum
-							blend: Some(AttachmentBlend {
-								src_color_blend_factor: BlendFactor::One,
-								dst_color_blend_factor: BlendFactor::One,
-								src_alpha_blend_factor: BlendFactor::One,
-								dst_alpha_blend_factor: BlendFactor::One,
-								..Default::default()
-							}),
+			let oit_color_blend_state = ColorBlendState {
+				attachments: vec![
+					ColorBlendAttachmentState {
+						// accum
+						blend: Some(AttachmentBlend {
+							src_color_blend_factor: BlendFactor::One,
+							dst_color_blend_factor: BlendFactor::One,
+							src_alpha_blend_factor: BlendFactor::One,
+							dst_alpha_blend_factor: BlendFactor::One,
 							..Default::default()
-						},
-						ColorBlendAttachmentState {
-							// revealage
-							blend: Some(AttachmentBlend {
-								src_color_blend_factor: BlendFactor::Zero,
-								dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
-								..Default::default()
-							}),
+						}),
+						..Default::default()
+					},
+					ColorBlendAttachmentState {
+						// revealage
+						blend: Some(AttachmentBlend {
+							src_color_blend_factor: BlendFactor::Zero,
+							dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
 							..Default::default()
-						},
-					],
-					..Default::default()
-				};
+						}),
+						..Default::default()
+					},
+				],
+				..Default::default()
+			};
 
-				let oit_rendering_formats = PipelineRenderingCreateInfo {
-					color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
-					depth_attachment_format: Some(depth_format),
-					stencil_attachment_format: Some(depth_format),
-					..Default::default()
-				};
+			let oit_rendering_formats = PipelineRenderingCreateInfo {
+				color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
+				depth_attachment_format: Some(depth_format),
+				stencil_attachment_format: Some(depth_format),
+				..Default::default()
+			};
 
-				let oit_pipeline_info = GraphicsPipelineCreateInfo {
-					stages: smallvec::smallvec![vs_stage, PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap())],
-					vertex_input_state: Some(vertex_input_state),
-					input_assembly_state: Some(Default::default()),
-					viewport_state: Some(Default::default()),
-					rasterization_state: Some(rasterization_state),
-					multisample_state: Some(Default::default()),
-					depth_stencil_state: Some(oit_depth_stencil_state),
-					color_blend_state: Some(oit_color_blend_state),
-					dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-					subpass: Some(oit_rendering_formats.into()),
-					..GraphicsPipelineCreateInfo::layout(pipeline_layout_oit)
-				};
-				GraphicsPipeline::new(device, None, oit_pipeline_info)
-			})
-			.transpose()?;
+			let oit_pipeline_info = GraphicsPipelineCreateInfo {
+				stages: smallvec::smallvec![vs_stage, PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap())],
+				vertex_input_state: Some(vertex_input_state),
+				input_assembly_state: Some(Default::default()),
+				viewport_state: Some(Default::default()),
+				rasterization_state: Some(rasterization_state),
+				multisample_state: Some(Default::default()),
+				depth_stencil_state: Some(oit_depth_stencil_state),
+				color_blend_state: Some(oit_color_blend_state),
+				dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+				subpass: Some(oit_rendering_formats.into()),
+				..GraphicsPipelineCreateInfo::layout(pipeline_layout_oit)
+			};
+			Some(GraphicsPipeline::new(device, None, oit_pipeline_info)?)
+		} else {
+			None
+		};
 
 		Ok(MaterialPipelines {
 			opaque_pipeline,

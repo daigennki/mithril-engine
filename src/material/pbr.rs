@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::device::Device;
 
-use super::{ColorInput, Material, MaterialPipelineConfig, MaterialTransparencyMode, ShaderInput};
+use super::{ColorInput, Material, MaterialPipelineConfig, ShaderInput};
 
 pub mod fs
 {
@@ -62,7 +62,7 @@ impl Material for PBR
 		Ok(MaterialPipelineConfig {
 			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
 			fragment_shader: fs::load(vk_dev.clone())?,
-			transparency: MaterialTransparencyMode::OIT(fs_oit::load(vk_dev)?),
+			fragment_shader_oit: Some(fs_oit::load(vk_dev)?),
 		})
 	}
 }
