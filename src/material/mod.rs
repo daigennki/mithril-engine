@@ -43,7 +43,7 @@ pub trait Material: Send + Sync
 	/// channel representing transparency.
 	fn get_shader_inputs(&self) -> Vec<ShaderInput>;
 
-	fn has_transparency(&self) -> bool;
+	fn blend_mode(&self) -> BlendMode;
 
 	fn load_shaders(&self, vk_dev: Arc<Device>) -> crate::Result<MaterialPipelineConfig>;
 }
@@ -133,6 +133,23 @@ fn new_single_color_texture(render_ctx: &mut RenderContext, color: Vec4) -> crat
 	};
 	let image = render_ctx.new_image(&[color], create_info)?;
 	Ok(ImageView::new_default(image)?)
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum BlendMode
+{
+	/// Don't blend (ignore alpha).
+	Opaque,
+	/// Blend with Order-Independent Transparency, using the base color input's alpha channel.
+	AlphaBlend,
+}
+impl Default for BlendMode
+{
+	fn default() -> Self
+	{
+		Self::Opaque
+	}
 }
 
 pub struct MaterialPipelines

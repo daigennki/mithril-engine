@@ -28,7 +28,7 @@ use vulkano::DeviceSize;
 use super::lighting::LightManager;
 use super::RenderContext;
 use crate::component::{camera::CameraManager, mesh::Mesh};
-use crate::material::{pbr::PBR, ColorInput, Material, MaterialPipelines};
+use crate::material::{pbr::PBR, BlendMode, ColorInput, Material, MaterialPipelines};
 use crate::EngineError;
 
 /// Vertex attributes and bindings describing the vertex buffers bound by a model. The indices in
@@ -165,6 +165,12 @@ impl Model
 		projview: &DMat4,
 	) -> bool
 	{
+		// The blend mode to render for during this pass.
+		let blend_mode_this_pass = match transparency_pass {
+			true => BlendMode::AlphaBlend,
+			false => BlendMode::Opaque,
+		};
+
 		// TODO: We should separately handle users with custom material variants after ones without
 		// custom material variants, so that the wrong descriptor set doesn't get bound.
 		let mut any_drawn = false;
@@ -191,7 +197,7 @@ impl Model
 						.map(|some_pl_name| mat.material_name() == some_pl_name)
 						.unwrap_or(true);
 
-					pipeline_matches && mat.has_transparency() == transparency_pass
+					pipeline_matches && mat.blend_mode() == blend_mode_this_pass
 				})
 				.filter(|submesh| submesh.cull(&pvm_f32))
 				.peekable();
@@ -436,9 +442,15 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Box<dyn Mat
 		}
 	}
 
+	let blend_mode = match mat.alpha_mode() {
+		// TODO: implement alpha testing
+		gltf::material::AlphaMode::Opaque | gltf::material::AlphaMode::Mask => BlendMode::Opaque,
+		gltf::material::AlphaMode::Blend => BlendMode::AlphaBlend,
+	};
+
 	Box::new(PBR {
 		base_color: ColorInput::Color(mat.pbr_metallic_roughness().base_color_factor().into()),
-		transparent: mat.alpha_mode() == gltf::material::AlphaMode::Blend,
+		blend_mode,
 	})
 }
 fn descriptor_set_from_materials(

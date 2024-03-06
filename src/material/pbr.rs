@@ -8,7 +8,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use vulkano::device::Device;
 
-use super::{ColorInput, Material, MaterialPipelineConfig, ShaderInput};
+use super::{BlendMode, ColorInput, Material, MaterialPipelineConfig, ShaderInput};
 
 pub mod fs
 {
@@ -36,7 +36,7 @@ pub struct PBR
 	//pub roughness: GreyscaleInput,
 	//pub specular: GreyscaleInput,
 	#[serde(default)]
-	pub transparent: bool,
+	pub blend_mode: BlendMode,
 }
 
 #[typetag::deserialize]
@@ -52,9 +52,9 @@ impl Material for PBR
 		vec![self.base_color.clone().into()]
 	}
 
-	fn has_transparency(&self) -> bool
+	fn blend_mode(&self) -> BlendMode
 	{
-		self.transparent
+		self.blend_mode
 	}
 
 	fn load_shaders(&self, vk_dev: Arc<Device>) -> crate::Result<MaterialPipelineConfig>
