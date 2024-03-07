@@ -8,6 +8,7 @@ use glam::*;
 use gltf::{mesh::util::ReadIndices, Semantic};
 use serde::Deserialize;
 use shipyard::{EntityId, UniqueView};
+use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -100,7 +101,14 @@ impl Model
 		let (vertex_subbuffers, index_buffer, submeshes) = load_gltf_meshes(render_ctx, &doc, &data_buffers)?;
 
 		let parent_folder = path.parent().unwrap();
-		let materials: Vec<_> = doc.materials().map(|mat| load_gltf_material(&mat, parent_folder)).collect();
+		let materials: Vec<_> = doc
+			.materials()
+			.map(|mat| {
+				let mat = load_gltf_material(&mat, parent_folder);
+				log::debug!("loaded a '{}' material ({:?})", mat.name(), mat.as_ref().type_id());
+				mat
+			})
+			.collect();
 		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
 			render_ctx,
 			descriptor_set_allocator,
@@ -157,7 +165,7 @@ impl Model
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_name: Option<&str>,
+		pipeline_name: Option<TypeId>,
 		pipeline_layout: Arc<PipelineLayout>,
 		transparency_pass: bool,
 		shadow_pass: bool,
@@ -193,7 +201,7 @@ impl Model
 
 					// don't filter by material pipeline name if `None` was given
 					let pipeline_matches = pipeline_name
-						.map(|some_pl_name| mat.material_name() == some_pl_name)
+						.map(|some_pl_name| mat.as_ref().type_id() == some_pl_name)
 						.unwrap_or(true);
 
 					pipeline_matches && mat.blend_mode() == blend_mode_this_pass
@@ -527,7 +535,7 @@ pub struct MeshManager
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	material_textures_set_layout: Arc<DescriptorSetLayout>,
 
-	material_pipelines: BTreeMap<&'static str, MaterialPipelines>,
+	material_pipelines: BTreeMap<TypeId, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
 	// Each model will also contain the model instance for each entity.
@@ -612,16 +620,16 @@ impl MeshManager
 		// Load all registered material pipelines
 		let mut material_pipelines = BTreeMap::new();
 		for conf in inventory::iter::<MaterialPipelineConfig> {
-			if !material_pipelines.contains_key(conf.name) {
-				log::debug!("Loading material pipeline '{}'...", conf.name);
-				let pipeline_data = conf.into_pipelines(
-					render_ctx.depth_stencil_format,
-					pipeline_layout.clone(),
-					pipeline_layout_oit.clone(),
-				)?;
+			let type_id = (conf.type_id)();
+			log::debug!("loading material pipeline with {:?}", type_id);
 
-				material_pipelines.insert(conf.name, pipeline_data);
-			}
+			let pipeline_data = conf.into_pipelines(
+				render_ctx.depth_stencil_format,
+				pipeline_layout.clone(),
+				pipeline_layout_oit.clone(),
+			)?;
+
+			material_pipelines.insert(type_id, pipeline_data);
 		}
 
 		Ok(Self {
@@ -719,7 +727,7 @@ impl MeshManager
 		let transparency_pass = matches!(pass_type, PassType::Transparency);
 
 		let mut any_drawn = false;
-		for (pipeline_name, mat_pl) in &self.material_pipelines {
+		for (pipeline_id, mat_pl) in &self.material_pipelines {
 			let pipeline = if let Some(pl) = pipeline_override {
 				pl.clone()
 			} else if transparency_pass {
@@ -740,13 +748,13 @@ impl MeshManager
 				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
 			}
 
-			// don't filter by material pipeline name if there is a pipeline override
-			let pipeline_name_option = pipeline_override.is_none().then_some(pipeline_name);
+			// don't filter by material pipeline ID if there is a pipeline override
+			let pipeline_id_option = pipeline_override.is_none().then_some(pipeline_id);
 
 			for model in self.models.values() {
 				if model.draw(
 					&mut cb,
-					pipeline_name_option.copied(),
+					pipeline_id_option.copied(),
 					pipeline_layout.clone(),
 					transparency_pass,
 					shadow_pass,

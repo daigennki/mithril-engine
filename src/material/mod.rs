@@ -8,6 +8,7 @@ pub mod pbr;
 
 use glam::*;
 use serde::Deserialize;
+use std::any::{Any, TypeId};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::device::{Device, DeviceOwned};
@@ -33,9 +34,9 @@ pub mod vs_3d_common
 
 /// A material used by meshes to set shader parameters.
 #[typetag::deserialize]
-pub trait Material: Send + Sync
+pub trait Material: Any + Send + Sync
 {
-	fn material_name(&self) -> &'static str;
+	fn name(&self) -> &'static str;
 
 	/// Return the list of colors/image files that should be loaded into a texture and then written
 	/// into the descriptor set image view array.
@@ -162,7 +163,8 @@ pub type ShaderLoader = &'static (dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule
 #[derive(Copy, Clone)]
 pub struct MaterialPipelineConfig
 {
-	pub name: &'static str,
+	// `TypeId` currently can't be `const`, so we use a getter function instead.
+	pub type_id: &'static (dyn Fn() -> TypeId + Send + Sync),
 	pub vertex_shader: ShaderLoader,
 	pub fragment_shader: ShaderLoader,
 	pub fragment_shader_oit: Option<ShaderLoader>,

@@ -39,7 +39,7 @@ pub struct PBR
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn material_name(&self) -> &'static str
+	fn name(&self) -> &'static str
 	{
 		"PBR"
 	}
@@ -56,7 +56,7 @@ impl Material for PBR
 }
 inventory::submit! {
 	MaterialPipelineConfig {
-		name: "PBR",
+		type_id: &std::any::TypeId::of::<PBR>,
 		vertex_shader: &super::vs_3d_common::load,
 		fragment_shader: &fs::load,
 		fragment_shader_oit: Some(&fs_oit::load),
