@@ -53,14 +53,13 @@ impl Material for PBR
 	{
 		self.blend_mode
 	}
-
-	fn load_shaders(&self) -> MaterialPipelineConfig
-	{
-		MaterialPipelineConfig {
-			vertex_shader: &super::vs_3d_common::load,
-			fragment_shader: &fs::load,
-			fragment_shader_oit: Some(&fs_oit::load),
-		}
+}
+inventory::submit! {
+	MaterialPipelineConfig {
+		name: "PBR",
+		vertex_shader: &super::vs_3d_common::load,
+		fragment_shader: &fs::load,
+		fragment_shader_oit: Some(&fs_oit::load),
 	}
 }
 

@@ -27,7 +27,7 @@ use vulkano::DeviceSize;
 use super::lighting::LightManager;
 use super::RenderContext;
 use crate::component::{camera::CameraManager, mesh::Mesh};
-use crate::material::{pbr::PBR, BlendMode, Material, MaterialPipelines};
+use crate::material::{pbr::PBR, BlendMode, Material, MaterialPipelineConfig, MaterialPipelines};
 use crate::EngineError;
 
 /// Vertex attributes and bindings describing the vertex buffers bound by a model. The indices in
@@ -527,9 +527,6 @@ pub struct MeshManager
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	material_textures_set_layout: Arc<DescriptorSetLayout>,
 
-	pipeline_layout: Arc<PipelineLayout>,
-	pipeline_layout_oit: Arc<PipelineLayout>,
-
 	material_pipelines: BTreeMap<&'static str, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
@@ -612,12 +609,25 @@ impl MeshManager
 		};
 		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;
 
+		// Load all registered material pipelines
+		let mut material_pipelines = BTreeMap::new();
+		for conf in inventory::iter::<MaterialPipelineConfig> {
+			if !material_pipelines.contains_key(conf.name) {
+				log::debug!("Loading material pipeline '{}'...", conf.name);
+				let pipeline_data = conf.into_pipelines(
+					render_ctx.depth_stencil_format,
+					pipeline_layout.clone(),
+					pipeline_layout_oit.clone(),
+				)?;
+
+				material_pipelines.insert(conf.name, pipeline_data);
+			}
+		}
+
 		Ok(Self {
 			descriptor_set_allocator,
 			material_textures_set_layout,
-			pipeline_layout,
-			pipeline_layout_oit,
-			material_pipelines: Default::default(),
+			material_pipelines,
 			models: Default::default(),
 			resources: Default::default(),
 			cb_3d: Default::default(),
@@ -642,21 +652,6 @@ impl MeshManager
 				self.models.get_mut(&component.model_path).unwrap()
 			}
 		};
-
-		// Go through all the materials, and load the pipelines they need if they aren't already loaded.
-		for mat in &loaded_model.materials {
-			let mat_name = mat.material_name();
-			if !self.material_pipelines.contains_key(mat_name) {
-				log::debug!("Loading material pipeline '{mat_name}'...");
-				let pipeline_data = mat.load_shaders().into_pipelines(
-					render_ctx.depth_stencil_format,
-					self.pipeline_layout.clone(),
-					self.pipeline_layout_oit.clone(),
-				)?;
-
-				self.material_pipelines.insert(mat_name, pipeline_data);
-			}
-		}
 
 		loaded_model.new_user(eid, component.material_variant.clone());
 		self.resources.insert(eid, component.model_path.clone());

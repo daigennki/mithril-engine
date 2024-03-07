@@ -45,8 +45,6 @@ pub trait Material: Send + Sync
 	fn get_shader_inputs(&self) -> Vec<ShaderInput>;
 
 	fn blend_mode(&self) -> BlendMode;
-
-	fn load_shaders(&self) -> MaterialPipelineConfig;
 }
 
 #[derive(Debug)]
@@ -159,13 +157,17 @@ pub struct MaterialPipelines
 	pub oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
 }
 
-pub type ShaderLoader = &'static dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>>;
+pub type ShaderLoader = &'static (dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>> + Send + Sync);
+
+#[derive(Copy, Clone)]
 pub struct MaterialPipelineConfig
 {
+	pub name: &'static str,
 	pub vertex_shader: ShaderLoader,
 	pub fragment_shader: ShaderLoader,
 	pub fragment_shader_oit: Option<ShaderLoader>,
 }
+inventory::collect!(MaterialPipelineConfig);
 impl MaterialPipelineConfig
 {
 	pub fn into_pipelines(
