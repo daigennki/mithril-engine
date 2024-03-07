@@ -66,3 +66,20 @@ impl Material for PBR
 		})
 	}
 }
+
+impl From<&gltf::Material<'_>> for PBR
+{
+	fn from(material: &gltf::Material) -> Self
+	{
+		let blend_mode = match material.alpha_mode() {
+			// TODO: implement alpha testing
+			gltf::material::AlphaMode::Opaque | gltf::material::AlphaMode::Mask => BlendMode::Opaque,
+			gltf::material::AlphaMode::Blend => BlendMode::AlphaBlend,
+		};
+
+		Self {
+			base_color: ColorInput::Color(material.pbr_metallic_roughness().base_color_factor().into()),
+			blend_mode,
+		}
+	}
+}

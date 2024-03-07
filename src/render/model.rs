@@ -5,8 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
-use gltf::mesh::util::ReadIndices;
-use gltf::Semantic;
+use gltf::{mesh::util::ReadIndices, Semantic};
 use serde::Deserialize;
 use shipyard::{EntityId, UniqueView};
 use std::collections::{BTreeMap, HashMap};
@@ -28,7 +27,7 @@ use vulkano::DeviceSize;
 use super::lighting::LightManager;
 use super::RenderContext;
 use crate::component::{camera::CameraManager, mesh::Mesh};
-use crate::material::{pbr::PBR, BlendMode, ColorInput, Material, MaterialPipelines};
+use crate::material::{pbr::PBR, BlendMode, Material, MaterialPipelines};
 use crate::EngineError;
 
 /// Vertex attributes and bindings describing the vertex buffers bound by a model. The indices in
@@ -442,16 +441,7 @@ fn load_gltf_material(mat: &gltf::Material, search_folder: &Path) -> Box<dyn Mat
 		}
 	}
 
-	let blend_mode = match mat.alpha_mode() {
-		// TODO: implement alpha testing
-		gltf::material::AlphaMode::Opaque | gltf::material::AlphaMode::Mask => BlendMode::Opaque,
-		gltf::material::AlphaMode::Blend => BlendMode::AlphaBlend,
-	};
-
-	Box::new(PBR {
-		base_color: ColorInput::Color(mat.pbr_metallic_roughness().base_color_factor().into()),
-		blend_mode,
-	})
+	Box::new(PBR::from(mat))
 }
 fn descriptor_set_from_materials(
 	render_ctx: &mut RenderContext,
