@@ -19,6 +19,7 @@ use vulkano::pipeline::graphics::{
 };
 use vulkano::pipeline::*;
 use vulkano::shader::ShaderModule;
+use vulkano::{Validated, VulkanError};
 
 use crate::render::RenderContext;
 
@@ -45,7 +46,7 @@ pub trait Material: Send + Sync
 
 	fn blend_mode(&self) -> BlendMode;
 
-	fn load_shaders(&self, vk_dev: Arc<Device>) -> crate::Result<MaterialPipelineConfig>;
+	fn load_shaders(&self) -> MaterialPipelineConfig;
 }
 
 #[derive(Debug)]
@@ -158,11 +159,12 @@ pub struct MaterialPipelines
 	pub oit_pipeline: Option<Arc<GraphicsPipeline>>, // Optional transparency pipeline may also be specified.
 }
 
+pub type ShaderLoader = &'static dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>>;
 pub struct MaterialPipelineConfig
 {
-	pub vertex_shader: Arc<ShaderModule>,
-	pub fragment_shader: Arc<ShaderModule>,
-	pub fragment_shader_oit: Option<Arc<ShaderModule>>,
+	pub vertex_shader: ShaderLoader,
+	pub fragment_shader: ShaderLoader,
+	pub fragment_shader_oit: Option<ShaderLoader>,
 }
 impl MaterialPipelineConfig
 {
@@ -175,7 +177,14 @@ impl MaterialPipelineConfig
 	{
 		let device = pipeline_layout.device().clone();
 
-		let vs_stage = PipelineShaderStageCreateInfo::new(self.vertex_shader.entry_point("main").unwrap());
+		let vs = (self.vertex_shader)(device.clone())?;
+		let fs = (self.fragment_shader)(device.clone())?;
+		let fs_oit = match self.fragment_shader_oit {
+			Some(fs_oit_loader) => Some(fs_oit_loader(device.clone())?),
+			None => None,
+		};
+
+		let vs_stage = PipelineShaderStageCreateInfo::new(vs.entry_point("main").unwrap());
 
 		let vertex_input_state = VertexInputState {
 			bindings: (0..).zip(crate::render::model::VERTEX_BINDINGS).collect(),
@@ -211,7 +220,7 @@ impl MaterialPipelineConfig
 		let opaque_pipeline_info = GraphicsPipelineCreateInfo {
 			stages: smallvec::smallvec![
 				vs_stage.clone(),
-				PipelineShaderStageCreateInfo::new(self.fragment_shader.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap()),
 			],
 			vertex_input_state: Some(vertex_input_state.clone()),
 			input_assembly_state: Some(Default::default()),
@@ -227,7 +236,7 @@ impl MaterialPipelineConfig
 		let opaque_pipeline = GraphicsPipeline::new(device.clone(), None, opaque_pipeline_info)?;
 
 		// Create the transparency pass pipeline.
-		let oit_pipeline = if let Some(fs) = self.fragment_shader_oit {
+		let oit_pipeline = if let Some(some_fs_oit) = fs_oit {
 			let oit_depth_stencil_state = DepthStencilState {
 				depth: Some(DepthState {
 					write_enable: false,
@@ -281,7 +290,10 @@ impl MaterialPipelineConfig
 			};
 
 			let oit_pipeline_info = GraphicsPipelineCreateInfo {
-				stages: smallvec::smallvec![vs_stage, PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap())],
+				stages: smallvec::smallvec![
+					vs_stage,
+					PipelineShaderStageCreateInfo::new(some_fs_oit.entry_point("main").unwrap()),
+				],
 				vertex_input_state: Some(vertex_input_state),
 				input_assembly_state: Some(Default::default()),
 				viewport_state: Some(Default::default()),

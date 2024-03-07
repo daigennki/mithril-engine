@@ -4,11 +4,8 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
-use serde::Deserialize;
-use std::sync::Arc;
-use vulkano::device::Device;
-
 use super::{BlendMode, ColorInput, Material, MaterialPipelineConfig, ShaderInput};
+use serde::Deserialize;
 
 pub mod fs
 {
@@ -57,13 +54,13 @@ impl Material for PBR
 		self.blend_mode
 	}
 
-	fn load_shaders(&self, vk_dev: Arc<Device>) -> crate::Result<MaterialPipelineConfig>
+	fn load_shaders(&self) -> MaterialPipelineConfig
 	{
-		Ok(MaterialPipelineConfig {
-			vertex_shader: super::vs_3d_common::load(vk_dev.clone())?,
-			fragment_shader: fs::load(vk_dev.clone())?,
-			fragment_shader_oit: Some(fs_oit::load(vk_dev)?),
-		})
+		MaterialPipelineConfig {
+			vertex_shader: &super::vs_3d_common::load,
+			fragment_shader: &fs::load,
+			fragment_shader_oit: Some(&fs_oit::load),
+		}
 	}
 }
 

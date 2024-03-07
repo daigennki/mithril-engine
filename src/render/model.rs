@@ -648,8 +648,7 @@ impl MeshManager
 			let mat_name = mat.material_name();
 			if !self.material_pipelines.contains_key(mat_name) {
 				log::debug!("Loading material pipeline '{mat_name}'...");
-				let pipeline_config = mat.load_shaders(self.pipeline_layout.device().clone())?;
-				let pipeline_data = pipeline_config.into_pipelines(
+				let pipeline_data = mat.load_shaders().into_pipelines(
 					render_ctx.depth_stencil_format,
 					self.pipeline_layout.clone(),
 					self.pipeline_layout_oit.clone(),
