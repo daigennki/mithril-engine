@@ -584,8 +584,8 @@ impl MeshManager
 		};
 		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
 
-		render_ctx.load_transparency(/*material_textures_set_layout.clone()*/)?;
-		/*let transparency_input_layout = render_ctx
+		/*render_ctx.load_transparency(material_textures_set_layout.clone())?;
+		let transparency_input_layout = render_ctx
 		.transparency_renderer
 		.as_ref()
 		.unwrap()
@@ -914,13 +914,11 @@ pub(crate) fn draw_3d_oit(
 	}*/
 
 	/* for WBOIT */
-	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
-		let projview = camera_manager.projview();
-		let common_sets = [light_manager.get_all_lights_set().clone()];
-		let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
-		if let Some(some_weights_cb) = weights_cb {
-			transparency_renderer.add_transparency_cb(some_weights_cb);
-		}
+	let projview = camera_manager.projview();
+	let common_sets = [light_manager.get_all_lights_set().clone()];
+	let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
+	if let Some(some_weights_cb) = weights_cb {
+		render_ctx.transparency_renderer.add_transparency_cb(some_weights_cb);
 	}
 
 	Ok(())

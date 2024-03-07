@@ -78,7 +78,8 @@ pub struct RenderContext
 	skybox_pipeline: Arc<GraphicsPipeline>,
 	skybox_tex_set: Option<Arc<PersistentDescriptorSet>>,
 
-	transparency_renderer: Option<wboit::WboitRenderer>,
+	transparency_renderer: wboit::WboitRenderer,
+	//transparency_renderer: Option<moment_transparency::MomentTransparencyRenderer>,
 
 	// Things related to the main color/depth/stencil images and gamma correction.
 	depth_stencil_format: Format,
@@ -143,6 +144,9 @@ impl RenderContext
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
 
+		let transparency_renderer =
+			wboit::WboitRenderer::new(memory_allocator.clone(), window.dimensions(), depth_stencil_format)?;
+
 		let mut new_self = Self {
 			window,
 			memory_allocator,
@@ -155,7 +159,7 @@ impl RenderContext
 			transfer_future: None,
 			skybox_pipeline: create_sky_pipeline(vk_dev.clone())?,
 			skybox_tex_set: None,
-			transparency_renderer: None,
+			transparency_renderer,
 			depth_stencil_format,
 			depth_stencil_image: None,
 			color_image: None,
@@ -181,15 +185,16 @@ impl RenderContext
 		Ok(new_self)
 	}
 
-	fn load_transparency(&mut self) -> crate::Result<()>
+	/*fn load_transparency(&mut self, mat_tex_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
 	{
-		self.transparency_renderer = Some(wboit::WboitRenderer::new(
+		self.transparency_renderer = Some(moment_transparency::MomentTransaprencyRenderer::new(
 			self.memory_allocator.clone(),
+			mat_tex_set_layout,
 			self.window.dimensions(),
 			self.depth_stencil_format,
 		)?);
 		Ok(())
-	}
+	}*/
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
@@ -1021,14 +1026,14 @@ pub(crate) fn submit_frame(
 
 	// transparent 3D objects (OIT)
 	let memory_allocator = render_ctx.memory_allocator.clone();
-	if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
-		transparency_renderer.process_transparency(
-			&mut cb_builder,
-			color_image.clone(),
-			depth_stencil_image,
-			memory_allocator,
-		)?;
-	}
+	//if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
+	render_ctx.transparency_renderer.process_transparency(
+		&mut cb_builder,
+		color_image.clone(),
+		depth_stencil_image,
+		memory_allocator,
+	)?;
+	//}
 
 	// UI
 	canvas.execute_rendering(&mut cb_builder, color_image)?;
