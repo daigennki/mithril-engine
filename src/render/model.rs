@@ -606,7 +606,7 @@ impl MeshManager
 		};
 		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 
-		let layout_info_oit = PipelineLayoutCreateInfo {
+		/*let layout_info_oit = PipelineLayoutCreateInfo {
 			set_layouts: vec![
 				material_textures_set_layout.clone(),
 				light_set_layout,
@@ -615,7 +615,7 @@ impl MeshManager
 			push_constant_ranges: vec![push_constant_range],
 			..Default::default()
 		};
-		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;
+		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;*/
 
 		// Load all registered material pipelines
 		let mut material_pipelines = BTreeMap::new();
@@ -626,7 +626,7 @@ impl MeshManager
 			let pipeline_data = conf.into_pipelines(
 				render_ctx.depth_stencil_format,
 				pipeline_layout.clone(),
-				pipeline_layout_oit.clone(),
+				//pipeline_layout_oit.clone(),
 			)?;
 
 			material_pipelines.insert(type_id, pipeline_data);

@@ -175,15 +175,14 @@ impl MaterialPipelineConfig
 		self,
 		depth_format: Format,
 		pipeline_layout: Arc<PipelineLayout>,
-		pipeline_layout_oit: Arc<PipelineLayout>,
+		//pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
 	{
 		let device = pipeline_layout.device().clone();
 
 		let vs = (self.vertex_shader)(device.clone())?;
-		let fs = (self.fragment_shader)(device.clone())?;
-
 		let vs_stage = PipelineShaderStageCreateInfo::new(vs.entry_point("main").unwrap());
+		let fs = (self.fragment_shader)(device.clone())?;
 
 		let vertex_input_state = VertexInputState {
 			bindings: (0..).zip(crate::render::model::VERTEX_BINDINGS).collect(),
@@ -202,19 +201,6 @@ impl MaterialPipelineConfig
 			..Default::default()
 		};
 
-		let color_blend_state = ColorBlendState {
-			attachments: vec![ColorBlendAttachmentState::default()],
-			..Default::default()
-		};
-
-		let depth_stencil_state = DepthStencilState {
-			depth: Some(DepthState {
-				write_enable: true,
-				compare_op: CompareOp::Less,
-			}),
-			..Default::default()
-		};
-
 		// Create the opaque pass pipeline.
 		let opaque_pipeline_info = GraphicsPipelineCreateInfo {
 			stages: smallvec::smallvec![
@@ -226,8 +212,17 @@ impl MaterialPipelineConfig
 			viewport_state: Some(Default::default()),
 			rasterization_state: Some(rasterization_state.clone()),
 			multisample_state: Some(Default::default()),
-			depth_stencil_state: Some(depth_stencil_state),
-			color_blend_state: Some(color_blend_state),
+			depth_stencil_state: Some(DepthStencilState {
+				depth: Some(DepthState {
+					write_enable: true,
+					compare_op: CompareOp::Less,
+				}),
+				..Default::default()
+			}),
+			color_blend_state: Some(ColorBlendState {
+				attachments: vec![ColorBlendAttachmentState::default()],
+				..Default::default()
+			}),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 			subpass: Some(rendering_formats.into()),
 			..GraphicsPipelineCreateInfo::layout(pipeline_layout.clone())
@@ -256,10 +251,10 @@ impl MaterialPipelineConfig
 				..Default::default()
 			};
 
+			// accum (all additive) and revealage (dst = dst * (1 - src)) blending
 			let oit_color_blend_state = ColorBlendState {
 				attachments: vec![
 					ColorBlendAttachmentState {
-						// accum
 						blend: Some(AttachmentBlend {
 							src_color_blend_factor: BlendFactor::One,
 							dst_color_blend_factor: BlendFactor::One,
@@ -270,7 +265,6 @@ impl MaterialPipelineConfig
 						..Default::default()
 					},
 					ColorBlendAttachmentState {
-						// revealage
 						blend: Some(AttachmentBlend {
 							src_color_blend_factor: BlendFactor::Zero,
 							dst_color_blend_factor: BlendFactor::OneMinusSrcColor,
@@ -305,7 +299,7 @@ impl MaterialPipelineConfig
 				color_blend_state: Some(oit_color_blend_state),
 				dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 				subpass: Some(oit_rendering_formats.into()),
-				..GraphicsPipelineCreateInfo::layout(pipeline_layout_oit)
+				..GraphicsPipelineCreateInfo::layout(pipeline_layout)
 			};
 			Some(GraphicsPipeline::new(device, None, oit_pipeline_info)?)
 		} else {
