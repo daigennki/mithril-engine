@@ -31,11 +31,6 @@ pub struct PBR
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn name(&self) -> &'static str
-	{
-		"PBR"
-	}
-
 	fn get_shader_inputs(&self) -> Vec<ShaderInput>
 	{
 		vec![self.base_color.clone().into()]
@@ -48,6 +43,7 @@ impl Material for PBR
 }
 inventory::submit! {
 	MaterialPipelineConfig {
+		name: "PBR",
 		type_id: &std::any::TypeId::of::<PBR>,
 		vertex_shader: &super::vs_3d_common::load,
 		fragment_shader: &fs::load,

@@ -36,8 +36,6 @@ pub mod vs_3d_common
 #[typetag::deserialize]
 pub trait Material: Any + Send + Sync
 {
-	fn name(&self) -> &'static str;
-
 	/// Return the list of colors/image files that should be loaded into a texture and then written
 	/// into the descriptor set image view array.
 	///
@@ -163,8 +161,12 @@ pub type ShaderLoader = &'static (dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule
 #[derive(Copy, Clone)]
 pub struct MaterialPipelineConfig
 {
+	// `name` is only for debugging purposes!! Use `type_id` to uniquely identify the material type.
+	pub name: &'static str,
+
 	// `TypeId` currently can't be `const`, so we use a getter function instead.
 	pub type_id: &'static (dyn Fn() -> TypeId + Send + Sync),
+
 	pub vertex_shader: ShaderLoader,
 	pub fragment_shader: ShaderLoader,
 }

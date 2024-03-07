@@ -103,11 +103,7 @@ impl Model
 		let parent_folder = path.parent().unwrap();
 		let materials: Vec<_> = doc
 			.materials()
-			.map(|mat| {
-				let mat = load_gltf_material(&mat, parent_folder);
-				log::debug!("loaded a '{}' material ({:?})", mat.name(), mat.as_ref().type_id());
-				mat
-			})
+			.map(|mat| load_gltf_material(&mat, parent_folder))
 			.collect();
 		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
 			render_ctx,
@@ -621,7 +617,7 @@ impl MeshManager
 		let mut material_pipelines = BTreeMap::new();
 		for conf in inventory::iter::<MaterialPipelineConfig> {
 			let type_id = (conf.type_id)();
-			log::debug!("loading material pipeline with {:?}", type_id);
+			log::debug!("loading material pipeline '{}' ({:?})", conf.name, type_id);
 
 			let pipeline_data = conf.into_pipelines(
 				render_ctx.depth_stencil_format,
