@@ -19,7 +19,7 @@ use vulkano::pipeline::graphics::{
 	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::*;
-use vulkano::shader::ShaderModule;
+use vulkano::shader::{ShaderModule, SpecializationConstant};
 use vulkano::{Validated, VulkanError};
 
 use crate::render::RenderContext;
@@ -167,7 +167,6 @@ pub struct MaterialPipelineConfig
 	pub type_id: &'static (dyn Fn() -> TypeId + Send + Sync),
 	pub vertex_shader: ShaderLoader,
 	pub fragment_shader: ShaderLoader,
-	pub fragment_shader_oit: Option<ShaderLoader>,
 }
 inventory::collect!(MaterialPipelineConfig);
 impl MaterialPipelineConfig
@@ -183,10 +182,6 @@ impl MaterialPipelineConfig
 
 		let vs = (self.vertex_shader)(device.clone())?;
 		let fs = (self.fragment_shader)(device.clone())?;
-		let fs_oit = match self.fragment_shader_oit {
-			Some(fs_oit_loader) => Some(fs_oit_loader(device.clone())?),
-			None => None,
-		};
 
 		let vs_stage = PipelineShaderStageCreateInfo::new(vs.entry_point("main").unwrap());
 
@@ -239,8 +234,9 @@ impl MaterialPipelineConfig
 		};
 		let opaque_pipeline = GraphicsPipeline::new(device.clone(), None, opaque_pipeline_info)?;
 
-		// Create the transparency pass pipeline.
-		let oit_pipeline = if let Some(some_fs_oit) = fs_oit {
+		// Create the transparency pass pipeline, if the fragment shader has the `TRANSPARENCY_PASS`
+		// specialization constant with ID 0.
+		let oit_pipeline = if fs.specialization_constants().contains_key(&0) {
 			let oit_depth_stencil_state = DepthStencilState {
 				depth: Some(DepthState {
 					write_enable: false,
@@ -293,10 +289,12 @@ impl MaterialPipelineConfig
 				..Default::default()
 			};
 
+			let specialization_constants = [(0_u32, SpecializationConstant::U32(1))];
+			let specialized_fs = fs.specialize(specialization_constants.into_iter().collect())?;
 			let oit_pipeline_info = GraphicsPipelineCreateInfo {
 				stages: smallvec::smallvec![
 					vs_stage,
-					PipelineShaderStageCreateInfo::new(some_fs_oit.entry_point("main").unwrap()),
+					PipelineShaderStageCreateInfo::new(specialized_fs.entry_point("main").unwrap()),
 				],
 				vertex_input_state: Some(vertex_input_state),
 				input_assembly_state: Some(Default::default()),

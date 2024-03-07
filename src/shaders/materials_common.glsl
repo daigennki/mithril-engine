@@ -1,7 +1,8 @@
-#ifdef TRANSPARENCY_PASS
 //#include "mboit_weights.glsl"
 #include "wboit_accum.glsl"
-#endif
+
+// Specialization constant to specify if this is for a transparency (OIT) pass.
+layout (constant_id = 0) const uint TRANSPARENCY_PASS = 0;
 
 /* Material parameters */
 layout(binding = 0) uniform sampler sampler0;
@@ -27,17 +28,14 @@ layout(set = 1, binding = 1) uniform dir_light_ubo
 };
 layout(set = 1, binding = 2) uniform texture2DArray dir_light_shadow;
 
-// If `TRANSPARENCY_PASS` is defined, the outputs in the OIT shader file included above will be used.
-#ifndef TRANSPARENCY_PASS
-layout(location = 0) out vec4 color_out;
-#endif
+// The shader output is defined in wboit_accum.glsl.
 
 // Use this function in your material's fragment shader to write pixels to the output image.
 void write_pixel(vec4 shaded_with_alpha)
 {
-#ifdef TRANSPARENCY_PASS
-	write_transparent_pixel(shaded_with_alpha);
-#else
-	color_out = vec4(shaded_with_alpha.rgb, 1.0);
-#endif
+	if (TRANSPARENCY_PASS != 0) {
+		write_transparent_pixel(shaded_with_alpha);
+	} else {
+		color_out = vec4(shaded_with_alpha.rgb, 1.0);
+	}
 }

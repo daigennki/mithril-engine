@@ -14,14 +14,6 @@ pub mod fs
 		path: "src/shaders/pbr.frag.glsl",
 	}
 }
-pub mod fs_oit
-{
-	vulkano_shaders::shader! {
-		ty: "fragment",
-		define: [("TRANSPARENCY_PASS", ""),],
-		path: "src/shaders/pbr.frag.glsl",
-	}
-}
 
 /// The standard PBR (Physically Based Rendering) material.
 #[derive(Deserialize)]
@@ -59,7 +51,6 @@ inventory::submit! {
 		type_id: &std::any::TypeId::of::<PBR>,
 		vertex_shader: &super::vs_3d_common::load,
 		fragment_shader: &fs::load,
-		fragment_shader_oit: Some(&fs_oit::load),
 	}
 }
 
