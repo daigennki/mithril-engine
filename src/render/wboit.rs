@@ -11,7 +11,7 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{view::ImageView, Image, ImageCreateInfo, ImageUsage};
+use vulkano::image::{view::ImageView, *};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
 	color_blend::*, depth_stencil::*, subpass::PipelineRenderingCreateInfo, viewport::Viewport, *,
@@ -138,8 +138,12 @@ impl WboitRenderer
 		let compositing_pipeline = GraphicsPipeline::new(device, None, compositing_pipeline_info)?;
 
 		/* Create the images and descriptor sets */
-		let (accum_image, revealage_image, weights_images) =
-			create_images(memory_allocator, &descriptor_set_allocator, dimensions, weights_images_layout)?;
+		let (accum_image, revealage_image, weights_images) = create_images(
+			memory_allocator,
+			&descriptor_set_allocator,
+			dimensions,
+			weights_images_layout,
+		)?;
 
 		Ok(Self {
 			accum_image,

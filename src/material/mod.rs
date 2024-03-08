@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
-use vulkano::image::{view::ImageView, ImageCreateInfo, ImageUsage};
+use vulkano::image::{view::ImageView, *};
 use vulkano::pipeline::graphics::{
-	color_blend::*, depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState,
-	GraphicsPipelineCreateInfo,
+	color_blend::*, depth_stencil::*, multisample::*, rasterization::*, subpass::PipelineRenderingCreateInfo,
+	vertex_input::VertexInputState, GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::*;
 use vulkano::shader::{ShaderModule, SpecializationConstant};
@@ -175,6 +175,7 @@ impl MaterialPipelineConfig
 {
 	pub fn into_pipelines(
 		self,
+		rasterization_samples: SampleCount,
 		depth_format: Format,
 		pipeline_layout: Arc<PipelineLayout>,
 		//pipeline_layout_oit: Arc<PipelineLayout>,
@@ -213,7 +214,10 @@ impl MaterialPipelineConfig
 			input_assembly_state: Some(Default::default()),
 			viewport_state: Some(Default::default()),
 			rasterization_state: Some(rasterization_state.clone()),
-			multisample_state: Some(Default::default()),
+			multisample_state: Some(MultisampleState {
+				rasterization_samples,
+				..Default::default()
+			}),
 			depth_stencil_state: Some(DepthStencilState {
 				depth: Some(DepthState {
 					write_enable: true,

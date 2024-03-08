@@ -29,7 +29,8 @@ use vulkano::format::{Format, FormatFeatures};
 use vulkano::image::{sampler::*, view::*, *};
 use vulkano::memory::{allocator::*, DeviceAlignment, MemoryPropertyFlags};
 use vulkano::pipeline::graphics::{
-	color_blend::ColorBlendState, subpass::PipelineRenderingCreateInfo, viewport::Viewport, GraphicsPipelineCreateInfo,
+	color_blend::ColorBlendState, multisample::MultisampleState, subpass::PipelineRenderingCreateInfo, viewport::Viewport,
+	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::{compute::ComputePipelineCreateInfo, layout::*, *};
 use vulkano::render_pass::AttachmentStoreOp;
@@ -82,10 +83,12 @@ pub struct RenderContext
 	//transparency_renderer: Option<moment_transparency::MomentTransparencyRenderer>,
 
 	// Things related to the main color/depth/stencil images and gamma correction.
+	rasterization_samples: SampleCount,
 	depth_stencil_format: Format,
 	depth_stencil_image: Option<Arc<ImageView>>,
 	color_image: Option<Arc<ImageView>>,
-	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `color_image` as a storage image binding.
+	single_sample_color_image: Option<Arc<ImageView>>,
+	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `single_sample_color_image` as a storage image binding.
 	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
 
 	// Loaded textures, with the key being the path relative to the current working directory.
@@ -132,6 +135,8 @@ impl RenderContext
 		};
 		let single_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), single_set_alloc_info);
 
+		let rasterization_samples = SampleCount::Sample1;
+
 		let depth_stencil_format = DEPTH_STENCIL_FORMAT_CANDIDATES
 			.into_iter()
 			.find(|format| {
@@ -157,12 +162,14 @@ impl RenderContext
 			current_arena: 0,
 			staging_layout: None,
 			transfer_future: None,
-			skybox_pipeline: create_sky_pipeline(vk_dev.clone())?,
+			skybox_pipeline: create_sky_pipeline(vk_dev.clone(), rasterization_samples)?,
 			skybox_tex_set: None,
 			transparency_renderer,
+			rasterization_samples,
 			depth_stencil_format,
 			depth_stencil_image: None,
 			color_image: None,
+			single_sample_color_image: None,
 			color_set: None,
 			gamma_pipeline: create_gamma_pipeline(vk_dev.clone())?,
 			textures: HashMap::new(),
@@ -457,6 +464,7 @@ impl RenderContext
 			let color_create_info = ImageCreateInfo {
 				format: Format::R16G16B16A16_SFLOAT,
 				extent,
+				samples: self.rasterization_samples,
 				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
 				..Default::default()
 			};
@@ -468,14 +476,33 @@ impl RenderContext
 			let depth_stencil_create_info = ImageCreateInfo {
 				format: self.depth_stencil_format,
 				extent,
+				samples: self.rasterization_samples,
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..Default::default()
 			};
 			let depth_stencil_image = Image::new(self.memory_allocator.clone(), depth_stencil_create_info, alloc_info)?;
 			self.depth_stencil_image = Some(ImageView::new_default(depth_stencil_image)?);
 
+			let set_image = if self.rasterization_samples != SampleCount::Sample1 {
+				let single_sample_create_info = ImageCreateInfo {
+					format: Format::R16G16B16A16_SFLOAT,
+					extent,
+					usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
+						| ImageUsage::TRANSFER_DST,
+					..Default::default()
+				};
+				let alloc_info = AllocationCreateInfo::default();
+				let single_sample_color_image =
+					Image::new(self.memory_allocator.clone(), single_sample_create_info, alloc_info.clone())?;
+				let single_sample_color = ImageView::new_default(single_sample_color_image)?;
+				self.single_sample_color_image = Some(single_sample_color.clone());
+				single_sample_color
+			} else {
+				color
+			};
+
 			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
-			let set_write = [WriteDescriptorSet::image_view(0, color)];
+			let set_write = [WriteDescriptorSet::image_view(0, set_image)];
 			let set = PersistentDescriptorSet::new(&self.single_set_allocator, set_layout, set_write, [])?;
 			self.color_set = Some(set);
 		}
@@ -511,7 +538,12 @@ impl RenderContext
 	fn present_image(&mut self, mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
 		if let Some((swapchain_image, acquire_future)) = self.window.get_next_image()? {
-			let color_image = self.color_image.as_ref().unwrap().image().clone();
+			let color_image = self
+				.single_sample_color_image
+				.as_ref()
+				.unwrap_or_else(|| self.color_image.as_ref().unwrap())
+				.image()
+				.clone();
 
 			if self.window.color_space() == ColorSpace::SrgbNonLinear {
 				// perform gamma correction
@@ -648,7 +680,7 @@ fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
 	}
 }
 
-fn create_sky_pipeline(device: Arc<Device>) -> crate::Result<Arc<GraphicsPipeline>>
+fn create_sky_pipeline(device: Arc<Device>, rasterization_samples: SampleCount) -> crate::Result<Arc<GraphicsPipeline>>
 {
 	let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
 	let tex_binding = DescriptorSetLayoutBinding {
@@ -686,7 +718,10 @@ fn create_sky_pipeline(device: Arc<Device>) -> crate::Result<Arc<GraphicsPipelin
 		input_assembly_state: Some(Default::default()),
 		viewport_state: Some(Default::default()),
 		rasterization_state: Some(Default::default()),
-		multisample_state: Some(Default::default()),
+		multisample_state: Some(MultisampleState {
+			rasterization_samples,
+			..Default::default()
+		}),
 		color_blend_state: Some(ColorBlendState::with_attachment_states(1, Default::default())),
 		dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 		subpass: Some(rendering_formats.into()),
@@ -1024,19 +1059,28 @@ pub(crate) fn submit_frame(
 	// opaque 3D objects
 	mesh_manager.execute_rendering(&mut cb_builder, color_image.clone(), depth_stencil_image.clone())?;
 
+	// resolve multisample image if it has more than 1 sample
+	let single_sample_color_image = if render_ctx.rasterization_samples != SampleCount::Sample1 {
+		let resolved_image = render_ctx.single_sample_color_image.clone().unwrap();
+		cb_builder.resolve_image(ResolveImageInfo::images(color_image.image().clone(), resolved_image.image().clone()))?;
+		resolved_image
+	} else {
+		color_image
+	};
+
 	// transparent 3D objects (OIT)
 	let memory_allocator = render_ctx.memory_allocator.clone();
 	//if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
 	render_ctx.transparency_renderer.process_transparency(
 		&mut cb_builder,
-		color_image.clone(),
+		single_sample_color_image.clone(),
 		depth_stencil_image,
 		memory_allocator,
 	)?;
 	//}
-
+	
 	// UI
-	canvas.execute_rendering(&mut cb_builder, color_image)?;
+	canvas.execute_rendering(&mut cb_builder, single_sample_color_image)?;
 
 	render_ctx.present_image(cb_builder)
 }

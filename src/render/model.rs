@@ -18,7 +18,7 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::*, view::ImageView};
+use vulkano::image::{sampler::*, view::ImageView, SampleCount};
 use vulkano::pipeline::graphics::{vertex_input::*, viewport::Viewport};
 use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -620,6 +620,7 @@ impl MeshManager
 			log::debug!("loading material pipeline '{}' ({:?})", conf.name, type_id);
 
 			let pipeline_data = conf.into_pipelines(
+				render_ctx.rasterization_samples,
 				render_ctx.depth_stencil_format,
 				pipeline_layout.clone(),
 				//pipeline_layout_oit.clone(),
@@ -695,10 +696,16 @@ impl MeshManager
 			_ => (render_ctx.depth_stencil_format, render_ctx.window_dimensions(), false),
 		};
 
+		let rasterization_samples = if matches!(pass_type, PassType::Opaque) {
+			render_ctx.rasterization_samples
+		} else {
+			SampleCount::Sample1
+		};
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: pass_type.render_color_formats(),
 			depth_attachment_format: Some(depth_format),
 			stencil_attachment_format: matches!(pass_type, PassType::Transparency).then_some(depth_format),
+			rasterization_samples,
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(

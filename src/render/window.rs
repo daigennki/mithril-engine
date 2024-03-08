@@ -496,6 +496,7 @@ const ENABLED_FEATURES: Features = Features {
 	runtime_descriptor_array: true,
 	sampler_anisotropy: true,
 	shader_sampled_image_array_non_uniform_indexing: true,
+	shader_storage_image_multisample: true,
 	texture_compression_bc: true,
 	..Features::empty()
 };
