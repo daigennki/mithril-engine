@@ -35,6 +35,14 @@ mod fs_compositing
 		path: "src/shaders/wboit_compositing.frag.glsl"
 	}
 }
+mod fs_compositing_ms
+{
+	vulkano_shaders::shader! {
+		ty: "fragment",
+		path: "src/shaders/wboit_compositing.frag.glsl",
+		define: [("MULTISAMPLE", "")]
+	}
+}
 
 /// A renderer that implements Order-Independent Transparency (OIT) using the Weighted Blended
 /// Order-Independent Transparency (McGuire and Bavoil, 2013) algorithm.
@@ -116,6 +124,12 @@ impl WboitRenderer
 			..Default::default()
 		};
 
+		let compositing_fs = if rasterization_samples != SampleCount::Sample1 {
+			fs_compositing_ms::load(device.clone())?
+		} else {
+			fs_compositing::load(device.clone())?
+		};
+
 		let compositing_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			stencil_attachment_format: Some(depth_stencil_format),
@@ -124,7 +138,7 @@ impl WboitRenderer
 		let compositing_pipeline_info = GraphicsPipelineCreateInfo {
 			stages: smallvec::smallvec![
 				PipelineShaderStageCreateInfo::new(vs_compositing::load(device.clone())?.entry_point("main").unwrap()),
-				PipelineShaderStageCreateInfo::new(fs_compositing::load(device.clone())?.entry_point("main").unwrap()),
+				PipelineShaderStageCreateInfo::new(compositing_fs.entry_point("main").unwrap()),
 			],
 			vertex_input_state: Some(Default::default()),
 			input_assembly_state: Some(Default::default()),
