@@ -1,3 +1,5 @@
+#version 460
+#define SMAA_INCLUDE_VS 1
 #include "smaa_common.glsl"
 
 layout(location = 0) out vec2 texcoord;

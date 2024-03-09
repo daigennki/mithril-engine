@@ -492,6 +492,7 @@ const ENABLED_FEATURES: Features = Features {
 	descriptor_indexing: true,
 	dynamic_rendering: true,
 	image_cube_array: true,
+	inline_uniform_block: true,
 	independent_blend: true,
 	runtime_descriptor_array: true,
 	sampler_anisotropy: true,

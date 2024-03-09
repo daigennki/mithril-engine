@@ -1,4 +1,4 @@
-layout(binding = 0) uniform smaa_metrics
+layout(push_constant) uniform smaa_metrics
 {
     vec4 SMAA_RT_METRICS;
 };

@@ -8,6 +8,7 @@ pub mod lighting;
 pub mod model;
 //mod moment_transparency;
 pub mod ui;
+mod smaa;
 mod wboit;
 mod window;
 
@@ -81,6 +82,7 @@ pub struct RenderContext
 
 	transparency_renderer: wboit::WboitRenderer,
 	//transparency_renderer: Option<moment_transparency::MomentTransparencyRenderer>,
+	smaa_renderer: Option<smaa::SmaaRenderer>,
 
 	// Things related to the main color/depth/stencil images and gamma correction.
 	rasterization_samples: SampleCount,
@@ -169,6 +171,7 @@ impl RenderContext
 			skybox_pipeline: create_sky_pipeline(vk_dev.clone(), rasterization_samples)?,
 			skybox_tex_set: None,
 			transparency_renderer,
+			smaa_renderer: None,
 			rasterization_samples,
 			depth_stencil_format,
 			depth_stencil_image: None,
@@ -192,6 +195,8 @@ impl RenderContext
 			let image = new_self.new_image(&img_raw, image_info)?;
 			new_self.error_texture = Some(ImageView::new_default(image)?);
 		}
+
+		new_self.smaa_renderer = Some(smaa::SmaaRenderer::new(&mut new_self)?);
 
 		Ok(new_self)
 	}
@@ -469,7 +474,7 @@ impl RenderContext
 				format: Format::R16G16B16A16_SFLOAT,
 				extent,
 				samples: self.rasterization_samples,
-				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC,
+				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::SAMPLED,
 				..Default::default()
 			};
 			let alloc_info = AllocationCreateInfo::default();
@@ -487,7 +492,7 @@ impl RenderContext
 			let depth_stencil_image = Image::new(self.memory_allocator.clone(), depth_stencil_create_info, alloc_info)?;
 			self.depth_stencil_image = Some(ImageView::new_default(depth_stencil_image)?);
 
-			let set_image = if self.rasterization_samples != SampleCount::Sample1 {
+			let set_image = /*if self.rasterization_samples != SampleCount::Sample1*/ {
 				let single_sample_create_info = ImageCreateInfo {
 					format: Format::R16G16B16A16_SFLOAT,
 					extent,
@@ -502,9 +507,9 @@ impl RenderContext
 				let single_sample_color = ImageView::new_default(single_sample_color_image)?;
 				self.single_sample_color_image = Some(single_sample_color.clone());
 				single_sample_color
-			} else {
+			} /*else {
 				color
-			};
+			}*/;
 
 			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
 			let set_write = [WriteDescriptorSet::image_view(0, set_image)];
@@ -1070,7 +1075,7 @@ pub(crate) fn submit_frame(
 	render_ctx.transparency_renderer.process_transparency(
 		&mut cb_builder,
 		color_image.clone(),
-		depth_stencil_image,
+		depth_stencil_image.clone(),
 		memory_allocator,
 	)?;
 	//}
@@ -1084,7 +1089,17 @@ pub(crate) fn submit_frame(
 		))?;
 		resolved_image
 	} else {
-		color_image
+		let smaa_output_image = render_ctx.single_sample_color_image.clone().unwrap();
+		let memory_allocator = render_ctx.memory_allocator.clone();
+		render_ctx.smaa_renderer.as_mut().unwrap().run(
+			&mut cb_builder,
+			memory_allocator,
+			color_image,
+			smaa_output_image.clone(),
+			depth_stencil_image,
+		)?;
+		smaa_output_image
+		//color_image
 	};
 
 	// UI

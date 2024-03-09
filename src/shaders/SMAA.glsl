@@ -485,12 +485,12 @@
  * On some compilers, discard cannot be used in vertex shaders. Thus, they need
  * to be compiled separately.
  */
-#ifndef SMAA_INCLUDE_VS
+/*#ifndef SMAA_INCLUDE_VS
 #define SMAA_INCLUDE_VS 1
 #endif
 #ifndef SMAA_INCLUDE_PS
 #define SMAA_INCLUDE_PS 1
-#endif
+#endif*/
 
 //-----------------------------------------------------------------------------
 // Texture Access Defines
