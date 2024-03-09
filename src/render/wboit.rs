@@ -14,7 +14,8 @@ use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, *};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::{
-	color_blend::*, depth_stencil::*, subpass::PipelineRenderingCreateInfo, viewport::Viewport, *,
+	color_blend::*, depth_stencil::*, multisample::MultisampleState, subpass::PipelineRenderingCreateInfo, viewport::Viewport,
+	*,
 };
 use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -53,6 +54,7 @@ impl WboitRenderer
 	pub fn new(
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		dimensions: [u32; 2],
+		rasterization_samples: SampleCount,
 		depth_stencil_format: Format,
 	) -> crate::Result<Self>
 	{
@@ -128,7 +130,10 @@ impl WboitRenderer
 			input_assembly_state: Some(Default::default()),
 			viewport_state: Some(Default::default()),
 			rasterization_state: Some(Default::default()),
-			multisample_state: Some(Default::default()),
+			multisample_state: Some(MultisampleState {
+				rasterization_samples,
+				..Default::default()
+			}),
 			depth_stencil_state: Some(compositing_depth_stencil_state),
 			color_blend_state: Some(compositing_color_blend_state),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
@@ -142,6 +147,7 @@ impl WboitRenderer
 			memory_allocator,
 			&descriptor_set_allocator,
 			dimensions,
+			rasterization_samples,
 			weights_images_layout,
 		)?;
 
@@ -162,6 +168,7 @@ impl WboitRenderer
 			memory_allocator,
 			&self.descriptor_set_allocator,
 			dimensions,
+			self.accum_image.image().samples(),
 			self.weights_images.layout().clone(),
 		)?;
 
@@ -264,6 +271,7 @@ fn create_images(
 	memory_allocator: Arc<StandardMemoryAllocator>,
 	descriptor_set_allocator: &StandardDescriptorSetAllocator,
 	extent: [u32; 2],
+	rasterization_samples: SampleCount,
 	weights_images_layout: Arc<DescriptorSetLayout>,
 ) -> crate::Result<(Arc<ImageView>, Arc<ImageView>, Arc<PersistentDescriptorSet>)>
 {
@@ -271,6 +279,7 @@ fn create_images(
 		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE,
 		format: Format::R16G16B16A16_SFLOAT,
 		extent: [extent[0], extent[1], 1],
+		samples: rasterization_samples,
 		..Default::default()
 	};
 	let accum_image = Image::new(memory_allocator.clone(), accum_info.clone(), AllocationCreateInfo::default())?;

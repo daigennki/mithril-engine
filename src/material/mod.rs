@@ -300,7 +300,10 @@ impl MaterialPipelineConfig
 				input_assembly_state: Some(Default::default()),
 				viewport_state: Some(Default::default()),
 				rasterization_state: Some(rasterization_state),
-				multisample_state: Some(Default::default()),
+				multisample_state: Some(MultisampleState {
+					rasterization_samples,
+					..Default::default()
+				}),
 				depth_stencil_state: Some(oit_depth_stencil_state),
 				color_blend_state: Some(oit_color_blend_state),
 				dynamic_state: [DynamicState::Viewport].into_iter().collect(),

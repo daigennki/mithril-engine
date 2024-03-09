@@ -101,10 +101,7 @@ impl Model
 		let (vertex_subbuffers, index_buffer, submeshes) = load_gltf_meshes(render_ctx, &doc, &data_buffers)?;
 
 		let parent_folder = path.parent().unwrap();
-		let materials: Vec<_> = doc
-			.materials()
-			.map(|mat| load_gltf_material(&mat, parent_folder))
-			.collect();
+		let materials: Vec<_> = doc.materials().map(|mat| load_gltf_material(&mat, parent_folder)).collect();
 		let (textures_set, mat_tex_base_indices) = descriptor_set_from_materials(
 			render_ctx,
 			descriptor_set_allocator,
@@ -696,7 +693,7 @@ impl MeshManager
 			_ => (render_ctx.depth_stencil_format, render_ctx.window_dimensions(), false),
 		};
 
-		let rasterization_samples = if matches!(pass_type, PassType::Opaque) {
+		let rasterization_samples = if !shadow_pass {
 			render_ctx.rasterization_samples
 		} else {
 			SampleCount::Sample1

@@ -149,8 +149,12 @@ impl RenderContext
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
 
-		let transparency_renderer =
-			wboit::WboitRenderer::new(memory_allocator.clone(), window.dimensions(), depth_stencil_format)?;
+		let transparency_renderer = wboit::WboitRenderer::new(
+			memory_allocator.clone(),
+			window.dimensions(),
+			rasterization_samples,
+			depth_stencil_format,
+		)?;
 
 		let mut new_self = Self {
 			window,
@@ -487,7 +491,8 @@ impl RenderContext
 				let single_sample_create_info = ImageCreateInfo {
 					format: Format::R16G16B16A16_SFLOAT,
 					extent,
-					usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
+					usage: ImageUsage::COLOR_ATTACHMENT
+						| ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
 						| ImageUsage::TRANSFER_DST,
 					..Default::default()
 				};
@@ -1059,26 +1064,29 @@ pub(crate) fn submit_frame(
 	// opaque 3D objects
 	mesh_manager.execute_rendering(&mut cb_builder, color_image.clone(), depth_stencil_image.clone())?;
 
-	// resolve multisample image if it has more than 1 sample
-	let single_sample_color_image = if render_ctx.rasterization_samples != SampleCount::Sample1 {
-		let resolved_image = render_ctx.single_sample_color_image.clone().unwrap();
-		cb_builder.resolve_image(ResolveImageInfo::images(color_image.image().clone(), resolved_image.image().clone()))?;
-		resolved_image
-	} else {
-		color_image
-	};
-
 	// transparent 3D objects (OIT)
 	let memory_allocator = render_ctx.memory_allocator.clone();
 	//if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
 	render_ctx.transparency_renderer.process_transparency(
 		&mut cb_builder,
-		single_sample_color_image.clone(),
+		color_image.clone(),
 		depth_stencil_image,
 		memory_allocator,
 	)?;
 	//}
-	
+
+	// resolve multisample image if it has more than 1 sample
+	let single_sample_color_image = if render_ctx.rasterization_samples != SampleCount::Sample1 {
+		let resolved_image = render_ctx.single_sample_color_image.clone().unwrap();
+		cb_builder.resolve_image(ResolveImageInfo::images(
+			color_image.image().clone(),
+			resolved_image.image().clone(),
+		))?;
+		resolved_image
+	} else {
+		color_image
+	};
+
 	// UI
 	canvas.execute_rendering(&mut cb_builder, single_sample_color_image)?;
 
