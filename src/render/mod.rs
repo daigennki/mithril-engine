@@ -472,7 +472,7 @@ impl RenderContext
 		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
 			let aa_enabled = self.rasterization_samples != SampleCount::Sample1 || self.smaa_renderer.is_some();
 			let color_usage = if aa_enabled {
-				ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED | ImageUsage::TRANSFER_SRC
+				ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
 			} else {
 				ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
 			};
@@ -1092,7 +1092,7 @@ pub(crate) fn submit_frame(
 		// At the moment, we can't enable SMAA and MSAA at the same time. SMAA could be used with MSAA
 		// 2x for SMAA S2x, but it's not implemented in this engine (yet).
 		assert!(
-			rasterization_samples == SampleCount::Sample1,
+			rasterization_samples == SampleCount::Sample1 || rasterization_samples == SampleCount::Sample2,
 			"SMAA and MSAA can't be enabled at the same time"
 		);
 
@@ -1102,7 +1102,6 @@ pub(crate) fn submit_frame(
 			memory_allocator,
 			color_image,
 			aa_output_image.clone(),
-			depth_stencil_image,
 		)?;
 		aa_output_image
 	} else if rasterization_samples != SampleCount::Sample1 {
