@@ -1097,12 +1097,7 @@ pub(crate) fn submit_frame(
 		);
 
 		// SMAA
-		smaa.run(
-			&mut cb_builder,
-			memory_allocator,
-			color_image,
-			aa_output_image.clone(),
-		)?;
+		smaa.run(&mut cb_builder, memory_allocator, color_image, aa_output_image.clone())?;
 		aa_output_image
 	} else if rasterization_samples != SampleCount::Sample1 {
 		// MSAA

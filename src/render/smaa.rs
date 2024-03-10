@@ -10,7 +10,7 @@ use std::sync::Arc;
 use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
-use vulkano::format::{ClearValue, Format};
+use vulkano::format::*;
 use vulkano::image::{sampler::*, view::ImageView, *};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::compute::ComputePipelineCreateInfo;
@@ -194,6 +194,8 @@ pub struct SmaaRenderer
 	rt_metrics: Vec4,
 
 	input_image_original: Option<Arc<ImageView>>,
+	stencil_format: Format,
+	stencil_image: Option<Arc<ImageView>>,
 	images0: Option<ImageBundle>, // always used
 	images1: Option<ImageBundle>, // only used with SMAA S2x
 	blend_set: Option<Arc<PersistentDescriptorSet>>,
@@ -232,7 +234,25 @@ impl SmaaRenderer
 
 		let color_blend_state = ColorBlendState::with_attachment_states(1, Default::default());
 
-		/*let write_stencil_op_state = StencilOpState {
+		const STENCIL_FORMAT_CANDIDATES: [Format; 4] = [
+			Format::S8_UINT,
+			Format::D16_UNORM_S8_UINT,
+			Format::D24_UNORM_S8_UINT,
+			Format::D32_SFLOAT_S8_UINT,
+		];
+		let stencil_format = STENCIL_FORMAT_CANDIDATES
+			.into_iter()
+			.find(|format| {
+				device
+					.physical_device()
+					.format_properties(*format)
+					.unwrap()
+					.optimal_tiling_features
+					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
+			})
+			.unwrap();
+
+		let write_stencil_op_state = StencilOpState {
 			ops: StencilOps {
 				pass_op: StencilOp::IncrementAndClamp,
 				compare_op: CompareOp::Always,
@@ -261,7 +281,7 @@ impl SmaaRenderer
 				back: stencil_op_state,
 			}),
 			..Default::default()
-		};*/
+		};
 
 		/*let inline_uniform_binding = DescriptorSetLayoutBinding {
 			descriptor_count: 16,
@@ -300,7 +320,7 @@ impl SmaaRenderer
 		let edges_pipeline_layout = PipelineLayout::new(device.clone(), edges_pipeline_layout_info)?;
 		let rg_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16_SFLOAT)],
-			//stencil_attachment_format: Some(render_ctx.depth_stencil_format),
+			stencil_attachment_format: Some(stencil_format),
 			..Default::default()
 		};
 		let edges_pipeline_info = GraphicsPipelineCreateInfo {
@@ -314,7 +334,7 @@ impl SmaaRenderer
 			rasterization_state: Some(Default::default()),
 			multisample_state: Some(Default::default()),
 			color_blend_state: Some(color_blend_state.clone()),
-			//depth_stencil_state: Some(depth_stencil_state_write_stencil),
+			depth_stencil_state: Some(depth_stencil_state_write_stencil),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 			subpass: Some(rg_rendering_info.into()),
 			..GraphicsPipelineCreateInfo::layout(edges_pipeline_layout)
@@ -339,7 +359,7 @@ impl SmaaRenderer
 		let blend_pipeline_layout = PipelineLayout::new(device.clone(), blend_pipeline_layout_info)?;
 		let rgba_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			//stencil_attachment_format: Some(render_ctx.depth_stencil_format),
+			stencil_attachment_format: Some(stencil_format),
 			..Default::default()
 		};
 		let blend_pipeline_info = GraphicsPipelineCreateInfo {
@@ -353,7 +373,7 @@ impl SmaaRenderer
 			rasterization_state: Some(Default::default()),
 			multisample_state: Some(Default::default()),
 			color_blend_state: Some(color_blend_state.clone()),
-			//depth_stencil_state: Some(depth_stencil_state.clone()),
+			depth_stencil_state: Some(depth_stencil_state.clone()),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
 			subpass: Some(rgba_rendering_info.clone().into()),
 			..GraphicsPipelineCreateInfo::layout(blend_pipeline_layout)
@@ -450,6 +470,8 @@ impl SmaaRenderer
 			descriptor_set_allocator,
 			rt_metrics: Vec4::ZERO,
 			input_image_original: None,
+			stencil_format,
+			stencil_image: None,
 			images0: None,
 			images1: None,
 			blend_set: None,
@@ -499,7 +521,7 @@ impl SmaaRenderer
 			if input_image_original.image().samples() == SampleCount::Sample2 {
 				self.images1 = Some(ImageBundle::new(
 					&self.descriptor_set_allocator,
-					memory_allocator,
+					memory_allocator.clone(),
 					self.area_tex.clone(),
 					self.search_tex.clone(),
 					input_set_layout,
@@ -550,22 +572,29 @@ impl SmaaRenderer
 				None
 			};
 
+			let stencil_info = ImageCreateInfo {
+				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+				format: self.stencil_format,
+				extent: [image_extent[0], image_extent[1], 1],
+				..Default::default()
+			};
+			let stencil = Image::new(memory_allocator, stencil_info.clone(), AllocationCreateInfo::default())?;
+			self.stencil_image = Some(ImageView::new_default(stencil)?);
+
 			self.input_image_original = Some(input_image_original);
 		}
 
 		let edges_rendering = RenderingInfo {
 			color_attachments: vec![Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
-				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 				..RenderingAttachmentInfo::image_view(self.images0.as_ref().unwrap().edges_image.clone())
 			})],
-			/*stencil_attachment: Some(RenderingAttachmentInfo {
+			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
 				clear_value: Some(ClearValue::Stencil(0)),
-				..RenderingAttachmentInfo::image_view(stencil_image.clone())
-			}),*/
+				..RenderingAttachmentInfo::image_view(self.stencil_image.clone().unwrap())
+			}),
 			..Default::default()
 		};
 		let blend_rendering = RenderingInfo {
@@ -575,11 +604,11 @@ impl SmaaRenderer
 				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 				..RenderingAttachmentInfo::image_view(self.images0.as_ref().unwrap().blend_image.clone())
 			})],
-			/*stencil_attachment: Some(RenderingAttachmentInfo {
+			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
 				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(stencil_image.clone())
-			}),*/
+				..RenderingAttachmentInfo::image_view(self.stencil_image.clone().unwrap())
+			}),
 			..Default::default()
 		};
 		let neighborhood_rendering = RenderingInfo {
@@ -627,12 +656,12 @@ impl SmaaRenderer
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(images1.edges_image.clone())
 				})],
-				/*stencil_attachment: Some(RenderingAttachmentInfo {
+				stencil_attachment: Some(RenderingAttachmentInfo {
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Stencil(0)),
-					..RenderingAttachmentInfo::image_view(stencil_image.clone())
-				}),*/
+					..RenderingAttachmentInfo::image_view(self.stencil_image.clone().unwrap())
+				}),
 				..Default::default()
 			};
 			cb.begin_rendering(edges_rendering1)?
@@ -660,11 +689,11 @@ impl SmaaRenderer
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
 					..RenderingAttachmentInfo::image_view(images1.blend_image.clone())
 				})],
-				/*stencil_attachment: Some(RenderingAttachmentInfo {
+				stencil_attachment: Some(RenderingAttachmentInfo {
 					load_op: AttachmentLoadOp::Load,
 					store_op: AttachmentStoreOp::Store,
-					..RenderingAttachmentInfo::image_view(stencil_image.clone())
-				}),*/
+					..RenderingAttachmentInfo::image_view(self.stencil_image.clone().unwrap())
+				}),
 				..Default::default()
 			};
 
