@@ -40,7 +40,7 @@ mod fs_compositing_ms
 	vulkano_shaders::shader! {
 		ty: "fragment",
 		path: "src/shaders/wboit_compositing.frag.glsl",
-		define: [("MULTISAMPLE", "")]
+		define: [("MULTISAMPLED_IMAGE", "")]
 	}
 }
 

@@ -2,7 +2,7 @@
 
 // The shader used to composite transparent objects over opaque objects, when using WBOIT/MBOIT.
 
-#ifdef MULTISAMPLE
+#ifdef MULTISAMPLED_IMAGE
 #define IMAGE_TYPE image2DMS
 #define IMAGE_LOAD(image, coord, sample) imageLoad(image, coord, sample)
 #else
