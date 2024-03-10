@@ -196,7 +196,7 @@ impl RenderContext
 			new_self.error_texture = Some(ImageView::new_default(image)?);
 		}
 
-		new_self.smaa_renderer = Some(smaa::SmaaRenderer::new(&mut new_self)?);
+		//new_self.smaa_renderer = Some(smaa::SmaaRenderer::new(&mut new_self)?);
 
 		Ok(new_self)
 	}
@@ -1086,21 +1086,20 @@ pub(crate) fn submit_frame(
 	)?;
 	//}
 
-	let aa_output_image = render_ctx.aa_output_image.clone().unwrap();
+	let aa_output_image_option = render_ctx.aa_output_image.clone();
 	let rasterization_samples = render_ctx.rasterization_samples;
 	let aa_output = if let Some(smaa) = render_ctx.smaa_renderer.as_mut() {
-		// At the moment, we can't enable SMAA and MSAA at the same time. SMAA could be used with MSAA
-		// 2x for SMAA S2x, but it's not implemented in this engine (yet).
+		// SMAA
 		assert!(
 			rasterization_samples == SampleCount::Sample1 || rasterization_samples == SampleCount::Sample2,
-			"SMAA and MSAA can't be enabled at the same time"
+			"SMAA can only be enabled with MSAA 2x or without MSAA at all"
 		);
-
-		// SMAA
+		let aa_output_image = aa_output_image_option.unwrap();
 		smaa.run(&mut cb_builder, memory_allocator, color_image, aa_output_image.clone())?;
 		aa_output_image
 	} else if rasterization_samples != SampleCount::Sample1 {
 		// MSAA
+		let aa_output_image = aa_output_image_option.unwrap();
 		cb_builder.resolve_image(ResolveImageInfo::images(
 			color_image.image().clone(),
 			aa_output_image.image().clone(),
