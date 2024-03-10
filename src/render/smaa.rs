@@ -68,6 +68,97 @@ mod fs_neighborhood
 	}
 }
 
+struct ImageBundle
+{
+	edges_image: Arc<ImageView>, // RG
+	blend_image: Arc<ImageView>, // RGBA
+
+	input_set: Arc<PersistentDescriptorSet>, // contains separated input image
+	edges_set: Arc<PersistentDescriptorSet>, // contains `edges_image`
+	blend_set: Arc<PersistentDescriptorSet>, // contains `blend_image`
+}
+impl ImageBundle
+{
+	/// Create a new SMAA image bundle from the given input image. The input image must only have
+	/// one sample per fragment (it must have been separated if it's from a multisample image).
+	fn new(
+		descriptor_set_allocator: &StandardDescriptorSetAllocator,
+		memory_allocator: Arc<StandardMemoryAllocator>,
+		area_tex: Arc<ImageView>,
+		search_tex: Arc<ImageView>,
+		input_set_layout: Arc<DescriptorSetLayout>,
+		edges_set_layout: Arc<DescriptorSetLayout>,
+		blend_set_layout: Arc<DescriptorSetLayout>,
+		input_image: Arc<ImageView>
+	) -> crate::Result<Self>
+	{
+		log::debug!("creating SMAA images");
+
+		let image_extent = input_image.image().extent();
+
+		let edges_info = ImageCreateInfo {
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+			format: Format::R16G16_SFLOAT,
+			extent: [image_extent[0], image_extent[1], 1],
+			..Default::default()
+		};
+		let edges = Image::new(memory_allocator.clone(), edges_info.clone(), AllocationCreateInfo::default())?;
+		let edges_image = ImageView::new_default(edges)?;
+
+		let blend_info = ImageCreateInfo {
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+			format: Format::R16G16B16A16_SFLOAT,
+			extent: [image_extent[0], image_extent[1], 1],
+			..Default::default()
+		};
+		let blend = Image::new(memory_allocator, blend_info.clone(), AllocationCreateInfo::default())?;
+		let blend_image = ImageView::new_default(blend)?;
+
+		let input_writes = [
+			//rt_metrics_uniform.clone(),
+			WriteDescriptorSet::image_view(1,input_image.clone()),
+		];
+		let input_set = PersistentDescriptorSet::new(
+			descriptor_set_allocator,
+			input_set_layout,
+			input_writes,
+			[],
+		)?;
+
+		let edges_writes = [
+			//rt_metrics_uniform.clone(),
+			WriteDescriptorSet::image_view(1, area_tex.clone()),
+			WriteDescriptorSet::image_view(2, search_tex.clone()),
+			WriteDescriptorSet::image_view(3, edges_image.clone()),
+		];
+		let edges_set = PersistentDescriptorSet::new(
+			descriptor_set_allocator,
+			edges_set_layout,
+			edges_writes,
+			[],
+		)?;
+
+		let blend_writes = [
+			//rt_metrics_uniform,
+			WriteDescriptorSet::image_view(1, input_image.clone()),
+			WriteDescriptorSet::image_view(2, blend_image.clone()),
+		];
+		let blend_set = PersistentDescriptorSet::new(
+			descriptor_set_allocator,
+			blend_set_layout,
+			blend_writes,
+			[],
+		)?;
+
+		Ok(Self {
+			edges_image,
+			blend_image,
+			input_set,
+			edges_set,
+			blend_set,
+		})
+	}
+}
 pub struct SmaaRenderer
 {
 	search_tex: Arc<ImageView>,
@@ -78,12 +169,10 @@ pub struct SmaaRenderer
 
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	rt_metrics: Vec4,
-	input_image: Option<Arc<ImageView>>,
-	edges_image: Option<Arc<ImageView>>,
-	blend_image: Option<Arc<ImageView>>,
-	input_set: Option<Arc<PersistentDescriptorSet>>,
-	edges_set: Option<Arc<PersistentDescriptorSet>>,
-	blend_set: Option<Arc<PersistentDescriptorSet>>,
+	
+	input_image_original: Option<Arc<ImageView>>,
+	images0: Option<ImageBundle>, // always used
+	//images1: Option<ImageBundle>, // only used with SMAA S2x
 }
 impl SmaaRenderer
 {
@@ -128,7 +217,6 @@ impl SmaaRenderer
 			stencil: Some(StencilState {
 				front: write_stencil_op_state,
 				back: write_stencil_op_state,
-				..Default::default()
 			}),
 			..Default::default()
 		};
@@ -283,7 +371,7 @@ impl SmaaRenderer
 		let neighborhood_pipeline = GraphicsPipeline::new(device.clone(), None, neighborhood_pipeline_info)?;
 
 		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
-			set_count: 2,
+			set_count: 4,
 			..Default::default()
 		};
 		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device, set_alloc_info);
@@ -296,12 +384,9 @@ impl SmaaRenderer
 			neighborhood_pipeline,
 			descriptor_set_allocator,
 			rt_metrics: Vec4::ZERO,
-			input_image: None,
-			edges_image: None,
-			blend_image: None,
-			input_set: None,
-			edges_set: None,
-			blend_set: None,
+			input_image_original: None,
+			images0: None,
+			//images1: None,
 		})
 	}
 
@@ -309,7 +394,7 @@ impl SmaaRenderer
 		&mut self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		input_image: Arc<ImageView>,
+		input_image_original: Arc<ImageView>,
 		output_image: Arc<ImageView>,
 		stencil_image: Arc<ImageView>,
 	) -> crate::Result<()>
@@ -317,81 +402,37 @@ impl SmaaRenderer
 		let image_extent = output_image.image().extent();
 		let extent_f32 = [image_extent[0] as f32, image_extent[1] as f32];
 
-		// Resize images and recreate descriptor set if `input_image` was resized.
+		// Resize images and recreate descriptor set if `input_image_original` was resized.
 		let edges_layout = self.edges_pipeline.layout().clone();
 		let blend_layout = self.blend_pipeline.layout().clone();
 		let neighborhood_layout = self.neighborhood_pipeline.layout().clone();
-		if self.input_image != Some(input_image.clone()) {
-			log::debug!("re-creating SMAA images");
-
-			self.input_image = Some(input_image);
-
-			let edges_info = ImageCreateInfo {
-				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
-				format: Format::R16G16_SFLOAT,
-				extent: [image_extent[0], image_extent[1], 1],
-				..Default::default()
-			};
-			let edges_image = Image::new(memory_allocator.clone(), edges_info.clone(), AllocationCreateInfo::default())?;
-			self.edges_image = Some(ImageView::new_default(edges_image)?);
-
-			let blend_info = ImageCreateInfo {
-				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
-				format: Format::R16G16B16A16_SFLOAT,
-				extent: [image_extent[0], image_extent[1], 1],
-				..Default::default()
-			};
-			let blend_image = Image::new(memory_allocator, blend_info.clone(), AllocationCreateInfo::default())?;
-			self.blend_image = Some(ImageView::new_default(blend_image)?);
-
+		if self.input_image_original != Some(input_image_original.clone()) {
 			let rt_metrics = Vec4::new(1.0 / (extent_f32[0]), 1.0 / (extent_f32[1]), extent_f32[0], extent_f32[1]);
 			//let rt_metrics_uniform = WriteDescriptorSet::inline_uniform_block(0, 0, bytemuck::bytes_of(&rt_metrics).into());
 			self.rt_metrics = rt_metrics;
 
-			let input_writes = [
-				//rt_metrics_uniform.clone(),
-				WriteDescriptorSet::image_view(1, self.input_image.clone().unwrap()),
-			];
+			// TODO: separate samples into separate images if `input_image_original` has 2 samples per fragment
+
 			let input_set_layout = edges_layout.set_layouts()[0].clone();
-			self.input_set = Some(PersistentDescriptorSet::new(
-				&self.descriptor_set_allocator,
-				input_set_layout,
-				input_writes,
-				[],
-			)?);
-
-			let edges_writes = [
-				//rt_metrics_uniform.clone(),
-				WriteDescriptorSet::image_view(1, self.area_tex.clone()),
-				WriteDescriptorSet::image_view(2, self.search_tex.clone()),
-				WriteDescriptorSet::image_view(3, self.edges_image.clone().unwrap()),
-			];
 			let edges_set_layout = blend_layout.set_layouts()[0].clone();
-			self.edges_set = Some(PersistentDescriptorSet::new(
-				&self.descriptor_set_allocator,
-				edges_set_layout,
-				edges_writes,
-				[],
-			)?);
-
-			let blend_writes = [
-				//rt_metrics_uniform,
-				WriteDescriptorSet::image_view(1, self.input_image.clone().unwrap()),
-				WriteDescriptorSet::image_view(2, self.blend_image.clone().unwrap()),
-			];
 			let blend_set_layout = neighborhood_layout.set_layouts()[0].clone();
-			self.blend_set = Some(PersistentDescriptorSet::new(
+			self.images0 = Some(ImageBundle::new(
 				&self.descriptor_set_allocator,
+				memory_allocator,
+				self.area_tex.clone(),
+				self.search_tex.clone(),
+				input_set_layout,
+				edges_set_layout,
 				blend_set_layout,
-				blend_writes,
-				[],
+				input_image_original.clone(),
 			)?);
+			self.input_image_original = Some(input_image_original);
 		}
 
 		let edges_rendering = RenderingInfo {
 			color_attachments: vec![Some(RenderingAttachmentInfo {
 				store_op: AttachmentStoreOp::Store,
-				..RenderingAttachmentInfo::image_view(self.edges_image.clone().unwrap())
+				..RenderingAttachmentInfo::image_view(self.images0.as_ref().unwrap().edges_image.clone())
 			})],
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
@@ -406,7 +447,7 @@ impl SmaaRenderer
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
 				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
-				..RenderingAttachmentInfo::image_view(self.blend_image.clone().unwrap())
+				..RenderingAttachmentInfo::image_view(self.images0.as_ref().unwrap().blend_image.clone())
 			})],
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Load,
@@ -433,19 +474,19 @@ impl SmaaRenderer
 		cb.begin_rendering(edges_rendering)?
 			.set_viewport(0, [viewport].as_slice().into())?
 			.bind_pipeline_graphics(self.edges_pipeline.clone())?
-			.bind_descriptor_sets(BIND_POINT, edges_layout.clone(), 0, self.input_set.clone().unwrap())?
+			.bind_descriptor_sets(BIND_POINT, edges_layout.clone(), 0, self.images0.as_ref().unwrap().input_set.clone())?
 			.push_constants(edges_layout, 0, self.rt_metrics)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?
 			.begin_rendering(blend_rendering)?
 			.bind_pipeline_graphics(self.blend_pipeline.clone())?
-			.bind_descriptor_sets(BIND_POINT, blend_layout.clone(), 0, self.edges_set.clone().unwrap())?
+			.bind_descriptor_sets(BIND_POINT, blend_layout.clone(), 0, self.images0.as_ref().unwrap().edges_set.clone())?
 			.push_constants(blend_layout, 0, self.rt_metrics)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?
 			.begin_rendering(neighborhood_rendering)?
 			.bind_pipeline_graphics(self.neighborhood_pipeline.clone())?
-			.bind_descriptor_sets(BIND_POINT, neighborhood_layout.clone(), 0, self.blend_set.clone().unwrap())?
+			.bind_descriptor_sets(BIND_POINT, neighborhood_layout.clone(), 0, self.images0.as_ref().unwrap().blend_set.clone())?
 			.push_constants(neighborhood_layout, 0, self.rt_metrics)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
