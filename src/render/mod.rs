@@ -7,8 +7,8 @@
 pub mod lighting;
 pub mod model;
 //mod moment_transparency;
-pub mod ui;
 mod smaa;
+pub mod ui;
 mod wboit;
 mod window;
 
@@ -82,15 +82,15 @@ pub struct RenderContext
 
 	transparency_renderer: wboit::WboitRenderer,
 	//transparency_renderer: Option<moment_transparency::MomentTransparencyRenderer>,
-	smaa_renderer: Option<smaa::SmaaRenderer>,
 
 	// Things related to the main color/depth/stencil images and gamma correction.
 	rasterization_samples: SampleCount,
 	depth_stencil_format: Format,
 	depth_stencil_image: Option<Arc<ImageView>>,
 	color_image: Option<Arc<ImageView>>,
-	single_sample_color_image: Option<Arc<ImageView>>,
-	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `single_sample_color_image` as a storage image binding.
+	smaa_renderer: Option<smaa::SmaaRenderer>,
+	aa_output_image: Option<Arc<ImageView>>,
+	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `aa_output_image` as a storage image binding.
 	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
 
 	// Loaded textures, with the key being the path relative to the current working directory.
@@ -176,7 +176,7 @@ impl RenderContext
 			depth_stencil_format,
 			depth_stencil_image: None,
 			color_image: None,
-			single_sample_color_image: None,
+			aa_output_image: None,
 			color_set: None,
 			gamma_pipeline: create_gamma_pipeline(vk_dev.clone())?,
 			textures: HashMap::new(),
@@ -470,11 +470,17 @@ impl RenderContext
 		let extent2 = self.window.dimensions();
 		let extent = [extent2[0], extent2[1], 1];
 		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
+			let aa_enabled = self.rasterization_samples != SampleCount::Sample1 || self.smaa_renderer.is_some();
+			let color_usage = if aa_enabled {
+				ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED | ImageUsage::TRANSFER_SRC
+			} else {
+				ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
+			};
 			let color_create_info = ImageCreateInfo {
 				format: Format::R16G16B16A16_SFLOAT,
 				extent,
 				samples: self.rasterization_samples,
-				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC | ImageUsage::SAMPLED,
+				usage: color_usage,
 				..Default::default()
 			};
 			let alloc_info = AllocationCreateInfo::default();
@@ -492,24 +498,24 @@ impl RenderContext
 			let depth_stencil_image = Image::new(self.memory_allocator.clone(), depth_stencil_create_info, alloc_info)?;
 			self.depth_stencil_image = Some(ImageView::new_default(depth_stencil_image)?);
 
-			let set_image = /*if self.rasterization_samples != SampleCount::Sample1*/ {
-				let single_sample_create_info = ImageCreateInfo {
+			let set_image = if aa_enabled {
+				let aa_output_create_info = ImageCreateInfo {
 					format: Format::R16G16B16A16_SFLOAT,
 					extent,
 					usage: ImageUsage::COLOR_ATTACHMENT
-						| ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
-						| ImageUsage::TRANSFER_DST,
+						| ImageUsage::STORAGE | ImageUsage::TRANSFER_DST
+						| ImageUsage::TRANSFER_SRC,
 					..Default::default()
 				};
 				let alloc_info = AllocationCreateInfo::default();
-				let single_sample_color_image =
-					Image::new(self.memory_allocator.clone(), single_sample_create_info, alloc_info.clone())?;
-				let single_sample_color = ImageView::new_default(single_sample_color_image)?;
-				self.single_sample_color_image = Some(single_sample_color.clone());
-				single_sample_color
-			} /*else {
+				let aa_output = Image::new(self.memory_allocator.clone(), aa_output_create_info, alloc_info.clone())?;
+				let aa_output_image = ImageView::new_default(aa_output)?;
+				self.aa_output_image = Some(aa_output_image.clone());
+				aa_output_image
+			} else {
+				self.aa_output_image = None;
 				color
-			}*/;
+			};
 
 			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
 			let set_write = [WriteDescriptorSet::image_view(0, set_image)];
@@ -549,7 +555,7 @@ impl RenderContext
 	{
 		if let Some((swapchain_image, acquire_future)) = self.window.get_next_image()? {
 			let color_image = self
-				.single_sample_color_image
+				.aa_output_image
 				.as_ref()
 				.unwrap_or_else(|| self.color_image.as_ref().unwrap())
 				.image()
@@ -1076,34 +1082,43 @@ pub(crate) fn submit_frame(
 		&mut cb_builder,
 		color_image.clone(),
 		depth_stencil_image.clone(),
-		memory_allocator,
+		memory_allocator.clone(),
 	)?;
 	//}
 
-	// resolve multisample image if it has more than 1 sample
-	let single_sample_color_image = if render_ctx.rasterization_samples != SampleCount::Sample1 {
-		let resolved_image = render_ctx.single_sample_color_image.clone().unwrap();
-		cb_builder.resolve_image(ResolveImageInfo::images(
-			color_image.image().clone(),
-			resolved_image.image().clone(),
-		))?;
-		resolved_image
-	} else {
-		let smaa_output_image = render_ctx.single_sample_color_image.clone().unwrap();
-		let memory_allocator = render_ctx.memory_allocator.clone();
-		render_ctx.smaa_renderer.as_mut().unwrap().run(
+	let aa_output_image = render_ctx.aa_output_image.clone().unwrap();
+	let rasterization_samples = render_ctx.rasterization_samples;
+	let aa_output = if let Some(smaa) = render_ctx.smaa_renderer.as_mut() {
+		// At the moment, we can't enable SMAA and MSAA at the same time. SMAA could be used with MSAA
+		// 2x for SMAA S2x, but it's not implemented in this engine (yet).
+		assert!(
+			rasterization_samples == SampleCount::Sample1,
+			"SMAA and MSAA can't be enabled at the same time"
+		);
+
+		// SMAA
+		smaa.run(
 			&mut cb_builder,
 			memory_allocator,
 			color_image,
-			smaa_output_image.clone(),
+			aa_output_image.clone(),
 			depth_stencil_image,
 		)?;
-		smaa_output_image
-		//color_image
+		aa_output_image
+	} else if rasterization_samples != SampleCount::Sample1 {
+		// MSAA
+		cb_builder.resolve_image(ResolveImageInfo::images(
+			color_image.image().clone(),
+			aa_output_image.image().clone(),
+		))?;
+		aa_output_image
+	} else {
+		// no anti-aliasing
+		color_image
 	};
 
 	// UI
-	canvas.execute_rendering(&mut cb_builder, single_sample_color_image)?;
+	canvas.execute_rendering(&mut cb_builder, aa_output)?;
 
 	render_ctx.present_image(cb_builder)
 }

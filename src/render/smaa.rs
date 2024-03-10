@@ -115,7 +115,7 @@ impl SmaaRenderer
 		};
 
 		let color_blend_state = ColorBlendState::with_attachment_states(1, Default::default());
-		
+
 		let write_stencil_op_state = StencilOpState {
 			ops: StencilOps {
 				pass_op: StencilOp::IncrementAndClamp,
@@ -286,7 +286,7 @@ impl SmaaRenderer
 			set_count: 2,
 			..Default::default()
 		};
-		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device, set_alloc_info); 
+		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device, set_alloc_info);
 
 		Ok(Self {
 			search_tex,
@@ -323,9 +323,9 @@ impl SmaaRenderer
 		let neighborhood_layout = self.neighborhood_pipeline.layout().clone();
 		if self.input_image != Some(input_image.clone()) {
 			log::debug!("re-creating SMAA images");
-			
+
 			self.input_image = Some(input_image);
-			
+
 			let edges_info = ImageCreateInfo {
 				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
 				format: Format::R16G16_SFLOAT,
@@ -353,30 +353,39 @@ impl SmaaRenderer
 				WriteDescriptorSet::image_view(1, self.input_image.clone().unwrap()),
 			];
 			let input_set_layout = edges_layout.set_layouts()[0].clone();
-			self.input_set = Some(
-				PersistentDescriptorSet::new(&self.descriptor_set_allocator, input_set_layout, input_writes, [])?
-			);
+			self.input_set = Some(PersistentDescriptorSet::new(
+				&self.descriptor_set_allocator,
+				input_set_layout,
+				input_writes,
+				[],
+			)?);
 
 			let edges_writes = [
 				//rt_metrics_uniform.clone(),
 				WriteDescriptorSet::image_view(1, self.area_tex.clone()),
 				WriteDescriptorSet::image_view(2, self.search_tex.clone()),
-				WriteDescriptorSet::image_view(3, self.edges_image.clone().unwrap()),	
+				WriteDescriptorSet::image_view(3, self.edges_image.clone().unwrap()),
 			];
 			let edges_set_layout = blend_layout.set_layouts()[0].clone();
-			self.edges_set = Some(
-				PersistentDescriptorSet::new(&self.descriptor_set_allocator, edges_set_layout, edges_writes, [])?
-			);
-	
+			self.edges_set = Some(PersistentDescriptorSet::new(
+				&self.descriptor_set_allocator,
+				edges_set_layout,
+				edges_writes,
+				[],
+			)?);
+
 			let blend_writes = [
 				//rt_metrics_uniform,
 				WriteDescriptorSet::image_view(1, self.input_image.clone().unwrap()),
-				WriteDescriptorSet::image_view(2, self.blend_image.clone().unwrap()),	
+				WriteDescriptorSet::image_view(2, self.blend_image.clone().unwrap()),
 			];
 			let blend_set_layout = neighborhood_layout.set_layouts()[0].clone();
-			self.blend_set = Some(
-				PersistentDescriptorSet::new(&self.descriptor_set_allocator, blend_set_layout, blend_writes, [])?
-			);
+			self.blend_set = Some(PersistentDescriptorSet::new(
+				&self.descriptor_set_allocator,
+				blend_set_layout,
+				blend_writes,
+				[],
+			)?);
 		}
 
 		let edges_rendering = RenderingInfo {
