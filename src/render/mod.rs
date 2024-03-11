@@ -196,7 +196,7 @@ impl RenderContext
 			new_self.error_texture = Some(ImageView::new_default(image)?);
 		}
 
-		//new_self.smaa_renderer = Some(smaa::SmaaRenderer::new(&mut new_self)?);
+		new_self.smaa_renderer = Some(smaa::SmaaRenderer::new(&mut new_self)?);
 
 		Ok(new_self)
 	}
