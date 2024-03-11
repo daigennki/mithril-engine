@@ -68,96 +68,6 @@ mod fs_neighborhood
 	}
 }
 
-struct ImageBundle
-{
-	blend_image: Arc<ImageView>,
-	input_set: Arc<PersistentDescriptorSet>,
-}
-impl ImageBundle
-{
-	fn new(
-		descriptor_set_allocator: &StandardDescriptorSetAllocator,
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		input_set_layout: Arc<DescriptorSetLayout>,
-		input_image: Arc<ImageView>,
-	) -> crate::Result<Self>
-	{
-		let blend_info = ImageCreateInfo {
-			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
-			format: Format::R16G16B16A16_SFLOAT,
-			extent: input_image.image().extent(),
-			..Default::default()
-		};
-		let blend = Image::new(memory_allocator, blend_info, AllocationCreateInfo::default())?;
-		let blend_image = ImageView::new_default(blend)?;
-
-		let input_writes = [
-			//rt_metrics_uniform.clone(),
-			WriteDescriptorSet::image_view(1, input_image),
-		];
-		let input_set = PersistentDescriptorSet::new(descriptor_set_allocator, input_set_layout, input_writes, [])?;
-
-		Ok(Self { blend_image, input_set })
-	}
-
-	fn run_edges_blend(
-		&self,
-		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		edges_pipeline: Arc<GraphicsPipeline>,
-		blend_pipeline: Arc<GraphicsPipeline>,
-		edges: Arc<ImageView>,
-		stencil: Arc<ImageView>,
-		edges_set: Arc<PersistentDescriptorSet>,
-		rt_metrics: Vec4,
-	) -> crate::Result<()>
-	{
-		let edges_rendering = RenderingInfo {
-			color_attachments: vec![Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Clear,
-				store_op: AttachmentStoreOp::Store,
-				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
-				..RenderingAttachmentInfo::image_view(edges)
-			})],
-			stencil_attachment: Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Clear,
-				store_op: AttachmentStoreOp::Store,
-				clear_value: Some(ClearValue::Stencil(0)),
-				..RenderingAttachmentInfo::image_view(stencil.clone())
-			}),
-			..Default::default()
-		};
-		let blend_rendering = RenderingInfo {
-			color_attachments: vec![Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Clear,
-				store_op: AttachmentStoreOp::Store,
-				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
-				..RenderingAttachmentInfo::image_view(self.blend_image.clone())
-			})],
-			stencil_attachment: Some(RenderingAttachmentInfo {
-				load_op: AttachmentLoadOp::Load,
-				..RenderingAttachmentInfo::image_view(stencil)
-			}),
-			..Default::default()
-		};
-
-		let edges_layout = edges_pipeline.layout().clone();
-		let blend_layout = blend_pipeline.layout().clone();
-		cb.bind_pipeline_graphics(edges_pipeline)?
-			.push_constants(edges_layout.clone(), 0, rt_metrics)?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, edges_layout, 0, self.input_set.clone())?
-			.begin_rendering(edges_rendering)?
-			.draw(3, 1, 0, 0)?
-			.end_rendering()?
-			.bind_pipeline_graphics(blend_pipeline)?
-			.push_constants(blend_layout.clone(), 0, rt_metrics)?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, blend_layout, 0, edges_set)?
-			.begin_rendering(blend_rendering)?
-			.draw(3, 1, 0, 0)?
-			.end_rendering()?;
-
-		Ok(())
-	}
-}
 pub struct SmaaRenderer
 {
 	search_tex: Arc<ImageView>,
@@ -170,7 +80,8 @@ pub struct SmaaRenderer
 	rt_metrics: Vec4,
 
 	input_image_original: Option<Arc<ImageView>>,
-	images0: Option<ImageBundle>,
+	input_set: Option<Arc<PersistentDescriptorSet>>,
+	blend_image: Option<Arc<ImageView>>,
 	edges_set: Option<Arc<PersistentDescriptorSet>>,
 	blend_set: Option<Arc<PersistentDescriptorSet>>,
 }
@@ -271,7 +182,7 @@ impl SmaaRenderer
 			..Default::default()
 		};
 		let edges_pipeline_layout = PipelineLayout::new(device.clone(), edges_pipeline_layout_info)?;
-		let rgba_rendering_info = PipelineRenderingCreateInfo {
+		let edges_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			stencil_attachment_format: Some(render_ctx.depth_stencil_format),
 			..Default::default()
@@ -289,7 +200,7 @@ impl SmaaRenderer
 			color_blend_state: Some(color_blend_state.clone()),
 			depth_stencil_state: Some(depth_stencil_state_write_stencil),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-			subpass: Some(rgba_rendering_info.clone().into()),
+			subpass: Some(edges_rendering_info.clone().into()),
 			..GraphicsPipelineCreateInfo::layout(edges_pipeline_layout)
 		};
 		let edges_pipeline = GraphicsPipeline::new(device.clone(), None, edges_pipeline_info)?;
@@ -310,6 +221,11 @@ impl SmaaRenderer
 			..Default::default()
 		};
 		let blend_pipeline_layout = PipelineLayout::new(device.clone(), blend_pipeline_layout_info)?;
+		let blend_rendering_info = PipelineRenderingCreateInfo {
+			color_attachment_formats: vec![Some(Format::B8G8R8A8_UNORM)],
+			stencil_attachment_format: Some(render_ctx.depth_stencil_format),
+			..Default::default()
+		};
 		let blend_pipeline_info = GraphicsPipelineCreateInfo {
 			stages: smallvec::smallvec![
 				PipelineShaderStageCreateInfo::new(vs_blend::load(device.clone())?.entry_point("main").unwrap()),
@@ -323,7 +239,7 @@ impl SmaaRenderer
 			color_blend_state: Some(color_blend_state.clone()),
 			depth_stencil_state: Some(depth_stencil_state),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-			subpass: Some(rgba_rendering_info.clone().into()),
+			subpass: Some(blend_rendering_info.into()),
 			..GraphicsPipelineCreateInfo::layout(blend_pipeline_layout)
 		};
 		let blend_pipeline = GraphicsPipeline::new(device.clone(), None, blend_pipeline_info)?;
@@ -343,7 +259,7 @@ impl SmaaRenderer
 			..Default::default()
 		};
 		let neighborhood_pipeline_layout = PipelineLayout::new(device.clone(), neighborhood_pipeline_layout_info)?;
-		let no_stencil_rendering_info = PipelineRenderingCreateInfo {
+		let neighborhood_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
 		};
@@ -359,7 +275,7 @@ impl SmaaRenderer
 			multisample_state: Some(Default::default()),
 			color_blend_state: Some(color_blend_state),
 			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-			subpass: Some(no_stencil_rendering_info.into()),
+			subpass: Some(neighborhood_rendering_info.into()),
 			..GraphicsPipelineCreateInfo::layout(neighborhood_pipeline_layout)
 		};
 		let neighborhood_pipeline = GraphicsPipeline::new(device.clone(), None, neighborhood_pipeline_info.clone())?;
@@ -379,8 +295,9 @@ impl SmaaRenderer
 			descriptor_set_allocator,
 			rt_metrics: Vec4::ZERO,
 			input_image_original: None,
+			input_set: None,
+			blend_image: None,
 			edges_set: None,
-			images0: None,
 			blend_set: None,
 		})
 	}
@@ -402,17 +319,22 @@ impl SmaaRenderer
 		// Resize images and recreate descriptor set if `input_image_original` was resized.
 		let edges_layout = self.edges_pipeline.layout().clone();
 		let blend_layout = self.blend_pipeline.layout().clone();
+		let neighborhood_layout = self.neighborhood_pipeline.layout().clone();
 		if self.input_image_original != Some(input_image_original.clone()) {
-			let rt_metrics = Vec4::new(1.0 / (extent_f32[0]), 1.0 / (extent_f32[1]), extent_f32[0], extent_f32[1]);
+			self.rt_metrics = Vec4::new(1.0 / (extent_f32[0]), 1.0 / (extent_f32[1]), extent_f32[0], extent_f32[1]);
 			//let rt_metrics_uniform = WriteDescriptorSet::inline_uniform_block(0, 0, bytemuck::bytes_of(&rt_metrics).into());
-			self.rt_metrics = rt_metrics;
 
 			let input_set_layout = edges_layout.set_layouts()[0].clone();
-			let edges_set_layout = blend_layout.set_layouts()[0].clone();
-			let blend_set_layout = self.neighborhood_pipeline.layout().set_layouts()[0].clone();
+			let input_writes = [
+				//rt_metrics_uniform.clone(),
+				WriteDescriptorSet::image_view(1, input_image_original.clone()),
+			];
+			let input_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, input_set_layout, input_writes, [])?;
+			self.input_set = Some(input_set);
 
 			// We use the output image as the edges image since the output image won't be needed
 			// until the neighborhood pass.
+			let edges_set_layout = blend_layout.set_layouts()[0].clone();
 			let edges_writes = [
 				//rt_metrics_uniform.clone(),
 				WriteDescriptorSet::image_view(1, self.area_tex.clone()),
@@ -422,17 +344,21 @@ impl SmaaRenderer
 			let edges_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, edges_set_layout, edges_writes, [])?;
 			self.edges_set = Some(edges_set);
 
-			let images0 = ImageBundle::new(
-				&self.descriptor_set_allocator,
-				memory_allocator,
-				input_set_layout,
-				input_image_original.clone(),
-			)?;
+			let blend_image_info = ImageCreateInfo {
+				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+				format: Format::B8G8R8A8_UNORM,
+				extent: image_extent,
+				..Default::default()
+			};
+			let blend = Image::new(memory_allocator, blend_image_info, AllocationCreateInfo::default())?;
+			let blend_image = ImageView::new_default(blend)?;
+			self.blend_image = Some(blend_image.clone());
 
+			let blend_set_layout = neighborhood_layout.set_layouts()[0].clone();
 			let blend_writes = [
 				//rt_metrics_uniform,
 				WriteDescriptorSet::image_view(1, input_image_original.clone()),
-				WriteDescriptorSet::image_view(2, images0.blend_image.clone()),
+				WriteDescriptorSet::image_view(2, blend_image),
 			];
 			self.blend_set = Some(PersistentDescriptorSet::new(
 				&self.descriptor_set_allocator,
@@ -441,7 +367,6 @@ impl SmaaRenderer
 				[],
 			)?);
 
-			self.images0 = Some(images0);
 			self.input_image_original = Some(input_image_original);
 		}
 
@@ -450,19 +375,34 @@ impl SmaaRenderer
 			extent: extent_f32,
 			depth_range: 0.0..=1.0,
 		};
-
-		cb.set_viewport(0, [viewport].as_slice().into())?;
-
-		self.images0.as_ref().unwrap().run_edges_blend(
-			cb,
-			self.edges_pipeline.clone(),
-			self.blend_pipeline.clone(),
-			output_image.clone(),
-			stencil_image.clone(),
-			self.edges_set.clone().unwrap(),
-			self.rt_metrics,
-		)?;
-
+		let edges_rendering = RenderingInfo {
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Clear,
+				store_op: AttachmentStoreOp::Store,
+				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
+				..RenderingAttachmentInfo::image_view(output_image.clone())
+			})],
+			stencil_attachment: Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Clear,
+				store_op: AttachmentStoreOp::Store,
+				clear_value: Some(ClearValue::Stencil(0)),
+				..RenderingAttachmentInfo::image_view(stencil_image.clone())
+			}),
+			..Default::default()
+		};
+		let blend_rendering = RenderingInfo {
+			color_attachments: vec![Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Clear,
+				store_op: AttachmentStoreOp::Store,
+				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
+				..RenderingAttachmentInfo::image_view(self.blend_image.clone().unwrap())
+			})],
+			stencil_attachment: Some(RenderingAttachmentInfo {
+				load_op: AttachmentLoadOp::Load,
+				..RenderingAttachmentInfo::image_view(stencil_image)
+			}),
+			..Default::default()
+		};
 		let neighborhood_rendering = RenderingInfo {
 			color_attachments: vec![Some(RenderingAttachmentInfo {
 				store_op: AttachmentStoreOp::Store,
@@ -470,17 +410,25 @@ impl SmaaRenderer
 			})],
 			..Default::default()
 		};
-		let neighborhood_pipeline = self.neighborhood_pipeline.clone();
-		let neighborhood_layout = neighborhood_pipeline.layout().clone();
-		cb.begin_rendering(neighborhood_rendering)?
-			.bind_pipeline_graphics(neighborhood_pipeline)?
-			.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				neighborhood_layout.clone(),
-				0,
-				self.blend_set.clone().unwrap(),
-			)?
-			.push_constants(neighborhood_layout, 0, self.rt_metrics)?
+
+		const BIND_POINT: PipelineBindPoint = PipelineBindPoint::Graphics;
+		cb.set_viewport(0, [viewport].as_slice().into())?
+			.bind_pipeline_graphics(self.edges_pipeline.clone())?
+			.push_constants(edges_layout.clone(), 0, self.rt_metrics)?
+			.bind_descriptor_sets(BIND_POINT, edges_layout, 0, self.input_set.clone().unwrap())?
+			.begin_rendering(edges_rendering)?
+			.draw(3, 1, 0, 0)?
+			.end_rendering()?
+			.bind_pipeline_graphics(self.blend_pipeline.clone())?
+			.push_constants(blend_layout.clone(), 0, self.rt_metrics)?
+			.bind_descriptor_sets(BIND_POINT, blend_layout, 0, self.edges_set.clone().unwrap())?
+			.begin_rendering(blend_rendering)?
+			.draw(3, 1, 0, 0)?
+			.end_rendering()?
+			.bind_pipeline_graphics(self.neighborhood_pipeline.clone())?
+			.push_constants(neighborhood_layout.clone(), 0, self.rt_metrics)?
+			.bind_descriptor_sets(BIND_POINT, neighborhood_layout, 0, self.blend_set.clone().unwrap())?
+			.begin_rendering(neighborhood_rendering)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
 
