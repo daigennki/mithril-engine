@@ -502,7 +502,8 @@ impl RenderContext
 					format: Format::R16G16B16A16_SFLOAT,
 					extent,
 					usage: ImageUsage::COLOR_ATTACHMENT
-						| ImageUsage::STORAGE | ImageUsage::TRANSFER_DST
+						| ImageUsage::SAMPLED | ImageUsage::STORAGE
+						| ImageUsage::TRANSFER_DST
 						| ImageUsage::TRANSFER_SRC,
 					..Default::default()
 				};
