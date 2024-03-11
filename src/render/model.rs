@@ -617,7 +617,7 @@ impl MeshManager
 			log::debug!("loading material pipeline '{}' ({:?})", conf.name, type_id);
 
 			let pipeline_data = conf.into_pipelines(
-				render_ctx.rasterization_samples,
+				render_ctx.aa_mode.sample_count(),
 				render_ctx.depth_stencil_format,
 				pipeline_layout.clone(),
 				//pipeline_layout_oit.clone(),
@@ -694,7 +694,7 @@ impl MeshManager
 		};
 
 		let rasterization_samples = if !shadow_pass {
-			render_ctx.rasterization_samples
+			render_ctx.aa_mode.sample_count()
 		} else {
 			SampleCount::Sample1
 		};

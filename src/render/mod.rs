@@ -84,14 +84,13 @@ pub struct RenderContext
 	//transparency_renderer: Option<moment_transparency::MomentTransparencyRenderer>,
 
 	// Things related to the main color/depth/stencil images and gamma correction.
-	rasterization_samples: SampleCount,
 	depth_stencil_format: Format,
 	depth_stencil_image: Option<Arc<ImageView>>,
 	color_image: Option<Arc<ImageView>>,
-	smaa_renderer: Option<smaa::SmaaRenderer>,
+	aa_mode: AntiAliasingMode,
 	aa_output_image: Option<Arc<ImageView>>,
-	color_set: Option<Arc<PersistentDescriptorSet>>, // Contains `aa_output_image` as a storage image binding.
-	gamma_pipeline: Arc<ComputePipeline>,            // The gamma correction pipeline.
+	gamma_input_set: Option<Arc<PersistentDescriptorSet>>,
+	gamma_pipeline: Arc<ComputePipeline>,
 
 	// Loaded textures, with the key being the path relative to the current working directory.
 	textures: HashMap<PathBuf, Arc<ImageView>>,
@@ -171,13 +170,12 @@ impl RenderContext
 			skybox_pipeline: create_sky_pipeline(vk_dev.clone(), rasterization_samples)?,
 			skybox_tex_set: None,
 			transparency_renderer,
-			smaa_renderer: None,
-			rasterization_samples,
+			aa_mode: Default::default(),
 			depth_stencil_format,
 			depth_stencil_image: None,
 			color_image: None,
 			aa_output_image: None,
-			color_set: None,
+			gamma_input_set: None,
 			gamma_pipeline: create_gamma_pipeline(vk_dev.clone())?,
 			textures: HashMap::new(),
 			error_texture: None,
@@ -196,7 +194,7 @@ impl RenderContext
 			new_self.error_texture = Some(ImageView::new_default(image)?);
 		}
 
-		new_self.smaa_renderer = Some(smaa::SmaaRenderer::new(&mut new_self)?);
+		new_self.aa_mode = AntiAliasingMode::Smaa(smaa::SmaaRenderer::new(&mut new_self)?);
 
 		Ok(new_self)
 	}
@@ -470,7 +468,8 @@ impl RenderContext
 		let extent2 = self.window.dimensions();
 		let extent = [extent2[0], extent2[1], 1];
 		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
-			let aa_enabled = self.rasterization_samples != SampleCount::Sample1 || self.smaa_renderer.is_some();
+			let rasterization_samples = self.aa_mode.sample_count();
+			let aa_enabled = !matches!(self.aa_mode, AntiAliasingMode::Off);
 			let color_usage = if aa_enabled {
 				ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED | ImageUsage::STORAGE | ImageUsage::TRANSFER_SRC
 			} else {
@@ -479,7 +478,7 @@ impl RenderContext
 			let color_create_info = ImageCreateInfo {
 				format: Format::R16G16B16A16_SFLOAT,
 				extent,
-				samples: self.rasterization_samples,
+				samples: rasterization_samples,
 				usage: color_usage,
 				..Default::default()
 			};
@@ -491,7 +490,7 @@ impl RenderContext
 			let depth_stencil_create_info = ImageCreateInfo {
 				format: self.depth_stencil_format,
 				extent,
-				samples: self.rasterization_samples,
+				samples: rasterization_samples,
 				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 				..Default::default()
 			};
@@ -520,7 +519,7 @@ impl RenderContext
 			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
 			let set_write = [WriteDescriptorSet::image_view(0, set_image)];
 			let set = PersistentDescriptorSet::new(&self.single_set_allocator, set_layout, set_write, [])?;
-			self.color_set = Some(set);
+			self.gamma_input_set = Some(set);
 		}
 
 		let color_image = self.color_image.clone().unwrap();
@@ -567,7 +566,7 @@ impl RenderContext
 				let workgroups_x = image_extent[0].div_ceil(64);
 				let layout = self.gamma_pipeline.layout().clone();
 				cb.bind_pipeline_compute(self.gamma_pipeline.clone())?
-					.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.color_set.clone().unwrap())?
+					.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, self.gamma_input_set.clone().unwrap())?
 					.dispatch([workgroups_x, image_extent[1], 1])?;
 			}
 
@@ -622,6 +621,32 @@ impl RenderContext
 	pub fn delta(&self) -> std::time::Duration
 	{
 		self.window.delta()
+	}
+}
+
+pub enum AntiAliasingMode
+{
+	Off,
+	Multisample2,
+	Multisample4,
+	Smaa(smaa::SmaaRenderer),
+}
+impl AntiAliasingMode
+{
+	fn sample_count(&self) -> SampleCount
+	{
+		match self {
+			Self::Multisample2 => SampleCount::Sample2,
+			Self::Multisample4 => SampleCount::Sample4,
+			_ => SampleCount::Sample1,
+		}
+	}
+}
+impl Default for AntiAliasingMode
+{
+	fn default() -> Self
+	{
+		Self::Off
 	}
 }
 
@@ -1087,29 +1112,27 @@ pub(crate) fn submit_frame(
 	//}
 
 	let aa_output_image_option = render_ctx.aa_output_image.clone();
-	let rasterization_samples = render_ctx.rasterization_samples;
-	let aa_output = if let Some(smaa) = render_ctx.smaa_renderer.as_mut() {
-		// SMAA
-		let aa_output_image = aa_output_image_option.unwrap();
-		smaa.run(
-			&mut cb_builder,
-			memory_allocator,
-			color_image,
-			depth_stencil_image,
-			aa_output_image.clone(),
-		)?;
-		aa_output_image
-	} else if rasterization_samples != SampleCount::Sample1 {
-		// MSAA
-		let aa_output_image = aa_output_image_option.unwrap();
-		cb_builder.resolve_image(ResolveImageInfo::images(
-			color_image.image().clone(),
-			aa_output_image.image().clone(),
-		))?;
-		aa_output_image
-	} else {
-		// no anti-aliasing
-		color_image
+	let aa_output = match &mut render_ctx.aa_mode {
+		AntiAliasingMode::Off => color_image,
+		AntiAliasingMode::Smaa(smaa) => {
+			let aa_output_image = aa_output_image_option.unwrap();
+			smaa.run(
+				&mut cb_builder,
+				memory_allocator,
+				color_image,
+				depth_stencil_image,
+				aa_output_image.clone(),
+			)?;
+			aa_output_image
+		}
+		_ => {
+			let aa_output_image = aa_output_image_option.unwrap();
+			cb_builder.resolve_image(ResolveImageInfo::images(
+				color_image.image().clone(),
+				aa_output_image.image().clone(),
+			))?;
+			aa_output_image
+		}
 	};
 
 	// UI
