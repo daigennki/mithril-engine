@@ -1090,12 +1090,14 @@ pub(crate) fn submit_frame(
 	let rasterization_samples = render_ctx.rasterization_samples;
 	let aa_output = if let Some(smaa) = render_ctx.smaa_renderer.as_mut() {
 		// SMAA
-		assert!(
-			rasterization_samples == SampleCount::Sample1 || rasterization_samples == SampleCount::Sample2,
-			"SMAA can only be enabled with MSAA 2x or without MSAA at all"
-		);
 		let aa_output_image = aa_output_image_option.unwrap();
-		smaa.run(&mut cb_builder, memory_allocator, color_image, aa_output_image.clone())?;
+		smaa.run(
+			&mut cb_builder,
+			memory_allocator,
+			color_image,
+			depth_stencil_image,
+			aa_output_image.clone(),
+		)?;
 		aa_output_image
 	} else if rasterization_samples != SampleCount::Sample1 {
 		// MSAA

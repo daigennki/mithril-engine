@@ -13,7 +13,6 @@ use vulkano::device::DeviceOwned;
 use vulkano::format::*;
 use vulkano::image::{sampler::*, view::ImageView, *};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
-use vulkano::pipeline::compute::ComputePipelineCreateInfo;
 use vulkano::pipeline::graphics::{
 	color_blend::*, depth_stencil::*, subpass::PipelineRenderingCreateInfo, viewport::Viewport, *,
 };
@@ -26,30 +25,6 @@ use super::{RenderContext, TextureSource};
 const SEARCH_TEX_BYTES: &[u8] = include_bytes!("SearchTexBC4.dds");
 const AREA_TEX_BYTES: &[u8] = include_bytes!("AreaTexBC5.dds");
 
-mod compute_separate_multisample
-{
-	vulkano_shaders::shader! {
-		ty: "compute",
-		src: r"
-			#version 460
-
-			layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
-
-			layout(binding = 0, rgba16f) uniform readonly image2DMS input_image;
-			layout(binding = 1) uniform writeonly image2D output_image0;
-			layout(binding = 2) uniform writeonly image2D output_image1;
-
-			void main()
-			{
-				ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
-				vec4 sample0 = imageLoad(input_image, image_coord, 0);
-				vec4 sample1 = imageLoad(input_image, image_coord, 1);
-				imageStore(output_image0, image_coord, sample0);
-				imageStore(output_image1, image_coord, sample1);
-			}
-		",
-	}
-}
 mod vs_edges
 {
 	vulkano_shaders::shader! {
@@ -103,40 +78,20 @@ mod fs_neighborhood_s2x
 
 struct ImageBundle
 {
-	split_input: Arc<ImageView>,
+	input_image: Arc<ImageView>,
 	blend_image: Arc<ImageView>,
-	input_set: Arc<PersistentDescriptorSet>, // contains `split_input`
-	edges_set: Arc<PersistentDescriptorSet>, // contains `edges_image`
+	input_set: Arc<PersistentDescriptorSet>,
 }
 impl ImageBundle
 {
 	fn new(
 		descriptor_set_allocator: &StandardDescriptorSetAllocator,
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		area_tex: Arc<ImageView>,
-		search_tex: Arc<ImageView>,
 		input_set_layout: Arc<DescriptorSetLayout>,
-		edges_set_layout: Arc<DescriptorSetLayout>,
-		input_image: Option<Arc<ImageView>>,
-		edges_image: Arc<ImageView>,
+		input_image: Arc<ImageView>,
 		image_extent: [u32; 3],
 	) -> crate::Result<Self>
 	{
-		log::debug!("creating SMAA images");
-
-		let split_input = if let Some(original) = input_image {
-			original
-		} else {
-			let split_info = ImageCreateInfo {
-				usage: ImageUsage::SAMPLED | ImageUsage::STORAGE,
-				format: Format::R16G16B16A16_SFLOAT,
-				extent: [image_extent[0], image_extent[1], 1],
-				..Default::default()
-			};
-			let split = Image::new(memory_allocator.clone(), split_info.clone(), AllocationCreateInfo::default())?;
-			ImageView::new_default(split)?
-		};
-
 		let blend_info = ImageCreateInfo {
 			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
 			format: Format::R16G16B16A16_SFLOAT,
@@ -148,23 +103,14 @@ impl ImageBundle
 
 		let input_writes = [
 			//rt_metrics_uniform.clone(),
-			WriteDescriptorSet::image_view(1, split_input.clone()),
+			WriteDescriptorSet::image_view(1, input_image.clone()),
 		];
 		let input_set = PersistentDescriptorSet::new(descriptor_set_allocator, input_set_layout, input_writes, [])?;
 
-		let edges_writes = [
-			//rt_metrics_uniform.clone(),
-			WriteDescriptorSet::image_view(1, area_tex),
-			WriteDescriptorSet::image_view(2, search_tex),
-			WriteDescriptorSet::image_view(3, edges_image),
-		];
-		let edges_set = PersistentDescriptorSet::new(descriptor_set_allocator, edges_set_layout, edges_writes, [])?;
-
 		Ok(Self {
-			split_input,
+			input_image,
 			blend_image,
 			input_set,
-			edges_set,
 		})
 	}
 
@@ -175,6 +121,7 @@ impl ImageBundle
 		blend_pipeline: Arc<GraphicsPipeline>,
 		edges: Arc<ImageView>,
 		stencil: Arc<ImageView>,
+		edges_set: Arc<PersistentDescriptorSet>,
 		rt_metrics: Vec4,
 	) -> crate::Result<()>
 	{
@@ -207,7 +154,6 @@ impl ImageBundle
 
 		let edges_layout = edges_pipeline.layout().clone();
 		let blend_layout = blend_pipeline.layout().clone();
-
 		cb.bind_pipeline_graphics(edges_pipeline)?
 			.push_constants(edges_layout.clone(), 0, rt_metrics)?
 			.bind_descriptor_sets(PipelineBindPoint::Graphics, edges_layout, 0, self.input_set.clone())?
@@ -216,7 +162,7 @@ impl ImageBundle
 			.end_rendering()?
 			.bind_pipeline_graphics(blend_pipeline)?
 			.push_constants(blend_layout.clone(), 0, rt_metrics)?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, blend_layout, 0, self.edges_set.clone())?
+			.bind_descriptor_sets(PipelineBindPoint::Graphics, blend_layout, 0, edges_set)?
 			.begin_rendering(blend_rendering)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
@@ -231,21 +177,15 @@ pub struct SmaaRenderer
 	edges_pipeline: Arc<GraphicsPipeline>,
 	blend_pipeline: Arc<GraphicsPipeline>,
 	neighborhood_pipeline: Arc<GraphicsPipeline>,
-	neighborhood_pipeline_s2x: Arc<GraphicsPipeline>,
 
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	rt_metrics: Vec4,
 
 	input_image_original: Option<Arc<ImageView>>,
-	stencil_format: Format,
-	stencil_image: Option<Arc<ImageView>>,
 	edges_image: Option<Arc<ImageView>>,
-	images0: Option<ImageBundle>, // always used
-	images1: Option<ImageBundle>, // only used with SMAA S2x
+	edges_set: Option<Arc<PersistentDescriptorSet>>,
+	images0: Option<ImageBundle>,
 	blend_set: Option<Arc<PersistentDescriptorSet>>,
-
-	multisample_split_pipeline: Arc<ComputePipeline>,
-	multisample_split_set: Option<Arc<PersistentDescriptorSet>>,
 }
 impl SmaaRenderer
 {
@@ -277,24 +217,6 @@ impl SmaaRenderer
 		};
 
 		let color_blend_state = ColorBlendState::with_attachment_states(1, Default::default());
-
-		const STENCIL_FORMAT_CANDIDATES: [Format; 4] = [
-			Format::S8_UINT,
-			Format::D16_UNORM_S8_UINT,
-			Format::D24_UNORM_S8_UINT,
-			Format::D32_SFLOAT_S8_UINT,
-		];
-		let stencil_format = STENCIL_FORMAT_CANDIDATES
-			.into_iter()
-			.find(|format| {
-				device
-					.physical_device()
-					.format_properties(*format)
-					.unwrap()
-					.optimal_tiling_features
-					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
-			})
-			.unwrap();
 
 		let write_stencil_op_state = StencilOpState {
 			ops: StencilOps {
@@ -364,7 +286,7 @@ impl SmaaRenderer
 		let edges_pipeline_layout = PipelineLayout::new(device.clone(), edges_pipeline_layout_info)?;
 		let rg_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16_SFLOAT)],
-			stencil_attachment_format: Some(stencil_format),
+			stencil_attachment_format: Some(render_ctx.depth_stencil_format),
 			..Default::default()
 		};
 		let edges_pipeline_info = GraphicsPipelineCreateInfo {
@@ -403,7 +325,7 @@ impl SmaaRenderer
 		let blend_pipeline_layout = PipelineLayout::new(device.clone(), blend_pipeline_layout_info)?;
 		let rgba_rendering_info = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			stencil_attachment_format: Some(stencil_format),
+			stencil_attachment_format: Some(render_ctx.depth_stencil_format),
 			..Default::default()
 		};
 		let blend_pipeline_info = GraphicsPipelineCreateInfo {
@@ -429,8 +351,6 @@ impl SmaaRenderer
 				//(0, inline_uniform_binding.clone()),
 				(1, tex_binding.clone()),
 				(2, tex_binding.clone()),
-				(3, tex_binding.clone()),
-				(4, tex_binding.clone()),
 			]),
 			..Default::default()
 		};
@@ -462,46 +382,11 @@ impl SmaaRenderer
 		};
 		let neighborhood_pipeline = GraphicsPipeline::new(device.clone(), None, neighborhood_pipeline_info.clone())?;
 
-		let neighborhood_pipeline_s2x_info = GraphicsPipelineCreateInfo {
-			stages: smallvec::smallvec![
-				PipelineShaderStageCreateInfo::new(vs_neighborhood::load(device.clone())?.entry_point("main").unwrap()),
-				PipelineShaderStageCreateInfo::new(fs_neighborhood_s2x::load(device.clone())?.entry_point("main").unwrap()),
-			],
-			..neighborhood_pipeline_info
-		};
-		let neighborhood_pipeline_s2x = GraphicsPipeline::new(device.clone(), None, neighborhood_pipeline_s2x_info.clone())?;
-
 		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
 			set_count: 4,
 			..Default::default()
 		};
 		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
-
-		let storage_image_binding = DescriptorSetLayoutBinding {
-			stages: ShaderStages::COMPUTE,
-			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
-		};
-		let color_set_layout_info = DescriptorSetLayoutCreateInfo {
-			bindings: [
-				(0, storage_image_binding.clone()),
-				(1, storage_image_binding.clone()),
-				(2, storage_image_binding),
-			]
-			.into(),
-			..Default::default()
-		};
-		let ms_split_set_layout = DescriptorSetLayout::new(device.clone(), color_set_layout_info)?;
-		let ms_split_pl_layout_info = PipelineLayoutCreateInfo {
-			set_layouts: vec![ms_split_set_layout],
-			..Default::default()
-		};
-		let ms_split_pl_layout = PipelineLayout::new(device.clone(), ms_split_pl_layout_info)?;
-		let ms_split_entry_point = compute_separate_multisample::load(device.clone())?
-			.entry_point("main")
-			.unwrap();
-		let ms_split_stage = PipelineShaderStageCreateInfo::new(ms_split_entry_point);
-		let ms_split_pipeline_create_info = ComputePipelineCreateInfo::stage_layout(ms_split_stage, ms_split_pl_layout);
-		let multisample_split_pipeline = ComputePipeline::new(device, None, ms_split_pipeline_create_info)?;
 
 		Ok(Self {
 			search_tex,
@@ -509,18 +394,13 @@ impl SmaaRenderer
 			edges_pipeline,
 			blend_pipeline,
 			neighborhood_pipeline,
-			neighborhood_pipeline_s2x,
 			descriptor_set_allocator,
 			rt_metrics: Vec4::ZERO,
 			input_image_original: None,
-			stencil_format,
-			stencil_image: None,
 			edges_image: None,
+			edges_set: None,
 			images0: None,
-			images1: None,
 			blend_set: None,
-			multisample_split_pipeline,
-			multisample_split_set: None,
 		})
 	}
 
@@ -529,20 +409,26 @@ impl SmaaRenderer
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		memory_allocator: Arc<StandardMemoryAllocator>,
 		input_image_original: Arc<ImageView>,
+		stencil_image: Arc<ImageView>,
 		output_image: Arc<ImageView>,
 	) -> crate::Result<()>
 	{
+		assert!(input_image_original.image().samples() == SampleCount::Sample1);
+
 		let image_extent = output_image.image().extent();
 		let extent_f32 = [image_extent[0] as f32, image_extent[1] as f32];
 
 		// Resize images and recreate descriptor set if `input_image_original` was resized.
-		let multisample_split_layout = self.multisample_split_pipeline.layout().clone();
 		let edges_layout = self.edges_pipeline.layout().clone();
 		let blend_layout = self.blend_pipeline.layout().clone();
 		if self.input_image_original != Some(input_image_original.clone()) {
 			let rt_metrics = Vec4::new(1.0 / (extent_f32[0]), 1.0 / (extent_f32[1]), extent_f32[0], extent_f32[1]);
 			//let rt_metrics_uniform = WriteDescriptorSet::inline_uniform_block(0, 0, bytemuck::bytes_of(&rt_metrics).into());
 			self.rt_metrics = rt_metrics;
+
+			let input_set_layout = edges_layout.set_layouts()[0].clone();
+			let edges_set_layout = blend_layout.set_layouts()[0].clone();
+			let blend_set_layout = self.neighborhood_pipeline.layout().set_layouts()[0].clone();
 
 			let edges_info = ImageCreateInfo {
 				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
@@ -554,53 +440,29 @@ impl SmaaRenderer
 			let edges_image = ImageView::new_default(edges)?;
 			self.edges_image = Some(edges_image.clone());
 
-			let input_set_layout = edges_layout.set_layouts()[0].clone();
-			let edges_set_layout = blend_layout.set_layouts()[0].clone();
-			let blend_set_layout = self.neighborhood_pipeline.layout().set_layouts()[0].clone();
-			let filtered_input_image =
-				(input_image_original.image().samples() == SampleCount::Sample1).then(|| input_image_original.clone());
+			let edges_writes = [
+				//rt_metrics_uniform.clone(),
+				WriteDescriptorSet::image_view(1, self.area_tex.clone()),
+				WriteDescriptorSet::image_view(2, self.search_tex.clone()),
+				WriteDescriptorSet::image_view(3, edges_image),
+			];
+			let edges_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, edges_set_layout, edges_writes, [])?;
+			self.edges_set = Some(edges_set);
+
 			self.images0 = Some(ImageBundle::new(
 				&self.descriptor_set_allocator,
-				memory_allocator.clone(),
-				self.area_tex.clone(),
-				self.search_tex.clone(),
-				input_set_layout.clone(),
-				edges_set_layout.clone(),
-				filtered_input_image.clone(),
-				edges_image.clone(),
+				memory_allocator,
+				input_set_layout,
+				input_image_original.clone(),
 				image_extent,
 			)?);
 
-			if input_image_original.image().samples() == SampleCount::Sample2 {
-				self.images1 = Some(ImageBundle::new(
-					&self.descriptor_set_allocator,
-					memory_allocator.clone(),
-					self.area_tex.clone(),
-					self.search_tex.clone(),
-					input_set_layout,
-					edges_set_layout,
-					filtered_input_image,
-					edges_image,
-					image_extent,
-				)?);
-			}
-
-			let input_image0 = self.images0.as_ref().unwrap().split_input.clone();
-			let input_image1 = self
-				.images1
-				.as_ref()
-				.map_or_else(|| input_image0.clone(), |bundle| bundle.split_input.clone());
+			let input_image0 = self.images0.as_ref().unwrap().input_image.clone();
 			let blend_image0 = self.images0.as_ref().unwrap().blend_image.clone();
-			let blend_image1 = self
-				.images1
-				.as_ref()
-				.map_or_else(|| blend_image0.clone(), |bundle| bundle.blend_image.clone());
 			let blend_writes = [
 				//rt_metrics_uniform,
-				WriteDescriptorSet::image_view(1, input_image0.clone()),
-				WriteDescriptorSet::image_view(2, input_image1.clone()),
-				WriteDescriptorSet::image_view(3, blend_image0),
-				WriteDescriptorSet::image_view(4, blend_image1),
+				WriteDescriptorSet::image_view(1, input_image0),
+				WriteDescriptorSet::image_view(2, blend_image0),
 			];
 			self.blend_set = Some(PersistentDescriptorSet::new(
 				&self.descriptor_set_allocator,
@@ -608,32 +470,6 @@ impl SmaaRenderer
 				blend_writes,
 				[],
 			)?);
-
-			self.multisample_split_set = if self.images1.is_some() {
-				let ms_split_set_layout = multisample_split_layout.set_layouts()[0].clone();
-				let split_writes = [
-					WriteDescriptorSet::image_view(0, input_image_original.clone()),
-					WriteDescriptorSet::image_view(1, input_image0.clone()),
-					WriteDescriptorSet::image_view(2, input_image1.clone()),
-				];
-				Some(PersistentDescriptorSet::new(
-					&self.descriptor_set_allocator,
-					ms_split_set_layout,
-					split_writes,
-					[],
-				)?)
-			} else {
-				None
-			};
-
-			let stencil_info = ImageCreateInfo {
-				usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
-				format: self.stencil_format,
-				extent: [image_extent[0], image_extent[1], 1],
-				..Default::default()
-			};
-			let stencil = Image::new(memory_allocator, stencil_info.clone(), AllocationCreateInfo::default())?;
-			self.stencil_image = Some(ImageView::new_default(stencil)?);
 
 			self.input_image_original = Some(input_image_original);
 		}
@@ -644,15 +480,6 @@ impl SmaaRenderer
 			depth_range: 0.0..=1.0,
 		};
 
-		// split each sample into separate images
-		if let Some(split_set) = self.multisample_split_set.clone() {
-			let workgroups_x = image_extent[0].div_ceil(64);
-			let layout = self.multisample_split_pipeline.layout().clone();
-			cb.bind_pipeline_compute(self.multisample_split_pipeline.clone())?
-				.bind_descriptor_sets(PipelineBindPoint::Compute, layout, 0, split_set)?
-				.dispatch([workgroups_x, image_extent[1], 1])?;
-		}
-
 		cb.set_viewport(0, [viewport].as_slice().into())?;
 
 		self.images0.as_ref().unwrap().run_edges_blend(
@@ -660,19 +487,10 @@ impl SmaaRenderer
 			self.edges_pipeline.clone(),
 			self.blend_pipeline.clone(),
 			self.edges_image.clone().unwrap(),
-			self.stencil_image.clone().unwrap(),
-			self.rt_metrics
+			stencil_image.clone(),
+			self.edges_set.clone().unwrap(),
+			self.rt_metrics,
 		)?;
-		if let Some(images1) = self.images1.as_ref() {
-			images1.run_edges_blend(
-				cb,
-				self.edges_pipeline.clone(),
-				self.blend_pipeline.clone(),
-				self.edges_image.clone().unwrap(),
-				self.stencil_image.clone().unwrap(),
-				self.rt_metrics
-			)?;
-		}
 
 		let neighborhood_rendering = RenderingInfo {
 			color_attachments: vec![Some(RenderingAttachmentInfo {
@@ -682,15 +500,16 @@ impl SmaaRenderer
 			})],
 			..Default::default()
 		};
-		let neighborhood_pipeline = if self.images1.is_some() {
-			self.neighborhood_pipeline_s2x.clone()
-		} else {
-			self.neighborhood_pipeline.clone()
-		};
+		let neighborhood_pipeline = self.neighborhood_pipeline.clone();
 		let neighborhood_layout = neighborhood_pipeline.layout().clone();
 		cb.begin_rendering(neighborhood_rendering)?
 			.bind_pipeline_graphics(neighborhood_pipeline)?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, neighborhood_layout.clone(), 0, self.blend_set.clone().unwrap())?
+			.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				neighborhood_layout.clone(),
+				0,
+				self.blend_set.clone().unwrap(),
+			)?
 			.push_constants(neighborhood_layout, 0, self.rt_metrics)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
