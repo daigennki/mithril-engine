@@ -88,6 +88,7 @@ pub struct RenderContext
 	depth_stencil_image: Option<Arc<ImageView>>,
 	color_image: Option<Arc<ImageView>>,
 	aa_mode: AntiAliasingMode,
+	smaa_renderer: Option<smaa::SmaaRenderer>,
 	aa_output_image: Option<Arc<ImageView>>,
 	gamma_input_set: Option<Arc<PersistentDescriptorSet>>,
 	gamma_pipeline: Arc<ComputePipeline>,
@@ -136,8 +137,6 @@ impl RenderContext
 		};
 		let single_set_allocator = StandardDescriptorSetAllocator::new(vk_dev.clone(), single_set_alloc_info);
 
-		let rasterization_samples = SampleCount::Sample1;
-
 		let depth_stencil_format = DEPTH_STENCIL_FORMAT_CANDIDATES
 			.into_iter()
 			.find(|format| {
@@ -149,6 +148,9 @@ impl RenderContext
 					.contains(FormatFeatures::DEPTH_STENCIL_ATTACHMENT)
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
+
+		let aa_mode = AntiAliasingMode::Off;
+		let rasterization_samples = aa_mode.sample_count();
 
 		let transparency_renderer = wboit::WboitRenderer::new(
 			memory_allocator.clone(),
@@ -170,7 +172,8 @@ impl RenderContext
 			skybox_pipeline: create_sky_pipeline(vk_dev.clone(), rasterization_samples)?,
 			skybox_tex_set: None,
 			transparency_renderer,
-			aa_mode: Default::default(),
+			aa_mode,
+			smaa_renderer: None,
 			depth_stencil_format,
 			depth_stencil_image: None,
 			color_image: None,
@@ -193,8 +196,6 @@ impl RenderContext
 			let image = new_self.new_image(&img_raw, image_info)?;
 			new_self.error_texture = Some(ImageView::new_default(image)?);
 		}
-
-		new_self.aa_mode = AntiAliasingMode::Smaa(smaa::SmaaRenderer::new(&mut new_self)?);
 
 		Ok(new_self)
 	}
@@ -517,6 +518,14 @@ impl RenderContext
 				color
 			};
 
+			if matches!(self.aa_mode, AntiAliasingMode::Smaa) {
+				if self.smaa_renderer.is_none() {
+					self.smaa_renderer = Some(smaa::SmaaRenderer::new(self)?);
+				}
+			} else if self.smaa_renderer.is_some() {
+				self.smaa_renderer = None;
+			}
+
 			let set_layout = self.gamma_pipeline.layout().set_layouts()[0].clone();
 			let set_write = [WriteDescriptorSet::image_view(0, set_image)];
 			let set = PersistentDescriptorSet::new(&self.single_set_allocator, set_layout, set_write, [])?;
@@ -630,7 +639,7 @@ pub enum AntiAliasingMode
 	Off,
 	Multisample2,
 	Multisample4,
-	Smaa(smaa::SmaaRenderer),
+	Smaa,
 }
 impl AntiAliasingMode
 {
@@ -1112,11 +1121,11 @@ pub(crate) fn submit_frame(
 	)?;
 	//}
 
-	let aa_output_image_option = render_ctx.aa_output_image.clone();
-	let aa_output = match &mut render_ctx.aa_mode {
+	let aa_output = match render_ctx.aa_mode {
 		AntiAliasingMode::Off => color_image,
-		AntiAliasingMode::Smaa(smaa) => {
-			let aa_output_image = aa_output_image_option.unwrap();
+		AntiAliasingMode::Smaa => {
+			let aa_output_image = render_ctx.aa_output_image.clone().unwrap();
+			let smaa = render_ctx.smaa_renderer.as_mut().unwrap();
 			smaa.run(
 				&mut cb_builder,
 				memory_allocator,
@@ -1127,7 +1136,7 @@ pub(crate) fn submit_frame(
 			aa_output_image
 		}
 		_ => {
-			let aa_output_image = aa_output_image_option.unwrap();
+			let aa_output_image = render_ctx.aa_output_image.clone().unwrap();
 			cb_builder.resolve_image(ResolveImageInfo::images(
 				color_image.image().clone(),
 				aa_output_image.image().clone(),
