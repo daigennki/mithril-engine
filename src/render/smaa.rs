@@ -80,8 +80,9 @@ pub struct SmaaRenderer
 	rt_metrics: Vec4,
 
 	input_image_original: Option<Arc<ImageView>>,
-	input_set: Option<Arc<PersistentDescriptorSet>>,
+	edges_image: Option<Arc<ImageView>>,
 	blend_image: Option<Arc<ImageView>>,
+	input_set: Option<Arc<PersistentDescriptorSet>>,
 	edges_set: Option<Arc<PersistentDescriptorSet>>,
 	blend_set: Option<Arc<PersistentDescriptorSet>>,
 }
@@ -183,7 +184,7 @@ impl SmaaRenderer
 		};
 		let edges_pipeline_layout = PipelineLayout::new(device.clone(), edges_pipeline_layout_info)?;
 		let edges_rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+			color_attachment_formats: vec![Some(Format::R8G8_UNORM)],
 			stencil_attachment_format: Some(render_ctx.depth_stencil_format),
 			..Default::default()
 		};
@@ -295,8 +296,9 @@ impl SmaaRenderer
 			descriptor_set_allocator,
 			rt_metrics: Vec4::ZERO,
 			input_image_original: None,
-			input_set: None,
+			edges_image: None,
 			blend_image: None,
+			input_set: None,
 			edges_set: None,
 			blend_set: None,
 		})
@@ -332,6 +334,16 @@ impl SmaaRenderer
 			let input_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, input_set_layout, input_writes, [])?;
 			self.input_set = Some(input_set);
 
+			let edges_image_info = ImageCreateInfo {
+				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+				format: Format::R8G8_UNORM,
+				extent: image_extent,
+				..Default::default()
+			};
+			let edges = Image::new(memory_allocator.clone(), edges_image_info, AllocationCreateInfo::default())?;
+			let edges_image = ImageView::new_default(edges)?;
+			self.edges_image = Some(edges_image.clone());
+
 			// We use the output image as the edges image since the output image won't be needed
 			// until the neighborhood pass.
 			let edges_set_layout = blend_layout.set_layouts()[0].clone();
@@ -339,7 +351,7 @@ impl SmaaRenderer
 				//rt_metrics_uniform.clone(),
 				WriteDescriptorSet::image_view(1, self.area_tex.clone()),
 				WriteDescriptorSet::image_view(2, self.search_tex.clone()),
-				WriteDescriptorSet::image_view(3, output_image.clone()),
+				WriteDescriptorSet::image_view(3, edges_image),
 			];
 			let edges_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, edges_set_layout, edges_writes, [])?;
 			self.edges_set = Some(edges_set);
@@ -380,7 +392,7 @@ impl SmaaRenderer
 				load_op: AttachmentLoadOp::Clear,
 				store_op: AttachmentStoreOp::Store,
 				clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
-				..RenderingAttachmentInfo::image_view(output_image.clone())
+				..RenderingAttachmentInfo::image_view(self.edges_image.clone().unwrap())
 			})],
 			stencil_attachment: Some(RenderingAttachmentInfo {
 				load_op: AttachmentLoadOp::Clear,
