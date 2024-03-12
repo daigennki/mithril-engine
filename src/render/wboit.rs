@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
-use vulkano::device::DeviceOwned;
+use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::{ClearValue, Format};
 use vulkano::image::{view::ImageView, *};
 use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
@@ -50,34 +50,28 @@ mod fs_compositing_ms
 /// Algorithm details: https://jcgt.org/published/0002/02/09/
 pub struct WboitRenderer
 {
-	accum_image: Arc<ImageView>,
-	revealage_image: Arc<ImageView>,
-	compositing_pipeline: Arc<GraphicsPipeline>,
+	compositing_pipeline_layout: Arc<PipelineLayout>,
+	compositing_pipeline: Option<Arc<GraphicsPipeline>>,
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
-	weights_images: Arc<PersistentDescriptorSet>,
+
+	accum_image: Option<Arc<ImageView>>,
+	revealage_image: Option<Arc<ImageView>>,
+	weight_set: Option<Arc<PersistentDescriptorSet>>,
+
 	transparency_cb: Mutex<Option<Arc<SecondaryAutoCommandBuffer>>>,
 }
 impl WboitRenderer
 {
-	pub fn new(
-		memory_allocator: Arc<StandardMemoryAllocator>,
-		dimensions: [u32; 2],
-		rasterization_samples: SampleCount,
-		depth_stencil_format: Format,
-	) -> crate::Result<Self>
+	pub fn new(device: Arc<Device>) -> crate::Result<Self>
 	{
-		let device = memory_allocator.device().clone();
 		let set_alloc_info = StandardDescriptorSetAllocatorCreateInfo {
 			set_count: 2,
 			..Default::default()
 		};
 		let descriptor_set_allocator = StandardDescriptorSetAllocator::new(device.clone(), set_alloc_info);
 
-		//
-		/* Composite transparency image onto opaque image */
-		//
-		// (weights are calculated by a shader that depends on each material, so we don't do any
-		// setup related to that here)
+		// Compositing pipeline setup (weights are calculated by a shader that depends on each
+		// material, so we don't do any setup related to that here)
 		let input_binding = DescriptorSetLayoutBinding {
 			stages: ShaderStages::FRAGMENT,
 			..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::StorageImage)
@@ -96,99 +90,70 @@ impl WboitRenderer
 		};
 		let compositing_pipeline_layout = PipelineLayout::new(device.clone(), compositing_pipeline_layout_info)?;
 
-		let compositing_blend = ColorBlendAttachmentState {
-			blend: Some(AttachmentBlend {
-				src_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
-				dst_color_blend_factor: BlendFactor::SrcAlpha,
-				src_alpha_blend_factor: BlendFactor::Zero,
-				dst_alpha_blend_factor: BlendFactor::One,
-				..Default::default()
-			}),
-			..Default::default()
-		};
-		let compositing_color_blend_state = ColorBlendState::with_attachment_states(1, compositing_blend);
-
-		let stencil_op_state = StencilOpState {
-			ops: StencilOps {
-				compare_op: CompareOp::Less,
-				..Default::default()
-			},
-			reference: 0,
-			..Default::default()
-		};
-		let compositing_depth_stencil_state = DepthStencilState {
-			stencil: Some(StencilState {
-				front: stencil_op_state,
-				back: stencil_op_state,
-			}),
-			..Default::default()
-		};
-
-		let compositing_fs = if rasterization_samples != SampleCount::Sample1 {
-			fs_compositing_ms::load(device.clone())?
-		} else {
-			fs_compositing::load(device.clone())?
-		};
-
-		let compositing_rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			stencil_attachment_format: Some(depth_stencil_format),
-			..Default::default()
-		};
-		let compositing_pipeline_info = GraphicsPipelineCreateInfo {
-			stages: smallvec::smallvec![
-				PipelineShaderStageCreateInfo::new(vs_compositing::load(device.clone())?.entry_point("main").unwrap()),
-				PipelineShaderStageCreateInfo::new(compositing_fs.entry_point("main").unwrap()),
-			],
-			vertex_input_state: Some(Default::default()),
-			input_assembly_state: Some(Default::default()),
-			viewport_state: Some(Default::default()),
-			rasterization_state: Some(Default::default()),
-			multisample_state: Some(MultisampleState {
-				rasterization_samples,
-				..Default::default()
-			}),
-			depth_stencil_state: Some(compositing_depth_stencil_state),
-			color_blend_state: Some(compositing_color_blend_state),
-			dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-			subpass: Some(compositing_rendering_info.into()),
-			..GraphicsPipelineCreateInfo::layout(compositing_pipeline_layout)
-		};
-		let compositing_pipeline = GraphicsPipeline::new(device, None, compositing_pipeline_info)?;
-
-		/* Create the images and descriptor sets */
-		let (accum_image, revealage_image, weights_images) = create_images(
-			memory_allocator,
-			&descriptor_set_allocator,
-			dimensions,
-			rasterization_samples,
-			weights_images_layout,
-		)?;
-
 		Ok(Self {
-			accum_image,
-			revealage_image,
-			compositing_pipeline,
+			compositing_pipeline_layout,
+			compositing_pipeline: None,
 			descriptor_set_allocator,
-			weights_images,
+			accum_image: None,
+			revealage_image: None,
+			weight_set: None,
 			transparency_cb: Mutex::new(None),
 		})
 	}
 
 	/// Resize the output image to match a resized color image.
-	fn resize_image(&mut self, memory_allocator: Arc<StandardMemoryAllocator>, dimensions: [u32; 2]) -> crate::Result<()>
+	fn resize_image(
+		&mut self,
+		memory_allocator: Arc<StandardMemoryAllocator>,
+		extent: [u32; 3],
+		rasterization_samples: SampleCount,
+		depth_stencil_format: Format,
+	) -> crate::Result<()>
 	{
-		let (accum, revealage, weights_images_set) = create_images(
-			memory_allocator,
-			&self.descriptor_set_allocator,
-			dimensions,
-			self.accum_image.image().samples(),
-			self.weights_images.layout().clone(),
-		)?;
+		// Also re-create the pipeline if the multisample configuration has changed.
+		let prev_samples = self
+			.compositing_pipeline
+			.as_ref()
+			.and_then(|pl| pl.multisample_state().map(|state| state.rasterization_samples));
+		if prev_samples != Some(rasterization_samples) {
+			self.compositing_pipeline = Some(create_compositing_pipeline(
+				self.compositing_pipeline_layout.clone(),
+				rasterization_samples,
+				depth_stencil_format,
+			)?);
+		}
 
-		self.accum_image = accum;
-		self.revealage_image = revealage;
-		self.weights_images = weights_images_set;
+		let accum_info = ImageCreateInfo {
+			usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE,
+			format: Format::R16G16B16A16_SFLOAT,
+			extent,
+			samples: rasterization_samples,
+			..Default::default()
+		};
+		let accum_image = Image::new(memory_allocator.clone(), accum_info.clone(), AllocationCreateInfo::default())?;
+		let accum_view = ImageView::new_default(accum_image)?;
+		self.accum_image = Some(accum_view.clone());
+
+		let revealage_info = ImageCreateInfo {
+			format: Format::R8_UNORM,
+			..accum_info
+		};
+		let revealage_image = Image::new(memory_allocator.clone(), revealage_info, AllocationCreateInfo::default())?;
+		let revealage_view = ImageView::new_default(revealage_image)?;
+		self.revealage_image = Some(revealage_view.clone());
+
+		let writes = [
+			WriteDescriptorSet::image_view(0, accum_view),
+			WriteDescriptorSet::image_view(1, revealage_view),
+		];
+		let set_layout = self.compositing_pipeline_layout.set_layouts()[0].clone();
+		self.weight_set = Some(PersistentDescriptorSet::new(
+			&self.descriptor_set_allocator,
+			set_layout,
+			writes,
+			[],
+		)?);
+
 		Ok(())
 	}
 
@@ -201,15 +166,21 @@ impl WboitRenderer
 		memory_allocator: Arc<StandardMemoryAllocator>,
 	) -> crate::Result<()>
 	{
-		let img_extent = color_image.image().extent();
-		if self.accum_image.image().extent() != img_extent {
-			self.resize_image(memory_allocator, [img_extent[0], img_extent[1]])?;
-		}
-
 		let weights_cb = match self.transparency_cb.lock().unwrap().take() {
 			Some(cb) => cb,
 			None => return Ok(()), // Skip OIT processing if no transparent submeshes are in view
 		};
+
+		let img_extent = color_image.image().extent();
+		let samples = color_image.image().samples();
+		let (prev_extent, prev_samples) = self
+			.accum_image
+			.as_ref()
+			.map(|view| (view.image().extent(), view.image().samples()))
+			.unzip();
+		if prev_extent != Some(img_extent) || prev_samples != Some(samples) {
+			self.resize_image(memory_allocator, img_extent, samples, depth_stencil_image.format())?;
+		}
 
 		let weights_rendering_info = RenderingInfo {
 			color_attachments: vec![
@@ -217,13 +188,13 @@ impl WboitRenderer
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([0.0, 0.0, 0.0, 0.0])),
-					..RenderingAttachmentInfo::image_view(self.accum_image.clone())
+					..RenderingAttachmentInfo::image_view(self.accum_image.clone().unwrap())
 				}),
 				Some(RenderingAttachmentInfo {
 					load_op: AttachmentLoadOp::Clear,
 					store_op: AttachmentStoreOp::Store,
 					clear_value: Some(ClearValue::Float([1.0, 0.0, 0.0, 0.0])),
-					..RenderingAttachmentInfo::image_view(self.revealage_image.clone())
+					..RenderingAttachmentInfo::image_view(self.revealage_image.clone().unwrap())
 				}),
 			],
 			depth_attachment: Some(RenderingAttachmentInfo {
@@ -260,14 +231,14 @@ impl WboitRenderer
 			depth_range: 0.0..=1.0,
 		};
 
-		let compositing_layout = self.compositing_pipeline.layout().clone();
-		let compositing_sets = vec![self.weights_images.clone()];
+		let compositing_layout = self.compositing_pipeline_layout.clone();
+		let compositing_sets = vec![self.weight_set.clone().unwrap()];
 		cb.begin_rendering(weights_rendering_info)?
 			.execute_commands(weights_cb)?
 			.end_rendering()?
 			.begin_rendering(compositing_rendering_info)?
 			.set_viewport(0, [viewport].as_slice().into())?
-			.bind_pipeline_graphics(self.compositing_pipeline.clone())?
+			.bind_pipeline_graphics(self.compositing_pipeline.clone().unwrap())?
 			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, compositing_sets)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
@@ -281,40 +252,71 @@ impl WboitRenderer
 	}
 }
 
-fn create_images(
-	memory_allocator: Arc<StandardMemoryAllocator>,
-	descriptor_set_allocator: &StandardDescriptorSetAllocator,
-	extent: [u32; 2],
+fn create_compositing_pipeline(
+	pipeline_layout: Arc<PipelineLayout>,
 	rasterization_samples: SampleCount,
-	weights_images_layout: Arc<DescriptorSetLayout>,
-) -> crate::Result<(Arc<ImageView>, Arc<ImageView>, Arc<PersistentDescriptorSet>)>
+	depth_stencil_format: Format,
+) -> crate::Result<Arc<GraphicsPipeline>>
 {
-	let accum_info = ImageCreateInfo {
-		usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::STORAGE,
-		format: Format::R16G16B16A16_SFLOAT,
-		extent: [extent[0], extent[1], 1],
-		samples: rasterization_samples,
+	let device = pipeline_layout.device().clone();
+	let blend = ColorBlendAttachmentState {
+		blend: Some(AttachmentBlend {
+			src_color_blend_factor: BlendFactor::OneMinusSrcAlpha,
+			dst_color_blend_factor: BlendFactor::SrcAlpha,
+			src_alpha_blend_factor: BlendFactor::Zero,
+			dst_alpha_blend_factor: BlendFactor::One,
+			..Default::default()
+		}),
 		..Default::default()
 	};
-	let accum_image = Image::new(memory_allocator.clone(), accum_info.clone(), AllocationCreateInfo::default())?;
-	let accum = ImageView::new_default(accum_image)?;
+	let color_blend_state = ColorBlendState::with_attachment_states(1, blend);
 
-	let revealage_info = ImageCreateInfo {
-		format: Format::R8_UNORM,
-		..accum_info
+	let stencil_op_state = StencilOpState {
+		ops: StencilOps {
+			compare_op: CompareOp::Less,
+			..Default::default()
+		},
+		reference: 0,
+		..Default::default()
 	};
-	let revealage_image = Image::new(memory_allocator.clone(), revealage_info, AllocationCreateInfo::default())?;
-	let revealage = ImageView::new_default(revealage_image)?;
+	let depth_stencil_state = DepthStencilState {
+		stencil: Some(StencilState {
+			front: stencil_op_state,
+			back: stencil_op_state,
+		}),
+		..Default::default()
+	};
 
-	let weights_images = PersistentDescriptorSet::new(
-		descriptor_set_allocator,
-		weights_images_layout,
-		[
-			WriteDescriptorSet::image_view(0, accum.clone()),
-			WriteDescriptorSet::image_view(1, revealage.clone()),
+	let fs = if rasterization_samples != SampleCount::Sample1 {
+		fs_compositing_ms::load(device.clone())?
+	} else {
+		fs_compositing::load(device.clone())?
+	};
+
+	let rendering_info = PipelineRenderingCreateInfo {
+		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
+		stencil_attachment_format: Some(depth_stencil_format),
+		..Default::default()
+	};
+	let pipeline_info = GraphicsPipelineCreateInfo {
+		stages: smallvec::smallvec![
+			PipelineShaderStageCreateInfo::new(vs_compositing::load(device.clone())?.entry_point("main").unwrap()),
+			PipelineShaderStageCreateInfo::new(fs.entry_point("main").unwrap()),
 		],
-		[],
-	)?;
+		vertex_input_state: Some(Default::default()),
+		input_assembly_state: Some(Default::default()),
+		viewport_state: Some(Default::default()),
+		rasterization_state: Some(Default::default()),
+		multisample_state: Some(MultisampleState {
+			rasterization_samples,
+			..Default::default()
+		}),
+		depth_stencil_state: Some(depth_stencil_state),
+		color_blend_state: Some(color_blend_state),
+		dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+		subpass: Some(rendering_info.into()),
+		..GraphicsPipelineCreateInfo::layout(pipeline_layout)
+	};
 
-	Ok((accum, revealage, weights_images))
+	Ok(GraphicsPipeline::new(device, None, pipeline_info)?)
 }

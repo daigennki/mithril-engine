@@ -149,15 +149,8 @@ impl RenderContext
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
 
-		let aa_mode = AntiAliasingMode::Multisample4;
+		let aa_mode = AntiAliasingMode::Off;
 		let rasterization_samples = aa_mode.sample_count();
-
-		let transparency_renderer = wboit::WboitRenderer::new(
-			memory_allocator.clone(),
-			window.dimensions(),
-			rasterization_samples,
-			depth_stencil_format,
-		)?;
 
 		let mut new_self = Self {
 			window,
@@ -171,7 +164,7 @@ impl RenderContext
 			transfer_future: None,
 			skybox_pipeline: create_sky_pipeline(vk_dev.clone(), rasterization_samples)?,
 			skybox_tex_set: None,
-			transparency_renderer,
+			transparency_renderer: wboit::WboitRenderer::new(vk_dev.clone())?,
 			aa_mode,
 			smaa_renderer: None,
 			depth_stencil_format,
