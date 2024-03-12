@@ -4,10 +4,8 @@
 
 #ifdef MULTISAMPLED_IMAGE
 #define IMAGE_TYPE image2DMS
-#define IMAGE_LOAD(image, coord, sample) imageLoad(image, coord, sample)
 #else
 #define IMAGE_TYPE image2D
-#define IMAGE_LOAD(image, coord, sample) imageLoad(image, coord)
 #endif
 
 /* sum(rgb * a, a) */
@@ -22,8 +20,21 @@ void main()
 {
 	ivec2 load_coord = ivec2(gl_FragCoord.xy);
 
-	vec4 accum = IMAGE_LOAD(accum_texture, load_coord, gl_SampleID);
-	float revealage = IMAGE_LOAD(revealage_texture, load_coord, gl_SampleID).r;
+#ifdef MULTISAMPLED_IMAGE
+	// Use the sample with the minimum revealage so that we don't run the shader for every sample.
+	int num_samples = imageSamples(revealage_texture);
+	int min_revealage_sample = 0;
+	float revealage = 1.0;
+	for (int i = 0; i < num_samples; i += 1) {
+		float sample_revealage = imageLoad(revealage_texture, load_coord, i).r;
+		min_revealage_sample = (sample_revealage < revealage ? i : min_revealage_sample);
+		revealage = (min_revealage_sample == i ? sample_revealage : revealage);
+	}
+	vec4 accum = imageLoad(accum_texture, load_coord, min_revealage_sample);
+#else
+	vec4 accum = imageLoad(accum_texture, load_coord);
+	float revealage = imageLoad(revealage_texture, load_coord).r;
+#endif
 
 	accum = min(accum, 16777216); // suppress overflow
 
