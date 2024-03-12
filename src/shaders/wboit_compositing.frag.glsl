@@ -21,16 +21,21 @@ void main()
 	ivec2 load_coord = ivec2(gl_FragCoord.xy);
 
 #ifdef MULTISAMPLED_IMAGE
-	// Use the sample with the minimum revealage so that we don't run the shader for every sample.
+	// calculate average of accum and revealage across all active samples
 	int num_samples = imageSamples(revealage_texture);
-	int min_revealage_sample = 0;
-	float revealage = 1.0;
+	int active_samples = 0;
+	vec4 accum = vec4(0.0);
+	float revealage = 0.0;
 	for (int i = 0; i < num_samples; i += 1) {
+		vec4 sample_accum = imageLoad(accum_texture, load_coord, i);
 		float sample_revealage = imageLoad(revealage_texture, load_coord, i).r;
-		min_revealage_sample = (sample_revealage < revealage ? i : min_revealage_sample);
-		revealage = (min_revealage_sample == i ? sample_revealage : revealage);
+		bool sample_active = (sample_revealage != 1.0);
+		accum += (sample_active ? sample_accum : vec4(0.0));
+		revealage += (sample_active ? sample_revealage : 0.0);
+		active_samples += (sample_active ? 1 : 0);
 	}
-	vec4 accum = imageLoad(accum_texture, load_coord, min_revealage_sample);
+	accum /= active_samples;
+	revealage /= active_samples;
 #else
 	vec4 accum = imageLoad(accum_texture, load_coord);
 	float revealage = imageLoad(revealage_texture, load_coord).r;

@@ -149,7 +149,7 @@ impl RenderContext
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
 
-		let aa_mode = AntiAliasingMode::Off;
+		let aa_mode = AntiAliasingMode::Multisample4;
 		let rasterization_samples = aa_mode.sample_count();
 
 		let transparency_renderer = wboit::WboitRenderer::new(
