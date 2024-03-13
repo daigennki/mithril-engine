@@ -34,7 +34,8 @@ void main()
 		revealage += (sample_active ? sample_revealage : 0.0);
 		active_samples += (sample_active ? 1 : 0);
 	}
-	accum /= active_samples;
+	// only revealage needs to be divided here since accum will be divided later as part of usual
+	// WBOIT compositing
 	revealage /= active_samples;
 #else
 	vec4 accum = imageLoad(accum_texture, load_coord);
