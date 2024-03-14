@@ -2,7 +2,7 @@
 #include "wboit_accum.glsl"
 
 // Specialization constant to specify if this is for a transparency (OIT) pass.
-layout (constant_id = 0) const uint TRANSPARENCY_PASS = 0;
+layout(constant_id = 0) const bool TRANSPARENCY_PASS = false;
 
 /* Material parameters */
 layout(binding = 0) uniform sampler sampler0;
@@ -33,7 +33,7 @@ layout(set = 1, binding = 2) uniform texture2DArray dir_light_shadow;
 // Use this function in your material's fragment shader to write pixels to the output image.
 void write_pixel(vec4 shaded_with_alpha)
 {
-	if (TRANSPARENCY_PASS != 0) {
+	if (TRANSPARENCY_PASS) {
 		write_transparent_pixel(shaded_with_alpha);
 	} else {
 		color_out = vec4(shaded_with_alpha.rgb, 1.0);

@@ -176,7 +176,7 @@ impl MaterialPipelineConfig
 	pub fn into_pipelines(
 		self,
 		rasterization_samples: SampleCount,
-		depth_format: Format,
+		depth_stencil_format: Format,
 		pipeline_layout: Arc<PipelineLayout>,
 		//pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
@@ -192,15 +192,18 @@ impl MaterialPipelineConfig
 			attributes: (0..).zip(crate::render::model::VERTEX_ATTRIBUTES).collect(),
 			..Default::default()
 		};
-
 		let rasterization_state = RasterizationState {
 			cull_mode: CullMode::Back,
+			..Default::default()
+		};
+		let multisample_state = MultisampleState {
+			rasterization_samples,
 			..Default::default()
 		};
 
 		let rendering_formats = PipelineRenderingCreateInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
-			depth_attachment_format: Some(depth_format),
+			depth_attachment_format: Some(depth_stencil_format),
 			..Default::default()
 		};
 
@@ -214,10 +217,7 @@ impl MaterialPipelineConfig
 			input_assembly_state: Some(Default::default()),
 			viewport_state: Some(Default::default()),
 			rasterization_state: Some(rasterization_state.clone()),
-			multisample_state: Some(MultisampleState {
-				rasterization_samples,
-				..Default::default()
-			}),
+			multisample_state: Some(multisample_state),
 			depth_stencil_state: Some(DepthStencilState {
 				depth: Some(DepthState {
 					write_enable: true,
@@ -235,9 +235,9 @@ impl MaterialPipelineConfig
 		};
 		let opaque_pipeline = GraphicsPipeline::new(device.clone(), None, opaque_pipeline_info)?;
 
-		// Create the transparency pass pipeline, if the fragment shader has the `TRANSPARENCY_PASS`
-		// specialization constant with ID 0.
-		let oit_pipeline = if fs.specialization_constants().contains_key(&0) {
+		// Create the transparency pass pipeline if the fragment shader has a boolean specialization
+		// constant with ID 0, which specifies if the shader is for an OIT pass.
+		let oit_pipeline = if matches!(fs.specialization_constants().get(&0), Some(SpecializationConstant::Bool(_))) {
 			let oit_depth_stencil_state = DepthStencilState {
 				depth: Some(DepthState {
 					write_enable: false,
@@ -284,26 +284,22 @@ impl MaterialPipelineConfig
 
 			let oit_rendering_formats = PipelineRenderingCreateInfo {
 				color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
-				depth_attachment_format: Some(depth_format),
-				stencil_attachment_format: Some(depth_format),
+				depth_attachment_format: Some(depth_stencil_format),
+				stencil_attachment_format: Some(depth_stencil_format),
 				..Default::default()
 			};
 
-			let specialization_constants = [(0_u32, SpecializationConstant::U32(1))];
-			let specialized_fs = fs.specialize(specialization_constants.into_iter().collect())?;
+			let fs_oit = fs.specialize([(0, SpecializationConstant::Bool(true))].into_iter().collect())?;
 			let oit_pipeline_info = GraphicsPipelineCreateInfo {
 				stages: smallvec::smallvec![
 					vs_stage,
-					PipelineShaderStageCreateInfo::new(specialized_fs.entry_point("main").unwrap()),
+					PipelineShaderStageCreateInfo::new(fs_oit.entry_point("main").unwrap()),
 				],
 				vertex_input_state: Some(vertex_input_state),
 				input_assembly_state: Some(Default::default()),
 				viewport_state: Some(Default::default()),
 				rasterization_state: Some(rasterization_state),
-				multisample_state: Some(MultisampleState {
-					rasterization_samples,
-					..Default::default()
-				}),
+				multisample_state: Some(multisample_state),
 				depth_stencil_state: Some(oit_depth_stencil_state),
 				color_blend_state: Some(oit_color_blend_state),
 				dynamic_state: [DynamicState::Viewport].into_iter().collect(),

@@ -52,7 +52,7 @@ void main()
 	int base_color_index = instance_index + TEXTURE_INDEX_OFFSET_BASE_COLOR;
 	vec4 tex_color = texture(sampler2D(textures[base_color_index], sampler0), texcoord);
 
-	if (TRANSPARENCY_PASS != 0) {
+	if (TRANSPARENCY_PASS) {
 		tex_color.rgb *= tex_color.a;
 	}
 
