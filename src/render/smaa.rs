@@ -79,7 +79,6 @@ pub struct SmaaRenderer
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	rt_metrics: Vec4,
 
-	input_image_original: Option<Arc<ImageView>>,
 	edges_image: Option<Arc<ImageView>>,
 	blend_image: Option<Arc<ImageView>>,
 	input_set: Option<Arc<PersistentDescriptorSet>>,
@@ -223,7 +222,7 @@ impl SmaaRenderer
 		};
 		let blend_pipeline_layout = PipelineLayout::new(device.clone(), blend_pipeline_layout_info)?;
 		let blend_rendering_info = PipelineRenderingCreateInfo {
-			color_attachment_formats: vec![Some(Format::B8G8R8A8_UNORM)],
+			color_attachment_formats: vec![Some(Format::R8G8B8A8_UNORM)],
 			stencil_attachment_format: Some(render_ctx.depth_stencil_format),
 			..Default::default()
 		};
@@ -295,7 +294,6 @@ impl SmaaRenderer
 			neighborhood_pipeline,
 			descriptor_set_allocator,
 			rt_metrics: Vec4::ZERO,
-			input_image_original: None,
 			edges_image: None,
 			blend_image: None,
 			input_set: None,
@@ -308,28 +306,28 @@ impl SmaaRenderer
 		&mut self,
 		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		memory_allocator: Arc<StandardMemoryAllocator>,
-		input_image_original: Arc<ImageView>,
+		input_image: Arc<ImageView>,
 		stencil_image: Arc<ImageView>,
 		output_image: Arc<ImageView>,
 	) -> crate::Result<()>
 	{
-		assert!(input_image_original.image().samples() == SampleCount::Sample1);
+		assert!(input_image.image().samples() == SampleCount::Sample1);
 
 		let image_extent = output_image.image().extent();
 		let extent_f32 = [image_extent[0] as f32, image_extent[1] as f32];
 
-		// Resize images and recreate descriptor set if `input_image_original` was resized.
+		// Resize images and recreate descriptor set if the output image was resized.
 		let edges_layout = self.edges_pipeline.layout().clone();
 		let blend_layout = self.blend_pipeline.layout().clone();
 		let neighborhood_layout = self.neighborhood_pipeline.layout().clone();
-		if self.input_image_original != Some(input_image_original.clone()) {
+		if Some(image_extent) != self.edges_image.as_ref().map(|view| view.image().extent()) {
 			self.rt_metrics = Vec4::new(1.0 / (extent_f32[0]), 1.0 / (extent_f32[1]), extent_f32[0], extent_f32[1]);
 			//let rt_metrics_uniform = WriteDescriptorSet::inline_uniform_block(0, 0, bytemuck::bytes_of(&rt_metrics).into());
 
 			let input_set_layout = edges_layout.set_layouts()[0].clone();
 			let input_writes = [
 				//rt_metrics_uniform.clone(),
-				WriteDescriptorSet::image_view(1, input_image_original.clone()),
+				WriteDescriptorSet::image_view(1, input_image.clone()),
 			];
 			let input_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, input_set_layout, input_writes, [])?;
 			self.input_set = Some(input_set);
@@ -358,7 +356,7 @@ impl SmaaRenderer
 
 			let blend_image_info = ImageCreateInfo {
 				usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
-				format: Format::B8G8R8A8_UNORM,
+				format: Format::R8G8B8A8_UNORM,
 				extent: image_extent,
 				..Default::default()
 			};
@@ -369,7 +367,7 @@ impl SmaaRenderer
 			let blend_set_layout = neighborhood_layout.set_layouts()[0].clone();
 			let blend_writes = [
 				//rt_metrics_uniform,
-				WriteDescriptorSet::image_view(1, input_image_original.clone()),
+				WriteDescriptorSet::image_view(1, input_image),
 				WriteDescriptorSet::image_view(2, blend_image),
 			];
 			self.blend_set = Some(PersistentDescriptorSet::new(
@@ -378,8 +376,6 @@ impl SmaaRenderer
 				blend_writes,
 				[],
 			)?);
-
-			self.input_image_original = Some(input_image_original);
 		}
 
 		let viewport = Viewport {
