@@ -1,5 +1,4 @@
 #version 460
-#extension GL_EXT_nonuniform_qualifier: enable
 #include "materials_common.glsl"
 
 layout(location = 0) in vec2 texcoord;

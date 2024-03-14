@@ -577,15 +577,6 @@ impl MeshManager
 		};
 		let material_textures_set_layout = DescriptorSetLayout::new(vk_dev.clone(), mat_tex_set_layout_info)?;
 
-		/*render_ctx.load_transparency(material_textures_set_layout.clone())?;
-		let transparency_input_layout = render_ctx
-		.transparency_renderer
-		.as_ref()
-		.unwrap()
-		.get_moments_images_set()
-		.layout()
-		.clone();*/
-
 		let push_constant_size = std::mem::size_of::<Mat4>() + std::mem::size_of::<Vec4>() * 3;
 		let push_constant_range = PushConstantRange {
 			stages: ShaderStages::VERTEX,
@@ -599,17 +590,6 @@ impl MeshManager
 		};
 		let pipeline_layout = PipelineLayout::new(vk_dev.clone(), layout_info)?;
 
-		/*let layout_info_oit = PipelineLayoutCreateInfo {
-			set_layouts: vec![
-				material_textures_set_layout.clone(),
-				light_set_layout,
-				//transparency_input_layout,
-			],
-			push_constant_ranges: vec![push_constant_range],
-			..Default::default()
-		};
-		let pipeline_layout_oit = PipelineLayout::new(vk_dev.clone(), layout_info_oit)?;*/
-
 		// Load all registered material pipelines
 		let mut material_pipelines = BTreeMap::new();
 		for conf in inventory::iter::<MaterialPipelineConfig> {
@@ -620,7 +600,6 @@ impl MeshManager
 				render_ctx.aa_mode.sample_count(),
 				render_ctx.depth_stencil_format,
 				pipeline_layout.clone(),
-				//pipeline_layout_oit.clone(),
 			)?;
 
 			material_pipelines.insert(type_id, pipeline_data);
@@ -680,28 +659,25 @@ impl MeshManager
 		render_ctx: &RenderContext,
 		projview: DMat4,
 		pass_type: PassType,
-		common_sets: &[Arc<PersistentDescriptorSet>],
+		light_manager: &LightManager,
 	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>
 	{
-		let (depth_format, viewport_extent, shadow_pass) = match &pass_type {
-			PassType::Shadow(light_manager) => {
-				let format = light_manager.get_dir_light_shadow().format();
-				let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
-				let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
-				(format, viewport_extent, true)
-			}
-			_ => (render_ctx.depth_stencil_format, render_ctx.window_dimensions(), false),
+		let shadow_pass = matches!(pass_type, PassType::Shadow);
+		let transparency_pass = matches!(pass_type, PassType::Transparency);
+		let (depth_format, viewport_extent, rasterization_samples) = if shadow_pass {
+			let format = light_manager.get_dir_light_shadow().format();
+			let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
+			let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
+			(format, viewport_extent, SampleCount::Sample1)
+		} else {
+			let samples = render_ctx.aa_mode.sample_count();
+			(render_ctx.depth_stencil_format, render_ctx.window_dimensions(), samples)
 		};
 
-		let rasterization_samples = if !shadow_pass {
-			render_ctx.aa_mode.sample_count()
-		} else {
-			SampleCount::Sample1
-		};
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
-			color_attachment_formats: pass_type.render_color_formats(),
+			color_attachment_formats: pass_type.render_color_formats().into(),
 			depth_attachment_format: Some(depth_format),
-			stencil_attachment_format: matches!(pass_type, PassType::Transparency).then_some(depth_format),
+			stencil_attachment_format: transparency_pass.then_some(depth_format),
 			rasterization_samples,
 			..Default::default()
 		};
@@ -722,34 +698,30 @@ impl MeshManager
 		};
 		cb.set_viewport(0, [viewport].as_slice().into())?;
 
-		let pipeline_override = pass_type.pipeline();
-		//let transparency_pass = matches!(pass_type, PassType::TransparencyMoments(_) | PassType::Transparency);
-		let transparency_pass = matches!(pass_type, PassType::Transparency);
-
 		let mut any_drawn = false;
 		for (pipeline_id, mat_pl) in &self.material_pipelines {
-			let pipeline = if let Some(pl) = pipeline_override {
-				pl.clone()
-			} else if transparency_pass {
-				if let Some(pl) = mat_pl.oit_pipeline.clone() {
-					pl
-				} else {
-					continue;
+			let pipeline = match pass_type {
+				PassType::Shadow => light_manager.get_shadow_pipeline().clone(),
+				PassType::Transparency => {
+					if let Some(pl) = mat_pl.oit_pipeline.clone() {
+						pl
+					} else {
+						continue;
+					}
 				}
-			} else {
-				mat_pl.opaque_pipeline.clone()
+				PassType::Opaque => mat_pl.opaque_pipeline.clone(),
 			};
 
 			cb.bind_pipeline_graphics(pipeline.clone())?;
 			let pipeline_layout = pipeline.layout().clone();
 
-			if !common_sets.is_empty() {
-				let sets = Vec::from(common_sets);
+			if !shadow_pass {
+				let sets = vec![light_manager.get_all_lights_set().clone()];
 				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
 			}
 
-			// don't filter by material pipeline ID if there is a pipeline override
-			let pipeline_id_option = pipeline_override.is_none().then_some(pipeline_id);
+			// don't filter by material pipeline ID if this is the shadow pass
+			let pipeline_id_option = shadow_pass.then_some(pipeline_id);
 
 			for model in self.models.values() {
 				if model.draw(
@@ -764,7 +736,7 @@ impl MeshManager
 				}
 			}
 
-			if pipeline_override.is_some() {
+			if shadow_pass {
 				break;
 			}
 		}
@@ -776,13 +748,12 @@ impl MeshManager
 			PassType::Opaque => {
 				*self.cb_3d.lock().unwrap() = Some(cb.build()?);
 			}
-			/*PassType::TransparencyMoments(_) |*/
 			PassType::Transparency => {
 				if any_drawn {
 					return Ok(Some(cb.build()?));
 				}
 			}
-			PassType::Shadow(light_manager) => {
+			PassType::Shadow => {
 				light_manager.add_dir_light_cb(cb.build()?);
 			}
 		}
@@ -822,33 +793,20 @@ impl MeshManager
 	}
 }
 
-enum PassType<'a>
+enum PassType
 {
-	Shadow(&'a LightManager),
+	Shadow,
 	Opaque,
-	//TransparencyMoments(Arc<GraphicsPipeline>),
 	Transparency,
 }
-impl PassType<'_>
+impl PassType
 {
-	fn render_color_formats(&self) -> Vec<Option<Format>>
-	{
-		let formats: &'static [Format] = match self {
-			PassType::Shadow { .. } => &[],
-			PassType::Opaque => &[Format::R16G16B16A16_SFLOAT],
-			/*PassType::TransparencyMoments(_) => {
-				&[Format::R32G32B32A32_SFLOAT, Format::R32_SFLOAT /*, Format::R32_SFLOAT*/]
-			}*/
-			PassType::Transparency => &[Format::R16G16B16A16_SFLOAT, Format::R8_UNORM],
-		};
-		formats.iter().copied().map(Some).collect()
-	}
-	fn pipeline(&self) -> Option<&Arc<GraphicsPipeline>>
+	fn render_color_formats(&self) -> &'static [Option<Format>]
 	{
 		match self {
-			PassType::Shadow(light_manager) => Some(light_manager.get_shadow_pipeline()),
-			//PassType::TransparencyMoments(pipeline) => Some(pipeline),
-			_ => None,
+			PassType::Shadow => &[],
+			PassType::Opaque => &[Some(Format::R16G16B16A16_SFLOAT)],
+			PassType::Transparency => &[Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
 		}
 	}
 }
@@ -865,7 +823,7 @@ pub(crate) fn draw_shadows(
 ) -> crate::Result<()>
 {
 	for layer_projview in light_manager.get_dir_light_projviews() {
-		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow(&light_manager), &[])?;
+		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow, &light_manager)?;
 	}
 	Ok(())
 }
@@ -878,8 +836,7 @@ pub(crate) fn draw_3d(
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
-	let common_sets = [light_manager.get_all_lights_set().clone()];
-	mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &common_sets)?;
+	mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &light_manager)?;
 	Ok(())
 }
 
@@ -891,35 +848,10 @@ pub(crate) fn draw_3d_oit(
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
-	/* for Moment Transparency */
-	/*// We do both passes for OIT in this function, because there will almost always be fewer draw
-	// calls for transparent objects.
-	if let Some(transparency_renderer) = &render_ctx.transparency_renderer {
-		// First, collect moments for Moment Transparency (OIT). This will bind the pipeline for us,
-		// since it doesn't need to do anything specific to materials (it only reads the alpha
-		// channel of each texture).
-		let projview = camera_manager.projview();
-		let moments_pass = PassType::TransparencyMoments(transparency_renderer.get_moments_pipeline().clone());
-		let moments_cb = mesh_manager.draw(&render_ctx, projview, moments_pass, &[])?;
-
-		// Next, do the weights pass for OIT.
-		if let Some(some_moments_cb) = moments_cb {
-			let common_sets = [
-				light_manager.get_all_lights_set().clone(),
-				transparency_renderer.get_moments_images_set().clone(),
-			];
-			let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
-			transparency_renderer.add_transparency_cb(some_moments_cb, weights_cb.unwrap());
-		}
-	}*/
-
-	/* for WBOIT */
 	let projview = camera_manager.projview();
-	let common_sets = [light_manager.get_all_lights_set().clone()];
-	let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &common_sets)?;
+	let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &light_manager)?;
 	if let Some(some_weights_cb) = weights_cb {
 		render_ctx.transparency_renderer.add_transparency_cb(some_weights_cb);
 	}
-
 	Ok(())
 }

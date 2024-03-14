@@ -178,7 +178,6 @@ impl MaterialPipelineConfig
 		rasterization_samples: SampleCount,
 		depth_stencil_format: Format,
 		pipeline_layout: Arc<PipelineLayout>,
-		//pipeline_layout_oit: Arc<PipelineLayout>,
 	) -> crate::Result<MaterialPipelines>
 	{
 		let device = pipeline_layout.device().clone();

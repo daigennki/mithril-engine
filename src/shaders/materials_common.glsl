@@ -1,14 +1,14 @@
-//#include "mboit_weights.glsl"
-#include "wboit_accum.glsl"
+#extension GL_EXT_nonuniform_qualifier: enable
 
-// Specialization constant to specify if this is for a transparency (OIT) pass.
+// Specialization constant indicating if this fragment shader is for a transparency (OIT) pass.
 layout(constant_id = 0) const bool TRANSPARENCY_PASS = false;
 
 /* Material parameters */
 layout(binding = 0) uniform sampler sampler0;
 
-// All textures will be taken from here, with textures for different purposes being at different offsets.
-// The offsets will be added to the instance index so that the correct texture for the current material gets selected.
+// All textures will be taken from here, with textures for different purposes being at different
+// offsets. Add the offset to the instance index so that the correct texture for the current
+// material gets selected.
 layout(binding = 1) uniform texture2D textures[];
 
 /* Lighting stuff */
@@ -28,13 +28,18 @@ layout(set = 1, binding = 1) uniform dir_light_ubo
 };
 layout(set = 1, binding = 2) uniform texture2DArray dir_light_shadow;
 
-// The shader output is defined in wboit_accum.glsl.
+/* Shader outputs */
+layout(location = 0) out vec4 color_out;  // used as color output in opaque pass, and accum in transparency pass
+layout(location = 1) out float revealage; // unused in opaque pass; only used in transparency pass
 
 // Use this function in your material's fragment shader to write pixels to the output image.
 void write_pixel(vec4 shaded_with_alpha)
 {
 	if (TRANSPARENCY_PASS) {
-		write_transparent_pixel(shaded_with_alpha);
+		// Implementation of equation 10 (one of the "generic weight functions") in the WBOIT paper.
+		float w = shaded_with_alpha.a * max(1e-2, 3e3 * pow(1.0 - gl_FragCoord.z, 3));
+		color_out = shaded_with_alpha * w;
+		revealage = shaded_with_alpha.a;
 	} else {
 		color_out = vec4(shaded_with_alpha.rgb, 1.0);
 	}

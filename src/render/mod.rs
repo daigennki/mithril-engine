@@ -6,7 +6,6 @@
 ----------------------------------------------------------------------------- */
 pub mod lighting;
 pub mod model;
-//mod moment_transparency;
 mod smaa;
 pub mod ui;
 mod wboit;
@@ -192,17 +191,6 @@ impl RenderContext
 
 		Ok(new_self)
 	}
-
-	/*fn load_transparency(&mut self, mat_tex_set_layout: Arc<DescriptorSetLayout>) -> crate::Result<()>
-	{
-		self.transparency_renderer = Some(moment_transparency::MomentTransaprencyRenderer::new(
-			self.memory_allocator.clone(),
-			mat_tex_set_layout,
-			self.window.dimensions(),
-			self.depth_stencil_format,
-		)?);
-		Ok(())
-	}*/
 
 	/// Create a device-local buffer from a slice, initialized with `data` for `usage`.
 	/// For stuff that isn't an array, just put the data into a single-element slice, like `[data]`.
@@ -1105,14 +1093,12 @@ pub(crate) fn submit_frame(
 
 	// transparent 3D objects (OIT)
 	let memory_allocator = render_ctx.memory_allocator.clone();
-	//if let Some(transparency_renderer) = &mut render_ctx.transparency_renderer {
 	render_ctx.transparency_renderer.process_transparency(
 		&mut cb_builder,
 		color_image.clone(),
 		depth_stencil_image.clone(),
 		memory_allocator.clone(),
 	)?;
-	//}
 
 	let aa_output = match render_ctx.aa_mode {
 		AntiAliasingMode::Off => color_image,
