@@ -158,7 +158,7 @@ impl Model
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_name: Option<TypeId>,
+		pipeline_id: Option<TypeId>,
 		pipeline_layout: Arc<PipelineLayout>,
 		pass_type: PassType,
 		projview: &DMat4,
@@ -193,9 +193,7 @@ impl Model
 					let mat = &self.materials[material_index];
 
 					// don't filter by material pipeline name if `None` was given
-					let pipeline_matches = pipeline_name
-						.map(|some_pl_name| mat.as_ref().type_id() == some_pl_name)
-						.unwrap_or(true);
+					let pipeline_matches = pipeline_id.map_or(true, |id| mat.as_ref().type_id() == id);
 
 					pipeline_matches && mat.blend_mode() == blend_mode_this_pass
 				})
@@ -712,16 +710,10 @@ impl MeshManager
 		for (pipeline_id, mat_pl) in &self.material_pipelines {
 			let pipeline = match pass_type {
 				PassType::Shadow => light_manager.get_shadow_pipeline().clone(),
-				PassType::Transparency => {
-					if let Some(pl) = mat_pl.oit_pipeline.clone() {
-						pl
-					} else {
-						continue;
-					}
-				}
+				PassType::Transparency => mat_pl.oit_pipeline.clone(),
 				PassType::Opaque => mat_pl.opaque_pipeline.clone(),
 			};
-			cb.bind_pipeline_graphics(pipeline.clone())?;
+			cb.bind_pipeline_graphics(pipeline)?;
 
 			// don't filter by material pipeline ID if this is the shadow pass
 			let pipeline_id_option = shadow_pass.then_some(pipeline_id);
