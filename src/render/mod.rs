@@ -148,7 +148,18 @@ impl RenderContext
 			})
 			.unwrap(); // unwrap since at least one of the formats must be supported
 
-		let aa_mode = AntiAliasingMode::Off;
+		let aa_mode_regex = regex::Regex::new("--aa_mode=(?<value>\\w+)").unwrap();
+		let aa_mode = std::env::args()
+			.collect::<Vec<_>>()
+			.iter()
+			.find_map(|arg| aa_mode_regex.captures(arg))
+			.and_then(|caps| caps.name("value"))
+			.map_or(AntiAliasingMode::Off, |value| match value.as_str() {
+				"Multisample2" => AntiAliasingMode::Multisample2,
+				"Multisample4" => AntiAliasingMode::Multisample4,
+				"Smaa" | "SMAA" => AntiAliasingMode::Smaa,
+				_ => AntiAliasingMode::Off,
+			});
 		let rasterization_samples = aa_mode.sample_count();
 
 		let mut new_self = Self {
