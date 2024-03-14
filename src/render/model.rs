@@ -160,16 +160,16 @@ impl Model
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_name: Option<TypeId>,
 		pipeline_layout: Arc<PipelineLayout>,
-		transparency_pass: bool,
-		shadow_pass: bool,
+		pass_type: PassType,
 		projview: &DMat4,
 	) -> bool
 	{
 		// The blend mode to render for during this pass.
-		let blend_mode_this_pass = match transparency_pass {
-			true => BlendMode::AlphaBlend,
-			false => BlendMode::Opaque,
+		let blend_mode_this_pass = match pass_type {
+			PassType::Transparency => BlendMode::AlphaBlend,
+			_ => BlendMode::Opaque,
 		};
+		let shadow_pass = pass_type == PassType::Shadow;
 
 		// TODO: We should separately handle users with custom material variants after ones without
 		// custom material variants, so that the wrong descriptor set doesn't get bound.
@@ -527,6 +527,7 @@ pub struct MeshManager
 {
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	material_textures_set_layout: Arc<DescriptorSetLayout>,
+	material_pipeline_layout: Arc<PipelineLayout>,
 
 	material_pipelines: BTreeMap<TypeId, MaterialPipelines>,
 
@@ -608,6 +609,7 @@ impl MeshManager
 		Ok(Self {
 			descriptor_set_allocator,
 			material_textures_set_layout,
+			material_pipeline_layout: pipeline_layout,
 			material_pipelines,
 			models: Default::default(),
 			resources: Default::default(),
@@ -662,8 +664,7 @@ impl MeshManager
 		light_manager: &LightManager,
 	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>
 	{
-		let shadow_pass = matches!(pass_type, PassType::Shadow);
-		let transparency_pass = matches!(pass_type, PassType::Transparency);
+		let shadow_pass = pass_type == PassType::Shadow;
 		let (depth_format, viewport_extent, rasterization_samples) = if shadow_pass {
 			let format = light_manager.get_dir_light_shadow().format();
 			let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
@@ -677,7 +678,7 @@ impl MeshManager
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: pass_type.render_color_formats().into(),
 			depth_attachment_format: Some(depth_format),
-			stencil_attachment_format: transparency_pass.then_some(depth_format),
+			stencil_attachment_format: (pass_type == PassType::Transparency).then_some(depth_format),
 			rasterization_samples,
 			..Default::default()
 		};
@@ -698,6 +699,15 @@ impl MeshManager
 		};
 		cb.set_viewport(0, [viewport].as_slice().into())?;
 
+		let pipeline_layout;
+		if shadow_pass {
+			pipeline_layout = light_manager.get_shadow_pipeline().layout().clone();
+		} else {
+			pipeline_layout = self.material_pipeline_layout.clone();
+			let sets = vec![light_manager.get_all_lights_set().clone()];
+			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
+		}
+
 		let mut any_drawn = false;
 		for (pipeline_id, mat_pl) in &self.material_pipelines {
 			let pipeline = match pass_type {
@@ -711,14 +721,7 @@ impl MeshManager
 				}
 				PassType::Opaque => mat_pl.opaque_pipeline.clone(),
 			};
-
 			cb.bind_pipeline_graphics(pipeline.clone())?;
-			let pipeline_layout = pipeline.layout().clone();
-
-			if !shadow_pass {
-				let sets = vec![light_manager.get_all_lights_set().clone()];
-				cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
-			}
 
 			// don't filter by material pipeline ID if this is the shadow pass
 			let pipeline_id_option = shadow_pass.then_some(pipeline_id);
@@ -728,8 +731,7 @@ impl MeshManager
 					&mut cb,
 					pipeline_id_option.copied(),
 					pipeline_layout.clone(),
-					transparency_pass,
-					shadow_pass,
+					pass_type,
 					&projview,
 				) {
 					any_drawn = true;
@@ -793,6 +795,7 @@ impl MeshManager
 	}
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum PassType
 {
 	Shadow,
