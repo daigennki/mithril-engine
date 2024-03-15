@@ -74,6 +74,11 @@ struct Model
 	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
 	index_buffer: IndexBuffer,
 
+	// Parameters for performing frustum culling on the entire model.
+	corner_min: Vec3,
+	corner_max: Vec3,
+	cull_submeshes: bool,
+
 	// Image views for all materials used by all material variants the glTF document comes with.
 	// Uses variable descriptor count.
 	textures_set: Arc<PersistentDescriptorSet>,
@@ -128,12 +133,29 @@ impl Model
 			log::debug!("material variants in model: {:?}", &material_variants);
 		}
 
+		let corner_min = submeshes
+			.iter()
+			.map(|submesh| submesh.corner_min)
+			.reduce(|acc, corner_min| acc.min(corner_min))
+			.unwrap_or_default();
+		let corner_max = submeshes
+			.iter()
+			.map(|submesh| submesh.corner_max)
+			.reduce(|acc, corner_max| acc.max(corner_max))
+			.unwrap_or_default();
+
+		// TODO: take a custom property from glTF extras for this
+		let cull_submeshes = submeshes.len() > 1;
+
 		Ok(Model {
 			materials,
 			material_variants,
 			submeshes,
 			vertex_subbuffers,
 			index_buffer,
+			corner_min,
+			corner_max,
+			cull_submeshes,
 			textures_set,
 			mat_tex_base_indices,
 			users: Default::default(),
@@ -171,33 +193,36 @@ impl Model
 		};
 		let shadow_pass = pass_type == PassType::Shadow;
 
-		// TODO: We should separately handle users with custom material variants after ones without
-		// custom material variants, so that the wrong descriptor set doesn't get bound.
+		// TODO: We should separately handle users with custom material variants after other users,
+		// so that the wrong descriptor set doesn't get bound.
 		let mut any_drawn = false;
 
 		for user in self.users.values() {
-			let projviewmodel = *projview * DMat4::from(user.affine);
-
 			// Convert the matrix values from f64 to f32 only after multiplying the matrices. This
 			// prevents precision loss, especially with large values in the affine transformation.
+			let projviewmodel = *projview * DMat4::from(user.affine);
 			let pvm_f32 = projviewmodel.as_mat4();
 
-			// Filter visible submeshes. "Visible" here means it uses the currently bound material
-			// pipeline, its transparency mode matches the current render pass type, and the submesh
-			// passes frustum culling.
+			// Perform frustum culling on the entire model.
+			if !cull_frustum(self.corner_min, self.corner_max, &pvm_f32) {
+				continue;
+			}
+
+			// Filter submeshes to those using the currently bound material pipeline and the same
+			// transparency mode as the current render pass type. If submesh culling is enabled for
+			// this model, submeshes must also pass frustum culling to be drawn.
 			let mut visible_submeshes = self
 				.submeshes
 				.iter()
-				.filter(|submesh| {
-					let material_index = submesh.mat_indices[user.material_variant];
-					let mat = &self.materials[material_index];
-
-					// don't filter by material pipeline name if `None` was given
-					let pipeline_matches = pipeline_id.map_or(true, |id| mat.as_ref().type_id() == id);
-
-					pipeline_matches && mat.blend_mode() == blend_mode_this_pass
+				.filter(|submesh| match pipeline_id {
+					Some(id) => {
+						let material_index = submesh.mat_indices[user.material_variant];
+						let mat = &self.materials[material_index];
+						mat.as_ref().type_id() == id && mat.blend_mode() == blend_mode_this_pass
+					}
+					None => true,
 				})
-				.filter(|submesh| submesh.cull(&pvm_f32))
+				.filter(|submesh| if self.cull_submeshes { submesh.cull(&pvm_f32) } else { true })
 				.peekable();
 
 			// Don't even bother with binds if no submeshes are visible in this model instance.
@@ -244,6 +269,48 @@ impl Model
 	}
 }
 
+fn cull_frustum(corner_min: Vec3, corner_max: Vec3, pvm: &Mat4) -> bool
+{
+	// generate vertices for all 8 corners of this bounding box
+	let mut bb_verts = [Vec4::ZERO; 8];
+	bb_verts[0..4].fill(corner_min.extend(1.0));
+	bb_verts[4..8].fill(corner_max.extend(1.0));
+	bb_verts[1].x = corner_max.x;
+	bb_verts[2].x = corner_max.x;
+	bb_verts[2].y = corner_max.y;
+	bb_verts[3].y = corner_max.y;
+	bb_verts[5].x = corner_min.x;
+	bb_verts[6].x = corner_min.x;
+	bb_verts[6].y = corner_min.y;
+	bb_verts[7].y = corner_min.y;
+
+	for vert in &mut bb_verts {
+		*vert = *pvm * *vert;
+	}
+
+	// check if all vertices are on the outside of any plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
+	let mut neg_axis = true;
+	for eval_axis in [0, 0, 1, 1, 2, 2] {
+		// `outside` will only be true here if all vertices are outside of the plane being evaluated
+		let outside = bb_verts.iter().all(|vert| {
+			let mut axis_coord = vert[eval_axis];
+
+			// negate coordinate when evaluating against negative planes so outside coordinates are greater than +W
+			if neg_axis {
+				axis_coord = -axis_coord;
+			}
+
+			axis_coord > vert.w // vertex is outside of plane if coordinate on plane axis is greater than +W
+		});
+		if outside {
+			return false;
+		}
+
+		neg_axis = !neg_axis;
+	}
+	true
+}
+
 struct SubMesh
 {
 	first_index: u32,
@@ -281,44 +348,7 @@ impl SubMesh
 	/// Perform frustum culling. Returns `true` if visible.
 	fn cull(&self, projviewmodel: &Mat4) -> bool
 	{
-		// generate vertices for all 8 corners of this bounding box
-		let mut bb_verts: [Vec4; 8] = Default::default();
-		bb_verts[0..4].fill(self.corner_min.extend(1.0));
-		bb_verts[4..8].fill(self.corner_max.extend(1.0));
-		bb_verts[1].x = self.corner_max.x;
-		bb_verts[2].x = self.corner_max.x;
-		bb_verts[2].y = self.corner_max.y;
-		bb_verts[3].y = self.corner_max.y;
-		bb_verts[5].x = self.corner_min.x;
-		bb_verts[6].x = self.corner_min.x;
-		bb_verts[6].y = self.corner_min.y;
-		bb_verts[7].y = self.corner_min.y;
-
-		for vert in &mut bb_verts {
-			*vert = *projviewmodel * *vert;
-		}
-
-		// check if all vertices are on the outside of any plane (evaluated in order of -X, +X, -Y, +Y, -Z, +Z)
-		let mut neg_axis = true;
-		for eval_axis in [0, 0, 1, 1, 2, 2] {
-			// `outside` will only be true here if all vertices are outside of the plane being evaluated
-			let outside = bb_verts.iter().all(|vert| {
-				let mut axis_coord = vert[eval_axis];
-
-				// negate coordinate when evaluating against negative planes so outside coordinates are greater than +W
-				if neg_axis {
-					axis_coord = -axis_coord;
-				}
-
-				axis_coord > vert.w // vertex is outside of plane if coordinate on plane axis is greater than +W
-			});
-			if outside {
-				return false;
-			}
-
-			neg_axis = !neg_axis;
-		}
-		true
+		cull_frustum(self.corner_min, self.corner_max, projviewmodel)
 	}
 
 	fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
