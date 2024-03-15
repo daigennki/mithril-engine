@@ -18,7 +18,7 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::*, view::ImageView, SampleCount};
+use vulkano::image::{sampler::*, view::ImageView};
 use vulkano::pipeline::graphics::{vertex_input::*, viewport::Viewport};
 use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -654,6 +654,42 @@ impl MeshManager
 		self.resources.remove(&eid);
 	}
 
+	fn draw_shadows(&self, render_ctx: &RenderContext, light_manager: &LightManager) -> crate::Result<()>
+	{
+		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
+			depth_attachment_format: Some(light_manager.get_dir_light_shadow().format()),
+			..Default::default()
+		};
+		let pipeline_layout = light_manager.get_shadow_pipeline().layout().clone();
+		let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
+		let viewport = Viewport {
+			offset: [0.0, 0.0],
+			extent: [dir_light_extent[0] as f32, dir_light_extent[1] as f32],
+			depth_range: 0.0..=1.0,
+		};
+
+		for projview in light_manager.get_dir_light_projviews() {
+			let mut cb = AutoCommandBufferBuilder::secondary(
+				&render_ctx.command_buffer_allocator,
+				render_ctx.graphics_queue_family_index(),
+				CommandBufferUsage::OneTimeSubmit,
+				CommandBufferInheritanceInfo {
+					render_pass: Some(rendering_inheritance.clone().into()),
+					..Default::default()
+				},
+			)?;
+			cb.bind_pipeline_graphics(light_manager.get_shadow_pipeline().clone())?
+				.set_viewport(0, smallvec::smallvec![viewport.clone()])?;
+
+			for model in self.models.values() {
+				model.draw(&mut cb, None, pipeline_layout.clone(), PassType::Shadow, &projview);
+			}
+
+			light_manager.add_dir_light_cb(cb.build()?);
+		}
+		Ok(())
+	}
+
 	fn draw(
 		&self,
 		render_ctx: &RenderContext,
@@ -662,22 +698,17 @@ impl MeshManager
 		light_manager: &LightManager,
 	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>
 	{
-		let shadow_pass = pass_type == PassType::Shadow;
-		let (depth_format, viewport_extent, rasterization_samples) = if shadow_pass {
-			let format = light_manager.get_dir_light_shadow().format();
-			let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
-			let viewport_extent = [dir_light_extent[0], dir_light_extent[1]];
-			(format, viewport_extent, SampleCount::Sample1)
-		} else {
-			let samples = render_ctx.aa_mode.sample_count();
-			(render_ctx.depth_stencil_format, render_ctx.window_dimensions(), samples)
+		let color_attachment_formats = match pass_type {
+			PassType::Shadow => unreachable!(),
+			PassType::Opaque => vec![Some(Format::R16G16B16A16_SFLOAT)],
+			PassType::Transparency => vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
 		};
-
+		let depth_stencil_format = render_ctx.depth_stencil_format;
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
-			color_attachment_formats: pass_type.render_color_formats().into(),
-			depth_attachment_format: Some(depth_format),
-			stencil_attachment_format: (pass_type == PassType::Transparency).then_some(depth_format),
-			rasterization_samples,
+			color_attachment_formats,
+			depth_attachment_format: Some(depth_stencil_format),
+			stencil_attachment_format: (pass_type == PassType::Transparency).then_some(depth_stencil_format),
+			rasterization_samples: render_ctx.aa_mode.sample_count(),
 			..Default::default()
 		};
 		let mut cb = AutoCommandBufferBuilder::secondary(
@@ -690,55 +721,37 @@ impl MeshManager
 			},
 		)?;
 
+		let pipeline_layout = self.material_pipeline_layout.clone();
+		let light_set = light_manager.get_all_lights_set().clone();
+		let viewport_extent = render_ctx.window_dimensions();
 		let viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
-		cb.set_viewport(0, [viewport].as_slice().into())?;
-
-		let pipeline_layout;
-		if shadow_pass {
-			pipeline_layout = light_manager.get_shadow_pipeline().layout().clone();
-		} else {
-			pipeline_layout = self.material_pipeline_layout.clone();
-			let sets = vec![light_manager.get_all_lights_set().clone()];
-			cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, sets)?;
-		}
+		cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, vec![light_set])?
+			.set_viewport(0, smallvec::smallvec![viewport])?;
 
 		let mut any_drawn = false;
 		for (pipeline_id, mat_pl) in &self.material_pipelines {
 			let pipeline = match pass_type {
-				PassType::Shadow => light_manager.get_shadow_pipeline().clone(),
-				PassType::Transparency => mat_pl.oit_pipeline.clone(),
+				PassType::Shadow => unreachable!(),
 				PassType::Opaque => mat_pl.opaque_pipeline.clone(),
+				PassType::Transparency => mat_pl.oit_pipeline.clone(),
 			};
 			cb.bind_pipeline_graphics(pipeline)?;
 
-			// don't filter by material pipeline ID if this is the shadow pass
-			let pipeline_id_option = shadow_pass.then_some(pipeline_id);
-
 			for model in self.models.values() {
-				if model.draw(
-					&mut cb,
-					pipeline_id_option.copied(),
-					pipeline_layout.clone(),
-					pass_type,
-					&projview,
-				) {
+				if model.draw(&mut cb, Some(*pipeline_id), pipeline_layout.clone(), pass_type, &projview) {
 					any_drawn = true;
 				}
 			}
-
-			if shadow_pass {
-				break;
-			}
 		}
 
-		// If this is the opaque pass, don't let the command buffer leave this `MeshManager`.
-		// Otherwise, only return the command buffer if this is the OIT pass and models were drawn
-		// at all, or if this is the shadow pass.
+		// Always return a command buffer if this is the opaque pass. If this is a transparency
+		// (OIT) pass, only return a command buffer if anything was drawn at all.
 		match pass_type {
+			PassType::Shadow => unreachable!(),
 			PassType::Opaque => {
 				*self.cb_3d.lock().unwrap() = Some(cb.build()?);
 			}
@@ -746,9 +759,6 @@ impl MeshManager
 				if any_drawn {
 					return Ok(Some(cb.build()?));
 				}
-			}
-			PassType::Shadow => {
-				light_manager.add_dir_light_cb(cb.build()?);
 			}
 		}
 		Ok(None)
@@ -794,17 +804,6 @@ enum PassType
 	Opaque,
 	Transparency,
 }
-impl PassType
-{
-	fn render_color_formats(&self) -> &'static [Option<Format>]
-	{
-		match self {
-			PassType::Shadow => &[],
-			PassType::Opaque => &[Some(Format::R16G16B16A16_SFLOAT)],
-			PassType::Transparency => &[Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
-		}
-	}
-}
 
 //
 /* Workloads and systems for drawing models */
@@ -817,9 +816,7 @@ pub(crate) fn draw_shadows(
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
-	for layer_projview in light_manager.get_dir_light_projviews() {
-		mesh_manager.draw(&render_ctx, layer_projview, PassType::Shadow, &light_manager)?;
-	}
+	mesh_manager.draw_shadows(&render_ctx, &light_manager)?;
 	Ok(())
 }
 
