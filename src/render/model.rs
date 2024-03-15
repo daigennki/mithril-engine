@@ -33,7 +33,8 @@ use crate::EngineError;
 
 /// Vertex attributes and bindings describing the vertex buffers bound by a model. The indices in
 /// each slice are used as the binding and attribute indices respectively as-is.
-pub const VERTEX_BINDINGS: [VertexInputBindingDescription; 3] = [
+pub const VERTEX_BINDING_COUNT: usize = 3;
+pub const VERTEX_BINDINGS: [VertexInputBindingDescription; VERTEX_BINDING_COUNT] = [
 	VertexInputBindingDescription {
 		stride: 12,
 		input_rate: VertexInputRate::Vertex,
@@ -47,7 +48,7 @@ pub const VERTEX_BINDINGS: [VertexInputBindingDescription; 3] = [
 		input_rate: VertexInputRate::Vertex,
 	},
 ];
-pub const VERTEX_ATTRIBUTES: [VertexInputAttributeDescription; 3] = [
+pub const VERTEX_ATTRIBUTES: [VertexInputAttributeDescription; VERTEX_BINDING_COUNT] = [
 	VertexInputAttributeDescription {
 		binding: 0,
 		format: Format::R32G32B32_SFLOAT,
@@ -71,7 +72,7 @@ struct Model
 	materials: Vec<Box<dyn Material>>,
 	material_variants: Vec<String>,
 	submeshes: Vec<SubMesh>,
-	vertex_subbuffers: Vec<Subbuffer<[f32]>>,
+	vertex_subbuffers: [Subbuffer<[f32]>; VERTEX_BINDING_COUNT],
 	index_buffer: IndexBuffer,
 
 	// Parameters for performing frustum culling on the entire model.
@@ -248,7 +249,7 @@ impl Model
 						let set = self.textures_set.clone();
 						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)
 							.unwrap();
-						self.vertex_subbuffers.clone()
+						Vec::from(self.vertex_subbuffers.clone())
 					};
 
 					cb.bind_vertex_buffers(0, vbo).unwrap();
@@ -359,7 +360,7 @@ impl SubMesh
 }
 
 // (vertex buffers, index buffer, submeshes)
-type LoadedMeshData = (Vec<Subbuffer<[f32]>>, IndexBuffer, Vec<SubMesh>);
+type LoadedMeshData = ([Subbuffer<[f32]>; VERTEX_BINDING_COUNT], IndexBuffer, Vec<SubMesh>);
 fn load_gltf_meshes(
 	render_ctx: &mut RenderContext,
 	doc: &gltf::Document,
@@ -375,7 +376,8 @@ fn load_gltf_meshes(
 	let mut indices_u32 = Vec::new();
 
 	// Skip the primitive if it doesn't have all the semantics we need.
-	const REQUIRED_SEMANTICS: [Semantic; 3] = [Semantic::Positions, Semantic::Normals, Semantic::TexCoords(0)];
+	const REQUIRED_SEMANTICS: [Semantic; VERTEX_BINDING_COUNT] =
+		[Semantic::Positions, Semantic::Normals, Semantic::TexCoords(0)];
 
 	// Create submeshes from glTF "primitives".
 	let primitives = doc
@@ -427,7 +429,7 @@ fn load_gltf_meshes(
 	let vbo_positions = vertex_buffer.clone().slice(..texcoords_offset);
 	let vbo_texcoords = vertex_buffer.clone().slice(texcoords_offset..normals_offset);
 	let vbo_normals = vertex_buffer.clone().slice(normals_offset..);
-	let vertex_subbuffers = vec![vbo_positions, vbo_texcoords, vbo_normals];
+	let vertex_subbuffers = [vbo_positions, vbo_texcoords, vbo_normals];
 
 	let index_buffer = if !indices_u32.is_empty() {
 		IndexBuffer::U32(render_ctx.new_buffer(&indices_u32, BufferUsage::INDEX_BUFFER)?)
