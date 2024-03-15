@@ -183,16 +183,12 @@ impl Model
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
 		pipeline_id: Option<TypeId>,
 		pipeline_layout: Arc<PipelineLayout>,
-		pass_type: PassType,
+		blend_mode_this_pass: Option<BlendMode>,
 		projview: &DMat4,
 	) -> bool
 	{
-		// The blend mode to render for during this pass.
-		let blend_mode_this_pass = match pass_type {
-			PassType::Transparency => BlendMode::AlphaBlend,
-			_ => BlendMode::Opaque,
-		};
-		let shadow_pass = pass_type == PassType::Shadow;
+		let shadow_pass = blend_mode_this_pass.is_none();
+		let unwrapped_blend_mode = blend_mode_this_pass.unwrap_or(BlendMode::Opaque);
 
 		// TODO: We should separately handle users with custom material variants after other users,
 		// so that the wrong descriptor set doesn't get bound.
@@ -219,7 +215,7 @@ impl Model
 					Some(id) => {
 						let material_index = submesh.mat_indices[user.material_variant];
 						let mat = &self.materials[material_index];
-						mat.as_ref().type_id() == id && mat.blend_mode() == blend_mode_this_pass
+						mat.as_ref().type_id() == id && mat.blend_mode() == unwrapped_blend_mode
 					}
 					None => true,
 				})
@@ -714,7 +710,7 @@ impl MeshManager
 				.set_viewport(0, smallvec::smallvec![viewport.clone()])?;
 
 			for model in self.models.values() {
-				model.draw(&mut cb, None, pipeline_layout.clone(), PassType::Shadow, &projview);
+				model.draw(&mut cb, None, pipeline_layout.clone(), None, &projview);
 			}
 
 			light_manager.add_dir_light_cb(cb.build()?);
@@ -726,20 +722,19 @@ impl MeshManager
 		&self,
 		render_ctx: &RenderContext,
 		projview: DMat4,
-		pass_type: PassType,
+		blend_mode: BlendMode,
 		light_manager: &LightManager,
 	) -> crate::Result<Option<Arc<SecondaryAutoCommandBuffer>>>
 	{
-		let color_attachment_formats = match pass_type {
-			PassType::Shadow => unreachable!(),
-			PassType::Opaque => vec![Some(Format::R16G16B16A16_SFLOAT)],
-			PassType::Transparency => vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
+		let color_attachment_formats = match blend_mode {
+			BlendMode::Opaque => vec![Some(Format::R16G16B16A16_SFLOAT)],
+			BlendMode::AlphaBlend => vec![Some(Format::R16G16B16A16_SFLOAT), Some(Format::R8_UNORM)],
 		};
 		let depth_stencil_format = render_ctx.depth_stencil_format;
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats,
 			depth_attachment_format: Some(depth_stencil_format),
-			stencil_attachment_format: (pass_type == PassType::Transparency).then_some(depth_stencil_format),
+			stencil_attachment_format: (blend_mode == BlendMode::AlphaBlend).then_some(depth_stencil_format),
 			rasterization_samples: render_ctx.aa_mode.sample_count(),
 			..Default::default()
 		};
@@ -766,15 +761,20 @@ impl MeshManager
 
 		let mut any_drawn = false;
 		for (pipeline_id, mat_pl) in &self.material_pipelines {
-			let pipeline = match pass_type {
-				PassType::Shadow => unreachable!(),
-				PassType::Opaque => mat_pl.opaque_pipeline.clone(),
-				PassType::Transparency => mat_pl.oit_pipeline.clone(),
+			let pipeline = match blend_mode {
+				BlendMode::Opaque => mat_pl.opaque_pipeline.clone(),
+				BlendMode::AlphaBlend => mat_pl.oit_pipeline.clone(),
 			};
 			cb.bind_pipeline_graphics(pipeline)?;
 
 			for model in self.models.values() {
-				if model.draw(&mut cb, Some(*pipeline_id), pipeline_layout.clone(), pass_type, &projview) {
+				if model.draw(
+					&mut cb,
+					Some(*pipeline_id),
+					pipeline_layout.clone(),
+					Some(blend_mode),
+					&projview,
+				) {
 					any_drawn = true;
 				}
 			}
@@ -782,12 +782,11 @@ impl MeshManager
 
 		// Always return a command buffer if this is the opaque pass. If this is a transparency
 		// (OIT) pass, only return a command buffer if anything was drawn at all.
-		match pass_type {
-			PassType::Shadow => unreachable!(),
-			PassType::Opaque => {
+		match blend_mode {
+			BlendMode::Opaque => {
 				*self.cb_3d.lock().unwrap() = Some(cb.build()?);
 			}
-			PassType::Transparency => {
+			BlendMode::AlphaBlend => {
 				if any_drawn {
 					return Ok(Some(cb.build()?));
 				}
@@ -829,14 +828,6 @@ impl MeshManager
 	}
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum PassType
-{
-	Shadow,
-	Opaque,
-	Transparency,
-}
-
 //
 /* Workloads and systems for drawing models */
 //
@@ -860,7 +851,7 @@ pub(crate) fn draw_3d(
 	light_manager: UniqueView<LightManager>,
 ) -> crate::Result<()>
 {
-	mesh_manager.draw(&render_ctx, camera_manager.projview(), PassType::Opaque, &light_manager)?;
+	mesh_manager.draw(&render_ctx, camera_manager.projview(), BlendMode::Opaque, &light_manager)?;
 	Ok(())
 }
 
@@ -873,7 +864,7 @@ pub(crate) fn draw_3d_oit(
 ) -> crate::Result<()>
 {
 	let projview = camera_manager.projview();
-	let weights_cb = mesh_manager.draw(&render_ctx, projview, PassType::Transparency, &light_manager)?;
+	let weights_cb = mesh_manager.draw(&render_ctx, projview, BlendMode::AlphaBlend, &light_manager)?;
 	if let Some(some_weights_cb) = weights_cb {
 		render_ctx.transparency_renderer.add_transparency_cb(some_weights_cb);
 	}
