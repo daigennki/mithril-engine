@@ -148,7 +148,7 @@ impl Model
 		// TODO: take a custom property from glTF extras for this
 		let cull_submeshes = submeshes.len() > 1;
 
-		Ok(Model {
+		Ok(Self {
 			materials,
 			material_variants,
 			submeshes,
@@ -181,13 +181,13 @@ impl Model
 	fn draw(
 		&self,
 		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
-		pipeline_id: Option<TypeId>,
+		material_filter: Option<(TypeId, BlendMode)>,
 		pipeline_layout: Arc<PipelineLayout>,
-		blend_mode_this_pass: Option<BlendMode>,
 		projview: &DMat4,
 	) -> bool
 	{
-		let shadow_pass = blend_mode_this_pass.is_none();
+		let shadow_pass = material_filter.is_none();
+		let (pipeline_id, blend_mode_this_pass) = material_filter.unzip();
 		let unwrapped_blend_mode = blend_mode_this_pass.unwrap_or(BlendMode::Opaque);
 
 		// TODO: We should separately handle users with custom material variants after other users,
@@ -319,7 +319,7 @@ struct SubMesh
 }
 impl SubMesh
 {
-	fn from_gltf_primitive(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Self
+	fn new(primitive: &gltf::Primitive, first_index: u32, vertex_offset: i32) -> Self
 	{
 		// Get the material index for each material variant. If the glTF document has no material
 		// variants, `mat_indices` will contain only the material index of the regular material.
@@ -332,7 +332,7 @@ impl SubMesh
 			vec![primitive.material().index().unwrap_or(0)]
 		};
 
-		SubMesh {
+		Self {
 			first_index,
 			index_count: primitive.indices().unwrap().count().try_into().unwrap(),
 			vertex_offset,
@@ -383,7 +383,7 @@ fn load_gltf_meshes(
 	for prim in primitives {
 		let first_index = indices_u32.len().max(indices_u16.len()).try_into().unwrap();
 		let vertex_offset = (positions.len() / 3).try_into().unwrap();
-		submeshes.push(SubMesh::from_gltf_primitive(&prim, first_index, vertex_offset));
+		submeshes.push(SubMesh::new(&prim, first_index, vertex_offset));
 
 		let reader = prim.reader(|buf| data_buffers.get(buf.index()).map(|data| data.0.as_slice()));
 		positions.extend(reader.read_positions().unwrap().flatten());
@@ -710,7 +710,7 @@ impl MeshManager
 				.set_viewport(0, smallvec::smallvec![viewport.clone()])?;
 
 			for model in self.models.values() {
-				model.draw(&mut cb, None, pipeline_layout.clone(), None, &projview);
+				model.draw(&mut cb, None, pipeline_layout.clone(), &projview);
 			}
 
 			light_manager.add_dir_light_cb(cb.build()?);
@@ -768,13 +768,7 @@ impl MeshManager
 			cb.bind_pipeline_graphics(pipeline)?;
 
 			for model in self.models.values() {
-				if model.draw(
-					&mut cb,
-					Some(*pipeline_id),
-					pipeline_layout.clone(),
-					Some(blend_mode),
-					&projview,
-				) {
+				if model.draw(&mut cb, Some((*pipeline_id, blend_mode)), pipeline_layout.clone(), &projview) {
 					any_drawn = true;
 				}
 			}
@@ -844,7 +838,7 @@ pub(crate) fn draw_shadows(
 }
 
 // Draw opaque 3D objects.
-pub(crate) fn draw_3d(
+pub(crate) fn draw_opaque(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<MeshManager>,
@@ -856,7 +850,7 @@ pub(crate) fn draw_3d(
 }
 
 // Draw objects for OIT (order-independent transparency).
-pub(crate) fn draw_3d_oit(
+pub(crate) fn draw_oit(
 	render_ctx: UniqueView<RenderContext>,
 	camera_manager: UniqueView<CameraManager>,
 	mesh_manager: UniqueView<MeshManager>,
