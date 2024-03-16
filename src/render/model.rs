@@ -324,10 +324,24 @@ impl SubMesh
 		// Get the material index for each material variant. If the glTF document has no material
 		// variants, `mat_indices` will contain only the material index of the regular material.
 		let mat_indices = if primitive.mappings().len() > 0 {
-			primitive
+			let max_variant: usize = primitive
 				.mappings()
-				.map(|mapping| mapping.material().index().unwrap_or(0))
-				.collect()
+				.flat_map(|mapping| mapping.variants())
+				.max()
+				.copied()
+				.unwrap_or(0)
+				.try_into()
+				.unwrap();
+
+			let mut mat_indices = vec![0; max_variant + 1];
+			for mapping in primitive.mappings() {
+				for variant in mapping.variants() {
+					let variant_usize: usize = (*variant).try_into().unwrap();
+					mat_indices[variant_usize] = mapping.material().index().unwrap_or(0);
+				}
+			}
+
+			mat_indices
 		} else {
 			vec![primitive.material().index().unwrap_or(0)]
 		};
