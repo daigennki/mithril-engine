@@ -722,7 +722,7 @@ impl MeshManager
 				.set_viewport(0, smallvec::smallvec![viewport.clone()])?;
 
 			for model in self.models.values() {
-				model.draw(&mut cb, None, pipeline_layout.clone(), &projview)?;
+				model.draw(&mut cb, None, pipeline_layout.clone(), projview)?;
 			}
 
 			light_manager.add_dir_light_cb(cb.build()?);

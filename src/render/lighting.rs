@@ -5,6 +5,7 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
+use smallvec::SmallVec;
 use std::sync::{Arc, Mutex};
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::*;
@@ -22,6 +23,8 @@ use vulkano::shader::ShaderStages;
 
 use crate::component::light::DirectionalLight;
 use crate::component::Transform;
+
+pub const DIRECTIONAL_LIGHT_LAYERS: usize = 3;
 
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -58,11 +61,11 @@ struct SpotLightData
 #[derive(shipyard::Unique)]
 pub struct LightManager
 {
-	dir_light_projviews: [DMat4; 3],
+	dir_light_projviews: [DMat4; DIRECTIONAL_LIGHT_LAYERS],
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
-	dir_light_shadow_layers: Vec<Arc<ImageView>>,
-	dir_light_cb: Mutex<Vec<Arc<SecondaryAutoCommandBuffer>>>,
+	dir_light_shadow_layers: SmallVec<[Arc<ImageView>; DIRECTIONAL_LIGHT_LAYERS]>,
+	dir_light_cb: Mutex<SmallVec<[Arc<SecondaryAutoCommandBuffer>; DIRECTIONAL_LIGHT_LAYERS]>>,
 
 	/*point_light_buf: Arc<Subbuffer<[PointLightData]>>,
 	spot_light_buf: Arc<Subbuffer<[SpotLightData]>>,*/
@@ -88,7 +91,7 @@ impl LightManager
 			usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
 			format: Format::D16_UNORM,
 			extent: [1024, 1024, 1],
-			array_layers: 3,
+			array_layers: DIRECTIONAL_LIGHT_LAYERS.try_into().unwrap(),
 			..Default::default()
 		};
 
@@ -140,13 +143,14 @@ impl LightManager
 		};
 		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
 
-		let dir_light_shadow_layers = (0..dir_light_shadow_img.array_layers())
+		let dir_light_shadow_layers = (0..DIRECTIONAL_LIGHT_LAYERS)
 			.map(|i| {
+				let i_u32 = i.try_into().unwrap();
 				let layer_info = ImageViewCreateInfo {
 					subresource_range: ImageSubresourceRange {
 						aspects: ImageAspects::DEPTH,
 						mip_levels: 0..1,
-						array_layers: i..(i + 1),
+						array_layers: i_u32..(i_u32 + 1),
 					},
 					usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 					..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
@@ -209,21 +213,24 @@ impl LightManager
 		};
 		let shadow_pipeline = GraphicsPipeline::new(device.clone(), None, pipeline_info)?;
 
-		let dir_light_cb = Vec::with_capacity(dir_light_shadow_img.array_layers().try_into().unwrap());
-
 		Ok(Self {
 			dir_light_projviews: Default::default(),
 			dir_light_buf,
 			dir_light_shadow: dir_light_shadow_view,
 			dir_light_shadow_layers,
-			dir_light_cb: Mutex::new(dir_light_cb),
+			dir_light_cb: Default::default(),
 			all_lights_set,
 			shadow_pipeline,
 			update_needed: None,
 		})
 	}
 
-	pub fn update_dir_light(&mut self, light: &DirectionalLight, transform: &Transform, cut_camera_frustums: [DMat4; 3])
+	pub fn update_dir_light(
+		&mut self,
+		light: &DirectionalLight,
+		transform: &Transform,
+		cut_camera_frustums: [DMat4; DIRECTIONAL_LIGHT_LAYERS],
+	)
 	{
 		let direction = transform.rotation_quat() * DVec3::NEG_Z;
 
@@ -281,7 +288,7 @@ impl LightManager
 			self.dir_light_projviews[i] = proj * view;
 		}
 
-		let mut projviews_f32: [Mat4; 3] = Default::default();
+		let mut projviews_f32 = [Mat4::ZERO; DIRECTIONAL_LIGHT_LAYERS];
 		for (i, projview) in self.dir_light_projviews.iter().enumerate() {
 			projviews_f32[i] = projview.as_mat4();
 		}
@@ -334,9 +341,9 @@ impl LightManager
 	{
 		&self.dir_light_shadow
 	}
-	pub fn get_dir_light_projviews(&self) -> [DMat4; 3]
+	pub fn get_dir_light_projviews(&self) -> &[DMat4]
 	{
-		self.dir_light_projviews
+		&self.dir_light_projviews
 	}
 
 	pub fn get_all_lights_set(&self) -> &Arc<PersistentDescriptorSet>
