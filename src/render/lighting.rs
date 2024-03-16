@@ -30,7 +30,7 @@ pub const DIRECTIONAL_LIGHT_LAYERS: usize = 3;
 #[repr(C)]
 struct DirLightData
 {
-	projviews: [Mat4; 3],
+	projviews: [Mat4; DIRECTIONAL_LIGHT_LAYERS],
 	direction: Vec4,       // "w" element only exists for alignment and will be set to 0
 	color_intensity: Vec4, // RGB is color, A is intensity
 }
