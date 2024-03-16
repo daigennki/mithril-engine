@@ -184,7 +184,7 @@ impl Model
 		material_filter: Option<(TypeId, BlendMode)>,
 		pipeline_layout: Arc<PipelineLayout>,
 		projview: &DMat4,
-	) -> bool
+	) -> crate::Result<bool>
 	{
 		let shadow_pass = material_filter.is_none();
 		let (pipeline_id, blend_mode_this_pass) = material_filter.unzip();
@@ -225,7 +225,7 @@ impl Model
 			// Don't even bother with binds if no submeshes are visible in this model instance.
 			if visible_submeshes.peek().is_some() {
 				if shadow_pass {
-					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32).unwrap();
+					cb.push_constants(pipeline_layout.clone(), 0, pvm_f32)?;
 				} else {
 					let affine_mat_f32 = user.affine.matrix3.as_mat3();
 					let translation = user.affine.translation.as_vec3();
@@ -235,21 +235,19 @@ impl Model
 						model_y: affine_mat_f32.y_axis.extend(translation.y),
 						model_z: affine_mat_f32.z_axis.extend(translation.z),
 					};
-					cb.push_constants(pipeline_layout.clone(), 0, push_data).unwrap();
+					cb.push_constants(pipeline_layout.clone(), 0, push_data)?;
 				}
 
 				if !any_drawn {
-					let vbo = if shadow_pass {
-						vec![self.vertex_subbuffers[0].clone()]
+					if shadow_pass {
+						cb.bind_vertex_buffers(0, self.vertex_subbuffers[0].clone())?;
 					} else {
 						let set = self.textures_set.clone();
-						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)
-							.unwrap();
-						Vec::from(self.vertex_subbuffers.clone())
+						cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 0, set)?
+							.bind_vertex_buffers(0, self.vertex_subbuffers.clone())?;
 					};
 
-					cb.bind_vertex_buffers(0, vbo).unwrap();
-					cb.bind_index_buffer(self.index_buffer.clone()).unwrap();
+					cb.bind_index_buffer(self.index_buffer.clone())?;
 				}
 
 				for submesh in visible_submeshes {
@@ -262,7 +260,7 @@ impl Model
 			}
 		}
 
-		any_drawn
+		Ok(any_drawn)
 	}
 }
 
@@ -724,7 +722,7 @@ impl MeshManager
 				.set_viewport(0, smallvec::smallvec![viewport.clone()])?;
 
 			for model in self.models.values() {
-				model.draw(&mut cb, None, pipeline_layout.clone(), &projview);
+				model.draw(&mut cb, None, pipeline_layout.clone(), &projview)?;
 			}
 
 			light_manager.add_dir_light_cb(cb.build()?);
@@ -782,7 +780,7 @@ impl MeshManager
 			cb.bind_pipeline_graphics(pipeline)?;
 
 			for model in self.models.values() {
-				if model.draw(&mut cb, Some((*pipeline_id, blend_mode)), pipeline_layout.clone(), &projview) {
+				if model.draw(&mut cb, Some((*pipeline_id, blend_mode)), pipeline_layout.clone(), &projview)? {
 					any_drawn = true;
 				}
 			}
