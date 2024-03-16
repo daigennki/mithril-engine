@@ -302,13 +302,11 @@ impl LightManager
 		dir_light_cb.push(cb);
 	}
 
-	pub fn execute_shadow_rendering(
-		&mut self,
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-	) -> crate::Result<()>
+	pub fn execute_shadow_rendering(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
+		-> crate::Result<()>
 	{
 		if let Some(dir_light_data) = self.update_needed.take() {
-			cb_builder.update_buffer(self.dir_light_buf.clone(), Box::from([dir_light_data]))?;
+			cb.update_buffer(self.dir_light_buf.clone(), Box::from([dir_light_data]))?;
 		}
 
 		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
@@ -324,8 +322,7 @@ impl LightManager
 				contents: SubpassContents::SecondaryCommandBuffers,
 				..Default::default()
 			};
-			cb_builder
-				.begin_rendering(shadow_render_info)?
+			cb.begin_rendering(shadow_render_info)?
 				.execute_commands(shadow_cb)?
 				.end_rendering()?;
 		}

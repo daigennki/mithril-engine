@@ -768,7 +768,7 @@ impl MeshManager
 			extent: [viewport_extent[0] as f32, viewport_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
-		cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, vec![light_set])?
+		cb.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), 1, light_set)?
 			.set_viewport(0, smallvec::smallvec![viewport])?;
 
 		let mut any_drawn = false;
@@ -804,7 +804,7 @@ impl MeshManager
 	/// Execute the secondary command buffers for rendering the opaque 3D models.
 	pub fn execute_rendering(
 		&mut self,
-		cb_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		color_image: Arc<ImageView>,
 		depth_image: Arc<ImageView>,
 	) -> crate::Result<()>
@@ -825,8 +825,7 @@ impl MeshManager
 			..Default::default()
 		};
 		let secondary_cb = self.cb_3d.lock().unwrap().take().unwrap();
-		cb_builder
-			.begin_rendering(main_render_info)?
+		cb.begin_rendering(main_render_info)?
 			.execute_commands(secondary_cb)?
 			.end_rendering()?;
 

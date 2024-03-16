@@ -420,7 +420,7 @@ impl SmaaRenderer
 		};
 
 		const BIND_POINT: PipelineBindPoint = PipelineBindPoint::Graphics;
-		cb.set_viewport(0, [viewport].as_slice().into())?
+		cb.set_viewport(0, smallvec::smallvec![viewport])?
 			.bind_pipeline_graphics(self.edges_pipeline.clone())?
 			.push_constants(edges_layout.clone(), 0, self.rt_metrics)?
 			.bind_descriptor_sets(BIND_POINT, edges_layout, 0, self.input_set.clone().unwrap())?

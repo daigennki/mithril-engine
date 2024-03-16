@@ -534,7 +534,6 @@ impl Canvas
 	pub fn draw(&mut self, render_ctx: &RenderContext) -> crate::Result<()>
 	{
 		// TODO: how do we respect the render order of each UI element?
-
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
 			color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 			..Default::default()
@@ -555,22 +554,18 @@ impl Canvas
 			extent: [vp_extent[0] as f32, vp_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
-		cb.set_viewport(0, [viewport].as_slice().into())?;
+		cb.set_viewport(0, smallvec::smallvec![viewport])?
+			.bind_pipeline_graphics(self.ui_pipeline.clone())?;
 
-		cb.bind_pipeline_graphics(self.ui_pipeline.clone())?;
+		let ui_pipeline_layout = self.text_pipeline.layout().clone();
 		for resources in self.mesh_resources.values() {
-			cb.push_constants(self.ui_pipeline.layout().clone(), 0, resources.projected)?;
-			cb.bind_descriptor_sets(
-				PipelineBindPoint::Graphics,
-				self.ui_pipeline.layout().clone(),
-				0,
-				vec![resources.descriptor_set.clone()],
-			)?;
+			let set = resources.descriptor_set.clone();
+			cb.push_constants(ui_pipeline_layout.clone(), 0, resources.projected)?
+				.bind_descriptor_sets(PipelineBindPoint::Graphics, ui_pipeline_layout.clone(), 0, set)?;
 
 			match resources.mesh_type {
 				MeshType::Quad => {
-					cb.bind_vertex_buffers(0, (self.quad_vbo.clone(),))?;
-					cb.draw(4, 1, 0, 0)?;
+					cb.bind_vertex_buffers(0, self.quad_vbo.clone())?.draw(4, 1, 0, 0)?;
 				}
 				MeshType::Frame(_border_width) => {
 					todo!();
@@ -579,6 +574,7 @@ impl Canvas
 		}
 
 		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
+		let text_pipeline_layout = self.text_pipeline.layout().clone();
 		for resources in self.text_resources.values() {
 			if let Some(glyph_buf) = &resources.glyph_info_buffer {
 				let mut push_constant_data: [f32; 8] = Default::default();
@@ -587,15 +583,11 @@ impl Canvas
 					.logical_texture_size_inv
 					.write_to_slice(&mut push_constant_data[6..8]);
 
-				cb.push_constants(self.text_pipeline.layout().clone(), 0, push_constant_data)?;
-				cb.bind_descriptor_sets(
-					PipelineBindPoint::Graphics,
-					self.text_pipeline.layout().clone(),
-					0,
-					vec![resources.descriptor_set.clone()],
-				)?;
-				let glyph_count = glyph_buf.len();
-				cb.draw(4, glyph_count as u32, 0, 0)?;
+				let set = resources.descriptor_set.clone();
+				let glyph_count = glyph_buf.len().try_into().unwrap();
+				cb.push_constants(text_pipeline_layout.clone(), 0, push_constant_data)?
+					.bind_descriptor_sets(PipelineBindPoint::Graphics, text_pipeline_layout.clone(), 0, set)?
+					.draw(4, glyph_count, 0, 0)?;
 			}
 		}
 

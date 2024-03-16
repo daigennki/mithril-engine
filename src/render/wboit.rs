@@ -232,14 +232,14 @@ impl WboitRenderer
 		};
 
 		let compositing_layout = self.compositing_pipeline_layout.clone();
-		let compositing_sets = vec![self.weight_set.clone().unwrap()];
+		let compositing_set = self.weight_set.clone().unwrap();
 		cb.begin_rendering(weights_rendering_info)?
 			.execute_commands(weights_cb)?
 			.end_rendering()?
 			.begin_rendering(compositing_rendering_info)?
-			.set_viewport(0, [viewport].as_slice().into())?
+			.set_viewport(0, smallvec::smallvec![viewport])?
 			.bind_pipeline_graphics(self.compositing_pipeline.clone().unwrap())?
-			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, compositing_sets)?
+			.bind_descriptor_sets(PipelineBindPoint::Graphics, compositing_layout, 0, compositing_set)?
 			.draw(3, 1, 0, 0)?
 			.end_rendering()?;
 
