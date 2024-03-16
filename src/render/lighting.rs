@@ -70,7 +70,7 @@ pub struct LightManager
 
 	shadow_pipeline: Arc<GraphicsPipeline>,
 
-	update_needed: Option<DirLightData>,
+	update_needed: Option<Box<[DirLightData]>>,
 }
 impl LightManager
 {
@@ -290,7 +290,7 @@ impl LightManager
 			direction: direction.as_vec3().extend(0.0),
 			color_intensity: light.color.extend(light.intensity),
 		};
-		self.update_needed = Some(dir_light_data);
+		self.update_needed = Some(Box::new([dir_light_data]));
 	}
 
 	pub fn add_dir_light_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
@@ -305,8 +305,8 @@ impl LightManager
 	pub fn execute_shadow_rendering(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
 		-> crate::Result<()>
 	{
-		if let Some(dir_light_data) = self.update_needed.take() {
-			cb.update_buffer(self.dir_light_buf.clone(), Box::from([dir_light_data]))?;
+		if let Some(update_data) = self.update_needed.take() {
+			cb.update_buffer(self.dir_light_buf.clone(), update_data)?;
 		}
 
 		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
