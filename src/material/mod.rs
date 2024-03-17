@@ -167,7 +167,7 @@ pub struct MaterialPipelineConfig
 inventory::collect!(MaterialPipelineConfig);
 impl MaterialPipelineConfig
 {
-	pub(crate) fn into_pipelines(
+	pub(crate) fn create_pipelines(
 		&'static self,
 		rasterization_samples: SampleCount,
 		depth_stencil_format: Format,
@@ -325,7 +325,7 @@ impl MaterialPipelines
 		let pipeline_layout = self.opaque_pipeline.layout().clone();
 		*self = self
 			.config
-			.into_pipelines(rasterization_samples, depth_stencil_format, pipeline_layout)?;
+			.create_pipelines(rasterization_samples, depth_stencil_format, pipeline_layout)?;
 		Ok(())
 	}
 }

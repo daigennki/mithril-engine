@@ -634,7 +634,7 @@ impl MeshManager
 			let type_id = (conf.type_id)();
 			log::debug!("loading material pipeline '{}' ({:?})", conf.name, type_id);
 
-			let pipeline_data = conf.into_pipelines(
+			let pipeline_data = conf.create_pipelines(
 				render_ctx.aa_mode.sample_count(),
 				render_ctx.depth_stencil_format,
 				pipeline_layout.clone(),
