@@ -36,7 +36,7 @@ use vulkano::pipeline::{compute::ComputePipelineCreateInfo, layout::*, *};
 use vulkano::render_pass::AttachmentStoreOp;
 use vulkano::shader::ShaderStages;
 use vulkano::swapchain::ColorSpace;
-use vulkano::sync::{future::FenceSignalFuture, GpuFuture};
+use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::{DeviceSize, Version};
 use winit::{event::WindowEvent, event_loop::EventLoop};
 
@@ -162,6 +162,31 @@ impl RenderContext
 			});
 		let rasterization_samples = aa_mode.sample_count();
 
+		let sky_pipeline_layout = {
+			let cubemap_sampler = Sampler::new(vk_dev.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
+			let tex_binding = DescriptorSetLayoutBinding {
+				stages: ShaderStages::FRAGMENT,
+				immutable_samplers: vec![cubemap_sampler],
+				..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
+			};
+			let set_layout_info = DescriptorSetLayoutCreateInfo {
+				bindings: [(0, tex_binding)].into(),
+				..Default::default()
+			};
+			let set_layout = DescriptorSetLayout::new(vk_dev.clone(), set_layout_info)?;
+
+			let pipeline_layout_info = PipelineLayoutCreateInfo {
+				set_layouts: vec![set_layout.clone()],
+				push_constant_ranges: vec![PushConstantRange {
+					stages: ShaderStages::VERTEX,
+					offset: 0,
+					size: std::mem::size_of::<Mat4>().try_into().unwrap(),
+				}],
+				..Default::default()
+			};
+			PipelineLayout::new(vk_dev.clone(), pipeline_layout_info)?
+		};
+
 		let mut new_self = Self {
 			window,
 			memory_allocator,
@@ -172,7 +197,7 @@ impl RenderContext
 			current_arena: 0,
 			staging_layout: None,
 			transfer_future: None,
-			skybox_pipeline: create_sky_pipeline(vk_dev.clone(), rasterization_samples)?,
+			skybox_pipeline: create_sky_pipeline(sky_pipeline_layout, rasterization_samples)?,
 			skybox_tex_set: None,
 			transparency_renderer: wboit::WboitRenderer::new(vk_dev.clone())?,
 			aa_mode,
@@ -631,8 +656,10 @@ impl RenderContext
 	}
 }
 
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub enum AntiAliasingMode
 {
+	#[default]
 	Off,
 	Multisample2,
 	Multisample4,
@@ -649,13 +676,6 @@ impl AntiAliasingMode
 		}
 	}
 }
-impl Default for AntiAliasingMode
-{
-	fn default() -> Self
-	{
-		Self::Off
-	}
-}
 
 #[derive(Debug)]
 struct CubemapFaceMismatch
@@ -663,13 +683,7 @@ struct CubemapFaceMismatch
 	existing: (Format, [u32; 2]),
 	new_face: (Format, [u32; 2]),
 }
-impl std::error::Error for CubemapFaceMismatch
-{
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
-	{
-		None
-	}
-}
+impl std::error::Error for CubemapFaceMismatch {}
 impl std::fmt::Display for CubemapFaceMismatch
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
@@ -684,13 +698,7 @@ impl std::fmt::Display for CubemapFaceMismatch
 
 #[derive(Debug)]
 struct TransferTooBig(DeviceSize);
-impl std::error::Error for TransferTooBig
-{
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
-	{
-		None
-	}
-}
+impl std::error::Error for TransferTooBig {}
 impl std::fmt::Display for TransferTooBig
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
@@ -728,31 +736,12 @@ fn check_direct_buffer_write(physical_device: &Arc<PhysicalDevice>) -> bool
 	}
 }
 
-fn create_sky_pipeline(device: Arc<Device>, rasterization_samples: SampleCount) -> crate::Result<Arc<GraphicsPipeline>>
+fn create_sky_pipeline(
+	pipeline_layout: Arc<PipelineLayout>,
+	rasterization_samples: SampleCount,
+) -> crate::Result<Arc<GraphicsPipeline>>
 {
-	let cubemap_sampler = Sampler::new(device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap())?;
-	let tex_binding = DescriptorSetLayoutBinding {
-		stages: ShaderStages::FRAGMENT,
-		immutable_samplers: vec![cubemap_sampler],
-		..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::CombinedImageSampler)
-	};
-	let set_layout_info = DescriptorSetLayoutCreateInfo {
-		bindings: [(0, tex_binding)].into(),
-		..Default::default()
-	};
-	let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
-
-	let pipeline_layout_info = PipelineLayoutCreateInfo {
-		set_layouts: vec![set_layout.clone()],
-		push_constant_ranges: vec![PushConstantRange {
-			stages: ShaderStages::VERTEX,
-			offset: 0,
-			size: std::mem::size_of::<Mat4>().try_into().unwrap(),
-		}],
-		..Default::default()
-	};
-	let pipeline_layout = PipelineLayout::new(device.clone(), pipeline_layout_info)?;
-
+	let device = pipeline_layout.device().clone();
 	let rendering_formats = PipelineRenderingCreateInfo {
 		color_attachment_formats: vec![Some(Format::R16G16B16A16_SFLOAT)],
 		..Default::default()
@@ -1028,11 +1017,14 @@ pub(crate) fn prepare_rendering(
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 ) -> crate::Result<()>
 {
-	// Take this opportunity to re-create material pipelines if rasterization samples changed,
-	// since this system is run before command buffers are built.
+	// Take this opportunity to re-create pipelines (that render to multisample images) if
+	// rasterization samples changed, since this system is run before command buffers are built.
 	if let Some(prev_color_image) = render_ctx.color_image.as_ref() {
-		if render_ctx.aa_mode.sample_count() != prev_color_image.image().samples() {
-			mesh_manager.change_rasterization_samples(render_ctx.aa_mode.sample_count())?;
+		let new_sample_count = render_ctx.aa_mode.sample_count();
+		if new_sample_count != prev_color_image.image().samples() {
+			let sky_pipeline_layout = render_ctx.skybox_pipeline.layout().clone();
+			render_ctx.skybox_pipeline = create_sky_pipeline(sky_pipeline_layout, new_sample_count)?;
+			mesh_manager.change_rasterization_samples(new_sample_count)?;
 		}
 	}
 
