@@ -188,7 +188,7 @@ impl RenderContext
 		};
 
 		{
-			let (format, extent, mip_levels, img_raw) = load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap();
+			let (format, extent, mip_levels, img_raw) = TextureSource::DdsBytes(ERROR_TEXTURE_BYTES).load().unwrap();
 			let image_info = ImageCreateInfo {
 				format,
 				extent: [extent[0], extent[1], 1],
@@ -276,7 +276,7 @@ impl RenderContext
 		}
 
 		// TODO: animated textures using APNG, animated JPEG-XL, or multi-layer DDS
-		let (format, extent, mip_levels, img_raw) = match load_texture(TextureSource::File(path)) {
+		let (format, extent, mip_levels, img_raw) = match TextureSource::File(path).load() {
 			Ok(view) => view,
 			Err(e) => {
 				log::error!("failed to load texture: {e}");
@@ -308,11 +308,11 @@ impl RenderContext
 		let mut combined_data = Vec::<u8>::new();
 		let mut cube_fmt_dim = None;
 		for face_path in faces {
-			let (face_fmt, face_dim, _, img_raw) = match load_texture(TextureSource::File(&face_path)) {
+			let (face_fmt, face_dim, _, img_raw) = match TextureSource::File(&face_path).load() {
 				Ok(ok) => ok,
 				Err(e) => {
 					log::error!("failed to load cubemap face texture file: {e}");
-					load_texture(TextureSource::EmbeddedDds(ERROR_TEXTURE_BYTES)).unwrap()
+					TextureSource::DdsBytes(ERROR_TEXTURE_BYTES).load().unwrap()
 				}
 			};
 
@@ -896,94 +896,74 @@ impl StagingWork
 //
 pub enum TextureSource<'a>
 {
-	File(&'a Path),
-	EmbeddedDds(&'static [u8]),
-	EmbeddedImage(&'static [u8]),
+	File(&'a Path),       // Open and read the file at the given path.
+	DdsBytes(&'a [u8]),   // Read the DDS file from raw bytes in memory.
+	ImageBytes(&'a [u8]), // Read the image file from raw bytes in memory.
 }
-impl<'a> TextureSource<'a>
+impl TextureSource<'_>
 {
-	fn file_type(&'a self) -> Option<&'a str>
+	fn load(self) -> Result<(Format, [u32; 2], u32, Vec<u8>), TextureLoadingError>
 	{
-		match self {
-			Self::File(path) => path.extension().and_then(|ext| ext.to_str()),
-			Self::EmbeddedDds(_) => Some("dds"),
-			_ => None,
-		}
-	}
-
-	fn open(&self) -> Result<BufReader<Box<dyn SeekRead>>, TextureLoadingError>
-	{
-		match self {
+		let (reader, path): (BufReader<Box<dyn SeekRead>>, _) = match self {
 			Self::File(path) => {
 				let file = std::fs::File::open(path)
 					.map_err(|e| TextureLoadingError::new(Some(path.to_path_buf()), TexLoadErrVariant::FileOpen(e)))?;
-				Ok(BufReader::new(Box::new(file)))
+				(BufReader::new(Box::new(file)), Some(path.to_path_buf()))
 			}
-			Self::EmbeddedDds(data) | Self::EmbeddedImage(data) => Ok(BufReader::new(Box::new(Cursor::new(*data)))),
-		}
-	}
+			Self::DdsBytes(data) | Self::ImageBytes(data) => (BufReader::new(Box::new(Cursor::new(data))), None),
+		};
 
-	fn path(&self) -> Option<PathBuf>
-	{
-		match self {
-			Self::File(path) => Some(path.to_path_buf()),
+		let file_type = match self {
+			Self::File(path) => path.extension().and_then(|ext| ext.to_str()),
+			Self::DdsBytes(_) => Some("dds"),
 			_ => None,
+		};
+
+		match file_type {
+			Some("dds") => {
+				let dds = ddsfile::Dds::read(reader)
+					.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::DdsRead(e)))?;
+
+				// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
+				// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
+				let vk_fmt = match dds.get_dxgi_format() {
+					Some(DxgiFormat::BC1_UNorm_sRGB) => Format::BC1_RGBA_SRGB_BLOCK,
+					Some(DxgiFormat::BC4_UNorm) => Format::BC4_UNORM_BLOCK,
+					Some(DxgiFormat::BC4_SNorm) => Format::BC4_SNORM_BLOCK,
+					Some(DxgiFormat::BC5_UNorm) => Format::BC5_UNORM_BLOCK,
+					Some(DxgiFormat::BC5_SNorm) => Format::BC5_SNORM_BLOCK,
+					Some(DxgiFormat::BC7_UNorm) => Format::BC7_SRGB_BLOCK,
+					Some(DxgiFormat::BC7_UNorm_sRGB) => Format::BC7_SRGB_BLOCK,
+					format => return Err(TextureLoadingError::new(path, TexLoadErrVariant::DdsFormat(format))),
+				};
+				let dim = [dds.get_width(), dds.get_height()];
+				let mip_count = dds.get_num_mipmap_levels();
+
+				Ok((vk_fmt, dim, mip_count, dds.data))
+			}
+			_ => {
+				// Load other formats such as PNG into an 8bpc sRGB RGBA image.
+				let img = image::io::Reader::new(reader)
+					.with_guessed_format()
+					.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::ImageGuessFormat(e)))?
+					.decode()
+					.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::ImageDecode(e)))?
+					.into_rgba8();
+				Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
+			}
 		}
 	}
 }
 trait SeekRead: Seek + Read {}
 impl<T: Seek + Read> SeekRead for T {}
 
-fn load_texture(src: TextureSource) -> Result<(Format, [u32; 2], u32, Vec<u8>), TextureLoadingError>
-{
-	let reader = src.open()?;
-	let path = src.path();
-	match src.file_type() {
-		Some("dds") => {
-			let dds = ddsfile::Dds::read(reader)
-				.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::DdsRead(e)))?;
-
-			// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
-			// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
-			let vk_fmt = match dds.get_dxgi_format() {
-				Some(DxgiFormat::BC1_UNorm_sRGB) => Format::BC1_RGBA_SRGB_BLOCK,
-				Some(DxgiFormat::BC4_UNorm) => Format::BC4_UNORM_BLOCK,
-				Some(DxgiFormat::BC5_UNorm) => Format::BC5_UNORM_BLOCK,
-				Some(DxgiFormat::BC7_UNorm) => Format::BC7_SRGB_BLOCK,
-				Some(DxgiFormat::BC7_UNorm_sRGB) => Format::BC7_SRGB_BLOCK,
-				Some(format) => {
-					let e = UnsupportedDdsFormat { format: Some(format) };
-					return Err(TextureLoadingError::new(path, TexLoadErrVariant::DdsFormat(e)));
-				}
-				None => {
-					let e = UnsupportedDdsFormat { format: None };
-					return Err(TextureLoadingError::new(path, TexLoadErrVariant::DdsFormat(e)));
-				}
-			};
-			let dim = [dds.get_width(), dds.get_height()];
-			let mip_count = dds.get_num_mipmap_levels();
-
-			Ok((vk_fmt, dim, mip_count, dds.data))
-		}
-		_ => {
-			// Load other formats such as PNG into an 8bpc sRGB RGBA image.
-			let img = image::io::Reader::new(reader)
-				.with_guessed_format()
-				.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::FileOpen(e)))?
-				.decode()
-				.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::ImageDecode(e)))?
-				.into_rgba8();
-			Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
-		}
-	}
-}
-
 #[derive(Debug)]
 enum TexLoadErrVariant
 {
 	FileOpen(std::io::Error),
 	DdsRead(ddsfile::Error),
-	DdsFormat(UnsupportedDdsFormat),
+	DdsFormat(Option<DxgiFormat>),
+	ImageGuessFormat(std::io::Error),
 	ImageDecode(image::error::ImageError),
 }
 impl std::fmt::Display for TexLoadErrVariant
@@ -993,8 +973,10 @@ impl std::fmt::Display for TexLoadErrVariant
 		match self {
 			Self::FileOpen(e) => write!(f, "failed to open texture file: {e}"),
 			Self::DdsRead(e) => write!(f, "failed to read DDS file: {e}"),
-			Self::DdsFormat(e) => write!(f, "failed to validate DDS format: {e}"),
-			Self::ImageDecode(e) => write!(f, "failed to decode: {e}"),
+			Self::DdsFormat(Some(format)) => write!(f, "DDS format '{format:?}' is unsupported"),
+			Self::DdsFormat(None) => write!(f, "DDS file doesn't have a DXGI format"),
+			Self::ImageGuessFormat(e) => write!(f, "failed to guess image format: {e}"),
+			Self::ImageDecode(e) => write!(f, "failed to decode image: {e}"),
 		}
 	}
 }
@@ -1012,13 +994,7 @@ impl TextureLoadingError
 		Self { file_path, error }
 	}
 }
-impl std::error::Error for TextureLoadingError
-{
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
-	{
-		None
-	}
-}
+impl std::error::Error for TextureLoadingError {}
 impl std::fmt::Display for TextureLoadingError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
@@ -1028,29 +1004,6 @@ impl std::fmt::Display for TextureLoadingError
 			.as_ref()
 			.map_or("<embedded file>", |p| p.to_str().unwrap_or("<invalid UTF-8>"));
 		write!(f, "{}: {}", print_path_str, self.error)
-	}
-}
-
-#[derive(Debug)]
-struct UnsupportedDdsFormat
-{
-	format: Option<DxgiFormat>,
-}
-impl std::error::Error for UnsupportedDdsFormat
-{
-	fn source(&self) -> Option<&(dyn std::error::Error + 'static)>
-	{
-		None
-	}
-}
-impl std::fmt::Display for UnsupportedDdsFormat
-{
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
-	{
-		match self.format {
-			Some(format) => write!(f, "DDS format '{format:?}' is unsupported"),
-			None => write!(f, "DDS file doesn't have a DXGI format"),
-		}
 	}
 }
 
