@@ -18,7 +18,7 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::{ClearValue, Format};
-use vulkano::image::{sampler::*, view::ImageView};
+use vulkano::image::{sampler::*, view::ImageView, SampleCount};
 use vulkano::pipeline::graphics::{vertex_input::*, viewport::Viewport};
 use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -566,7 +566,6 @@ pub struct MeshManager
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	material_textures_set_layout: Arc<DescriptorSetLayout>,
 	material_pipeline_layout: Arc<PipelineLayout>,
-
 	material_pipelines: BTreeMap<TypeId, MaterialPipelines>,
 
 	// Loaded 3D models, with the key being the path relative to the current working directory.
@@ -686,12 +685,23 @@ impl MeshManager
 		self.models.get_mut(path).unwrap().set_affine(eid, affine);
 	}
 
-	/// Free resources for the given entity ID. Only call this when the `Mesh` component was actually removed!
+	/// Free resources for the given entity ID. Only call this when the `Mesh` component was
+	/// actually removed!
 	pub fn cleanup_removed(&mut self, eid: EntityId)
 	{
 		let path = self.resources.get(&eid).unwrap().as_path();
 		self.models.get_mut(path).unwrap().cleanup(eid);
 		self.resources.remove(&eid);
+	}
+
+	/// Re-create the material pipelines with a multisample state that has the given rasterization
+	/// samples.
+	pub fn change_rasterization_samples(&mut self, rasterization_samples: SampleCount) -> crate::Result<()>
+	{
+		for mat_pl in self.material_pipelines.values_mut() {
+			mat_pl.recreate(rasterization_samples)?;
+		}
+		Ok(())
 	}
 
 	fn draw_shadows(&self, render_ctx: &RenderContext, light_manager: &LightManager) -> crate::Result<()>

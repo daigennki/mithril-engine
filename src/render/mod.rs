@@ -460,7 +460,12 @@ impl RenderContext
 	{
 		let extent2 = self.window.dimensions();
 		let extent = [extent2[0], extent2[1], 1];
-		if Some(extent) != self.color_image.as_ref().map(|view| view.image().extent()) {
+		let (optional_extent, optional_samples) = self
+			.color_image
+			.as_ref()
+			.map(|view| (view.image().extent(), view.image().samples()))
+			.unzip();
+		if Some(extent) != optional_extent || Some(self.aa_mode.sample_count()) != optional_samples {
 			let rasterization_samples = self.aa_mode.sample_count();
 			let aa_enabled = !matches!(self.aa_mode, AntiAliasingMode::Off);
 			let color_usage = if aa_enabled {
@@ -1065,8 +1070,19 @@ fn get_mip_size(format: Format, mip_width: u32, mip_height: u32) -> DeviceSize
 //
 /* Render workload */
 //
-pub(crate) fn submit_transfers(mut render_ctx: UniqueViewMut<RenderContext>) -> crate::Result<()>
+pub(crate) fn prepare_rendering(
+	mut render_ctx: UniqueViewMut<RenderContext>,
+	mut mesh_manager: UniqueViewMut<MeshManager>,
+) -> crate::Result<()>
 {
+	// Take this opportunity to re-create material pipelines if rasterization samples changed,
+	// since this system is run before command buffers are built.
+	if let Some(prev_color_image) = render_ctx.color_image.as_ref() {
+		if render_ctx.aa_mode.sample_count() != prev_color_image.image().samples() {
+			mesh_manager.change_rasterization_samples(render_ctx.aa_mode.sample_count())?;
+		}
+	}
+
 	render_ctx.submit_transfers()
 }
 pub(crate) fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>

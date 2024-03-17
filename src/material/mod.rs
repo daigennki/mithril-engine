@@ -15,8 +15,8 @@ use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::image::{view::ImageView, *};
 use vulkano::pipeline::graphics::{
-	color_blend::*, depth_stencil::*, multisample::*, rasterization::*, subpass::PipelineRenderingCreateInfo,
-	vertex_input::VertexInputState, GraphicsPipelineCreateInfo,
+	color_blend::*, depth_stencil::*, multisample::*, rasterization::*, subpass::*, vertex_input::VertexInputState,
+	GraphicsPipelineCreateInfo,
 };
 use vulkano::pipeline::*;
 use vulkano::shader::{ShaderModule, SpecializationConstant};
@@ -168,7 +168,7 @@ inventory::collect!(MaterialPipelineConfig);
 impl MaterialPipelineConfig
 {
 	pub(crate) fn into_pipelines(
-		self,
+		&'static self,
 		rasterization_samples: SampleCount,
 		depth_stencil_format: Format,
 		pipeline_layout: Arc<PipelineLayout>,
@@ -303,6 +303,7 @@ impl MaterialPipelineConfig
 		Ok(MaterialPipelines {
 			opaque_pipeline,
 			oit_pipeline,
+			config: self,
 		})
 	}
 }
@@ -311,4 +312,20 @@ pub(crate) struct MaterialPipelines
 {
 	pub opaque_pipeline: Arc<GraphicsPipeline>,
 	pub oit_pipeline: Arc<GraphicsPipeline>,
+	pub config: &'static MaterialPipelineConfig,
+}
+impl MaterialPipelines
+{
+	pub(crate) fn recreate(&mut self, rasterization_samples: SampleCount) -> crate::Result<()>
+	{
+		let depth_stencil_format = match self.opaque_pipeline.subpass() {
+			PipelineSubpassType::BeginRendering(rendering_info) => rendering_info.depth_attachment_format.unwrap(),
+			_ => unreachable!(),
+		};
+		let pipeline_layout = self.opaque_pipeline.layout().clone();
+		*self = self
+			.config
+			.into_pipelines(rasterization_samples, depth_stencil_format, pipeline_layout)?;
+		Ok(())
+	}
 }

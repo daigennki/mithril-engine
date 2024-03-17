@@ -150,7 +150,7 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 
 	// Main rendering: build the command buffers, then submit them for presentation.
 	Workload::new("render")
-		.with_try_system(render::submit_transfers)
+		.with_try_system(render::prepare_rendering)
 		.with_try_system(render::model::draw_shadows)
 		.with_try_system(render::model::draw_opaque)
 		.with_try_system(render::model::draw_oit)
