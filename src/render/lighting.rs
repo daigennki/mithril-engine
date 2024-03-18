@@ -64,7 +64,7 @@ pub struct LightManager
 	dir_light_projviews: [DMat4; DIRECTIONAL_LIGHT_LAYERS],
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
-	dir_light_shadow_layers: SmallVec<[Arc<ImageView>; DIRECTIONAL_LIGHT_LAYERS]>,
+	dir_light_shadow_layers: [Arc<ImageView>; DIRECTIONAL_LIGHT_LAYERS],
 	dir_light_cb: Mutex<SmallVec<[Arc<SecondaryAutoCommandBuffer>; DIRECTIONAL_LIGHT_LAYERS]>>,
 
 	/*point_light_buf: Arc<Subbuffer<[PointLightData]>>,
@@ -141,9 +141,9 @@ impl LightManager
 			usage: ImageUsage::SAMPLED,
 			..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
 		};
-		let dir_light_shadow_view = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
+		let dir_light_shadow = ImageView::new(dir_light_shadow_img.clone(), dir_light_shadow_view_info)?;
 
-		let dir_light_shadow_layers = (0..DIRECTIONAL_LIGHT_LAYERS)
+		let dir_light_shadow_layers: Vec<_> = (0..DIRECTIONAL_LIGHT_LAYERS)
 			.map(|i| {
 				let i_u32 = i.try_into().unwrap();
 				let layer_info = ImageViewCreateInfo {
@@ -216,8 +216,8 @@ impl LightManager
 		Ok(Self {
 			dir_light_projviews: Default::default(),
 			dir_light_buf,
-			dir_light_shadow: dir_light_shadow_view,
-			dir_light_shadow_layers,
+			dir_light_shadow,
+			dir_light_shadow_layers: dir_light_shadow_layers.try_into().unwrap(),
 			dir_light_cb: Default::default(),
 			all_lights_set,
 			shadow_pipeline,
@@ -233,6 +233,8 @@ impl LightManager
 	)
 	{
 		let direction = transform.rotation_quat() * DVec3::NEG_Z;
+
+		let mut projviews_f32 = [Mat4::ZERO; DIRECTIONAL_LIGHT_LAYERS];
 
 		// Fit the light view and projection matrices to different sections of the camera frustum.
 		// Most of this is adapted from here: https://learnopengl.com/Guest-Articles/2021/CSM
@@ -277,14 +279,11 @@ impl LightManager
 			}
 
 			let proj = DMat4::orthographic_lh(min_c.x, max_c.x, min_c.y, max_c.y, min_c.z, max_c.z);
-
-			self.dir_light_projviews[i] = proj * view;
-		}
-
-		let mut projviews_f32 = [Mat4::ZERO; DIRECTIONAL_LIGHT_LAYERS];
-		for (i, projview) in self.dir_light_projviews.iter().enumerate() {
+			let projview = proj * view;
+			self.dir_light_projviews[i] = projview;
 			projviews_f32[i] = projview.as_mat4();
 		}
+
 		let dir_light_data = DirLightData {
 			projviews: projviews_f32,
 			direction: direction.as_vec3().extend(0.0),
@@ -355,7 +354,7 @@ mod vs_shadow
 	vulkano_shaders::shader! {
 		ty: "vertex",
 		src: r"
-			#version 450
+			#version 460
 
 			layout(push_constant) uniform pc
 			{
