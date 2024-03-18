@@ -229,7 +229,7 @@ impl LightManager
 		&mut self,
 		light: &DirectionalLight,
 		transform: &Transform,
-		cut_camera_frustums: [DMat4; DIRECTIONAL_LIGHT_LAYERS],
+		cut_camera_frustums: &[DMat4; DIRECTIONAL_LIGHT_LAYERS],
 	)
 	{
 		let direction = transform.rotation_quat() * DVec3::NEG_Z;
@@ -238,7 +238,7 @@ impl LightManager
 		// Most of this is adapted from here: https://learnopengl.com/Guest-Articles/2021/CSM
 		for (i, cut_frustum) in cut_camera_frustums.iter().enumerate() {
 			let camera_projview_inv = cut_frustum.inverse();
-			let mut frustum_corners: [DVec4; 8] = Default::default();
+			let mut frustum_corners = [DVec4::ZERO; 8];
 			let mut corner_i = 0;
 			for x in 0..2 {
 				for y in 0..2 {
@@ -255,35 +255,28 @@ impl LightManager
 			let center = frustum_corners.iter().sum::<DVec4>() * (1.0 / 8.0);
 			let view = DMat4::look_to_lh(center.truncate(), direction, DVec3::Y);
 
-			let mut min_x = f64::MAX;
-			let mut max_x = f64::MIN;
-			let mut min_y = f64::MAX;
-			let mut max_y = f64::MIN;
-			let mut min_z = f64::MAX;
-			let mut max_z = f64::MIN;
+			let mut min_c = DVec4::MAX;
+			let mut max_c = DVec4::MIN;
 			for v in frustum_corners {
 				let trf = view * v;
-				min_x = min_x.min(trf.x);
-				max_x = max_x.max(trf.x);
-				min_y = min_y.min(trf.y);
-				max_y = max_y.max(trf.y);
-				min_z = min_z.min(trf.z);
-				max_z = max_z.max(trf.z);
+				min_c = min_c.min(trf);
+				max_c = max_c.max(trf);
 			}
 
-			let z_mul = 10.0;
-			if min_z < 0.0 {
-				min_z *= z_mul;
+			const Z_MUL: f64 = 10.0;
+			const Z_DIV: f64 = 1.0 / Z_MUL;
+			if min_c.z < 0.0 {
+				min_c.z *= Z_MUL;
 			} else {
-				min_z /= z_mul;
+				min_c.z *= Z_DIV;
 			}
-			if max_z < 0.0 {
-				max_z /= z_mul;
+			if max_c.z < 0.0 {
+				max_c.z *= Z_DIV;
 			} else {
-				max_z *= z_mul;
+				max_c.z *= Z_MUL;
 			}
 
-			let proj = DMat4::orthographic_lh(min_x, max_x, min_y, max_y, min_z, max_z);
+			let proj = DMat4::orthographic_lh(min_c.x, max_c.x, min_c.y, max_c.y, min_c.z, max_c.z);
 
 			self.dir_light_projviews[i] = proj * view;
 		}

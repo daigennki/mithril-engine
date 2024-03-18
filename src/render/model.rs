@@ -122,16 +122,8 @@ impl Model
 			.flatten()
 			.map(|variant| variant.name().to_string())
 			.collect();
-		if material_variants.is_empty() {
-			log::debug!("no material variants in model");
-			if submeshes.len() > materials.len() {
-				log::warn!(
-					"There are more meshes than materials in the model, even though there are no material variants! \
-					This model may be inefficient to draw, so consider joining the meshes."
-				);
-			}
-		} else {
-			log::debug!("material variants in model: {:?}", &material_variants);
+		if !material_variants.is_empty() {
+			log::debug!("model has material variants: {:?}", &material_variants);
 		}
 
 		let corner_min = submeshes

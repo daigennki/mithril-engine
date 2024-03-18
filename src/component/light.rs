@@ -9,7 +9,7 @@ use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, UniqueViewMut, View, WorkloadSystem};
 
 use super::{camera::CameraManager, ComponentSystems, EntityComponent, Transform};
-use crate::render::lighting::LightManager;
+use crate::render::lighting::{LightManager, DIRECTIONAL_LIGHT_LAYERS};
 use crate::SystemBundle;
 
 /// These are various components that represent light sources in the world.
@@ -41,14 +41,14 @@ fn update_directional_light(
 	if let Some((dl, t)) = (&dir_lights, &transforms).iter().next() {
 		// Cut the camera frustum into different pieces for the light.
 		let fars = [6.0, 12.0, 24.0];
-		let mut cut_frustums: [DMat4; 3] = Default::default();
+		let mut cut_frustums = [DMat4::ZERO; DIRECTIONAL_LIGHT_LAYERS];
 		let mut near = crate::component::camera::CAMERA_NEAR;
 		for (i, far) in fars.into_iter().enumerate() {
 			cut_frustums[i] = camera_manager.proj_with_near_far(near, far);
 			near = fars[i];
 		}
 
-		light_manager.update_dir_light(dl, t, cut_frustums);
+		light_manager.update_dir_light(dl, t, &cut_frustums);
 	}
 }
 
