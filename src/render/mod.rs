@@ -14,6 +14,7 @@ mod window;
 use ddsfile::DxgiFormat;
 use glam::*;
 use shipyard::{UniqueView, UniqueViewMut};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -104,7 +105,7 @@ impl RenderContext
 		let vk_dev = window.graphics_queue().device().clone();
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
-		// - Primary command buffers: One for each graphics submission, plus four for transfers.
+		// - Primary command buffers: One for each graphics submission on each thread, plus four for transfers.
 		// - Secondary command buffers: Only up to four should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: window.image_count() + 4,
@@ -582,7 +583,11 @@ impl RenderContext
 		Ok((color_image, self.depth_stencil_image.clone().unwrap()))
 	}
 
-	fn present_image(&mut self, mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
+	fn present_image(
+		&mut self,
+		prior_command_buffers: SmallVec<[Arc<PrimaryAutoCommandBuffer>; 2]>,
+		mut cb: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+	) -> crate::Result<()>
 	{
 		if let Some((swapchain_image, acquire_future)) = self.window.get_next_image()? {
 			let color_image = self
@@ -604,7 +609,8 @@ impl RenderContext
 
 			cb.blit_image(BlitImageInfo::images(color_image, swapchain_image))?;
 
-			let built_cb = cb.build()?;
+			let mut command_buffers = prior_command_buffers;
+			command_buffers.push(cb.build()?);
 
 			// wait for any transfers to finish
 			// (ideally we'd use a semaphore, but it's borked in Vulkano right now)
@@ -613,8 +619,8 @@ impl RenderContext
 			}
 			let transfer_future = self.transfer_future.take();
 
-			// submit the built command buffer, presenting it if possible
-			self.window.present(built_cb, acquire_future, transfer_future)?;
+			// submit the built command buffers, presenting it if possible
+			self.window.present(command_buffers, acquire_future, transfer_future)?;
 		}
 
 		Ok(())
@@ -850,7 +856,7 @@ impl StagingWork
 				let array_layers = dst_image.array_layers();
 
 				// generate copies for every mipmap level
-				let mut regions = smallvec::SmallVec::with_capacity(mip_levels as usize);
+				let mut regions = SmallVec::with_capacity(mip_levels as usize);
 				let [mut mip_w, mut mip_h, _] = dst_image.extent();
 				let mut buffer_offset: DeviceSize = 0;
 				for mip_level in 0..mip_levels {
@@ -1040,7 +1046,7 @@ pub(crate) fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<Canvas>,
-	mut light_manager: UniqueViewMut<LightManager>,
+	light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
@@ -1055,8 +1061,6 @@ pub(crate) fn submit_frame(
 		render_ctx.graphics_queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
-
-	light_manager.execute_shadow_rendering(&mut cb_builder)?;
 
 	let (color_image, depth_stencil_image) = render_ctx.get_render_images(&mut cb_builder, camera_manager.sky_projview())?;
 
@@ -1099,5 +1103,9 @@ pub(crate) fn submit_frame(
 	// UI
 	canvas.execute_rendering(&mut cb_builder, aa_output)?;
 
-	render_ctx.present_image(cb_builder)
+	let mut prior_command_buffers = SmallVec::new();
+	if let Some(light_cb) = light_manager.take_light_cb() {
+		prior_command_buffers.push(light_cb);
+	}
+	render_ctx.present_image(prior_command_buffers, cb_builder)
 }

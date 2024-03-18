@@ -5,20 +5,18 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
-use smallvec::SmallVec;
 use std::sync::{Arc, Mutex};
 use vulkano::buffer::{BufferUsage, Subbuffer};
 use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::DeviceOwned;
-use vulkano::format::{ClearValue, Format};
+use vulkano::format::Format;
 use vulkano::image::{sampler::*, view::*, *};
 use vulkano::memory::allocator::AllocationCreateInfo;
 use vulkano::pipeline::graphics::{
 	depth_stencil::*, rasterization::*, subpass::PipelineRenderingCreateInfo, vertex_input::VertexInputState, *,
 };
 use vulkano::pipeline::{layout::*, *};
-use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
 
 use crate::component::light::DirectionalLight;
@@ -61,11 +59,11 @@ struct SpotLightData
 #[derive(shipyard::Unique)]
 pub struct LightManager
 {
-	dir_light_projviews: [DMat4; DIRECTIONAL_LIGHT_LAYERS],
 	dir_light_buf: Subbuffer<[DirLightData]>,
 	dir_light_shadow: Arc<ImageView>,
-	dir_light_shadow_layers: [Arc<ImageView>; DIRECTIONAL_LIGHT_LAYERS],
-	dir_light_cb: Mutex<SmallVec<[Arc<SecondaryAutoCommandBuffer>; DIRECTIONAL_LIGHT_LAYERS]>>,
+	dir_light_shadow_layers: [(DMat4, Arc<ImageView>); DIRECTIONAL_LIGHT_LAYERS],
+
+	light_cb: Mutex<Option<Arc<PrimaryAutoCommandBuffer>>>,
 
 	/*point_light_buf: Arc<Subbuffer<[PointLightData]>>,
 	spot_light_buf: Arc<Subbuffer<[SpotLightData]>>,*/
@@ -73,7 +71,7 @@ pub struct LightManager
 
 	shadow_pipeline: Arc<GraphicsPipeline>,
 
-	update_needed: Option<Box<[DirLightData]>>,
+	update_needed: Mutex<Option<Box<[DirLightData]>>>,
 }
 impl LightManager
 {
@@ -155,7 +153,7 @@ impl LightManager
 					usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
 					..ImageViewCreateInfo::from_image(&dir_light_shadow_img)
 				};
-				ImageView::new(dir_light_shadow_img.clone(), layer_info)
+				ImageView::new(dir_light_shadow_img.clone(), layer_info).map(|view| (DMat4::ZERO, view))
 			})
 			.collect::<Result<_, _>>()?;
 
@@ -165,7 +163,7 @@ impl LightManager
 			light_set_layout.clone(),
 			[
 				WriteDescriptorSet::buffer(1, dir_light_buf.clone()),
-				WriteDescriptorSet::image_view(2, dir_light_shadow_view.clone()),
+				WriteDescriptorSet::image_view(2, dir_light_shadow.clone()),
 			],
 			[],
 		)?;
@@ -214,14 +212,13 @@ impl LightManager
 		let shadow_pipeline = GraphicsPipeline::new(device.clone(), None, pipeline_info)?;
 
 		Ok(Self {
-			dir_light_projviews: Default::default(),
 			dir_light_buf,
 			dir_light_shadow,
 			dir_light_shadow_layers: dir_light_shadow_layers.try_into().unwrap(),
-			dir_light_cb: Default::default(),
+			light_cb: Default::default(),
 			all_lights_set,
 			shadow_pipeline,
-			update_needed: None,
+			update_needed: Default::default(),
 		})
 	}
 
@@ -280,7 +277,7 @@ impl LightManager
 
 			let proj = DMat4::orthographic_lh(min_c.x, max_c.x, min_c.y, max_c.y, min_c.z, max_c.z);
 			let projview = proj * view;
-			self.dir_light_projviews[i] = projview;
+			self.dir_light_shadow_layers[i].0 = projview;
 			projviews_f32[i] = projview.as_mat4();
 		}
 
@@ -289,43 +286,23 @@ impl LightManager
 			direction: direction.as_vec3().extend(0.0),
 			color_intensity: light.color.extend(light.intensity),
 		};
-		self.update_needed = Some(Box::new([dir_light_data]));
+		*self.update_needed.lock().unwrap() = Some(Box::new([dir_light_data]));
 	}
 
-	pub fn add_dir_light_cb(&self, cb: Arc<SecondaryAutoCommandBuffer>)
+	pub fn add_light_cb(&self, cb: Arc<PrimaryAutoCommandBuffer>)
 	{
-		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
-		if dir_light_cb.len() == dir_light_cb.capacity() {
-			panic!("attempted to add too many command buffers for directional light rendering");
-		}
-		dir_light_cb.push(cb);
+		*self.light_cb.lock().unwrap() = Some(cb);
+	}
+	pub fn take_light_cb(&self) -> Option<Arc<PrimaryAutoCommandBuffer>>
+	{
+		self.light_cb.lock().unwrap().take()
 	}
 
-	pub fn execute_shadow_rendering(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>)
-		-> crate::Result<()>
+	pub fn update_buffer(&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
-		if let Some(update_data) = self.update_needed.take() {
+		if let Some(update_data) = self.update_needed.lock().unwrap().take() {
 			cb.update_buffer(self.dir_light_buf.clone(), update_data)?;
 		}
-
-		let mut dir_light_cb = self.dir_light_cb.lock().unwrap();
-		let shadow_iter = dir_light_cb.drain(..).zip(self.dir_light_shadow_layers.iter());
-		for (shadow_cb, shadow_layer_image_view) in shadow_iter {
-			let shadow_render_info = RenderingInfo {
-				depth_attachment: Some(RenderingAttachmentInfo {
-					load_op: AttachmentLoadOp::Clear,
-					store_op: AttachmentStoreOp::Store,
-					clear_value: Some(ClearValue::Depth(1.0)),
-					..RenderingAttachmentInfo::image_view(shadow_layer_image_view.clone())
-				}),
-				contents: SubpassContents::SecondaryCommandBuffers,
-				..Default::default()
-			};
-			cb.begin_rendering(shadow_render_info)?
-				.execute_commands(shadow_cb)?
-				.end_rendering()?;
-		}
-
 		Ok(())
 	}
 
@@ -333,9 +310,9 @@ impl LightManager
 	{
 		&self.dir_light_shadow
 	}
-	pub fn get_dir_light_projviews(&self) -> &[DMat4]
+	pub fn get_dir_light_shadow_layers(&self) -> &[(DMat4, Arc<ImageView>)]
 	{
-		&self.dir_light_projviews
+		&self.dir_light_shadow_layers
 	}
 
 	pub fn get_all_lights_set(&self) -> &Arc<PersistentDescriptorSet>

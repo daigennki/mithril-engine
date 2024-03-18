@@ -170,9 +170,9 @@ impl Model
 
 	/// Draw this model's submeshes for all visible users. Returns `true` if any submeshes were
 	/// drawn at all.
-	fn draw(
+	fn draw<L>(
 		&self,
-		cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+		cb: &mut AutoCommandBufferBuilder<L>,
 		material_filter: Option<(TypeId, BlendMode)>,
 		pipeline_layout: Arc<PipelineLayout>,
 		projview: &DMat4,
@@ -352,7 +352,7 @@ impl SubMesh
 		cull_frustum(self.corner_min, self.corner_max, projviewmodel)
 	}
 
-	fn draw(&self, cb: &mut AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, instance_index: u32)
+	fn draw<L>(&self, cb: &mut AutoCommandBufferBuilder<L>, instance_index: u32)
 	{
 		cb.draw_indexed(self.index_count, 1, self.first_index, self.vertex_offset, instance_index)
 			.unwrap();
@@ -698,37 +698,45 @@ impl MeshManager
 
 	fn draw_shadows(&self, render_ctx: &RenderContext, light_manager: &LightManager) -> crate::Result<()>
 	{
-		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
-			depth_attachment_format: Some(light_manager.get_dir_light_shadow().format()),
-			..Default::default()
-		};
 		let pipeline_layout = light_manager.get_shadow_pipeline().layout().clone();
 		let dir_light_extent = light_manager.get_dir_light_shadow().image().extent();
-		let viewport = Viewport {
+		let dir_light_viewport = Viewport {
 			offset: [0.0, 0.0],
 			extent: [dir_light_extent[0] as f32, dir_light_extent[1] as f32],
 			depth_range: 0.0..=1.0,
 		};
 
-		for projview in light_manager.get_dir_light_projviews() {
-			let mut cb = AutoCommandBufferBuilder::secondary(
-				&render_ctx.command_buffer_allocator,
-				render_ctx.graphics_queue_family_index(),
-				CommandBufferUsage::OneTimeSubmit,
-				CommandBufferInheritanceInfo {
-					render_pass: Some(rendering_inheritance.clone().into()),
-					..Default::default()
-				},
-			)?;
-			cb.bind_pipeline_graphics(light_manager.get_shadow_pipeline().clone())?
-				.set_viewport(0, smallvec::smallvec![viewport.clone()])?;
+		let mut cb = AutoCommandBufferBuilder::primary(
+			&render_ctx.command_buffer_allocator,
+			render_ctx.graphics_queue_family_index(),
+			CommandBufferUsage::OneTimeSubmit,
+		)?;
+
+		light_manager.update_buffer(&mut cb)?;
+		cb.bind_pipeline_graphics(light_manager.get_shadow_pipeline().clone())?
+			.set_viewport(0, smallvec::smallvec![dir_light_viewport.clone()])?;
+
+		for (projview, shadow_layer) in light_manager.get_dir_light_shadow_layers() {
+			let rendering_info = RenderingInfo {
+				depth_attachment: Some(RenderingAttachmentInfo {
+					load_op: AttachmentLoadOp::Clear,
+					store_op: AttachmentStoreOp::Store,
+					clear_value: Some(ClearValue::Depth(1.0)),
+					..RenderingAttachmentInfo::image_view(shadow_layer.clone())
+				}),
+				..Default::default()
+			};
+			cb.begin_rendering(rendering_info)?;
 
 			for model in self.models.values() {
 				model.draw(&mut cb, None, pipeline_layout.clone(), projview)?;
 			}
 
-			light_manager.add_dir_light_cb(cb.build()?);
+			cb.end_rendering()?;
 		}
+
+		light_manager.add_light_cb(cb.build()?);
+
 		Ok(())
 	}
 

@@ -5,9 +5,10 @@
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
 use glam::*;
+use smallvec::SmallVec;
 use std::sync::Arc;
 use std::time::Duration;
-use vulkano::command_buffer::PrimaryCommandBufferAbstract;
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::device::{
 	physical::{PhysicalDevice, PhysicalDeviceType},
 	*,
@@ -184,13 +185,13 @@ impl GameWindow
 		Ok(Some((self.images[image_index as usize].clone(), acquire_future)))
 	}
 
-	/// Submit a primary command buffer to the graphics queue, and then present the resulting image.
+	/// Submit primary command buffers to the graphics queue, and then present the resulting image.
 	///
 	/// If the swapchain is out of date, this won't present an image, and the swapchain will be
 	/// recreated the next time `get_next_image` is called.
 	pub fn present(
 		&mut self,
-		cb: Arc<impl PrimaryCommandBufferAbstract + 'static>,
+		command_buffers: SmallVec<[Arc<PrimaryAutoCommandBuffer>; 2]>,
 		acquire_future: SwapchainAcquireFuture,
 		join_with: Option<impl GpuFuture + Send + Sync + 'static>,
 	) -> crate::Result<()>
@@ -219,9 +220,10 @@ impl GameWindow
 		self.last_frame_presented = now;
 
 		let present_info = SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index);
+		for cb in command_buffers {
+			joined_futures = joined_futures.then_execute(queue.clone(), cb).unwrap().boxed_send_sync();
+		}
 		let submit_result = joined_futures
-			.then_execute(queue.clone(), cb)
-			.unwrap()
 			.then_swapchain_present(queue, present_info)
 			.boxed_send_sync()
 			.then_signal_fence_and_flush();
