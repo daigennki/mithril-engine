@@ -106,10 +106,10 @@ impl RenderContext
 		let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(vk_dev.clone()));
 
 		// - Primary command buffers: One for each graphics submission on each thread, plus four for transfers.
-		// - Secondary command buffers: Only up to four should be created per thread.
+		// - Secondary command buffers: Only one should be created per thread.
 		let cb_alloc_info = StandardCommandBufferAllocatorCreateInfo {
 			primary_buffer_count: window.image_count() + 4,
-			secondary_buffer_count: 4,
+			secondary_buffer_count: window.image_count() + 1,
 			..Default::default()
 		};
 		let command_buffer_allocator = StandardCommandBufferAllocator::new(vk_dev.clone(), cb_alloc_info);
@@ -1046,7 +1046,7 @@ pub(crate) fn submit_frame(
 	mut render_ctx: UniqueViewMut<RenderContext>,
 	mut mesh_manager: UniqueViewMut<MeshManager>,
 	mut canvas: UniqueViewMut<Canvas>,
-	light_manager: UniqueViewMut<LightManager>,
+	mut light_manager: UniqueViewMut<LightManager>,
 	camera_manager: UniqueView<CameraManager>,
 ) -> crate::Result<()>
 {
@@ -1061,6 +1061,8 @@ pub(crate) fn submit_frame(
 		render_ctx.graphics_queue_family_index(),
 		CommandBufferUsage::OneTimeSubmit,
 	)?;
+
+	light_manager.update_buffer(&mut cb_builder)?;
 
 	let (color_image, depth_stencil_image) = render_ctx.get_render_images(&mut cb_builder, camera_manager.sky_projview())?;
 

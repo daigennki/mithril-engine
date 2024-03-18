@@ -712,7 +712,6 @@ impl MeshManager
 			CommandBufferUsage::OneTimeSubmit,
 		)?;
 
-		light_manager.update_buffer(&mut cb)?;
 		cb.bind_pipeline_graphics(light_manager.get_shadow_pipeline().clone())?
 			.set_viewport(0, smallvec::smallvec![dir_light_viewport.clone()])?;
 

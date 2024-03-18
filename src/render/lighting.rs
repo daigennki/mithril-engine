@@ -71,7 +71,7 @@ pub struct LightManager
 
 	shadow_pipeline: Arc<GraphicsPipeline>,
 
-	update_needed: Mutex<Option<Box<[DirLightData]>>>,
+	update_needed: Option<Box<[DirLightData]>>,
 }
 impl LightManager
 {
@@ -286,7 +286,7 @@ impl LightManager
 			direction: direction.as_vec3().extend(0.0),
 			color_intensity: light.color.extend(light.intensity),
 		};
-		*self.update_needed.lock().unwrap() = Some(Box::new([dir_light_data]));
+		self.update_needed = Some(Box::new([dir_light_data]));
 	}
 
 	pub fn add_light_cb(&self, cb: Arc<PrimaryAutoCommandBuffer>)
@@ -298,9 +298,9 @@ impl LightManager
 		self.light_cb.lock().unwrap().take()
 	}
 
-	pub fn update_buffer(&self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
+	pub fn update_buffer(&mut self, cb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> crate::Result<()>
 	{
-		if let Some(update_data) = self.update_needed.lock().unwrap().take() {
+		if let Some(update_data) = self.update_needed.take() {
 			cb.update_buffer(self.dir_light_buf.clone(), update_data)?;
 		}
 		Ok(())
