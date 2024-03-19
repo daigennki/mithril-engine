@@ -31,9 +31,9 @@ pub struct PBR
 #[typetag::deserialize]
 impl Material for PBR
 {
-	fn get_shader_inputs(&self) -> Vec<ShaderInput>
+	fn get_shader_inputs(&self) -> Vec<&dyn ShaderInput>
 	{
-		vec![self.base_color.clone().into()]
+		vec![&self.base_color]
 	}
 
 	fn blend_mode(&self) -> BlendMode

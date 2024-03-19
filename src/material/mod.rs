@@ -41,40 +41,14 @@ pub trait Material: Any + Send + Sync
 	///
 	/// The first entry in the `Vec` returned *must* be the "base color" image, with an alpha
 	/// channel representing transparency.
-	fn get_shader_inputs(&self) -> Vec<ShaderInput>;
+	fn get_shader_inputs(&self) -> Vec<&dyn ShaderInput>;
 
 	fn blend_mode(&self) -> BlendMode;
 }
 
-#[derive(Debug)]
-pub enum ShaderInput
+pub trait ShaderInput
 {
-	Color(ColorInput),
-	Greyscale(GreyscaleInput),
-}
-impl ShaderInput
-{
-	pub fn into_texture(self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
-	{
-		match self {
-			Self::Color(input) => input.into_texture(path_prefix, render_ctx),
-			Self::Greyscale(input) => input.into_texture(path_prefix, render_ctx),
-		}
-	}
-}
-impl From<ColorInput> for ShaderInput
-{
-	fn from(input: ColorInput) -> Self
-	{
-		Self::Color(input)
-	}
-}
-impl From<GreyscaleInput> for ShaderInput
-{
-	fn from(input: GreyscaleInput) -> Self
-	{
-		Self::Greyscale(input)
-	}
+	fn as_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>;
 }
 
 /// A representation of the possible shader color inputs, like those on the shader nodes in Blender.
@@ -90,12 +64,12 @@ pub enum ColorInput
 	/// A texture image file.
 	Texture(PathBuf),
 }
-impl ColorInput
+impl ShaderInput for ColorInput
 {
-	pub fn into_texture(self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
+	fn as_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
 	{
 		match self {
-			Self::Color(color) => new_single_color_texture(render_ctx, color),
+			Self::Color(color) => new_single_color_texture(render_ctx, *color),
 			Self::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
 		}
 	}
@@ -109,12 +83,12 @@ pub enum GreyscaleInput
 	Value(f32),
 	Texture(PathBuf),
 }
-impl GreyscaleInput
+impl ShaderInput for GreyscaleInput
 {
-	pub fn into_texture(self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
+	fn as_texture(&self, path_prefix: &Path, render_ctx: &mut RenderContext) -> crate::Result<Arc<ImageView>>
 	{
 		match self {
-			Self::Value(value) => new_single_color_texture(render_ctx, Vec4::new(value, value, value, 1.0)),
+			Self::Value(value) => new_single_color_texture(render_ctx, Vec4::new(*value, *value, *value, 1.0)),
 			Self::Texture(tex_path) => render_ctx.new_texture(&path_prefix.join(tex_path)),
 		}
 	}

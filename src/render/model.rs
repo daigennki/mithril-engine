@@ -490,7 +490,7 @@ fn descriptor_set_from_materials(
 		let mat_image_views: Vec<_> = mat
 			.get_shader_inputs()
 			.into_iter()
-			.map(|input| input.into_texture(parent_folder, render_ctx))
+			.map(|input| input.as_texture(parent_folder, render_ctx))
 			.collect::<Result<_, _>>()?;
 
 		let mat_tex_base_index = mat_tex_base_indices.last().copied().unwrap_or(0) + last_tex_index_stride;
