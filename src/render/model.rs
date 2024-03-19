@@ -623,8 +623,9 @@ impl MeshManager
 		// Load all registered material pipelines
 		let mut material_pipelines = BTreeMap::new();
 		for conf in inventory::iter::<MaterialPipelineConfig> {
+			let name = (conf.name)();
 			let type_id = (conf.type_id)();
-			log::debug!("loading material pipeline '{}' ({:?})", conf.name, type_id);
+			log::debug!("loading material pipeline '{name}' ({type_id:?})");
 
 			let pipeline_data = conf.create_pipelines(
 				render_ctx.aa_mode.sample_count(),

@@ -7,7 +7,7 @@
 use super::{BlendMode, ColorInput, Material, MaterialPipelineConfig, ShaderInput};
 use serde::Deserialize;
 
-pub mod fs
+mod fs
 {
 	vulkano_shaders::shader! {
 		ty: "fragment",
@@ -42,12 +42,7 @@ impl Material for PBR
 	}
 }
 inventory::submit! {
-	MaterialPipelineConfig {
-		name: "PBR",
-		type_id: &std::any::TypeId::of::<PBR>,
-		vertex_shader: &super::vs_3d_common::load,
-		fragment_shader: &fs::load,
-	}
+	MaterialPipelineConfig::new::<PBR>(&super::vs_3d_common::load, &fs::load)
 }
 
 impl From<&gltf::Material<'_>> for PBR

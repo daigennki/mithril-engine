@@ -107,21 +107,15 @@ fn new_single_color_texture(render_ctx: &mut RenderContext, color: Vec4) -> crat
 	Ok(ImageView::new_default(image)?)
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum BlendMode
 {
 	/// Don't blend (ignore alpha).
+	#[default]
 	Opaque,
 	/// Blend with Order-Independent Transparency, using the base color input's alpha channel.
 	AlphaBlend,
-}
-impl Default for BlendMode
-{
-	fn default() -> Self
-	{
-		Self::Opaque
-	}
 }
 
 pub type ShaderLoader = &'static (dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule>, Validated<VulkanError>> + Send + Sync);
@@ -130,17 +124,26 @@ pub type ShaderLoader = &'static (dyn Fn(Arc<Device>) -> Result<Arc<ShaderModule
 pub struct MaterialPipelineConfig
 {
 	// `name` is only for debugging purposes!! Use `type_id` to uniquely identify the material type.
-	pub name: &'static str,
-
+	pub name: &'static (dyn Fn() -> &'static str + Send + Sync),
 	// `TypeId` currently can't be `const`, so we use a getter function instead.
 	pub type_id: &'static (dyn Fn() -> TypeId + Send + Sync),
 
-	pub vertex_shader: ShaderLoader,
-	pub fragment_shader: ShaderLoader,
+	vertex_shader: ShaderLoader,
+	fragment_shader: ShaderLoader,
 }
 inventory::collect!(MaterialPipelineConfig);
 impl MaterialPipelineConfig
 {
+	pub const fn new<T: Material>(vertex_shader: ShaderLoader, fragment_shader: ShaderLoader) -> Self
+	{
+		Self {
+			name: &std::any::type_name::<T>,
+			type_id: &std::any::TypeId::of::<T>,
+			vertex_shader,
+			fragment_shader,
+		}
+	}
+
 	pub(crate) fn create_pipelines(
 		&'static self,
 		rasterization_samples: SampleCount,
