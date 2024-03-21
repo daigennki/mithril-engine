@@ -214,7 +214,7 @@ impl RenderContext
 		};
 
 		{
-			let (format, extent, mip_levels, img_raw) = TextureSource::DdsBytes(ERROR_TEXTURE_BYTES).load().unwrap();
+			let (format, extent, mip_levels, img_raw) = TextureSource::Bytes(ERROR_TEXTURE_BYTES).load().unwrap();
 			let image_info = ImageCreateInfo {
 				format,
 				extent: [extent[0], extent[1], 1],
@@ -338,7 +338,7 @@ impl RenderContext
 				Ok(ok) => ok,
 				Err(e) => {
 					log::error!("failed to load cubemap face texture file: {e}");
-					TextureSource::DdsBytes(ERROR_TEXTURE_BYTES).load().unwrap()
+					TextureSource::Bytes(ERROR_TEXTURE_BYTES).load().unwrap()
 				}
 			};
 
@@ -889,35 +889,40 @@ impl StagingWork
 //
 /* Texture stuff */
 //
+#[derive(Copy, Clone)]
 pub enum TextureSource<'a>
 {
-	File(&'a Path),       // Open and read the file at the given path.
-	DdsBytes(&'a [u8]),   // Read the DDS file from raw bytes in memory.
-	ImageBytes(&'a [u8]), // Read the image file from raw bytes in memory.
+	File(&'a Path),  // Open and read the file at the given path.
+	Bytes(&'a [u8]), // Read the image file from raw bytes in memory.
 }
 impl TextureSource<'_>
 {
 	fn load(self) -> Result<(Format, [u32; 2], u32, Vec<u8>), TextureLoadingError>
 	{
-		let (reader, path): (BufReader<Box<dyn SeekRead>>, _) = match self {
-			Self::File(path) => {
-				let file = std::fs::File::open(path)
-					.map_err(|e| TextureLoadingError::new(Some(path.to_path_buf()), TexLoadErrVariant::FileOpen(e)))?;
-				(BufReader::new(Box::new(file)), Some(path.to_path_buf()))
-			}
-			Self::DdsBytes(data) | Self::ImageBytes(data) => (BufReader::new(Box::new(Cursor::new(data))), None),
-		};
+		self.load_inner().map_err(|error| {
+			let file_path = match self {
+				Self::File(path) => path.to_str().unwrap_or("<invalid UTF-8>").into(),
+				Self::Bytes(_) => "<embedded bytes>".into(),
+			};
+			TextureLoadingError { file_path, error }
+		})
+	}
 
-		let file_type = match self {
-			Self::File(path) => path.extension().and_then(|ext| ext.to_str()),
-			Self::DdsBytes(_) => Some("dds"),
-			_ => None,
+	fn load_inner(self) -> Result<(Format, [u32; 2], u32, Vec<u8>), TexLoadErrVariant>
+	{
+		let seekread: Box<dyn SeekRead> = match self {
+			Self::File(path) => Box::new(std::fs::File::open(path).map_err(TexLoadErrVariant::IoError)?),
+			Self::Bytes(data) => Box::new(Cursor::new(data)),
 		};
+		let mut reader = BufReader::new(seekread);
 
-		match file_type {
-			Some("dds") => {
-				let dds = ddsfile::Dds::read(reader)
-					.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::DdsRead(e)))?;
+		let mut magic_number = [0; 4];
+		reader.read_exact(&mut magic_number).map_err(TexLoadErrVariant::IoError)?;
+		reader.rewind().map_err(TexLoadErrVariant::IoError)?;
+
+		match std::str::from_utf8(&magic_number) {
+			Ok("DDS ") => {
+				let dds = ddsfile::Dds::read(reader).map_err(TexLoadErrVariant::DdsRead)?;
 
 				// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
 				// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
@@ -929,7 +934,7 @@ impl TextureSource<'_>
 					Some(DxgiFormat::BC5_SNorm) => Format::BC5_SNORM_BLOCK,
 					Some(DxgiFormat::BC7_UNorm) => Format::BC7_SRGB_BLOCK,
 					Some(DxgiFormat::BC7_UNorm_sRGB) => Format::BC7_SRGB_BLOCK,
-					format => return Err(TextureLoadingError::new(path, TexLoadErrVariant::DdsFormat(format))),
+					format => return Err(TexLoadErrVariant::DdsFormat(format)),
 				};
 				let dim = [dds.get_width(), dds.get_height()];
 				let mip_count = dds.get_num_mipmap_levels();
@@ -940,9 +945,9 @@ impl TextureSource<'_>
 				// Load other formats such as PNG into an 8bpc sRGB RGBA image.
 				let img = image::io::Reader::new(reader)
 					.with_guessed_format()
-					.map_err(|e| TextureLoadingError::new(path.clone(), TexLoadErrVariant::ImageGuessFormat(e)))?
+					.map_err(TexLoadErrVariant::IoError)?
 					.decode()
-					.map_err(|e| TextureLoadingError::new(path, TexLoadErrVariant::ImageDecode(e)))?
+					.map_err(TexLoadErrVariant::ImageDecode)?
 					.into_rgba8();
 				Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
 			}
@@ -955,10 +960,9 @@ impl<T: Seek + Read> SeekRead for T {}
 #[derive(Debug)]
 enum TexLoadErrVariant
 {
-	FileOpen(std::io::Error),
+	IoError(std::io::Error),
 	DdsRead(ddsfile::Error),
 	DdsFormat(Option<DxgiFormat>),
-	ImageGuessFormat(std::io::Error),
 	ImageDecode(image::error::ImageError),
 }
 impl std::fmt::Display for TexLoadErrVariant
@@ -966,11 +970,10 @@ impl std::fmt::Display for TexLoadErrVariant
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
 		match self {
-			Self::FileOpen(e) => write!(f, "failed to open texture file: {e}"),
+			Self::IoError(e) => write!(f, "I/O error: {e}"),
 			Self::DdsRead(e) => write!(f, "failed to read DDS file: {e}"),
 			Self::DdsFormat(Some(format)) => write!(f, "DDS format '{format:?}' is unsupported"),
 			Self::DdsFormat(None) => write!(f, "DDS file doesn't have a DXGI format"),
-			Self::ImageGuessFormat(e) => write!(f, "failed to guess image format: {e}"),
 			Self::ImageDecode(e) => write!(f, "failed to decode image: {e}"),
 		}
 	}
@@ -979,26 +982,15 @@ impl std::fmt::Display for TexLoadErrVariant
 #[derive(Debug)]
 struct TextureLoadingError
 {
-	file_path: Option<PathBuf>,
+	file_path: String,
 	error: TexLoadErrVariant,
-}
-impl TextureLoadingError
-{
-	fn new(file_path: Option<PathBuf>, error: TexLoadErrVariant) -> Self
-	{
-		Self { file_path, error }
-	}
 }
 impl std::error::Error for TextureLoadingError {}
 impl std::fmt::Display for TextureLoadingError
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
-		let print_path_str = self
-			.file_path
-			.as_ref()
-			.map_or("<embedded file>", |p| p.to_str().unwrap_or("<invalid UTF-8>"));
-		write!(f, "{}: {}", print_path_str, self.error)
+		write!(f, "{}: {}", self.file_path, self.error)
 	}
 }
 

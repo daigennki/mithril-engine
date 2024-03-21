@@ -92,7 +92,7 @@ impl SmaaRenderer
 		let device = render_ctx.memory_allocator.device().clone();
 
 		let search_tex = {
-			let (format, extent, _, img_raw) = TextureSource::DdsBytes(SEARCH_TEX_BYTES).load().unwrap();
+			let (format, extent, _, img_raw) = TextureSource::Bytes(SEARCH_TEX_BYTES).load().unwrap();
 			let image_info = ImageCreateInfo {
 				format,
 				extent: [extent[0], extent[1], 1],
@@ -103,7 +103,7 @@ impl SmaaRenderer
 			ImageView::new_default(image)?
 		};
 		let area_tex = {
-			let (format, extent, _, img_raw) = TextureSource::DdsBytes(AREA_TEX_BYTES).load().unwrap();
+			let (format, extent, _, img_raw) = TextureSource::Bytes(AREA_TEX_BYTES).load().unwrap();
 			let image_info = ImageCreateInfo {
 				format,
 				extent: [extent[0], extent[1], 1],
