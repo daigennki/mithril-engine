@@ -15,6 +15,7 @@ use ddsfile::DxgiFormat;
 use glam::*;
 use shipyard::{UniqueView, UniqueViewMut};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{BufReader, Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -893,7 +894,7 @@ impl StagingWork
 pub enum TextureSource<'a>
 {
 	File(&'a Path),  // Open and read the file at the given path.
-	Bytes(&'a [u8]), // Read the image file from raw bytes in memory.
+	Bytes(&'a [u8]), // Read the file from a byte slice.
 }
 impl TextureSource<'_>
 {
@@ -901,8 +902,8 @@ impl TextureSource<'_>
 	{
 		self.load_inner().map_err(|error| {
 			let file_path = match self {
-				Self::File(path) => path.to_str().unwrap_or("<invalid UTF-8>").into(),
-				Self::Bytes(_) => "<embedded bytes>".into(),
+				Self::File(path) => path.to_string_lossy().into_owned().into(),
+				Self::Bytes(_) => "<byte slice>".into(),
 			};
 			TextureLoadingError { file_path, error }
 		})
@@ -982,7 +983,7 @@ impl std::fmt::Display for TexLoadErrVariant
 #[derive(Debug)]
 struct TextureLoadingError
 {
-	file_path: String,
+	file_path: Cow<'static, str>,
 	error: TexLoadErrVariant,
 }
 impl std::error::Error for TextureLoadingError {}
