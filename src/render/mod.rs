@@ -903,7 +903,7 @@ impl TextureSource<'_>
 		self.load_inner().map_err(|error| {
 			let file_path = match self {
 				Self::File(path) => path.to_string_lossy().into_owned().into(),
-				Self::Bytes(_) => "<byte slice>".into(),
+				Self::Bytes(_) => "<texture file byte slice>".into(),
 			};
 			TextureLoadingError { file_path, error }
 		})
@@ -912,22 +912,22 @@ impl TextureSource<'_>
 	fn load_inner(self) -> Result<(Format, [u32; 2], u32, Vec<u8>), TexLoadErrVariant>
 	{
 		let seekread: Box<dyn SeekRead> = match self {
-			Self::File(path) => Box::new(std::fs::File::open(path).map_err(TexLoadErrVariant::IoError)?),
+			Self::File(path) => Box::new(std::fs::File::open(path)?),
 			Self::Bytes(data) => Box::new(Cursor::new(data)),
 		};
 		let mut reader = BufReader::new(seekread);
 
 		let mut magic_number = [0; 4];
-		reader.read_exact(&mut magic_number).map_err(TexLoadErrVariant::IoError)?;
-		reader.rewind().map_err(TexLoadErrVariant::IoError)?;
+		reader.read_exact(&mut magic_number)?;
+		reader.rewind()?;
 
 		match std::str::from_utf8(&magic_number) {
 			Ok("DDS ") => {
-				let dds = ddsfile::Dds::read(reader).map_err(TexLoadErrVariant::DdsRead)?;
+				let dds = ddsfile::Dds::read(reader)?;
 
-				// BC7_UNorm is treated as sRGB for now since Compressonator doesn't support converting to
+				// BC7_UNorm is treated as sRGB for now since Compressonator can't output
 				// BC7_UNorm_sRGB, even though the data itself appears to be in sRGB gamma.
-				let vk_fmt = match dds.get_dxgi_format() {
+				let format = match dds.get_dxgi_format() {
 					Some(DxgiFormat::BC1_UNorm_sRGB) => Format::BC1_RGBA_SRGB_BLOCK,
 					Some(DxgiFormat::BC4_UNorm) => Format::BC4_UNORM_BLOCK,
 					Some(DxgiFormat::BC4_SNorm) => Format::BC4_SNORM_BLOCK,
@@ -937,19 +937,13 @@ impl TextureSource<'_>
 					Some(DxgiFormat::BC7_UNorm_sRGB) => Format::BC7_SRGB_BLOCK,
 					format => return Err(TexLoadErrVariant::DdsFormat(format)),
 				};
-				let dim = [dds.get_width(), dds.get_height()];
-				let mip_count = dds.get_num_mipmap_levels();
+				let extent = [dds.get_width(), dds.get_height()];
+				let mip_levels = dds.get_num_mipmap_levels();
 
-				Ok((vk_fmt, dim, mip_count, dds.data))
+				Ok((format, extent, mip_levels, dds.data))
 			}
 			_ => {
-				// Load other formats such as PNG into an 8bpc sRGB RGBA image.
-				let img = image::io::Reader::new(reader)
-					.with_guessed_format()
-					.map_err(TexLoadErrVariant::IoError)?
-					.decode()
-					.map_err(TexLoadErrVariant::ImageDecode)?
-					.into_rgba8();
+				let img = image::io::Reader::new(reader).with_guessed_format()?.decode()?.into_rgba8();
 				Ok((Format::R8G8B8A8_SRGB, img.dimensions().into(), 1, img.into_raw()))
 			}
 		}
@@ -961,21 +955,24 @@ impl<T: Seek + Read> SeekRead for T {}
 #[derive(Debug)]
 enum TexLoadErrVariant
 {
-	IoError(std::io::Error),
-	DdsRead(ddsfile::Error),
 	DdsFormat(Option<DxgiFormat>),
-	ImageDecode(image::error::ImageError),
+	Other(Box<dyn std::error::Error>),
+}
+impl<E: std::error::Error + 'static> From<E> for TexLoadErrVariant
+{
+	fn from(e: E) -> Self
+	{
+		Self::Other(Box::new(e))
+	}
 }
 impl std::fmt::Display for TexLoadErrVariant
 {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result
 	{
 		match self {
-			Self::IoError(e) => write!(f, "I/O error: {e}"),
-			Self::DdsRead(e) => write!(f, "failed to read DDS file: {e}"),
-			Self::DdsFormat(Some(format)) => write!(f, "DDS format '{format:?}' is unsupported"),
+			Self::DdsFormat(Some(format)) => write!(f, "format '{format:?}' is unsupported"),
 			Self::DdsFormat(None) => write!(f, "DDS file doesn't have a DXGI format"),
-			Self::ImageDecode(e) => write!(f, "failed to decode image: {e}"),
+			Self::Other(e) => write!(f, "{e}"),
 		}
 	}
 }
