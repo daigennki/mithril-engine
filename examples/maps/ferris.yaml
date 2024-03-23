@@ -8,6 +8,11 @@ entities:
       size: 32.0
       color: [0.0, 0.0, 0.0, 1.0]
   - FpsCounter:
+-
+  - UITransform:
+      position: [-550, -300]
+  - UIMesh:
+      image_path: examples/rust_logo.png
 - 
   - Transform:
       position: [0.0, 0.0, 0.0]

@@ -4,35 +4,33 @@
 	Licensed under the BSD 3-clause license.
 	https://opensource.org/license/BSD-3-clause/
 ----------------------------------------------------------------------------- */
+use serde::Deserialize;
 use shipyard::{IntoIter, IntoWithId, IntoWorkloadSystem, UniqueViewMut, View, WorkloadSystem};
 use std::path::PathBuf;
 
-use crate::component::ComponentSystems;
+use crate::component::{ComponentSystems, EntityComponent, SystemBundle};
 use crate::render::ui::Canvas;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(untagged)]
 pub enum MeshType
 {
+	#[default]
 	Quad,
 	Frame(u32), // `u32` is border width in logical pixels
 }
-impl Default for MeshType
-{
-	fn default() -> Self
-	{
-		Self::Quad
-	}
-}
 
 /// UI component that renders to a mesh, such as a quad, or a background frame mesh.
-#[derive(Default, shipyard::Component)]
+#[derive(Default, Deserialize, EntityComponent, shipyard::Component)]
 #[track(All)]
-pub struct Mesh
+pub struct UIMesh
 {
+	#[serde(default)]
 	pub mesh_type: MeshType,
+
 	pub image_path: PathBuf,
 }
-impl ComponentSystems for Mesh
+impl ComponentSystems for UIMesh
 {
 	fn late_update() -> Option<WorkloadSystem>
 	{
@@ -43,7 +41,7 @@ fn update_mesh(
 	mut render_ctx: UniqueViewMut<crate::render::RenderContext>,
 	mut canvas: UniqueViewMut<Canvas>,
 	ui_transforms: View<super::UITransform>,
-	ui_meshes: View<Mesh>,
+	ui_meshes: View<UIMesh>,
 )
 {
 	for eid in ui_meshes.removed() {

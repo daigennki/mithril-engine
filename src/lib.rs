@@ -154,7 +154,7 @@ fn init_world(_org_name: &str, app_name: &str, app_version: Version, event_loop:
 		.with_try_system(render::model::draw_shadows)
 		.with_try_system(render::model::draw_opaque)
 		.with_try_system(render::model::draw_oit)
-		.with_try_system(render::draw_ui)
+		.with_try_system(render::ui::draw_ui)
 		.with_try_system(render::submit_frame)
 		.add_to_world(&world)
 		.unwrap();

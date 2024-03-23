@@ -1026,10 +1026,6 @@ pub(crate) fn prepare_rendering(
 
 	render_ctx.submit_transfers()
 }
-pub(crate) fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
-{
-	canvas.draw(&render_ctx)
-}
 
 // Submit all the command buffers for this frame to present the results.
 pub(crate) fn submit_frame(

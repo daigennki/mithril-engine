@@ -7,7 +7,7 @@
 use glam::*;
 use image::{DynamicImage, GrayImage, Luma};
 use rusttype::{Font, Scale};
-use shipyard::EntityId;
+use shipyard::{EntityId, UniqueView, UniqueViewMut};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vulkano::buffer::{BufferUsage, Subbuffer};
@@ -25,7 +25,7 @@ use vulkano::shader::ShaderStages;
 
 use super::RenderContext;
 use crate::component::ui::{
-	mesh::{Mesh, MeshType},
+	mesh::{MeshType, UIMesh},
 	text::UIText,
 	UITransform,
 };
@@ -150,14 +150,19 @@ struct GlyphInfo
 	pos_size: Vec4, // pos: xy, size: zw
 	color: Vec4,
 }
-struct UiGpuResources
+struct TextResources
 {
-	glyph_info_buffer: Option<Subbuffer<[GlyphInfo]>>,
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	projected: Affine2,
 	logical_texture_size_inv: Vec2,
-	mesh_type: MeshType,
+	glyph_info_buffer: Subbuffer<[GlyphInfo]>,
 	update_needed: Option<Box<[GlyphInfo]>>,
+}
+struct MeshResources
+{
+	descriptor_set: Arc<PersistentDescriptorSet>,
+	projected: Affine2,
+	mesh_type: MeshType,
 }
 
 #[derive(shipyard::Unique)]
@@ -168,13 +173,11 @@ pub struct Canvas
 	scale_factor: f32,
 
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
-	set_layout: Arc<DescriptorSetLayout>,
-	text_set_layout: Arc<DescriptorSetLayout>,
 	ui_pipeline: Arc<GraphicsPipeline>,
 	text_pipeline: Arc<GraphicsPipeline>,
 
-	text_resources: BTreeMap<EntityId, UiGpuResources>,
-	mesh_resources: BTreeMap<EntityId, UiGpuResources>,
+	text_resources: BTreeMap<EntityId, TextResources>,
+	mesh_resources: BTreeMap<EntityId, MeshResources>,
 
 	quad_vbo: Subbuffer<[Vec4]>,
 
@@ -210,13 +213,12 @@ impl Canvas
 		};
 		let set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>();
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![set_layout.clone()],
 			push_constant_ranges: vec![PushConstantRange {
 				stages: ShaderStages::VERTEX,
 				offset: 0,
-				size: push_constant_size.try_into().unwrap(),
+				size: std::mem::size_of::<Affine2>().try_into().unwrap(),
 			}],
 			..Default::default()
 		};
@@ -277,7 +279,7 @@ impl Canvas
 		};
 		let text_set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let text_push_constant_size = std::mem::size_of::<Mat2>() + std::mem::size_of::<Vec2>() * 2;
+		let text_push_constant_size = std::mem::size_of::<Vec2>() * 4;
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![text_set_layout.clone()],
 			push_constant_ranges: vec![PushConstantRange {
@@ -328,8 +330,6 @@ impl Canvas
 			canvas_scaling,
 			scale_factor,
 			descriptor_set_allocator,
-			set_layout,
-			text_set_layout,
 			ui_pipeline,
 			text_pipeline,
 			text_resources: Default::default(),
@@ -361,44 +361,6 @@ impl Canvas
 		self.scale_factor = scale_factor;
 	}
 
-	fn update_transform(
-		&mut self,
-		set_layout: Arc<DescriptorSetLayout>,
-		transform: &UITransform,
-		image_view: Arc<ImageView>,
-		default_scale: Vec2,
-		glyph_info_buffer: Option<Subbuffer<[GlyphInfo]>>,
-	) -> crate::Result<UiGpuResources>
-	{
-		let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
-		let translation = transform.position.as_vec2() * self.canvas_scaling;
-		let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
-
-		let image_extent = image_view.image().extent();
-
-		// division inverted here so that division isn't performed in shader
-		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(image_extent[0], image_extent[1]).as_vec2();
-
-		let writes: smallvec::SmallVec<[WriteDescriptorSet; 2]> = if let Some(buf) = glyph_info_buffer.clone() {
-			smallvec::smallvec![
-				WriteDescriptorSet::image_view(0, image_view),
-				WriteDescriptorSet::buffer(1, buf),
-			]
-		} else {
-			smallvec::smallvec![WriteDescriptorSet::image_view(0, image_view)]
-		};
-		let descriptor_set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes.into_iter(), [])?;
-
-		Ok(UiGpuResources {
-			glyph_info_buffer,
-			descriptor_set,
-			projected,
-			logical_texture_size_inv,
-			mesh_type: MeshType::Quad,
-			update_needed: None,
-		})
-	}
-
 	/// Update the GPU resources for entities with a `Mesh` component.
 	/// Call this whenever the component has been inserted or modified.
 	pub fn update_mesh(
@@ -406,15 +368,30 @@ impl Canvas
 		render_ctx: &mut RenderContext,
 		eid: EntityId,
 		transform: &UITransform,
-		mesh: &Mesh,
+		mesh: &UIMesh,
 	) -> crate::Result<()>
 	{
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.new_texture(&mesh.image_path)?;
 			let image_extent = tex.image().extent();
 			let image_dimensions = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
-			let resources = self.update_transform(self.set_layout.clone(), transform, tex, image_dimensions, None)?;
+
+			let scale = transform.scale.unwrap_or(image_dimensions) * self.canvas_scaling;
+			let translation = transform.position.as_vec2() * self.canvas_scaling;
+			let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
+
+			let writes = [WriteDescriptorSet::image_view(0, tex)];
+			let set_layout = self.ui_pipeline.layout().set_layouts()[0].clone();
+			let set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes, [])?;
+
+			let resources = MeshResources {
+				descriptor_set: set,
+				projected,
+				mesh_type: MeshType::Quad,
+			};
 			self.mesh_resources.insert(eid, resources);
+		} else {
+			self.mesh_resources.remove(&eid);
 		}
 
 		Ok(())
@@ -460,13 +437,11 @@ impl Canvas
 			text_to_image(text_str, &self.default_font, text.size * self.scale_factor);
 
 		// If no visible glyphs were produced (e.g. the string was empty, or it only has space characters),
-		// remove the vertex buffers from the GPU resources, and then return immediately.
+		// remove the GPU resources for the component, and then return immediately.
 		let combined_image = if let Some(image) = optional_glyphs_image {
 			image
 		} else {
-			if let Some(resources) = self.text_resources.get_mut(&eid) {
-				resources.glyph_info_buffer = None;
-			}
+			self.text_resources.remove(&eid);
 			return Ok(());
 		};
 
@@ -480,8 +455,7 @@ impl Canvas
 			.text_resources
 			.get(&eid)
 			.as_ref()
-			.and_then(|res| res.glyph_info_buffer.as_ref())
-			.map(|buf| buf.len() as usize)
+			.map(|res| usize::try_from(res.glyph_info_buffer.len()).unwrap())
 			.unwrap_or(0);
 
 		// Scale the positions and sizes according to the current UI scale factor, and set the color
@@ -502,27 +476,44 @@ impl Canvas
 		let tex = ImageView::new_default(tex_image)?;
 
 		let update_needed;
-		let glyph_info_buf = if glyph_count == prev_glyph_count {
+		let glyph_info_buffer = if glyph_count == prev_glyph_count {
 			// Reuse the buffer if the glyph count hasn't changed. If `prev_glyph_count` is greater
 			// than 0, `text_resources` for the given `eid` must be `Some`, so we use `unwrap` here.
 			let resources = self.text_resources.get_mut(&eid).unwrap();
 			update_needed = Some(glyph_infos.into());
-			resources.glyph_info_buffer.clone().unwrap()
+			resources.glyph_info_buffer.clone()
 		} else {
 			update_needed = None;
 			render_ctx.new_buffer(&glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
 		};
 
-		let resources = UiGpuResources {
+		let writes = [
+			WriteDescriptorSet::image_view(0, tex),
+			WriteDescriptorSet::buffer(1, glyph_info_buffer.clone()),
+		];
+		let set_layout = self.text_pipeline.layout().set_layouts()[0].clone();
+		let set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes, [])?;
+
+		let scale = transform.scale.unwrap_or(Vec2::ONE) * self.canvas_scaling;
+		let translation = transform.position.as_vec2() * self.canvas_scaling;
+		let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
+
+		// division inverted here so that division isn't performed in shader
+		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(img_dim[0], img_dim[1]).as_vec2();
+
+		let resources = TextResources {
+			descriptor_set: set,
+			projected,
+			logical_texture_size_inv,
+			glyph_info_buffer,
 			update_needed,
-			..self.update_transform(self.text_set_layout.clone(), transform, tex, Vec2::ONE, Some(glyph_info_buf))?
 		};
 		self.text_resources.insert(eid, resources);
 
 		Ok(())
 	}
 
-	pub fn draw(&mut self, render_ctx: &RenderContext) -> crate::Result<()>
+	fn draw(&mut self, render_ctx: &RenderContext) -> crate::Result<()>
 	{
 		// TODO: how do we respect the render order of each UI element?
 		let rendering_inheritance = CommandBufferInheritanceRenderingInfo {
@@ -548,7 +539,7 @@ impl Canvas
 		cb.set_viewport(0, smallvec::smallvec![viewport])?
 			.bind_pipeline_graphics(self.ui_pipeline.clone())?;
 
-		let ui_pipeline_layout = self.text_pipeline.layout().clone();
+		let ui_pipeline_layout = self.ui_pipeline.layout().clone();
 		for resources in self.mesh_resources.values() {
 			let set = resources.descriptor_set.clone();
 			cb.push_constants(ui_pipeline_layout.clone(), 0, resources.projected)?
@@ -567,19 +558,17 @@ impl Canvas
 		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
 		let text_pipeline_layout = self.text_pipeline.layout().clone();
 		for resources in self.text_resources.values() {
-			if let Some(glyph_buf) = &resources.glyph_info_buffer {
-				let mut push_constant_data: [f32; 8] = Default::default();
-				resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
-				resources
-					.logical_texture_size_inv
-					.write_to_slice(&mut push_constant_data[6..8]);
+			let mut push_constant_data: [f32; 8] = Default::default();
+			resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
+			resources
+				.logical_texture_size_inv
+				.write_to_slice(&mut push_constant_data[6..8]);
 
-				let set = resources.descriptor_set.clone();
-				let glyph_count = glyph_buf.len().try_into().unwrap();
-				cb.push_constants(text_pipeline_layout.clone(), 0, push_constant_data)?
-					.bind_descriptor_sets(PipelineBindPoint::Graphics, text_pipeline_layout.clone(), 0, set)?
-					.draw(4, glyph_count, 0, 0)?;
-			}
+			let set = resources.descriptor_set.clone();
+			let glyph_count = resources.glyph_info_buffer.len().try_into().unwrap();
+			cb.push_constants(text_pipeline_layout.clone(), 0, push_constant_data)?
+				.bind_descriptor_sets(PipelineBindPoint::Graphics, text_pipeline_layout.clone(), 0, set)?
+				.draw(4, glyph_count, 0, 0)?;
 		}
 
 		self.ui_cb = Some(cb.build()?);
@@ -595,7 +584,7 @@ impl Canvas
 	{
 		for text_resource in self.text_resources.values_mut() {
 			if let Some(update_needed) = text_resource.update_needed.take() {
-				let dst_buf = text_resource.glyph_info_buffer.clone().unwrap();
+				let dst_buf = text_resource.glyph_info_buffer.clone();
 				cb_builder.update_buffer(dst_buf, update_needed)?;
 			}
 		}
@@ -654,7 +643,7 @@ fn calculate_projection(canvas_width: f32, canvas_height: f32, screen_width: f32
 /// Each image is paired with a `GlyphInfo` containing a `Vec4` with xy representing the top left
 /// corner relative to the baseline, and zw representing the bounding box size. The `color` will be
 /// set to white, which you can change later for each glyph.
-fn text_to_image(text: &str, font: &Font<'static>, size: f32) -> (Option<GrayImage>, Vec<GlyphInfo>)
+fn text_to_image(text: &str, font: &Font<'_>, size: f32) -> (Option<GrayImage>, Vec<GlyphInfo>)
 {
 	let scale_uniform = Scale::uniform(size);
 	let glyphs: Vec<_> = font
@@ -701,4 +690,10 @@ fn text_to_image(text: &str, font: &Font<'static>, size: f32) -> (Option<GrayIma
 		.collect();
 
 	(Some(combined_images), positions_sizes)
+}
+
+/* UI workload system */
+pub(crate) fn draw_ui(render_ctx: UniqueView<RenderContext>, mut canvas: UniqueViewMut<Canvas>) -> crate::Result<()>
+{
+	canvas.draw(&render_ctx)
 }
