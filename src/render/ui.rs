@@ -15,7 +15,7 @@ use vulkano::command_buffer::*;
 use vulkano::descriptor_set::{allocator::*, layout::*, *};
 use vulkano::device::DeviceOwned;
 use vulkano::format::Format;
-use vulkano::image::{sampler::*, view::ImageView, ImageCreateInfo, ImageFormatInfo, ImageUsage};
+use vulkano::image::{sampler::*, view::ImageView, ImageCreateInfo, ImageUsage};
 use vulkano::pipeline::graphics::{
 	color_blend::*, input_assembly::*, subpass::PipelineRenderingCreateInfo, vertex_input::*, viewport::Viewport, *,
 };
@@ -430,39 +430,30 @@ impl Canvas
 		text: &UIText,
 	) -> crate::Result<()>
 	{
-		let text_str = &text.text_str;
+		let mut text_str = text.text_str.as_str();
 
-		// If the string is longer than the maximum image array layers allowed by the
-		// implementation, refuse to render it. On Windows/Linux desktop, the limit is always at
-		// least 2048 which is way more than enough, but we should check it anyways just in case.
-		// We also check that it's no larger than 2048 characters because we use
-		// `vkCmdUpdateBuffer`, which has a limit of 65536 (32 * 2048) bytes, to update vertices.
-		let image_format_info = ImageFormatInfo {
-			format: Format::R8_UNORM,
-			usage: ImageUsage::SAMPLED,
-			..Default::default()
-		};
+		// Truncate strings longer than the maximum image array layers allowed by the device. That's
+		// often at least 2048 which is way more than enough, but we should check it anyways just in
+		// case. Strings longer than 2048 characters are also truncated because vertices are updated
+		// with `vkCmdUpdateBuffer`, which has a limit of 65536 (32 * 2048) bytes.
 		let max_glyphs: usize = render_ctx
 			.memory_allocator
 			.device()
 			.physical_device()
-			.image_format_properties(image_format_info)?
-			.unwrap() // Vulkan spec says that sampled image usage must be supported for `R8_UNORM`
-			.max_array_layers
+			.properties()
+			.max_image_array_layers
 			.min(2048)
 			.try_into()
 			.unwrap();
-		if text_str.chars().count() >= max_glyphs {
+		if text_str.chars().count() > max_glyphs {
 			log::warn!(
-				"UI text string too long ({} chars, limit is {})! Refusing to render string: {}",
+				"UI text string is too long ({} chars, limit is {})! Truncating string: {}",
 				text_str.len(),
 				max_glyphs,
 				text_str,
 			);
-			if let Some(resources) = self.text_resources.get_mut(&eid) {
-				resources.glyph_info_buffer = None;
-			}
-			return Ok(());
+			let (truncate_byte_offset, _) = text_str.char_indices().nth(max_glyphs).unwrap();
+			text_str = &text_str[..truncate_byte_offset];
 		}
 
 		let (optional_glyphs_image, mut glyph_infos) =
