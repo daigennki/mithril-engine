@@ -3,6 +3,7 @@ use mithril_engine::{InputHelperWrapper, SystemBundle};
 use mithril_engine_derive::EntityComponent;
 use serde::Deserialize;
 use shipyard::{IntoIter, IntoWorkloadSystem, UniqueView, View, ViewMut, WorkloadSystem};
+use winit::event::MouseButton;
 
 // This is an example implementation of a camera controller that would be implemented by the game developer.
 
@@ -23,7 +24,7 @@ fn update_controllable_camera(
 )
 {
 	let InputHelperWrapper(input_helper) = input_helper_wrapper.as_ref();
-	if input_helper.mouse_held(1) {
+	if input_helper.mouse_held(MouseButton::Right) {
 		let delta = input_helper.mouse_diff();
 		let sensitivity = 0.05;
 		let adjusted_delta_x = (sensitivity * delta.0) as f64;

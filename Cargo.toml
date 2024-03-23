@@ -21,11 +21,11 @@ shaderc = "0.8"
 mithril-engine-derive = { version = "0.1.0", path = "mithril-engine-derive" }
 winit = { version = "0.29", default-features = true, features = ["rwh_05"] }
 rusttype = "0.9"
-image = { version = "0.24", features = ["png"] }
+image = { version = "0.25", features = ["png"] }
 ddsfile = "0.5"
 vulkano = "0.34"
 vulkano-shaders = "0.34"
-glam = { version = "0.24", features = ["bytemuck", "serde"] }
+glam = { version = "0.25", features = ["bytemuck", "serde"] }
 msgbox = "0.7"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 simplelog = "0.12"
@@ -37,11 +37,11 @@ serde_yaml = "0.9"
 serde_json = { version = "1.0", features = ["raw_value"] }
 typetag = "0.2"
 gltf = { version = "1.4", features = ["extras", "names", "utils", "import", "KHR_materials_variants"] }
-winit_input_helper = "0.15"
+winit_input_helper = "0.16"
 smallvec = "1.11"
 regex = "1.10"
 rapier3d-f64 = { version = "0.18", features = ["serde-serialize"] }
-nalgebra = { version = "0.32", features = ["convert-glam024"] }
+nalgebra = { version = "0.32", features = ["convert-glam025"] }
 inventory = "0.3"
 #egui_winit_vulkano = { version = "0.22", optional = true }
 #kira = "0.7.1"
