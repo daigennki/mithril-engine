@@ -22,6 +22,7 @@ use vulkano::pipeline::graphics::{
 use vulkano::pipeline::{layout::*, *};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::shader::ShaderStages;
+use vulkano::DeviceSize;
 
 use super::RenderContext;
 use crate::component::ui::{
@@ -374,9 +375,9 @@ impl Canvas
 		if !mesh.image_path.as_os_str().is_empty() {
 			let tex = render_ctx.new_texture(&mesh.image_path)?;
 			let image_extent = tex.image().extent();
-			let image_dimensions = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
 
-			let scale = transform.scale.unwrap_or(image_dimensions) * self.canvas_scaling;
+			let default_scale = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
+			let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
 			let translation = transform.position.as_vec2() * self.canvas_scaling;
 			let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
 
@@ -407,30 +408,23 @@ impl Canvas
 		text: &UIText,
 	) -> crate::Result<()>
 	{
-		let mut text_str = text.text_str.as_str();
-
-		// Truncate strings longer than the maximum image array layers allowed by the device. That's
-		// often at least 2048 which is way more than enough, but we should check it anyways just in
-		// case. Strings longer than 2048 characters are also truncated because vertices are updated
-		// with `vkCmdUpdateBuffer`, which has a limit of 65536 (32 * 2048) bytes.
-		let max_glyphs: usize = render_ctx
+		let max_array_layers: usize = render_ctx
 			.memory_allocator
 			.device()
 			.physical_device()
 			.properties()
 			.max_image_array_layers
-			.min(2048)
 			.try_into()
 			.unwrap();
+
+		// Truncate strings longer than the maximum image array layers allowed by the device.
+		// Also truncate to stay within `vkCmdUpdateBuffer`'s update size limit of 65536 bytes.
+		const MAX_GLYPH_UPDATE_COUNT: usize = 65536 / std::mem::size_of::<GlyphInfo>();
+		let max_glyphs = max_array_layers.min(MAX_GLYPH_UPDATE_COUNT);
+		let mut text_str = text.text_str.as_str();
 		if text_str.chars().count() > max_glyphs {
-			log::warn!(
-				"UI text string is too long ({} chars, limit is {})! Truncating string: {}",
-				text_str.len(),
-				max_glyphs,
-				text_str,
-			);
 			let (truncate_byte_offset, _) = text_str.char_indices().nth(max_glyphs).unwrap();
-			text_str = &text_str[..truncate_byte_offset];
+			text_str = &text.text_str[..truncate_byte_offset];
 		}
 
 		let (optional_glyphs_image, mut glyph_infos) =
@@ -445,18 +439,17 @@ impl Canvas
 			return Ok(());
 		};
 
-		let len_u32: u32 = glyph_infos.len().try_into().unwrap();
-		let img_width = combined_image.width();
-		let img_height = combined_image.height() / len_u32;
-		let img_dim = [img_width, img_height];
-
-		let glyph_count = glyph_infos.len();
-		let prev_glyph_count = self
-			.text_resources
-			.get(&eid)
-			.as_ref()
-			.map(|res| usize::try_from(res.glyph_info_buffer.len()).unwrap())
-			.unwrap_or(0);
+		let glyph_count_u32: u32 = glyph_infos.len().try_into().unwrap();
+		let img_dim = [combined_image.width(), combined_image.height() / glyph_count_u32];
+		let image_create_info = ImageCreateInfo {
+			format: Format::R8_UNORM,
+			extent: [img_dim[0], img_dim[1], 1],
+			array_layers: glyph_count_u32,
+			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+			..Default::default()
+		};
+		let tex_image = render_ctx.new_image(&combined_image.into_raw(), image_create_info)?;
+		let tex = ImageView::new_default(tex_image)?;
 
 		// Scale the positions and sizes according to the current UI scale factor, and set the color
 		// for each glyph.
@@ -465,23 +458,14 @@ impl Canvas
 			glyph_info.color = text.color;
 		}
 
-		let image_create_info = ImageCreateInfo {
-			format: Format::R8_UNORM,
-			extent: [img_dim[0], img_dim[1], 1],
-			array_layers: glyph_count.try_into().unwrap(),
-			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-			..Default::default()
-		};
-		let tex_image = render_ctx.new_image(&combined_image.into_raw(), image_create_info)?;
-		let tex = ImageView::new_default(tex_image)?;
-
+		let glyph_count: DeviceSize = glyph_count_u32.into();
+		let prev_glyph_count = self.text_resources.get(&eid).map_or(0, |res| res.glyph_info_buffer.len());
 		let update_needed;
 		let glyph_info_buffer = if glyph_count == prev_glyph_count {
 			// Reuse the buffer if the glyph count hasn't changed. If `prev_glyph_count` is greater
 			// than 0, `text_resources` for the given `eid` must be `Some`, so we use `unwrap` here.
-			let resources = self.text_resources.get_mut(&eid).unwrap();
 			update_needed = Some(glyph_infos.into());
-			resources.glyph_info_buffer.clone()
+			self.text_resources.get_mut(&eid).unwrap().glyph_info_buffer.clone()
 		} else {
 			update_needed = None;
 			render_ctx.new_buffer(&glyph_infos, BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST)?
