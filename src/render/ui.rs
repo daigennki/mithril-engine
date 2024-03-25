@@ -87,13 +87,14 @@ mod ui_text_vs
 			{
 				mat2 transformation;
 				vec2 translation_projected;
-				vec2 texture_size_inv;
 			};
 
 			struct GlyphInfo
 			{
-				vec4 pos; // xy: top left pos, zw: width and height
-				vec4 color;
+				vec4 corners;     // xy: top left, zw: bottom right
+				vec2 texcoord_br; // bottom right texcoord
+				uint color;       // 4x u8
+				uint _filler;
 			};
 			layout(binding = 1) readonly buffer glyph_info
 			{
@@ -107,16 +108,17 @@ mod ui_text_vs
 			void main()
 			{
 				GlyphInfo glyph_info = glyphs[gl_InstanceIndex];
-				vec4 pos = glyph_info.pos;
-				vec2 texcoords[4] = { { 0.0, 0.0 }, { 0.0, pos.w }, { pos.z, 0.0 }, pos.zw };
-				vec2 texcoord_logical_pixels = texcoords[min(gl_VertexIndex, 3)];
-				vec2 pos2 = texcoord_logical_pixels + pos.xy;
-				texcoord = texcoord_logical_pixels * texture_size_inv;
+				vec4 corners = glyph_info.corners;
+				vec2 positions[4] = { corners.xy, corners.xw, corners.zy, corners.zw };
+				vec2 position = positions[gl_VertexIndex];
+				gl_Position = vec4(transformation * position + translation_projected, 0.0, 1.0);
 
-				gl_Position = vec4(transformation * pos2 + translation_projected, 0.0, 1.0);
+				vec2 texcoord_br = glyph_info.texcoord_br;
+				vec2 texcoords[4] = {{ 0.0, 0.0 }, { 0.0, texcoord_br.y }, { texcoord_br.x, 0.0 }, texcoord_br.xy };
+				texcoord = texcoords[gl_VertexIndex];
 
 				instance_index = gl_InstanceIndex;
-				glyph_color = glyph_info.color;
+				glyph_color = unpackUnorm4x8(glyph_info.color);
 			}
 		",
 	}
@@ -148,14 +150,15 @@ mod ui_text_fs
 #[repr(C)]
 struct GlyphInfo
 {
-	pos_size: Vec4, // pos: xy, size: zw
-	color: Vec4,
+	corners: Vec4,     // top left: xy, bottom right: zw
+	texcoord_br: Vec2, // bottom right texcoord
+	color: [u8; 4],
+	_filler: u32,
 }
 struct TextResources
 {
 	descriptor_set: Arc<PersistentDescriptorSet>,
 	projected: Affine2,
-	logical_texture_size_inv: Vec2,
 	glyph_info_buffer: Subbuffer<[GlyphInfo]>,
 	update_needed: Option<Box<[GlyphInfo]>>,
 }
@@ -280,13 +283,12 @@ impl Canvas
 		};
 		let text_set_layout = DescriptorSetLayout::new(device.clone(), set_layout_info)?;
 
-		let text_push_constant_size = std::mem::size_of::<Vec2>() * 4;
 		let pipeline_layout_info = PipelineLayoutCreateInfo {
 			set_layouts: vec![text_set_layout.clone()],
 			push_constant_ranges: vec![PushConstantRange {
 				stages: ShaderStages::VERTEX,
 				offset: 0,
-				size: text_push_constant_size.try_into().unwrap(),
+				size: std::mem::size_of::<Affine2>().try_into().unwrap(),
 			}],
 			..Default::default()
 		};
@@ -454,8 +456,13 @@ impl Canvas
 		// Scale the positions and sizes according to the current UI scale factor, and set the color
 		// for each glyph.
 		for glyph_info in &mut glyph_infos {
-			glyph_info.pos_size /= self.scale_factor;
-			glyph_info.color = text.color;
+			let color_unnormalized = text.color * (u8::MAX as f32);
+			glyph_info.color = [
+				color_unnormalized.x as u8,
+				color_unnormalized.y as u8,
+				color_unnormalized.z as u8,
+				color_unnormalized.w as u8,
+			];
 		}
 
 		let glyph_count: DeviceSize = glyph_count_u32.into();
@@ -478,17 +485,13 @@ impl Canvas
 		let set_layout = self.text_pipeline.layout().set_layouts()[0].clone();
 		let set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes, [])?;
 
-		let scale = transform.scale.unwrap_or(Vec2::ONE) * self.canvas_scaling;
+		let scale = transform.scale.unwrap_or(Vec2::ONE) * self.canvas_scaling / self.scale_factor;
 		let translation = transform.position.as_vec2() * self.canvas_scaling;
 		let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
-
-		// division inverted here so that division isn't performed in shader
-		let logical_texture_size_inv = Vec2::splat(self.scale_factor) / UVec2::new(img_dim[0], img_dim[1]).as_vec2();
 
 		let resources = TextResources {
 			descriptor_set: set,
 			projected,
-			logical_texture_size_inv,
 			glyph_info_buffer,
 			update_needed,
 		};
@@ -542,15 +545,9 @@ impl Canvas
 		cb.bind_pipeline_graphics(self.text_pipeline.clone())?;
 		let text_pipeline_layout = self.text_pipeline.layout().clone();
 		for resources in self.text_resources.values() {
-			let mut push_constant_data: [f32; 8] = Default::default();
-			resources.projected.write_cols_to_slice(&mut push_constant_data[0..6]);
-			resources
-				.logical_texture_size_inv
-				.write_to_slice(&mut push_constant_data[6..8]);
-
 			let set = resources.descriptor_set.clone();
 			let glyph_count = resources.glyph_info_buffer.len().try_into().unwrap();
-			cb.push_constants(text_pipeline_layout.clone(), 0, push_constant_data)?
+			cb.push_constants(text_pipeline_layout.clone(), 0, resources.projected)?
 				.bind_descriptor_sets(PipelineBindPoint::Graphics, text_pipeline_layout.clone(), 0, set)?
 				.draw(4, glyph_count, 0, 0)?;
 		}
@@ -665,10 +662,14 @@ fn text_to_image(text: &str, font: &Font<'_>, size: f32) -> (Option<GrayImage>, 
 			// Draw the glyph into the image per-pixel, and turn the coverage into an alpha value.
 			glyph.draw(|x, y, v| combined_images.put_pixel(x, y + offset_lines, Luma([(v * 255.0) as u8])));
 
-			let position_size_int = IVec4::new(bb.min.x, bb.min.y, bb.max.x - bb.min.x, bb.max.y - bb.min.y);
+			let glyph_width = (bb.max.x - bb.min.x) as f32;
+			let glyph_height = (bb.max.y - bb.min.y) as f32;
+			let texcoord_br = Vec2::new(glyph_width / max_width as f32, glyph_height / max_height as f32);
 			GlyphInfo {
-				pos_size: position_size_int.as_vec4(),
-				color: Vec4::splat(1.0),
+				corners: IVec4::new(bb.min.x, bb.min.y, bb.max.x, bb.max.y).as_vec4(),
+				texcoord_br,
+				color: [u8::MAX; 4],
+				_filler: 0,
 			}
 		})
 		.collect();
