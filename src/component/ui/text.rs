@@ -17,7 +17,7 @@ use crate::SystemBundle;
 pub struct UIText
 {
 	pub text_str: String,
-	pub size: f32,
+	pub size: f64,
 	pub color: Vec4,
 }
 impl ComponentSystems for UIText

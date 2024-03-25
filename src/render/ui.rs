@@ -173,8 +173,12 @@ struct MeshResources
 pub struct Canvas
 {
 	base_dimensions: [u32; 2],
-	canvas_scaling: Vec2,
-	scale_factor: f32,
+
+	// Scaling values which project logical coordinates to window coordinates (-1.0..1.0 range).
+	canvas_scaling: DVec2,
+
+	// Value used to increase resolution of components such as text with the window physical size.
+	scale_factor: f64,
 
 	descriptor_set_allocator: StandardDescriptorSetAllocator,
 	ui_pipeline: Arc<GraphicsPipeline>,
@@ -326,7 +330,7 @@ impl Canvas
 		let dim = render_ctx.window_dimensions();
 
 		let (canvas_scaling, scale_factor) =
-			calculate_projection(canvas_width as f32, canvas_height as f32, dim[0] as f32, dim[1] as f32);
+			calculate_projection(canvas_width as f64, canvas_height as f64, dim[0] as f64, dim[1] as f64);
 
 		Ok(Canvas {
 			base_dimensions: [canvas_width, canvas_height],
@@ -357,9 +361,9 @@ impl Canvas
 	/// Run this function whenever the screen resizes, to adjust the canvas aspect ratio to fit.
 	pub fn on_screen_resize(&mut self, screen_width: u32, screen_height: u32)
 	{
-		let (canvas_width, canvas_height) = (self.base_dimensions[0] as f32, self.base_dimensions[1] as f32);
+		let (canvas_width, canvas_height) = (self.base_dimensions[0] as f64, self.base_dimensions[1] as f64);
 		let (canvas_scaling, scale_factor) =
-			calculate_projection(canvas_width, canvas_height, screen_width as f32, screen_height as f32);
+			calculate_projection(canvas_width, canvas_height, screen_width as f64, screen_height as f64);
 		self.canvas_scaling = canvas_scaling;
 		self.scale_factor = scale_factor;
 	}
@@ -378,10 +382,10 @@ impl Canvas
 			let tex = render_ctx.new_texture(&mesh.image_path)?;
 			let image_extent = tex.image().extent();
 
-			let default_scale = Vec2::new(image_extent[0] as f32, image_extent[1] as f32);
+			let default_scale = DVec2::new(image_extent[0] as f64, image_extent[1] as f64);
 			let scale = transform.scale.unwrap_or(default_scale) * self.canvas_scaling;
-			let translation = transform.position.as_vec2() * self.canvas_scaling;
-			let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
+			let translation = transform.position.as_dvec2() * self.canvas_scaling;
+			let projected = Affine2::from_scale_angle_translation(scale.as_vec2(), 0.0, translation.as_vec2());
 
 			let writes = [WriteDescriptorSet::image_view(0, tex)];
 			let set_layout = self.ui_pipeline.layout().set_layouts()[0].clone();
@@ -429,8 +433,8 @@ impl Canvas
 			text_str = &text.text_str[..truncate_byte_offset];
 		}
 
-		let (optional_glyphs_image, mut glyph_infos) =
-			text_to_image(text_str, &self.default_font, text.size * self.scale_factor);
+		let scaled_size = text.size * self.scale_factor;
+		let (optional_glyphs_image, mut glyph_infos) = text_to_image(text_str, &self.default_font, scaled_size as f32);
 
 		// If no visible glyphs were produced (e.g. the string was empty, or it only has space characters),
 		// remove the GPU resources for the component, and then return immediately.
@@ -442,10 +446,9 @@ impl Canvas
 		};
 
 		let glyph_count_u32: u32 = glyph_infos.len().try_into().unwrap();
-		let img_dim = [combined_image.width(), combined_image.height() / glyph_count_u32];
 		let image_create_info = ImageCreateInfo {
 			format: Format::R8_UNORM,
-			extent: [img_dim[0], img_dim[1], 1],
+			extent: [combined_image.width(), combined_image.height() / glyph_count_u32, 1],
 			array_layers: glyph_count_u32,
 			usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
 			..Default::default()
@@ -485,9 +488,9 @@ impl Canvas
 		let set_layout = self.text_pipeline.layout().set_layouts()[0].clone();
 		let set = PersistentDescriptorSet::new(&self.descriptor_set_allocator, set_layout, writes, [])?;
 
-		let scale = transform.scale.unwrap_or(Vec2::ONE) * self.canvas_scaling / self.scale_factor;
-		let translation = transform.position.as_vec2() * self.canvas_scaling;
-		let projected = Affine2::from_scale_angle_translation(scale, 0.0, translation);
+		let scale = transform.scale.unwrap_or(DVec2::ONE) * self.canvas_scaling / self.scale_factor;
+		let translation = transform.position.as_dvec2() * self.canvas_scaling;
+		let projected = Affine2::from_scale_angle_translation(scale.as_vec2(), 0.0, translation.as_vec2());
 
 		let resources = TextResources {
 			descriptor_set: set,
@@ -590,30 +593,24 @@ impl Canvas
 	}
 }
 
-fn calculate_projection(canvas_width: f32, canvas_height: f32, screen_width: f32, screen_height: f32) -> (Vec2, f32)
+fn calculate_projection(canvas_width: f64, canvas_height: f64, screen_width: f64, screen_height: f64) -> (DVec2, f64)
 {
 	let canvas_aspect_ratio = canvas_width / canvas_height;
 	let screen_aspect_ratio = screen_width / screen_height;
 
-	// UI scale factor, used to increase resolution of components such as text when necessary
-	let scale_factor;
-
-	// Adjusted canvas dimensions
+	// If the screen is wider than the canvas, make the canvas wider. Otherwise, make the canvas taller.
 	let (adjusted_canvas_w, adjusted_canvas_h);
-
-	// If the screen is wider than the canvas, make the canvas wider.
-	// Otherwise, make the canvas taller.
-	if screen_aspect_ratio > canvas_aspect_ratio {
+	let scale_factor = if screen_aspect_ratio > canvas_aspect_ratio {
 		adjusted_canvas_w = canvas_height * screen_width / screen_height;
 		adjusted_canvas_h = canvas_height;
-		scale_factor = screen_height / canvas_height;
+		screen_height / canvas_height
 	} else {
 		adjusted_canvas_w = canvas_width;
 		adjusted_canvas_h = canvas_width * screen_height / screen_width;
-		scale_factor = screen_width / canvas_width;
-	}
+		screen_width / canvas_width
+	};
 
-	let proj = 2.0 / Vec2::new(adjusted_canvas_w, adjusted_canvas_h);
+	let proj = 2.0 / DVec2::new(adjusted_canvas_w, adjusted_canvas_h);
 
 	(proj, scale_factor)
 }
